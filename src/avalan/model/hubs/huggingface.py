@@ -19,7 +19,7 @@ from logging import Logger
 from os.path import expanduser
 from os import getenv
 from tqdm import tqdm
-from typing import Callable, Iterable, Optional, Type, Union
+from typing import Callable, Iterable, Type
 from urllib.parse import urlparse
 
 class HuggingfaceHub:
@@ -63,8 +63,8 @@ class HuggingfaceHub:
     def cache_delete(
         self,
         model_id: str,
-        revisions: Optional[list[str]] = None
-    ) -> (Optional[HubCacheDeletion], Optional[Callable[[], None]]):
+        revisions: list[str] | None = None
+    ) -> (HubCacheDeletion | None, Callable[[], None] | None):
         scan_results = scan_cache_dir(self._cache_dir)
         delete_revisions = [
             revision.commit_hash
@@ -147,7 +147,7 @@ class HuggingfaceHub:
     def download(
         self,
         model_id: str,
-        tqdm_class: Optional[Union[Type[tqdm], Callable[..., tqdm]]] = None
+        tqdm_class: Type[tqdm] | Callable[..., tqdm] | None = None
     ) -> str:
         try:
             path = self._hf.snapshot_download(
@@ -180,10 +180,10 @@ class HuggingfaceHub:
 
     def models(
         self,
-        filter: Optional[str]=None,
-        name: Optional[str]=None,
-        search: Optional[str]=None,
-        limit: Optional[int]=None
+        filter: str | None=None,
+        name: str | None=None,
+        search: str | None=None,
+        limit: int | None=None
     ) -> Iterable[Model]:
         yield from (
             HuggingfaceHub._model(model_info)

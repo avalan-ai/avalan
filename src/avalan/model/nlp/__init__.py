@@ -24,10 +24,10 @@ from torch import (
 )
 from transformers import AsyncTextIteratorStreamer
 from transformers.generation import StoppingCriteria
-from typing import AsyncGenerator, Callable, Literal, Optional, Union
+from typing import AsyncGenerator, Callable, Literal
 
-OutputGenerator = AsyncGenerator[Union[Token,TokenDetail,str],None]
-OutputFunction = Callable[..., Union[OutputGenerator,str]]
+OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
+OutputFunction = Callable[..., OutputGenerator | str]
 
 class InvalidJsonResponseException(Exception):
     pass
@@ -35,10 +35,10 @@ class InvalidJsonResponseException(Exception):
 class BaseNLPModel(TransformerModel,ABC):
     def _generate_output(
         self,
-        inputs: Union[dict[str,Tensor],Tensor],
+        inputs: dict[str,Tensor] | Tensor,
         settings: GenerationSettings,
-        stopping_criterias: Optional[list[StoppingCriteria]]=None,
-        streamer: Optional[AsyncTextIteratorStreamer]=None,
+        stopping_criterias: list[StoppingCriteria] | None=None,
+        streamer: AsyncTextIteratorStreamer | None=None,
     ):
         eos_token_id = \
             settings.eos_token_id if settings.eos_token_id \
@@ -102,9 +102,7 @@ class BaseNLPModel(TransformerModel,ABC):
         return outputs
 
     @staticmethod
-    def _get_weight_type(weight_type: WeightType) -> Union[
-        Literal["auto"], dtype
-    ]:
+    def _get_weight_type(weight_type: WeightType) -> Literal["auto"] | dtype:
         wtype = (
             tbool if weight_type == "bool" else
             bfloat16 if weight_type == "bf16" else

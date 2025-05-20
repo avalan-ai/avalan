@@ -12,13 +12,13 @@ from avalan.model.nlp.text.vendor import (
 from avalan.tool.manager import ToolManager
 from openai import AsyncOpenAI, AsyncStream
 from transformers import PreTrainedModel
-from typing import AsyncIterator, Optional, Union
+from typing import AsyncIterator
 
 class OpenAIStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncStream):
         super().__init__(stream.__aiter__())
 
-    async def __anext__(self) -> Union[Token,TokenDetail,str]:
+    async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
         text = chunk.choices[0].delta.content or ""
         return text
@@ -26,7 +26,7 @@ class OpenAIStream(TextGenerationVendorStream):
 class OpenAIClient(TextGenerationVendor):
     _client: AsyncOpenAI
 
-    def __init__(self, api_key: str, base_url: Optional[str]):
+    def __init__(self, api_key: str, base_url: str | None):
         self._client = AsyncOpenAI(
             base_url = base_url,
             api_key = api_key
@@ -36,11 +36,11 @@ class OpenAIClient(TextGenerationVendor):
         self,
         model_id: str,
         messages: list[Message],
-        settings: Optional[GenerationSettings]=None,
+        settings: GenerationSettings | None=None,
         *,
-        tool: Optional[ToolManager]=None,
+        tool: ToolManager | None=None,
         use_async_generator: bool=True
-    ) -> AsyncIterator[Union[Token,TokenDetail,str]]:
+    ) -> AsyncIterator[Token | TokenDetail | str]:
         template_messages = self._template_messages(messages)
         client_stream = await self._client.chat.completions.create(
             model=model_id,
@@ -50,7 +50,7 @@ class OpenAIClient(TextGenerationVendor):
         return OpenAIStream(stream=client_stream)
 
 class OpenAIModel(TextGenerationVendorModel):
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         assert self._settings.access_token
         return OpenAIClient(
             base_url = self._settings.base_url,

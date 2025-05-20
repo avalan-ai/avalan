@@ -13,7 +13,7 @@ from avalan.model.nlp.text.vendor import (
 )
 from avalan.tool.manager import ToolManager
 from transformers import PreTrainedModel
-from typing import AsyncIterator, Optional, Union
+from typing import AsyncIterator
 
 class AnthropicStream(TextGenerationVendorStream):
     _stream: AsyncIterator
@@ -21,7 +21,7 @@ class AnthropicStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator):
         super().__init__(stream.__aiter__())
 
-    async def __anext__(self) -> Union[Token, TokenDetail, str]:
+    async def __anext__(self) -> Token | TokenDetail | str:
         # We may handle multiple iterations before yielding because
         # Anthropic triggers multiple events besides the deltas
         while True:
@@ -42,18 +42,18 @@ class AnthropicStream(TextGenerationVendorStream):
 class AnthropicClient(TextGenerationVendor):
     _client: AsyncAnthropic
 
-    def __init__(self, api_key: str, base_url: Optional[str] = None):
+    def __init__(self, api_key: str, base_url: str | None = None):
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
 
     async def __call__(
         self,
         model_id: str,
         messages: list[Message],
-        settings: Optional[GenerationSettings] = None,
+        settings: GenerationSettings | None = None,
         *,
-        tool: Optional[ToolManager] = None,
+        tool: ToolManager | None = None,
         use_async_generator: bool = True
-    ) -> AsyncIterator[Union[Token, TokenDetail, str]]:
+    ) -> AsyncIterator[Token | TokenDetail | str]:
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
@@ -68,7 +68,7 @@ class AnthropicClient(TextGenerationVendor):
         return AnthropicStream(stream=stream)
 
 class AnthropicModel(TextGenerationVendorModel):
-    def _load_model(self) -> Union[TextGenerationVendor, PreTrainedModel]:
+    def _load_model(self) -> TextGenerationVendor | PreTrainedModel:
         assert self._settings.access_token
         return AnthropicClient(
             api_key=self._settings.access_token,

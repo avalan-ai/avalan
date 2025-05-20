@@ -7,10 +7,10 @@ from transformers import (
     AutoModelForSemanticSegmentation,
     PreTrainedModel,
 )
-from typing import Literal, Union
+from typing import Literal
 
 class SemanticSegmentationModel(BaseVisionModel):
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
@@ -24,7 +24,7 @@ class SemanticSegmentationModel(BaseVisionModel):
 
     async def __call__(
         self,
-        image_source: Union[str,Image],
+        image_source: str | Image,
         tensor_format: Literal["pt"]="pt"
     ) -> list[str]:
         image = BaseVisionModel._get_image(image_source)

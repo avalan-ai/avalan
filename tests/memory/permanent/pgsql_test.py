@@ -8,7 +8,7 @@ from pgvector.psycopg import Vector
 from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection, AsyncCursor
 from re import sub
-from typing import Tuple, Union
+
 from unittest import main, IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 from uuid import uuid4, UUID
@@ -306,9 +306,9 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
 
     @staticmethod
     def mock_query(
-        record_set: Union[dict, list[dict]],
+        record_set: dict | list[dict],
         fetch_all: bool=False
-    ) -> Tuple[AsyncConnectionPool, AsyncConnection, AsyncCursor]:
+    ) -> tuple[AsyncConnectionPool, AsyncConnection, AsyncCursor]:
         cursor_mock = AsyncMock(spec=AsyncCursor)
         cursor_mock.__aenter__.return_value = cursor_mock
         if fetch_all:

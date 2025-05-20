@@ -13,13 +13,13 @@ from avalan.model.nlp.text.vendor import (
 )
 from avalan.tool.manager import ToolManager
 from transformers import PreTrainedModel
-from typing import AsyncIterator, Optional, Union
+from typing import AsyncIterator
 
 class GoogleStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[GenerateContentResponse]):
         super().__init__(stream)
 
-    async def __anext__(self) -> Union[Token, TokenDetail, str]:
+    async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
         return chunk.text
 
@@ -33,11 +33,11 @@ class GoogleClient(TextGenerationVendor):
         self,
         model_id: str,
         messages: list[Message],
-        settings: Optional[GenerationSettings] = None,
+        settings: GenerationSettings | None = None,
         *,
-        tool: Optional[ToolManager] = None,
+        tool: ToolManager | None = None,
         use_async_generator: bool = True
-    ) -> AsyncIterator[Union[Token, TokenDetail, str]]:
+    ) -> AsyncIterator[Token | TokenDetail | str]:
         contents = [m.content for m in messages]
 
         if use_async_generator:
@@ -58,7 +58,7 @@ class GoogleClient(TextGenerationVendor):
             return single_gen()
 
 class GoogleModel(TextGenerationVendorModel):
-    def _load_model(self) -> Union[PreTrainedModel, TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         assert self._settings.access_token
         return GoogleClient(api_key=self._settings.access_token)
 

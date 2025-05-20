@@ -11,7 +11,7 @@ from avalan.model.nlp.sentence import SentenceTransformerModel
 from avalan.model.nlp.text.generation import TextGenerationModel
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
-from typing import Any, get_args, Optional, Type, Union
+from typing import Any, get_args
 from urllib.parse import urlparse, parse_qsl
 
 class ModelManager(ContextDecorator):
@@ -28,17 +28,17 @@ class ModelManager(ContextDecorator):
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any]
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any | None
     ):
         return self._stack.__exit__(exc_type, exc_value, traceback)
 
     def get_engine_settings(
         self,
         engine_uri,
-        settings: Optional[dict]=None,
-        is_sentence_transformer: Optional[bool]=None,
+        settings: dict | None=None,
+        is_sentence_transformer: bool | None=None,
     ) -> TransformerEngineSettings:
         engine_settings_args = settings or {}
 
@@ -58,20 +58,20 @@ class ModelManager(ContextDecorator):
         self,
         engine_uri: EngineUri,
         *args,
-        attention: Optional[AttentionImplementation]=None,
-        device: Optional[str]=None,
+        attention: AttentionImplementation | None=None,
+        device: str | None=None,
         disable_loading_progress_bar: bool=False,
-        is_sentence_transformer: Optional[bool]=None,
-        loader_class: Optional[TextGenerationLoaderClass]="auto",
+        is_sentence_transformer: bool | None=None,
+        loader_class: TextGenerationLoaderClass | None="auto",
         low_cpu_mem_usage: bool=False,
         quiet: bool=False,
-        revision: Optional[str]=None,
-        special_tokens: Optional[list[str]]=None,
-        tokenizer: Optional[str]=None,
-        tokens: Optional[list[str]]=None,
-        trust_remote_code: Optional[bool]=None,
+        revision: str | None=None,
+        special_tokens: list[str] | None=None,
+        tokenizer: str | None=None,
+        tokens: list[str] | None=None,
+        trust_remote_code: bool | None=None,
         weight_type: WeightType="auto"
-    ) -> Union[SentenceTransformerModel, TextGenerationModel]:
+    ) -> SentenceTransformerModel | TextGenerationModel:
         engine_settings_args = dict(
             cache_dir=self._hub.cache_dir,
             device=device,
@@ -106,8 +106,8 @@ class ModelManager(ContextDecorator):
         self,
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
-        is_sentence_transformer: Optional[bool]=None,
-    ) -> Union[SentenceTransformerModel, TextGenerationModel]:
+        is_sentence_transformer: bool | None=None,
+    ) -> SentenceTransformerModel | TextGenerationModel:
         model_load_args = dict(
             model_id=engine_uri.model_id,
             settings=engine_settings,

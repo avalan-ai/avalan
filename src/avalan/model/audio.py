@@ -12,35 +12,33 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Literal, Optional, Union
+from typing import Literal
 
 class BaseAudioModel(Engine,ABC):
     @abstractmethod
     async def __call__(
         self,
-        image_source: Union[str,Image.Image],
+        image_source: str | Image.Image,
         tensor_format: Literal["pt"]="pt"
-    ) -> Union[
-        str
-    ]:
+    ) -> str:
         raise NotImplementedError()
 
     def _load_tokenizer(
         self,
-        tokenizer_name_or_path: Optional[str],
+        tokenizer_name_or_path: str | None,
         use_fast: bool=True
-    ) -> Union[PreTrainedTokenizer,PreTrainedTokenizerFast]:
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         raise TokenizerNotSupportedException()
 
     def _load_tokenizer_with_tokens(
         self,
-        tokenizer_name_or_path: Optional[str],
+        tokenizer_name_or_path: str | None,
         use_fast: bool=True
-    ) -> Union[PreTrainedTokenizer,PreTrainedTokenizerFast]:
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         raise TokenizerNotSupportedException()
 
 class SpeechRecognitionModel(BaseAudioModel):
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,

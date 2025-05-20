@@ -14,7 +14,7 @@ from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import PreTrainedModel
-from typing import AsyncGenerator, Literal, Optional, override, Union
+from typing import AsyncGenerator, Literal, override
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncGenerator
@@ -35,8 +35,8 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     def __init__(
         self,
         model_id: str,
-        settings: Optional[TransformerEngineSettings]=None,
-        logger: Optional[Logger]=None,
+        settings: TransformerEngineSettings | None=None,
+        logger: Logger | None=None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
         assert settings.access_token, "API key needed for vendor"
@@ -44,7 +44,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         super().__init__(model_id, settings, logger)
 
     @abstractmethod
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         raise NotImplementedError()
 
     @property
@@ -62,20 +62,16 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     def _tokenize_input(
         self,
         input: Input,
-        context: Optional[str]=None,
+        context: str | None=None,
         tensor_format: Literal["pt"]="pt",
         **kwargs
-    ) -> Union[
-        dict[str,Tensor],
-        BatchEncoding,
-        Tensor
-    ]:
+    ) -> dict[str,Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
     def input_token_count(
         self,
         input: Input,
-        system_prompt: Optional[str]=None
+        system_prompt: str | None=None
     ) -> int:
         try:
             encoding = encoding_for_model(self._model_id)
@@ -93,10 +89,10 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     async def __call__(
         self,
         input: Input,
-        system_prompt: Optional[str]=None,
-        settings: Optional[GenerationSettings]=None,
+        system_prompt: str | None=None,
+        settings: GenerationSettings | None=None,
         *,
-        tool: Optional[ToolManager]=None,
+        tool: ToolManager | None=None,
     ) -> TextGenerationResponse:
         messages = self._messages(input, system_prompt, tool)
         streamer = await self._model(

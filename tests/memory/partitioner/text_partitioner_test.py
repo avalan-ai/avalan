@@ -3,15 +3,15 @@ from avalan.model.nlp.sentence import SentenceTransformerModel
 from logging import Logger
 from numpy import arange, ndarray
 from numpy.testing import assert_array_equal
-from typing import Optional, Tuple
+
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, call, _Call
 
 class TextPartitionerTestCase(IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sources : list[Tuple[str,int,int,int,str, list[Tuple[
-            int, int, int, Optional[int], int,
+        cls.sources : list[tuple[str,int,int,int,str, list[tuple[
+            int, int, int, int | None, int,
             str
         ]]]] = [
         (

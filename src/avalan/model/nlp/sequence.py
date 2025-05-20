@@ -10,7 +10,7 @@ from transformers import (
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal, Optional, Union
+from typing import Literal
 
 class SequenceClassificationModel(BaseNLPModel):
     @property
@@ -21,7 +21,7 @@ class SequenceClassificationModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return False
 
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         model = AutoModelForSequenceClassification.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
@@ -39,8 +39,8 @@ class SequenceClassificationModel(BaseNLPModel):
     def _tokenize_input(
         self,
         input: Input,
-        system_prompt: Optional[str],
-        context: Optional[str],
+        system_prompt: str | None,
+        context: str | None,
         tensor_format: Literal["pt"]="pt"
     ) -> BatchEncoding:
         assert not system_prompt, "Sequence classification model " + \
@@ -78,7 +78,7 @@ class SequenceToSequenceModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return False
 
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         model = AutoModelForSeq2SeqLM.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
@@ -96,8 +96,8 @@ class SequenceToSequenceModel(BaseNLPModel):
     def _tokenize_input(
         self,
         input: Input,
-        system_prompt: Optional[str],
-        context: Optional[str],
+        system_prompt: str | None,
+        context: str | None,
         tensor_format: Literal["pt"]="pt"
     ) -> Tensor:
         assert not system_prompt, "SequenceToSequence model " + \
@@ -113,7 +113,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         self,
         input: Input,
         settings: GenerationSettings,
-        stopping_criterias: Optional[list[StoppingCriteria]]=None,
+        stopping_criterias: list[StoppingCriteria] | None=None,
     ) -> str:
         assert self._tokenizer, f"Model {self._model} can't be executed " + \
                                  "without a tokenizer loaded first"
@@ -142,7 +142,7 @@ class TranslationModel(SequenceToSequenceModel):
         source_language: str,
         destination_language: str,
         settings: GenerationSettings,
-        stopping_criterias: Optional[list[StoppingCriteria]]=None,
+        stopping_criterias: list[StoppingCriteria] | None=None,
         skip_special_tokens: bool=True
     ) -> str:
         assert self._tokenizer, f"Model {self._model} can't be executed " + \

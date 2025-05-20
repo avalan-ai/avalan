@@ -6,7 +6,7 @@ from numpy import ndarray
 from torch import no_grad
 from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal, Optional, Union
+from typing import Literal
 
 class SentenceTransformerModel(BaseNLPModel):
     @property
@@ -25,7 +25,7 @@ class SentenceTransformerModel(BaseNLPModel):
         token_ids = self.tokenizer.encode(input, add_special_tokens=False)
         return len(token_ids)
 
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         from sentence_transformers import SentenceTransformer
         model = SentenceTransformer(
             self._model_id,
@@ -52,8 +52,8 @@ class SentenceTransformerModel(BaseNLPModel):
     def _tokenize_input(
         self,
         input: Input,
-        system_prompt: Optional[str],
-        context: Optional[str],
+        system_prompt: str | None,
+        context: str | None,
         tensor_format: Literal["pt"]="pt"
     ) -> BatchEncoding:
         raise NotImplementedError()
