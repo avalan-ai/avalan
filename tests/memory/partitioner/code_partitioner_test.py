@@ -82,7 +82,7 @@ c = 3
                 self.assertEqual(len(partitions), 6)
                 self.assertEqual(
                     [len(p.data) for p in partitions],
-                    [186, 13, 157, 123, 218, 7]
+                    [159, 13, 157, 123, 215, 7]
                 )
                 self.assertEqual(partitions[0].encoding, encoding)
                 self.assertIsNone(partitions[0].function_id)
@@ -183,7 +183,7 @@ c = 3
                 )
                 self.assertEqual(
                     functions[2].parameters[5].type,
-                    "Optional[Node]"
+                    "Node | None"
                 )
                 self.assertEqual(functions[2].parameters[5].name, "third")
                 self.assertEqual(

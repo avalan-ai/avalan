@@ -19,7 +19,7 @@ from logging import Logger
 from os.path import expanduser
 from os import getenv
 from tqdm import tqdm
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Type
 from urllib.parse import urlparse
 
 class HuggingfaceHub:
