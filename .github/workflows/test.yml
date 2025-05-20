@@ -16,6 +16,6 @@ jobs:
       - name: Install Poetry
         run: pip install poetry
       - name: Install dependencies
-        run: poetry install --extras test
+        run: poetry install --extras all
       - name: Run tests
         run: poetry run pytest --verbose
