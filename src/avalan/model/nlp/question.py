@@ -4,7 +4,7 @@ from avalan.model.nlp import BaseNLPModel
 from torch import argmax
 from transformers import AutoModelForQuestionAnswering, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal, Optional, Union
+from typing import Literal
 
 class QuestionAnsweringModel(BaseNLPModel):
     @property
@@ -15,7 +15,7 @@ class QuestionAnsweringModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return False
 
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         model = AutoModelForQuestionAnswering.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
@@ -33,8 +33,8 @@ class QuestionAnsweringModel(BaseNLPModel):
     def _tokenize_input(
         self,
         input: Input,
-        system_prompt: Optional[str],
-        context: Optional[str],
+        system_prompt: str | None,
+        context: str | None,
         tensor_format: Literal["pt"]="pt"
     ) -> BatchEncoding:
         assert not system_prompt, "Token classification model " + \

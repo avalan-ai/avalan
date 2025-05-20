@@ -14,7 +14,7 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Literal, Optional, Union
+from typing import Literal
 
 class TransformerModel(Engine,ABC):
     @property
@@ -33,21 +33,21 @@ class TransformerModel(Engine,ABC):
     def _tokenize_input(
         self,
         input: Input,
-        context: Optional[str]=None,
+        context: str | None=None,
         tensor_format: Literal["pt"]="pt",
         **kwargs
-    ) -> Union[
-        dict[str,Tensor],
-        BatchEncoding,
-        Tensor
-    ]:
+    ) -> (
+        dict[str,Tensor]
+        | BatchEncoding
+        | Tensor
+    ):
         raise NotImplementedError()
 
     def __init__(
         self,
         model_id: str,
-        settings: Optional[TransformerEngineSettings]=None,
-        logger: Optional[Logger]=None,
+        settings: TransformerEngineSettings | None=None,
+        logger: Logger | None=None,
     ) -> None:
         super().__init__(
             model_id,
@@ -67,7 +67,7 @@ class TransformerModel(Engine,ABC):
     def tokenize(
         self,
         text: str,
-        tokenizer_name_or_path: Optional[str]=None
+        tokenizer_name_or_path: str | None=None
     ) -> list[Token]:
         _l = self._log
         if not hasattr(self, "_loaded_tokenizer") \
@@ -97,7 +97,7 @@ class TransformerModel(Engine,ABC):
     def input_token_count(
         self,
         input: Input,
-        system_prompt: Optional[str]=None
+        system_prompt: str | None=None
     ) -> int:
         _l = self._log
         assert self._tokenizer, f"Model {self._model} can't be executed " + \
@@ -108,9 +108,9 @@ class TransformerModel(Engine,ABC):
 
     def _load_tokenizer(
         self,
-        tokenizer_name_or_path: Optional[str],
+        tokenizer_name_or_path: str | None,
         use_fast: bool
-    ) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         return AutoTokenizer.from_pretrained(
             tokenizer_name_or_path or self._model_id,
             use_fast=use_fast
@@ -118,9 +118,9 @@ class TransformerModel(Engine,ABC):
 
     def _load_tokenizer_with_tokens(
         self,
-        tokenizer_name_or_path: Optional[str],
+        tokenizer_name_or_path: str | None,
         use_fast: bool=True
-    ) -> Union[PreTrainedTokenizer,PreTrainedTokenizerFast]:
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         _l = self._log
         tokenizer = self._load_tokenizer(tokenizer_name_or_path, use_fast)
         if self._settings.tokens:

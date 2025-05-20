@@ -10,9 +10,7 @@ from typing import (
     AsyncGenerator,
     AsyncIterator,
     Literal,
-    Optional,
     TypedDict,
-    Union
 )
 
 TemplateMessageRole = Literal[
@@ -36,17 +34,17 @@ class TemplateMessage(TypedDict):
     content: str
 
 class TextGenerationStream(
-    AsyncIterator[Union[Token,TokenDetail,str]],
+    AsyncIterator[Token | TokenDetail | str],
     ABC
 ):
-    _generator: Optional[AsyncGenerator]=None
+    _generator: AsyncGenerator | None=None
 
     @abstractmethod
     def __call__(self, *args, **kwargs):
         raise NotImplementedError()
 
     @abstractmethod
-    async def __anext__(self) -> Union[Token,TokenDetail,str]:
+    async def __anext__(self) -> Token | TokenDetail | str:
         raise NotImplementedError()
 
     def __aiter__(self):
@@ -58,14 +56,14 @@ class TextGenerationVendor(ABC):
         self,
         model_id: str,
         messages: list[Message],
-        settings: Optional[GenerationSettings]=None,
+        settings: GenerationSettings | None=None,
         *,
-        tool: Optional[ToolManager]=None,
+        tool: ToolManager | None=None,
         use_async_generator: bool=True
     ) -> TextGenerationStream:
         raise NotImplementedError()
 
-    def _system_prompt(self, messages: list[Message]) -> Optional[str]:
+    def _system_prompt(self, messages: list[Message]) -> str | None:
         return next(
             (
                 message.content
@@ -78,7 +76,7 @@ class TextGenerationVendor(ABC):
     def _template_messages(
         self,
         messages: list[Message],
-        exclude_roles: Optional[list[TemplateMessageRole]]=None
+        exclude_roles: list[TemplateMessageRole] | None=None
     ) -> list[TemplateMessage]:
         return [
             { "role": message.role, "content": message.content }

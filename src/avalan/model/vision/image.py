@@ -11,11 +11,11 @@ from transformers import (
     PreTrainedModel,
 )
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal, Optional, Union
+from typing import Literal
 
 # model predicts one of the 1000 ImageNet classes
 class ImageClassificationModel(BaseVisionModel):
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
@@ -26,7 +26,7 @@ class ImageClassificationModel(BaseVisionModel):
 
     async def __call__(
         self,
-        image_source: Union[str,Image],
+        image_source: str | Image,
         tensor_format: Literal["pt"]="pt"
     ) -> ImageEntity:
         image = BaseVisionModel._get_image(image_source)
@@ -41,7 +41,7 @@ class ImageClassificationModel(BaseVisionModel):
         )
 
 class ImageToTextModel(TransformerModel):
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
@@ -54,19 +54,17 @@ class ImageToTextModel(TransformerModel):
     def _tokenize_input(
         self,
         input: Input,
-        context: Optional[str]=None,
+        context: str | None=None,
         tensor_format: Literal["pt"]="pt",
         **kwargs
-    ) -> Union[
-        dict[str,Tensor],
-        BatchEncoding,
-        Tensor
-    ]:
+    ) -> (
+        dict[str,Tensor] | BatchEncoding | Tensor
+    ):
         raise NotImplementedError()
 
     async def __call__(
         self,
-        image_source: Union[str,Image],
+        image_source: str | Image,
         skip_special_tokens: bool=True,
         tensor_format: Literal["pt"]="pt"
     ) -> str:

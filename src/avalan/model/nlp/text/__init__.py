@@ -7,7 +7,7 @@ from avalan.model.nlp import (
 from io import StringIO
 from json import loads, JSONDecodeError
 from re import compile, DOTALL, Pattern
-from typing import Optional, Union
+from typing import Optional
 
 class TextGenerationResponse:
     _json_patterns: list[Pattern] = [
@@ -20,7 +20,7 @@ class TextGenerationResponse:
     ]
     _output_fn: OutputFunction
     _input_token_count: int=0
-    _output: Optional[OutputGenerator]=None
+    _output: OutputGenerator | None=None
     _buffer: StringIO=StringIO()
 
     def __init__(
@@ -49,7 +49,7 @@ class TextGenerationResponse:
         self._output = self._output_fn(*self._args, **self._kwargs)
         return self
 
-    async def __anext__(self) -> Union[Token,TokenDetail,str]:
+    async def __anext__(self) -> Token | TokenDetail | str:
         token = await self._output.__anext__()
         self._buffer.write(token if isinstance(token,str) else token.token)
         return token

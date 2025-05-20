@@ -10,20 +10,20 @@ from transformers import (
     AutoModelForObjectDetection,
     PreTrainedModel,
 )
-from typing import Literal, Optional, Union
+from typing import Literal
 
 class ObjectDetectionModel(ImageClassificationModel):
     def __init__(
         self,
         model_id: str,
-        settings: Optional[EngineSettings]=None,
+        settings: EngineSettings | None=None,
         revision: Literal["no_timm"]="no_timm",
-        logger: Optional[Logger]=None,
+        logger: Logger | None=None,
     ):
         self._revision = revision
         super().__init__(model_id, settings, logger=logger)
 
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             revision=self._revision,
@@ -38,8 +38,8 @@ class ObjectDetectionModel(ImageClassificationModel):
 
     async def __call__(
         self,
-        image_source: Union[str,Image],
-        threshold: Optional[float]=0.3,
+        image_source: str | Image,
+        threshold: float | None=0.3,
         tensor_format: Literal["pt"]="pt"
     ) -> list[ImageEntity]:
         image = BaseVisionModel._get_image(image_source)

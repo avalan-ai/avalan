@@ -3,19 +3,19 @@ from avalan.memory.partitioner.code import CodePartitioner, LanguageName
 from logging import Logger
 from unittest import main, TestCase
 from unittest.mock import MagicMock
-from typing import Tuple
+
 
 class CodePartitionerTestCase(TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sources : list[Tuple[LanguageName,str,int,Encoding,str]] = [
+        cls.sources : list[tuple[LanguageName,str,int,Encoding,str]] = [
             ("python", "ai.avalan.tests.memory.partitioner", 256, "utf-8", """
 #!shebang
 # License blah blah (Apache 2.0)
 "This is a module docstring."
 
 from datetime import datetime
-from typing import Optional
+
 
 a = 1
 
@@ -52,7 +52,7 @@ class Test:
         *,
         extra: datetime,
         second: bool = True,
-        third: Optional[Node] = None,
+        third: Node | None = None,
         **kwargs,
         fourth: float = 3.14159
     ):

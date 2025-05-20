@@ -34,10 +34,10 @@ from transformers import (
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import AsyncGenerator, Literal, Optional, Type, Union
+from typing import AsyncGenerator, Literal
 
 class TextGenerationModel(BaseNLPModel):
-    _loaders: dict[TextGenerationLoaderClass,Type[PreTrainedModel]] = {
+    _loaders: dict[TextGenerationLoaderClass, type[PreTrainedModel]] = {
         "auto": AutoModelForCausalLM,
         "gemma3": Gemma3ForConditionalGeneration,
         "mistral3": Mistral3ForConditionalGeneration,
@@ -46,8 +46,8 @@ class TextGenerationModel(BaseNLPModel):
     def __init__(
         self,
         model_id: str,
-        settings: Optional[TransformerEngineSettings]=None,
-        logger: Optional[Logger]=None,
+        settings: TransformerEngineSettings | None=None,
+        logger: Logger | None=None,
     ) -> None:
         super().__init__(
             model_id,
@@ -63,7 +63,7 @@ class TextGenerationModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return True
 
-    def _load_model(self) -> Union[PreTrainedModel,TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         assert self._settings.loader_class in self._loaders, \
             f"Unrecognized loader {self._settings.loader_class}"
 
@@ -103,14 +103,14 @@ class TextGenerationModel(BaseNLPModel):
     async def __call__(
         self,
         input: Input,
-        system_prompt: Optional[str]=None,
-        settings: Optional[GenerationSettings]=None,
-        stopping_criterias: Optional[list[StoppingCriteria]]=None,
+        system_prompt: str | None=None,
+        settings: GenerationSettings | None=None,
+        stopping_criterias: list[StoppingCriteria] | None=None,
         *,
         manual_sampling: bool=False,
-        pick: Optional[int]=None,
+        pick: int | None=None,
         skip_special_tokens: bool=False,
-        tool: Optional[ToolManager]=None
+        tool: ToolManager | None=None
     ) -> TextGenerationResponse:
         assert self._tokenizer, f"Model {self._model} can't be executed " + \
                                  "without a tokenizer loaded first"
@@ -164,12 +164,12 @@ class TextGenerationModel(BaseNLPModel):
 
     async def _stream_generator(
         self,
-        inputs: Union[dict[str,Tensor],Tensor],
+        inputs: dict[str,Tensor] | Tensor,
         settings: GenerationSettings,
-        stopping_criterias: Optional[list[StoppingCriteria]],
+        stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
         **kwargs
-    ) -> AsyncGenerator[str,None]:
+    ) -> AsyncGenerator[str, None]:
         _l = self._log
 
         streamer = AsyncTextIteratorStreamer(
@@ -210,9 +210,9 @@ class TextGenerationModel(BaseNLPModel):
 
     def _string_output(
         self,
-        inputs: Union[dict[str,Tensor],Tensor],
+        inputs: dict[str,Tensor] | Tensor,
         settings: GenerationSettings,
-        stopping_criterias: Optional[list[StoppingCriteria]],
+        stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
         **kwargs
     ) -> str:
@@ -231,13 +231,13 @@ class TextGenerationModel(BaseNLPModel):
 
     async def _token_generator(
         self,
-        inputs: Union[dict[str,Tensor],Tensor],
+        inputs: dict[str,Tensor] | Tensor,
         settings: GenerationSettings,
-        stopping_criterias: Optional[list[StoppingCriteria]],
+        stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
-        pick: Optional[int],
+        pick: int | None,
         probability_distribution: ProbabilityDistribution = "softmax"
-    ) -> AsyncGenerator[Union[Token,TokenDetail],None]:
+    ) -> AsyncGenerator[Token | TokenDetail, None]:
         assert not settings.temperature or (
             settings.temperature >= 0 and settings.temperature <= 1
         ), "temperature should be [0, 1]"
@@ -297,7 +297,7 @@ class TextGenerationModel(BaseNLPModel):
                     if enable_entmax and probability_distribution == "entmax" \
                 else softmax(logits / settings.temperature, dim=-1)
 
-            tokens: Optional[list[Token]] = None
+            tokens: list[Token] | None = None
             if pick > 0:
                 picked_logits = topk(logits_probs, pick)
                 picked_logits_ids = picked_logits.indices.tolist()
@@ -339,16 +339,14 @@ class TextGenerationModel(BaseNLPModel):
     def _tokenize_input(
         self,
         input: Input,
-        system_prompt: Optional[str],
-        context: Optional[str],
+        system_prompt: str | None,
+        context: str | None,
         tensor_format: Literal["pt"]="pt",
-        chat_template: Optional[str]=None,
-        tool: Optional[ToolManager]=None
-    ) -> Union[
-        dict[str,Tensor],
-        BatchEncoding,
-        Tensor
-    ]:
+        chat_template: str | None=None,
+        tool: ToolManager | None=None
+    ) -> (
+        dict[str,Tensor] | BatchEncoding | Tensor
+    ):
         _l = self._log
         messages = self._messages(input, system_prompt, tool)
         template_messages = [
@@ -404,8 +402,8 @@ class TextGenerationModel(BaseNLPModel):
     def _messages(
         self,
         input: Input,
-        system_prompt: Optional[str],
-        tool: Optional[ToolManager]=None
+        system_prompt: str | None,
+        tool: ToolManager | None=None
     ) -> list[Message]:
         if isinstance(input,str):
             input = Message(role=MessageRole.USER, content=input)
