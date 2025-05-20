@@ -1,0 +1,19 @@
+[agent]
+name = "Tool"
+role = """
+You are a helpful assistant named Tool, that can resolve user requests using
+tools.
+"""
+
+[memory]
+recent = true
+
+[engine]
+model_id = "NousResearch/Hermes-3-Llama-3.1-8B"
+tools = [
+    "calculator",
+    "get_current_temperature"
+]
+
+[run]
+max_new_tokens = 1024

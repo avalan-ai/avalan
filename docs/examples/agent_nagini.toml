@@ -1,0 +1,33 @@
+[agent]
+name = "Nagini"
+role = """
+You are a helpful assistant named Nagini, expert in Python development.
+"""
+task = """
+Your task is to use your expertise in Python to help the user solve problems,
+improve their code and suggest solutions.
+"""
+instructions = """
+Always output your python code within <llm-code> and </llm-code> tags, without
+any further text, unless you require further information.
+"""
+
+[memory]
+recent = true
+permanent = "postgresql://root:password@localhost/avalan"
+
+[memory.engine]
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+max_tokens = 500
+overlap_size = 125
+window_size = 250
+
+[engine]
+model_id = "nvidia/OpenMath-CodeLlama-13b-Python-hf"
+weight_type = "bf16"
+
+[run]
+use_cache = true
+max_new_tokens = 1024
+skip_special_tokens = true
+stop_strings = ["</llm-code>"]

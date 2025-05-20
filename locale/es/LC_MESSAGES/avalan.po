@@ -1,0 +1,67 @@
+# Spanish translations for avalan package
+# Traducciones al español para el paquete avalan.
+# Copyright (C) 2025 THE avalan'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the avalan package.
+# Mariano Iglesias <avalan@avalan.ai>, 2025.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: avalan 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-01-30 16:39-0300\n"
+"PO-Revision-Date: 2025-01-30 01:27-0300\n"
+"Last-Translator: Mariano Iglesias <avalan@avalan.ai>\n"
+"Language-Team: Spanish <es@tp.org.es>\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/avalan/./cli/themes.py:70
+msgid "checking access"
+msgstr "verificando acceso"
+
+#: src/avalan/./cli/themes.py:71
+msgid "access granted"
+msgstr "acceso autorizado"
+
+#: src/avalan/./cli/themes.py:72
+msgid "access denied"
+msgstr "acceso denegado"
+
+#: src/avalan/./cli/themes.py:74
+msgid "gated"
+msgstr "restringido"
+
+#: src/avalan/./cli/themes.py:75
+msgid "private"
+msgstr "privado"
+
+#: src/avalan/./cli/themes.py:76
+msgid "disabled"
+msgstr "deshabilitado"
+
+#: src/avalan/./cli/themes.py:79
+msgid "created: "
+msgstr "creado: "
+
+#: src/avalan/./cli/themes.py:80
+msgid "updated: "
+msgstr "actualizado: "
+
+#: src/avalan/./cli/__main__.py:125
+msgid "Login to huggingface?"
+msgstr "¿Iniciar sesión en Huggingface?"
+
+#: src/avalan/./cli/__main__.py:126
+msgid "Logging in..."
+msgstr "Iniciando sesión..."
+
+#: src/avalan/./cli/__main__.py:149
+msgid "Loading models..."
+msgstr "Cargando modelos..."
+
+#: src/avalan/./cli/__main__.py:171
+msgid "Running agents"
+msgstr "Ejecutando agentes"

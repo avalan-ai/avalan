@@ -1,0 +1,66 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the avalan package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: avalan 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-01-30 16:39-0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: src/avalan/./cli/themes.py:70
+msgid "checking access"
+msgstr ""
+
+#: src/avalan/./cli/themes.py:71
+msgid "access granted"
+msgstr ""
+
+#: src/avalan/./cli/themes.py:72
+msgid "access denied"
+msgstr ""
+
+#: src/avalan/./cli/themes.py:74
+msgid "gated"
+msgstr ""
+
+#: src/avalan/./cli/themes.py:75
+msgid "private"
+msgstr ""
+
+#: src/avalan/./cli/themes.py:76
+msgid "disabled"
+msgstr ""
+
+#: src/avalan/./cli/themes.py:79
+msgid "created: "
+msgstr ""
+
+#: src/avalan/./cli/themes.py:80
+msgid "updated: "
+msgstr ""
+
+#: src/avalan/./cli/__main__.py:125
+msgid "Login to huggingface?"
+msgstr ""
+
+#: src/avalan/./cli/__main__.py:126
+msgid "Logging in..."
+msgstr ""
+
+#: src/avalan/./cli/__main__.py:149
+msgid "Loading models..."
+msgstr ""
+
+#: src/avalan/./cli/__main__.py:171
+msgid "Running agents"
+msgstr ""

@@ -1,0 +1,8 @@
+build/
+docs/images/*.mov
+__pycache__/
+.venv/
+*.egg-info/
+.DS_Store
+*.sw[nop]
+.session.vim

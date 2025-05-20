@@ -1,0 +1,62 @@
+from abc import ABC, abstractmethod
+from avalan.model.entities import EngineMessage
+from dataclasses import dataclass
+from threading import Lock
+from typing import Generic, Optional, override, TypeVar
+from uuid import UUID
+
+T = TypeVar("T")
+
+@dataclass(frozen=True)
+class MemoryChunk(Generic[T]):
+    repository_key: str
+    key: Optional[str]
+    data: T
+
+class Memory(ABC, Generic[T]):
+    @abstractmethod
+    async def append(self, agent_id: UUID, data: T) -> None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def reset(self) -> None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def search(self, query: str) -> Optional[list[T]]:
+        raise NotImplementedError()
+
+class MessageMemory(Memory[EngineMessage], ABC):
+    def search(self, query: str) -> Optional[list[EngineMessage]]:
+        raise NotImplementedError()
+
+class RecentMessageMemory(MessageMemory):
+    _lock: Lock
+    _data: list[EngineMessage]
+
+    def __init__(self, **kwargs) -> None:
+        self._lock = Lock()
+        self.reset()
+        super().__init__(**kwargs)
+
+    @override
+    def append(self, data: EngineMessage) -> None:
+        with self._lock:
+            self._data.append(data)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._data = []
+
+    @property
+    def size(self) -> int:
+        return len(self._data)
+
+    @property
+    def is_empty(self) -> bool:
+        return not bool(self._data)
+
+    @property
+    def data(self) -> list[EngineMessage]:
+        return self._data
+
