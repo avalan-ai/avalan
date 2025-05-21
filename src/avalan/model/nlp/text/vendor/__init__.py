@@ -14,7 +14,8 @@ from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import PreTrainedModel
-from typing import AsyncGenerator, Literal, override
+from typing import AsyncGenerator, Literal
+from avalan.compat import override
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncGenerator

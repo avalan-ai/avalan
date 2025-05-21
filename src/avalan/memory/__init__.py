@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from avalan.model.entities import EngineMessage
 from dataclasses import dataclass
 from threading import Lock
-from typing import Generic, Optional, override, TypeVar
+from typing import Generic, Optional, TypeVar
+from avalan.compat import override
 from uuid import UUID
 
 T = TypeVar("T")

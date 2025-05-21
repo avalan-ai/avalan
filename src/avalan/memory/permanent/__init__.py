@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from numpy import ndarray
-from typing import Literal, Optional, override
+from typing import Literal, Optional
+from avalan.compat import override
 from uuid import UUID
 
 Order = Literal["asc", "desc"]

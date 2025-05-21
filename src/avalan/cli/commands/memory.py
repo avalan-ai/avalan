@@ -175,9 +175,11 @@ async def memory_embeddings(
 
             # Comparisons
             if compare_strings:
-                logger.debug(f"Calculating similarities between "
-                            f"\"{input_string} and "
-                            f"[\"{'\", \"'.join(compare_strings)}\"]")
+                joined = '", "'.join(compare_strings)
+                logger.debug(
+                    f'Calculating similarities between "{input_string}" and '
+                    f'["{joined}"]'
+                )
                 embeddings = embeddings[1:]
                 comparisons = dict(zip(compare_strings, embeddings))
                 # Calculate similarities
@@ -220,9 +222,12 @@ async def memory_embeddings(
                     reverse=False
                 ))
 
-                logger.debug(f"Similarities between \"{input_string} and "
-                            f"[\"{'\", \"'.join(compare_strings)}\"]: " +
-                            similarities.__repr__())
+                joined = '", "'.join(compare_strings)
+                logger.debug(
+                    f'Similarities between "{input_string}" and '
+                    f'["{joined}"]: '
+                    + similarities.__repr__()
+                )
 
                 # Closest match
                 most_similar = next(iter(similarities))
