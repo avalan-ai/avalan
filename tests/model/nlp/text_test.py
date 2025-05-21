@@ -4,6 +4,7 @@ from avalan.model.nlp.text.generation import (
     AutoModelForCausalLM,
     TextGenerationModel
 )
+from avalan.model.engine import Engine
 from logging import Logger
 from transformers import (
     PretrainedConfig,
@@ -117,7 +118,7 @@ class TextGenerationModelTestCase(TestCase):
                     state_dict=None,
                     local_files_only=False,
                     low_cpu_mem_usage=True,
-                    device_map="mps",
+                    device_map=Engine.get_default_device(),
                     token=None,
                     quantization_config=None,
                     revision=None
