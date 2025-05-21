@@ -6,7 +6,8 @@ from avalan.cli import CommandAbortException, has_input
 from avalan.cli.commands.agent import (
     agent_message_search,
     agent_run,
-    agent_serve
+    agent_serve,
+    agent_init
 )
 from avalan.cli.commands.cache import cache_delete, cache_download, cache_list
 from avalan.cli.commands.memory import (
@@ -474,6 +475,68 @@ class CLI:
             action="store_true",
             default=False,
             help="Hot reload on code changes"
+        )
+
+        agent_init_parser = agent_command_parsers.add_parser(
+            name="init",
+            description="Create an agent definition",
+            parents=[global_parser]
+        )
+        agent_init_parser.add_argument("--name", type=str, help="Agent name")
+        agent_init_parser.add_argument("--role", type=str, help="Agent role")
+        agent_init_parser.add_argument("--task", type=str, help="Agent task")
+        agent_init_parser.add_argument(
+            "--instructions", type=str, help="Agent instructions"
+        )
+        agent_init_parser.add_argument(
+            "--memory-recent",
+            dest="memory_recent",
+            action="store_true",
+            default=None,
+            help="Enable recent message memory"
+        )
+        agent_init_parser.add_argument(
+            "--no-memory-recent",
+            dest="memory_recent",
+            action="store_false"
+        )
+        agent_init_parser.add_argument(
+            "--memory-permanent",
+            type=str,
+            help="Permanent memory DSN"
+        )
+        agent_init_parser.add_argument(
+            "--memory-engine-model-id",
+            type=str,
+            help="Sentence transformer model for memory"
+        )
+        agent_init_parser.add_argument(
+            "--engine-uri",
+            type=str,
+            help="Agent engine URI"
+        )
+        agent_init_parser.add_argument(
+            "--use-cache",
+            dest="use_cache",
+            action="store_true",
+            default=None,
+            help="Cache model locally"
+        )
+        agent_init_parser.add_argument(
+            "--no-cache",
+            dest="use_cache",
+            action="store_false"
+        )
+        agent_init_parser.add_argument(
+            "--max-new-tokens",
+            type=int,
+            help="Max new tokens",
+            default=None
+        )
+        agent_init_parser.add_argument(
+            "--skip-special-tokens",
+            action="store_true",
+            help="Skip special tokens"
         )
 
         # Cache command
@@ -965,6 +1028,12 @@ class CLI:
                             self._logger,
                             self._name,
                             str(self._version)
+                        )
+                    case "init":
+                        await agent_init(
+                            args,
+                            console,
+                            theme
                         )
             case "cache":
                 subcommand = args.cache_command or "list"

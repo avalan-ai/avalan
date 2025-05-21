@@ -10,9 +10,13 @@ from avalan.server import agents_server
 from contextlib import AsyncExitStack
 from logging import Logger
 from rich.console import Console
+from rich.prompt import Confirm, Prompt
+from rich.syntax import Syntax
 from rich.theme import Theme
 from typing import Optional
 from uuid import uuid4
+from jinja2 import Environment, FileSystemLoader
+from os.path import dirname, join
 
 async def agent_message_search(
     args: Namespace,
@@ -284,4 +288,83 @@ async def agent_serve(
             logger=logger
         )
         await server.serve()
+
+async def agent_init(
+    args: Namespace,
+    console: Console,
+    theme: Theme
+) -> None:
+    _ = theme._
+
+    name = args.name or Prompt.ask(_("Agent name"))
+    role = args.role or get_input(
+        console,
+        _("Agent role") + " ",
+        echo_stdin=not args.no_repl,
+        is_quiet=args.quiet,
+    )
+    if not role:
+        return
+
+    task = args.task or get_input(
+        console,
+        _("Agent task") + " ",
+        echo_stdin=not args.no_repl,
+        is_quiet=args.quiet,
+    )
+    instructions = args.instructions or get_input(
+        console,
+        _("Agent instructions") + " ",
+        echo_stdin=not args.no_repl,
+        is_quiet=args.quiet,
+    )
+
+    memory_recent = (
+        args.memory_recent if args.memory_recent is not None
+        else Confirm.ask(_("Use recent message memory?"))
+    )
+    memory_permanent = (
+        args.memory_permanent
+        if args.memory_permanent is not None
+        else Prompt.ask(_("Permanent memory DSN"), default="")
+    )
+    memory_engine_model_id = (
+        args.memory_engine_model_id
+        or Loader.DEFAULT_SENTENCE_MODEL_ID
+    )
+    engine_uri = args.engine_uri or Prompt.ask(
+        _("Engine URI"),
+        default="microsoft/Phi-4-mini-instruct",
+    )
+    run_use_cache = (
+        args.use_cache if args.use_cache is not None
+        else Confirm.ask(_("Cache model locally?"))
+    )
+    run_skip_special_tokens = args.skip_special_tokens
+    max_new_tokens = args.max_new_tokens or 1024
+
+    data = dict(
+        name=name,
+        role=role,
+        task=task,
+        instructions=instructions,
+        memory_recent=memory_recent,
+        memory_permanent=memory_permanent,
+        memory_engine_model_id=memory_engine_model_id,
+        engine_uri=engine_uri,
+        run_use_cache=run_use_cache,
+        run_skip_special_tokens=run_skip_special_tokens,
+        max_new_tokens=max_new_tokens,
+    )
+
+    env = Environment(
+        loader=FileSystemLoader(
+            join(dirname(__file__), "..", "..", "agent")
+        ),
+        trim_blocks=True,
+        lstrip_blocks=True
+    )
+    template = env.get_template("blueprint.toml")
+    rendered = template.render(**data)
+    console.print(Syntax(rendered, "toml"))
 
