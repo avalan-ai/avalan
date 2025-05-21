@@ -334,6 +334,15 @@ You'll need your Huggingface access token exported as `HF_ACCESS_TOKEN`.
 
 ### agent run
 
+### agent init
+
+Generate a TOML template for a new agent. Missing values will be
+requested interactively:
+
+```bash
+avalan agent init --name "Leo Messi" --engine-uri microsoft/Phi-4-mini-instruct
+```
+
 ## cache
 
 To run models locally you'll need to cache their data on a filesystem. A
