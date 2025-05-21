@@ -70,8 +70,12 @@ async def agent_message_search(
 
             can_access = args.skip_hub_access_check or \
                         hub.can_access(orchestrator.engine.model_id)
+            is_local = not isinstance(
+                orchestrator.engine,
+                TextGenerationVendorModel
+            )
             models = [
-                hub.model(model_id)
+                hub.model(model_id) if is_local else model_id
                 for model_id in orchestrator.model_ids
             ]
 
@@ -163,9 +167,9 @@ async def agent_run(
                 or hub.can_access(orchestrator.engine.model_id)
             )
             models = [
-                hub.model(model_id)
+                hub.model(model_id) if is_local else model_id
                 for model_id in orchestrator.model_ids
-            ] if is_local else []
+            ]
 
             console.print(theme.agent(
                 orchestrator,

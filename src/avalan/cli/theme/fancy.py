@@ -167,7 +167,7 @@ class FancyTheme(Theme):
         self,
         agent: Orchestrator,
         *args,
-        models: list[Model],
+        models: list[Model | str],
         can_access: Optional[bool],
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
@@ -182,7 +182,7 @@ class FancyTheme(Theme):
                         ),
                         icon=False
                     )
-                )
+                ) if isinstance(model, Model) else str(model)
                 for model in models
             ]),
             _f("memory", _j(", ", [

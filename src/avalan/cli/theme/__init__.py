@@ -101,7 +101,7 @@ class Theme(ABC):
         self,
         agent: Orchestrator,
         *args,
-        model: Model,
+        models: list[Model | str],
         cans_access: Optional[bool]
     ) -> RenderableType:
         raise NotImplementedError()
@@ -385,7 +385,7 @@ class Theme(ABC):
     def get_spinner(self, spinner_name: str) -> Spinner:
         return self._all_spinners[spinner_name]
 
-    def __call__(self, item: Union[Model]) -> RenderableType:
+    def __call__(self, item: Model | str) -> RenderableType:
         return \
             self.model(item) if isinstance(item, Model) else \
             str(item)
