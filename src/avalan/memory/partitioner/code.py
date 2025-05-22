@@ -1,5 +1,5 @@
-from avalan.memory.partitioner import Encoding, PartitionerException
-from avalan.utils import _j
+from ...memory.partitioner import Encoding, PartitionerException
+from ...utils import _j
 from dataclasses import dataclass
 from logging import Logger
 from tree_sitter_python import language as python

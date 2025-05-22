@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from avalan.model import TextGenerationVendor, TokenizerNotSupportedException
-from avalan.model.engine import Engine
+from ..model import TextGenerationVendor, TokenizerNotSupportedException
+from ..model.engine import Engine
 from PIL import Image
 from torch import argmax, no_grad
 from torchaudio import load

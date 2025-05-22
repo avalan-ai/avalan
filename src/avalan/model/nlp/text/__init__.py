@@ -1,5 +1,5 @@
-from avalan.model.entities import Token, TokenDetail
-from avalan.model.nlp import (
+from ....model.entities import Token, TokenDetail
+from ....model.nlp import (
     InvalidJsonResponseException,
     OutputFunction,
     OutputGenerator

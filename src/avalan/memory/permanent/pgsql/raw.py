@@ -1,13 +1,13 @@
-from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import (
+from ....memory.partitioner.text import TextPartition
+from ....memory.permanent import (
     Memory,
     PermanentMemory,
     PermanentMemoryPartition,
     PermanentMessageScored,
     VectorFunction
 )
-from avalan.memory.permanent.pgsql import PgsqlMemory
-from avalan.model.entities import (
+from ....memory.permanent.pgsql import PgsqlMemory
+from ....model.entities import (
     EngineMessageScored,
 )
 from datetime import datetime, timezone

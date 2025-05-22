@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
-from avalan.model import (
+from ..model import (
     ModelAlreadyLoadedException,
     TextGenerationVendor,
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException
 )
-from avalan.model.entities import (
+from ..model.entities import (
     EngineSettings,
     ImageEntity,
     Input,

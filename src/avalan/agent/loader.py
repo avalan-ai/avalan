@@ -1,14 +1,14 @@
-from avalan.agent.orchestrator import Orchestrator
-from avalan.agent.orchestrators.default import DefaultOrchestrator
-from avalan.agent.orchestrators.json import JsonOrchestrator, Property
-from avalan.memory.manager import MemoryManager
-from avalan.memory.partitioner.text import TextPartitioner
-from avalan.model.entities import EngineUri, TransformerEngineSettings
-from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.manager import ModelManager
-from avalan.model.nlp.sentence import SentenceTransformerModel
-from avalan.tool.manager import ToolManager
-from avalan.event.manager import EventManager
+from ..agent.orchestrator import Orchestrator
+from ..agent.orchestrators.default import DefaultOrchestrator
+from ..agent.orchestrators.json import JsonOrchestrator, Property
+from ..memory.manager import MemoryManager
+from ..memory.partitioner.text import TextPartitioner
+from ..model.entities import EngineUri, TransformerEngineSettings
+from ..model.hubs.huggingface import HuggingfaceHub
+from ..model.manager import ModelManager
+from ..model.nlp.sentence import SentenceTransformerModel
+from ..tool.manager import ToolManager
+from ..event.manager import EventManager
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK

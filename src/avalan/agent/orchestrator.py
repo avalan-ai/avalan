@@ -1,25 +1,25 @@
-from avalan.agent import (
+from ..agent import (
     EngineEnvironment,
     EngineType,
     InputType,
     NoOperationAvailableException,
     Operation,
 )
-from avalan.agent.engine import EngineAgent
-from avalan.agent.renderer import Renderer, TemplateEngineAgent
-from avalan.event import Event, EventType
-from avalan.event.manager import EventManager
-from avalan.memory.manager import MemoryManager
-from avalan.model.engine import Engine
-from avalan.model.entities import (
+from ..agent.engine import EngineAgent
+from ..agent.renderer import Renderer, TemplateEngineAgent
+from ..event import Event, EventType
+from ..event.manager import EventManager
+from ..memory.manager import MemoryManager
+from ..model.engine import Engine
+from ..model.entities import (
     EngineMessage,
     Input,
     Message,
     MessageRole,
 )
-from avalan.model.manager import ModelManager
-from avalan.model.nlp.text import TextGenerationResponse
-from avalan.tool.manager import ToolManager
+from ..model.manager import ModelManager
+from ..model.nlp.text import TextGenerationResponse
+from ..tool.manager import ToolManager
 from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps

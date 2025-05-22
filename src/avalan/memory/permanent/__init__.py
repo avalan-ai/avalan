@@ -1,14 +1,14 @@
 from abc import abstractmethod
-from avalan.memory import MessageMemory, MemoryStore
-from avalan.memory.partitioner.text import TextPartition
-from avalan.model.entities import EngineMessage, MessageRole
-from avalan.model.nlp.sentence import SentenceTransformerModel
+from ...memory import MessageMemory, MemoryStore
+from ...memory.partitioner.text import TextPartition
+from ...model.entities import EngineMessage, MessageRole
+from ...model.nlp.sentence import SentenceTransformerModel
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from numpy import ndarray
 from typing import Literal, Optional
-from avalan.compat import override
+from ...compat import override
 from uuid import UUID
 
 Order = Literal["asc", "desc"]

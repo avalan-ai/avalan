@@ -1,5 +1,5 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.vision import BaseVisionModel
+from ...model import TextGenerationVendor
+from ...model.vision import BaseVisionModel
 from PIL import Image
 from torch import unique
 from transformers import (

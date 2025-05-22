@@ -1,5 +1,5 @@
-from avalan.flow.connection import Connection
-from avalan.flow.node import Node
+from ..flow.connection import Connection
+from ..flow.node import Node
 from typing import Any, Callable, Dict, Optional, Union, Tuple
 from re import match
 

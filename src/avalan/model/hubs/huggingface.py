@@ -1,12 +1,12 @@
-from avalan import name, version
-from avalan.model.entities import (
+from ... import name, version
+from ...model.entities import (
     Model,
     HubCacheDeletion,
     HubCacheFile,
     HubCache,
     User
 )
-from avalan.model.hubs import HubAccessDeniedException
+from ...model.hubs import HubAccessDeniedException
 from datetime import datetime
 from huggingface_hub import (
     HfApi,

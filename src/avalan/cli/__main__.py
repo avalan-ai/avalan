@@ -1,39 +1,39 @@
 from argparse import ArgumentParser, Namespace
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
-from avalan import license, name, site, version
-from avalan.cli import CommandAbortException, has_input
-from avalan.cli.commands.agent import (
+from .. import license, name, site, version
+from ..cli import CommandAbortException, has_input
+from ..cli.commands.agent import (
     agent_message_search,
     agent_run,
     agent_serve,
     agent_init
 )
-from avalan.cli.commands.cache import cache_delete, cache_download, cache_list
-from avalan.cli.commands.memory import (
+from ..cli.commands.cache import cache_delete, cache_download, cache_list
+from ..cli.commands.memory import (
     memory_document_index,
     memory_embeddings
 )
-from avalan.cli.commands.model import (
+from ..cli.commands.model import (
     model_display,
     model_install,
     model_run,
     model_search,
     model_uninstall,
 )
-from avalan.cli.commands.tokenizer import tokenize
-from avalan.cli.theme.fancy import FancyTheme
-from avalan.memory.permanent import VectorFunction
-from avalan.model.entities import (
+from ..cli.commands.tokenizer import tokenize
+from ..cli.theme.fancy import FancyTheme
+from ..memory.permanent import VectorFunction
+from ..model.entities import (
     AttentionImplementation,
     DistanceType,
     TextGenerationLoaderClass,
     User,
     WeightType
 )
-from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.transformer import TransformerModel
-from avalan.utils import logger_replace
+from ..model.hubs.huggingface import HuggingfaceHub
+from ..model.transformer import TransformerModel
+from ..utils import logger_replace
 import gettext
 from gettext import translation
 from importlib.util import find_spec

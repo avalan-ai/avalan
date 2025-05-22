@@ -1,4 +1,4 @@
-from avalan.model.entities import (
+from ..model.entities import (
     EngineSettings,
     EngineUri,
     GenerationSettings,

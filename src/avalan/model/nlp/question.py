@@ -1,6 +1,6 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.entities import Input
-from avalan.model.nlp import BaseNLPModel
+from ...model import TextGenerationVendor
+from ...model.entities import Input
+from ...model.nlp import BaseNLPModel
 from torch import argmax
 from transformers import AutoModelForQuestionAnswering, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding

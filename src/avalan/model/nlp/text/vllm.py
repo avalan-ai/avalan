@@ -1,12 +1,12 @@
 from asyncio import to_thread
-from avalan.model.entities import (
+from ....model.entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings,
 )
-from avalan.model.nlp.text.generation import TextGenerationModel
-from avalan.model.nlp.text.vendor import TextGenerationVendorStream
-from avalan.tool.manager import ToolManager
+from ....model.nlp.text.generation import TextGenerationModel
+from ....model.nlp.text.vendor import TextGenerationVendorStream
+from ....tool.manager import ToolManager
 from dataclasses import replace
 from logging import Logger
 from typing import AsyncGenerator

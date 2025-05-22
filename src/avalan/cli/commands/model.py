@@ -1,20 +1,20 @@
 from argparse import Namespace
 from asyncio import as_completed, create_task, gather, sleep, to_thread
-from avalan.agent.orchestrator import Orchestrator
-from avalan.cli import get_input
-from avalan.cli.commands.cache import cache_delete, cache_download
-from avalan.model.entities import (
+from ...agent.orchestrator import Orchestrator
+from ...cli import get_input
+from ...cli.commands.cache import cache_delete, cache_download
+from ...model.entities import (
     EngineUri,
     GenerationSettings,
     Model,
     Token
 )
-from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.manager import ModelManager
-from avalan.model.criteria import KeywordStoppingCriteria
-from avalan.model.nlp.sentence import SentenceTransformerModel
-from avalan.model.nlp.text import TextGenerationResponse
-from avalan.model.nlp.text.generation import TextGenerationModel
+from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.manager import ModelManager
+from ...model.criteria import KeywordStoppingCriteria
+from ...model.nlp.sentence import SentenceTransformerModel
+from ...model.nlp.text import TextGenerationResponse
+from ...model.nlp.text.generation import TextGenerationModel
 from logging import Logger
 from rich.console import Console, Group, RenderableType
 from rich.live import Live

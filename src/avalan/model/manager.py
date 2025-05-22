@@ -1,4 +1,4 @@
-from avalan.model.entities import (
+from ..model.entities import (
     AttentionImplementation,
     EngineUri,
     TextGenerationLoaderClass,
@@ -6,9 +6,9 @@ from avalan.model.entities import (
     Vendor,
     WeightType
 )
-from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.nlp.sentence import SentenceTransformerModel
-from avalan.model.nlp.text.generation import TextGenerationModel
+from ..model.hubs.huggingface import HuggingfaceHub
+from ..model.nlp.sentence import SentenceTransformerModel
+from ..model.nlp.text.generation import TextGenerationModel
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
 from typing import Any, get_args
@@ -122,10 +122,10 @@ class ModelManager(ContextDecorator):
                 else TextGenerationModel(**model_load_args)
             )
         elif engine_uri.vendor == "openai":
-            from avalan.model.nlp.text.vendor.openai import OpenAIModel
+            from ..model.nlp.text.vendor.openai import OpenAIModel
             model = OpenAIModel(**model_load_args)
         elif engine_uri.vendor == "openrouter":
-            from avalan.model.nlp.text.vendor.openrouter import OpenRouterModel
+            from ..model.nlp.text.vendor.openrouter import OpenRouterModel
             model = OpenRouterModel(**model_load_args)
 
         self._stack.enter_context(model)

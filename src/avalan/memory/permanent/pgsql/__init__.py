@@ -1,11 +1,11 @@
-from avalan.memory import MemoryStore, MemoryChunk
-from avalan.memory.permanent import (
+from ....memory import MemoryStore, MemoryChunk
+from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageScored,
     RecordNotFoundException,
     RecordNotSavedException
 )
-from avalan.model.entities import (
+from ....model.entities import (
     EngineMessage,
     EngineMessageScored,
     Message

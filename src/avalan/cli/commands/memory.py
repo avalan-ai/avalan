@@ -1,14 +1,14 @@
 from argparse import Namespace
 from asyncio import to_thread
-from avalan.cli import get_input
-from avalan.cli.commands.model import get_model_settings, model_display
-from avalan.memory.partitioner.text import TextPartitioner
-from avalan.memory.permanent import MemoryType
-from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
+from ...cli import get_input
+from ...cli.commands.model import get_model_settings, model_display
+from ...memory.partitioner.text import TextPartitioner
+from ...memory.permanent import MemoryType
+from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from uuid import UUID
-from avalan.model.entities import DistanceType, SearchMatch, Similarity
-from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.manager import ModelManager
+from ...model.entities import DistanceType, SearchMatch, Similarity
+from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.manager import ModelManager
 from faiss import IndexFlatL2
 from httpx import AsyncClient, Response
 from io import BytesIO

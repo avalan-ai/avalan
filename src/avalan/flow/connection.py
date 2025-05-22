@@ -1,4 +1,4 @@
-from avalan.flow.node import Node
+from ..flow.node import Node
 from typing import Any, Callable, Optional
 
 class Connection:

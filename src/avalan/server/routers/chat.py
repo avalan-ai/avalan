@@ -1,5 +1,5 @@
-from avalan.agent import Agent
-from avalan.server.entities import (
+from ...agent import Agent
+from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
     ChatCompletionChunkChoice,
@@ -9,7 +9,7 @@ from avalan.server.entities import (
     ChatMessage,
     ChatCompletionUsage
 )
-from avalan.model.entities import (
+from ...model.entities import (
     GenerationSettings,
     Message,
     MessageRole

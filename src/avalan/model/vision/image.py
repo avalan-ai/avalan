@@ -1,7 +1,7 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.entities import ImageEntity, Input
-from avalan.model.vision import BaseVisionModel
-from avalan.model.transformer import TransformerModel
+from ...model import TextGenerationVendor
+from ...model.entities import ImageEntity, Input
+from ...model.vision import BaseVisionModel
+from ...model.transformer import TransformerModel
 from PIL import Image
 from torch import no_grad, Tensor
 from transformers import (

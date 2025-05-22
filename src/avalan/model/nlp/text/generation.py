@@ -1,6 +1,6 @@
 from asyncio import sleep
-from avalan.model import TextGenerationVendor
-from avalan.model.entities import (
+from ....model import TextGenerationVendor
+from ....model.entities import (
     GenerationSettings,
     Input,
     Message,
@@ -11,9 +11,9 @@ from avalan.model.entities import (
     TokenDetail,
     TransformerEngineSettings
 )
-from avalan.model.nlp import BaseNLPModel
-from avalan.model.nlp.text import TextGenerationResponse
-from avalan.tool.manager import ToolManager
+from ....model.nlp import BaseNLPModel
+from ....model.nlp.text import TextGenerationResponse
+from ....tool.manager import ToolManager
 from dataclasses import replace
 from importlib.util import find_spec
 from logging import Logger

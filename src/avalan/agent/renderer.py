@@ -1,8 +1,8 @@
-from avalan.agent import Role, Specification
-from avalan.agent.engine import EngineAgent
-from avalan.memory.manager import MemoryManager
-from avalan.model.engine import Engine
-from avalan.tool.manager import ToolManager
+from ..agent import Role, Specification
+from ..agent.engine import EngineAgent
+from ..memory.manager import MemoryManager
+from ..model.engine import Engine
+from ..tool.manager import ToolManager
 from jinja2 import (
     Environment as TemplateEnvironment,
     FileSystemLoader,

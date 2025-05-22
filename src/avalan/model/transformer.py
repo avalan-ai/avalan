@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from avalan.model.engine import Engine
-from avalan.model.entities import (
+from ..model.engine import Engine
+from ..model.entities import (
     Input,
     Token,
     TransformerEngineSettings,

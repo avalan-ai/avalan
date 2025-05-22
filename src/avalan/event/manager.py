@@ -1,4 +1,4 @@
-from avalan.event import Event, EventType
+from ..event import Event, EventType
 from collections import defaultdict
 from inspect import iscoroutine
 from typing import Awaitable, Callable, Iterable

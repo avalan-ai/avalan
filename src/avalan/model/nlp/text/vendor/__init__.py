@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
-from avalan.model import TextGenerationVendor, TextGenerationStream
-from avalan.model.entities import (
+from .....model import TextGenerationVendor, TextGenerationStream
+from .....model.entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings
 )
-from avalan.model.nlp.text.generation import TextGenerationModel
-from avalan.model.nlp.text import TextGenerationResponse
-from avalan.tool.manager import ToolManager
+from .....model.nlp.text.generation import TextGenerationModel
+from .....model.nlp.text import TextGenerationResponse
+from .....tool.manager import ToolManager
 from dataclasses import replace
 from logging import Logger
 from tiktoken import encoding_for_model, get_encoding
@@ -15,7 +15,7 @@ from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import PreTrainedModel
 from typing import AsyncGenerator, Literal
-from avalan.compat import override
+from .....compat import override
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncGenerator
