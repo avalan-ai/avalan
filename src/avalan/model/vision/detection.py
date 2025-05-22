@@ -1,7 +1,7 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.entities import ImageEntity, EngineSettings
-from avalan.model.vision import BaseVisionModel
-from avalan.model.vision.image import ImageClassificationModel
+from ...model import TextGenerationVendor
+from ...model.entities import ImageEntity, EngineSettings
+from ...model.vision import BaseVisionModel
+from ...model.vision.image import ImageClassificationModel
 from logging import Logger
 from PIL import Image
 from torch import tensor

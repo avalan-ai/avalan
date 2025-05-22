@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
-from avalan.model.entities import (
+from ..model.entities import (
     GenerationSettings,
     Message,
     Token,
     TokenDetail
 )
-from avalan.tool.manager import ToolManager
+from ..tool.manager import ToolManager
 from typing import (
     AsyncGenerator,
     AsyncIterator,

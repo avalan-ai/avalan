@@ -1,6 +1,6 @@
-from avalan.model.entities import ToolCall, ToolCallResult, ToolFormat
-from avalan.tool.calculator import calculator
-from avalan.tool.parser import ToolCallParser
+from ..model.entities import ToolCall, ToolCallResult, ToolFormat
+from ..tool.calculator import calculator
+from ..tool.parser import ToolCallParser
 from types import FunctionType
 from typing import Optional, Tuple
 

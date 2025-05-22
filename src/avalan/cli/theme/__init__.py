@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from avalan.agent.orchestrator import Orchestrator
-from avalan.memory.partitioner.text import TextPartition
-from avalan.model.entities import (
+from ...agent.orchestrator import Orchestrator
+from ...memory.partitioner.text import TextPartition
+from ...model.entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
@@ -14,7 +14,7 @@ from avalan.model.entities import (
     TokenizerConfig,
     User
 )
-from avalan.model.nlp import Token
+from ...model.nlp import Token
 from dataclasses import fields
 from datetime import datetime
 from enum import StrEnum

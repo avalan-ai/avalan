@@ -1,6 +1,6 @@
 from abc import ABC
-from avalan.model.transformer import TransformerModel
-from avalan.model.entities import (
+from ...model.transformer import TransformerModel
+from ...model.entities import (
     GenerationSettings,
     Token,
     TokenDetail,

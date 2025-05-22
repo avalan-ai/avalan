@@ -1,11 +1,11 @@
 from argparse import Namespace
-from avalan.cli import get_input
-from avalan.model.entities import (
+from ...cli import get_input
+from ...model.entities import (
     Token,
     TransformerEngineSettings
 )
-from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.nlp.text.generation import TextGenerationModel
+from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.nlp.text.generation import TextGenerationModel
 from logging import Logger
 from rich.console import Console
 from rich.theme import Theme

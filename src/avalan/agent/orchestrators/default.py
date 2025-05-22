@@ -1,11 +1,11 @@
-from avalan.agent import EngineEnvironment, Goal, Operation, Specification
-from avalan.agent.orchestrator import Orchestrator
+from ...agent import EngineEnvironment, Goal, Operation, Specification
+from ...agent.orchestrator import Orchestrator
 from logging import Logger
-from avalan.event.manager import EventManager
-from avalan.memory.manager import MemoryManager
-from avalan.model.entities import EngineUri, TransformerEngineSettings
-from avalan.model.manager import ModelManager
-from avalan.tool.manager import ToolManager
+from ...event.manager import EventManager
+from ...memory.manager import MemoryManager
+from ...model.entities import EngineUri, TransformerEngineSettings
+from ...model.manager import ModelManager
+from ...tool.manager import ToolManager
 from typing import Optional
 from uuid import UUID
 

@@ -1,15 +1,15 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.entities import (
+from .....model import TextGenerationVendor
+from .....model.entities import (
     GenerationSettings,
     Message,
     Token,
     TokenDetail,
 )
-from avalan.model.nlp.text.vendor import (
+from .....model.nlp.text.vendor import (
     TextGenerationVendorModel,
     TextGenerationVendorStream
 )
-from avalan.tool.manager import ToolManager
+from .....tool.manager import ToolManager
 from openai import AsyncOpenAI, AsyncStream
 from transformers import PreTrainedModel
 from typing import AsyncIterator

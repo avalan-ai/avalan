@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from avalan.flow.flow import Flow
+    from ..flow.flow import Flow
 
 class Node:
     def __init__(

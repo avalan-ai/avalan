@@ -1,5 +1,5 @@
-from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import (
+from ....memory.partitioner.text import TextPartition
+from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageMemory,
     PermanentMessagePartition,
@@ -7,8 +7,8 @@ from avalan.memory.permanent import (
     Session,
     VectorFunction,
 )
-from avalan.memory.permanent.pgsql import PgsqlMemory
-from avalan.model.entities import EngineMessage, EngineMessageScored
+from ....memory.permanent.pgsql import PgsqlMemory
+from ....model.entities import EngineMessage, EngineMessageScored
 from datetime import datetime, timezone
 from pgvector.psycopg import Vector
 from typing import Optional

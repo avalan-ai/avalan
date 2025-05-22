@@ -1,5 +1,5 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
+from .....model import TextGenerationVendor
+from .....model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
 from transformers import PreTrainedModel
 
 class OpenRouterClient(OpenAIClient):

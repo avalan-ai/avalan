@@ -1,6 +1,6 @@
-from avalan.agent.orchestrator import Orchestrator
-from avalan.memory.partitioner.text import TextPartition
-from avalan.model.entities import (
+from ...agent.orchestrator import Orchestrator
+from ...memory.partitioner.text import TextPartition
+from ...model.entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
@@ -14,8 +14,8 @@ from avalan.model.entities import (
     TokenizerConfig,
     User
 )
-from avalan.cli.theme import Data, Spinner, Theme
-from avalan.utils import _j, _lf
+from ...cli.theme import Data, Spinner, Theme
+from ...utils import _j, _lf
 from humanize import clamp, intcomma, intword, naturalday, naturalsize
 from locale import format_string
 from logging import Logger

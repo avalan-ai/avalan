@@ -1,6 +1,6 @@
-from avalan.model import TextGenerationVendor
-from avalan.model.entities import GenerationSettings, Input
-from avalan.model.nlp import BaseNLPModel
+from ...model import TextGenerationVendor
+from ...model.entities import GenerationSettings, Input
+from ...model.nlp import BaseNLPModel
 from dataclasses import replace
 from torch import argmax, no_grad, softmax, Tensor
 from transformers import (

@@ -1,4 +1,4 @@
-from avalan.model.nlp.sentence import SentenceTransformerModel
+from ...model.nlp.sentence import SentenceTransformerModel
 from dataclasses import dataclass
 from logging import Logger
 from numpy import ndarray

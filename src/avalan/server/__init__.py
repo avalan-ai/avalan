@@ -1,5 +1,5 @@
-from avalan.agent.orchestrator import Orchestrator
-from avalan.utils import logger_replace
+from ..agent.orchestrator import Orchestrator
+from ..utils import logger_replace
 from logging import Logger
 
 def agents_server(
@@ -13,7 +13,7 @@ def agents_server(
     prefix_openai: str,
     logger: Logger
 ):
-    from avalan.server.routers import chat
+    from ..server.routers import chat
     from fastapi import FastAPI, APIRouter
     from mcp.server.lowlevel.server import Server as MCPServer
     from mcp.server.sse import SseServerTransport

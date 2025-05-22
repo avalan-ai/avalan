@@ -1,17 +1,17 @@
 from abc import ABC, abstractmethod
-from avalan.agent import Specification
-from avalan.memory.manager import MemoryManager
-from avalan.model.engine import Engine
-from avalan.model.entities import (
+from ..agent import Specification
+from ..memory.manager import MemoryManager
+from ..model.engine import Engine
+from ..model.entities import (
     EngineMessage,
     GenerationSettings,
     Input,
     Message,
     MessageRole,
 )
-from avalan.model.nlp.text import TextGenerationResponse
-from avalan.model.nlp.text.vendor import TextGenerationVendorModel
-from avalan.tool.manager import ToolManager
+from ..model.nlp.text import TextGenerationResponse
+from ..model.nlp.text.vendor import TextGenerationVendorModel
+from ..tool.manager import ToolManager
 from dataclasses import replace
 from typing import Any, Optional, Union, Tuple
 from uuid import UUID, uuid4

@@ -1,4 +1,4 @@
-from avalan.agent import (
+from ...agent import (
     EngineEnvironment,
     EngineUri,
     Goal,
@@ -7,13 +7,13 @@ from avalan.agent import (
     Role,
     Specification
 )
-from avalan.agent.orchestrator import Orchestrator
+from ...agent.orchestrator import Orchestrator
 from logging import Logger
-from avalan.event.manager import EventManager
-from avalan.memory.manager import MemoryManager
-from avalan.model.entities import Input, TransformerEngineSettings
-from avalan.model.manager import ModelManager
-from avalan.tool.manager import ToolManager
+from ...event.manager import EventManager
+from ...memory.manager import MemoryManager
+from ...model.entities import Input, TransformerEngineSettings
+from ...model.manager import ModelManager
+from ...tool.manager import ToolManager
 from dataclasses import dataclass
 from typing import Annotated, Optional, Union, get_args, get_origin
 
