@@ -69,6 +69,13 @@ class ToolFormat(StrEnum):
     BRACKET = "bracket"
     OPENAI = "openai"
 
+class DistanceType(StrEnum):
+    COSINE = "cosine"
+    DOT = "dot"
+    L1 = "l1"
+    L2 = "l2"
+    PEARSON = "pearson"
+
 @dataclass(frozen=True, kw_only=True)
 class EngineSettings:
     auto_load_model: bool=True
