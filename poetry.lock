@@ -4682,13 +4682,14 @@ propcache = ">=0.2.1"
 
 [extras]
 agent = ["jinja2"]
-all = ["accelerate", "anthropic", "bitsandbytes", "faiss-cpu", "fastapi", "google-genai", "jinja2", "markitdown", "mcp", "openai", "pgvector", "pillow", "protobuf", "psycopg", "pydantic", "pytest", "sentence-transformers", "sentencepiece", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn"]
+all = ["accelerate", "anthropic", "bitsandbytes", "faiss-cpu", "fastapi", "google-genai", "jinja2", "markitdown", "mcp", "openai", "pgvector", "pillow", "protobuf", "psycopg", "pydantic", "pytest", "sentence-transformers", "sentencepiece", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn"]
 audio = ["torchaudio"]
 cpu = ["accelerate"]
 memory = ["faiss-cpu", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
 quantization = ["bitsandbytes"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
 test = ["pytest"]
+tool = ["sympy"]
 translation = ["protobuf", "sentencepiece", "tiktoken"]
 vendors = ["anthropic", "google-genai", "openai", "tiktoken"]
 vision = ["pillow", "torchvision"]
@@ -4697,4 +4698,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.11"
-content-hash = "9301b46828deba10cdf3980ef72ba0ce49bb5146683811efbe58192e3d5095d4"
+content-hash = "0c8bb2d0d6ed80a0113d62464f3f26f512491386b87c5c098e03d87581fd026b"
