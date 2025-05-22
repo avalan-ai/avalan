@@ -1,0 +1,30 @@
+[agent]
+{% if name %}name = "{{ name }}"{% endif %}
+role = """
+{{ role | indent(4) }}
+"""
+{% if task %}
+task = """
+{{ task | indent(4) }}
+"""
+{% endif %}
+{% if instructions %}
+instructions = """
+{{ instructions | indent(4) }}
+"""
+{% endif %}
+
+[memory]
+recent = {{ memory_recent | lower }}
+{% if memory_permanent %}permanent = "{{ memory_permanent }}"{% endif %}
+
+[memory.engine]
+model_id = "{{ memory_engine_model_id }}"
+
+[engine]
+uri = "{{ engine_uri }}"
+
+[run]
+use_cache = {{ run_use_cache | lower }}
+max_new_tokens = {{ max_new_tokens }}
+skip_special_tokens = {{ run_skip_special_tokens | lower }}

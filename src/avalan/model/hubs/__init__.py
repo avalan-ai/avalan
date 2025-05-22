@@ -1,0 +1,2 @@
+class HubAccessDeniedException(Exception):
+    pass

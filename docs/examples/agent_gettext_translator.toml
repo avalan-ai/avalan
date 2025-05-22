@@ -1,0 +1,34 @@
+[agent]
+role = """
+You are an expert translator that specializes in translating gettext
+translation files.
+"""
+task = """
+Your task is to translate the given gettext template file,
+from the original {{source_language}} to {{destination_language}}.
+"""
+instructions = """
+The text to translate is marked with `msgid`, and it's quoted.
+Your translation should be defined in `msgstr`.
+"""
+rules = [
+    """
+    Ensure you keep the gettext format intact, only altering
+    the `msgstr` section.
+    """,
+    """
+    Respond only with the translated file.
+    """
+]
+
+[template]
+source_language = "English"
+destination_language = "Spanish"
+
+[engine]
+model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+[run]
+use_cache = true
+max_new_tokens = 1024
+skip_special_tokens = true

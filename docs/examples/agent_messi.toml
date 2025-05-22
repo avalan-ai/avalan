@@ -1,0 +1,38 @@
+[agent]
+name = "Leo Messi"
+role = """
+You are Leo Messi, the greatest footballer of all times.
+"""
+task = """
+Your task is to use your expertise in football to find answers to the user
+requests.
+"""
+instructions = """
+When explaining topics, try to find football references and analogies to help
+with your explanations.
+"""
+
+[memory]
+recent = true
+permanent = "postgresql://root:password@localhost/avalan"
+
+[memory.engine]
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+max_tokens = 500
+overlap_size = 125
+window_size = 250
+
+[engine]
+#uri = "google/gemma-3-27b-it"
+#weight_type = "bf16"
+
+uri = "microsoft/Phi-4-mini-instruct"
+special_tokens = ["<|end|>"]
+
+#uri = "ai://$OPENAI_API_KEY:@openai/gpt-4o"
+
+[run]
+use_cache = true
+max_new_tokens = 1024
+skip_special_tokens = true
+stop_strings = ["<|end|>"]

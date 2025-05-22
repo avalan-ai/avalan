@@ -1,0 +1,6 @@
+[virtualenvs]
+always-copy = false
+create = true
+in-project = true
+no-pip = false
+prompt = "{project_name}-python-{python_version}"

@@ -1,0 +1,118 @@
+[build-system]
+requires = ["poetry-core>=2.1.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "avalan"
+version = "1.0.3"
+description = "An AI multi-model, multi-modal orchestration framework"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "MIT" }
+authors = [
+  { name = "The Avalan Team", email = "avalan@avalan.ai" },
+]
+requires-python = ">=3.11.11"
+dependencies = [
+  "packaging (>=24.2)",
+  "humanize (>=4.12.2)",
+  "rich (>=14.0.0)",
+  "torch (>=2.6.0)",
+  "transformers (>=4.51.2)",
+  "pandas (>=2.2.3,<3.0.0)"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: OS Independent"
+]
+
+[project.urls]
+homepage = "https://avalan.ai"
+repository = "https://github.com/avalan-ai/avalan"
+documentation = "https://github.com/avalan-ai/avalan#readme"
+"Bug Tracker" = "https://github.com/avalan-ai/avalan/issues"
+
+[project.scripts]
+avalan = "avalan.cli.__main__:main"
+
+[project.optional-dependencies]
+agent = [
+  "jinja2",
+]
+audio = [
+  "torchaudio",
+]
+cpu = [
+  "accelerate"
+]
+memory = [
+  "faiss-cpu",
+  "markitdown[pdf]",
+  "psycopg[binary,pool]",
+  "pgvector",
+  "sentence-transformers",
+  "tree-sitter",
+  "tree-sitter-python"
+]
+quantization = [
+  "bitsandbytes"
+]
+server = [
+  "pydantic",
+  "fastapi",
+  "mcp",
+  "uvicorn",
+]
+test = [
+  "pytest",
+]
+translation = [
+  "protobuf",
+  "sentencepiece",
+  "tiktoken"
+]
+vendors = [
+  "anthropic",
+  "google-genai",
+  "openai",
+  "tiktoken"
+]
+vision = [
+  "pillow",
+  "torchvision",
+]
+vllm = [
+  "vllm[cpu]"
+]
+all = [
+  "accelerate",
+  "anthropic",
+  "bitsandbytes",
+  "faiss-cpu",
+  "fastapi",
+  "google-genai",
+  "jinja2",
+  "markitdown[pdf]",
+  "mcp",
+  "openai",
+  "pillow",
+  "protobuf",
+  "psycopg[binary,pool]",
+  "pgvector",
+  "pydantic",
+  "pytest",
+  "sentence-transformers",
+  "sentencepiece",
+  "tiktoken",
+  "torchaudio",
+  "torchvision",
+  "tree-sitter",
+  "tree-sitter-python",
+  "uvicorn",
+]

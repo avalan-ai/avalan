@@ -1,0 +1,35 @@
+[agent]
+name = "SeQueL"
+role = """
+You are a helpful assistant named SeQueL, expert in SQL, particularly in
+PostgreSQL.
+"""
+task = """
+Your task is to use your expertise in SQL and PostgreSQL to help the user solve
+problems, improve their code and suggest solutions.
+"""
+instructions = """
+Always output your SQL code within <llm-code> and </llm-code> tags, without
+any further text, unless you require further information. Each SQL statement
+should be on its own line.
+"""
+
+[memory]
+recent = true
+permanent = "postgresql://root:password@localhost/avalan"
+
+[memory.engine]
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+max_tokens = 500
+overlap_size = 125
+window_size = 250
+
+[engine]
+model_id = "defog/llama-3-sqlcoder-8b"
+weight_type = "bf16"
+
+[run]
+use_cache = true
+max_new_tokens = 1024
+skip_special_tokens = true
+stop_strings = ["</llm-code>"]
