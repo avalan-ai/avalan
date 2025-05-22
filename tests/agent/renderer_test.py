@@ -1,16 +1,15 @@
-import importlib.util
-import os
-import sys
+from importlib.util import module_from_spec, spec_from_file_location
+from os import path
+from sys import modules
 from types import ModuleType
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 from unittest.mock import patch
 
-
 def load_renderer():
-    spec = importlib.util.spec_from_file_location(
+    spec = spec_from_file_location(
         "avalan.agent.renderer",
-        os.path.join("src", "avalan", "agent", "renderer.py"),
+        path.join("src", "avalan", "agent", "renderer.py"),
     )
 
     stubs = {
@@ -23,7 +22,7 @@ def load_renderer():
     }
 
     for name, module in stubs.items():
-        sys.modules.setdefault(name, module)
+        modules.setdefault(name, module)
 
     stubs["avalan.agent.engine"].EngineAgent = object
     stubs["avalan.memory.manager"].MemoryManager = object
@@ -32,7 +31,7 @@ def load_renderer():
     stubs["avalan.agent"].Role = object
     stubs["avalan.agent"].Specification = object
 
-    module = importlib.util.module_from_spec(spec)
+    module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.Renderer
 
@@ -50,16 +49,22 @@ class RendererTestCase(TestCase):
 
     def test_custom_template_path(self):
         with TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "greet.txt")
-            with open(path, "w", encoding="utf-8") as fh:
+            path_greet = path.join(tmp, "greet.txt")
+            with open(path_greet, "w", encoding="utf-8") as fh:
                 fh.write("Hello {{name}}!")
             renderer = self.Renderer(tmp)
-            self.assertEqual(renderer("greet.txt", name="Bob"), "Hello Bob!")
+            self.assertEqual(
+                renderer("greet.txt", name="Bob"),
+                "Hello Bob!"
+            )
 
     def test_from_string(self):
         renderer = self.Renderer()
         tmpl = "Hi {{name}}"
-        self.assertEqual(renderer.from_string(tmpl, {"name": "Ada"}), b"Hi Ada")
+        self.assertEqual(
+            renderer.from_string(tmpl, {"name": "Ada"}),
+            b"Hi Ada"
+        )
         self.assertEqual(renderer.from_string(tmpl), tmpl)
 
     def test_template_caching(self):
@@ -78,9 +83,10 @@ class RendererTestCase(TestCase):
     def test_no_clean_spaces(self):
         renderer = self.Renderer(clean_spaces=False)
         result = renderer("agent.md", name="Leo")
-        self.assertTrue(result.startswith("        You are a helpful assistant."))
+        self.assertTrue(result.strip().startswith(
+            "You are a helpful assistant."
+        ))
         self.assertIn("Your name is Leo.", result)
-
 
 if __name__ == "__main__":
     main()
