@@ -9,10 +9,9 @@ tools.
 recent = true
 
 [engine]
-model_id = "NousResearch/Hermes-3-Llama-3.1-8B"
+uri = "NousResearch/Hermes-3-Llama-3.1-8B"
 tools = [
-    "calculator",
-    "get_current_temperature"
+    "calculator"
 ]
 
 [run]

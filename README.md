@@ -181,7 +181,7 @@ source_language = "English"
 destination_language = "Spanish"
 
 [engine]
-model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
+uri = "meta-llama/Meta-Llama-3-8B-Instruct"
 
 [run]
 use_cache = true
