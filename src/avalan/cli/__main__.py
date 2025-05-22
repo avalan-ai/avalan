@@ -26,6 +26,7 @@ from avalan.cli.theme.fancy import FancyTheme
 from avalan.memory.permanent import VectorFunction
 from avalan.model.entities import (
     AttentionImplementation,
+    DistanceType,
     TextGenerationLoaderClass,
     User,
     WeightType
@@ -675,6 +676,13 @@ class CLI:
             default=1,
             type=int,
             help="How many nearest neighbors to obtain with search",
+        )
+        memory_embeddings_parser.add_argument(
+            "--sort",
+            type=DistanceType,
+            choices=list(DistanceType),
+            default=DistanceType.L2,
+            help="Sort comparison results using the given similarity measure",
         )
         memory_doc_parser = memory_command_parsers.add_parser(
             name="document",

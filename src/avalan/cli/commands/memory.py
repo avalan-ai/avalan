@@ -6,7 +6,7 @@ from avalan.memory.partitioner.text import TextPartitioner
 from avalan.memory.permanent import MemoryType
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from uuid import UUID
-from avalan.model.entities import SearchMatch, Similarity
+from avalan.model.entities import DistanceType, SearchMatch, Similarity
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from faiss import IndexFlatL2
@@ -118,6 +118,16 @@ async def memory_embeddings(
     compare_strings = args.compare or None
     searches = args.search or None
     search_k = args.search_k or 1
+    sort_by: DistanceType = args.sort or DistanceType.L2
+
+    sort_key = {
+        DistanceType.COSINE: lambda s: s.cosine_distance,
+        DistanceType.DOT: lambda s: s.inner_product,
+        DistanceType.L1: lambda s: s.l1_distance,
+        DistanceType.L2: lambda s: s.l2_distance,
+        DistanceType.PEARSON: lambda s: s.pearson,
+    }[sort_by]
+    reverse_sort = sort_by in (DistanceType.COSINE, DistanceType.PEARSON)
 
     model_settings = get_model_settings(
         args,
@@ -234,11 +244,10 @@ async def memory_embeddings(
                         pearson=pearson
                     )
 
-                # Sort by most similar (closer in L2 distance)
                 similarities = dict(sorted(
                     similarities.items(),
-                    key=lambda item: item[1].l2_distance,
-                    reverse=False
+                    key=lambda item: sort_key(item[1]),
+                    reverse=reverse_sort
                 ))
 
                 joined = '", "'.join(compare_strings)
