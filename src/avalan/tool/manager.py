@@ -1,5 +1,5 @@
 from avalan.model.entities import ToolCall, ToolCallResult, ToolFormat
-from avalan.tool import calculator, get_current_temperature
+from avalan.tool.calculator import calculator
 from avalan.tool.parser import ToolCallParser
 from types import FunctionType
 from typing import Optional, Tuple
@@ -20,7 +20,9 @@ class ToolManager:
         enabled_tools: Optional[list[FunctionType]] = None
 
         if not available_tools:
-            available_tools = [calculator, get_current_temperature]
+            available_tools = [
+                calculator
+            ]
 
         if available_tools and enable_tools:
             enabled_tools = [

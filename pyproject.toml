@@ -72,6 +72,9 @@ server = [
 test = [
   "pytest",
 ]
+tool = [
+  "sympy",
+]
 translation = [
   "protobuf",
   "sentencepiece",
@@ -109,6 +112,7 @@ all = [
   "pytest",
   "sentence-transformers",
   "sentencepiece",
+  "sympy",
   "tiktoken",
   "torchaudio",
   "torchvision",
