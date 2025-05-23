@@ -9,7 +9,7 @@ from avalan.event.manager import EventManager
 from avalan.model.entities import (
     EngineUri, 
     Message, 
-    MessageRole
+    MessageRole,
     TransformerEngineSettings
 )
 from avalan.model.manager import ModelManager
