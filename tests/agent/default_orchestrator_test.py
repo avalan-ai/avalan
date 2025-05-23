@@ -1,4 +1,5 @@
 from avalan.agent import (
+    Goal,
     InputType, 
     OutputType,
     Specification
