@@ -111,27 +111,26 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(orch.model_ids, {"m"})
 
             result = await orch("hi")
-            agent_mock.assert_awaited_once_with(
-                Specification(
-                    role='assistant', 
-                    goal=Goal(
-                        task='do', 
-                        instructions=['something']
-                    ), 
-                    rules=None, 
-                    input_type=InputType.TEXT, 
-                    output_type=OutputType.TEXT, 
-                    settings=None, 
-                    template_id='agent.md', 
-                    template_vars=None
+            
+            agent_mock.assert_awaited_once()
+            arg, msg_arg = agent_mock.await_args.args
+            self.assertEqual(msg_arg.content, "hi")
+            self.assertEqual(msg_arg.role, MessageRole.USER)
+            self.assertIsNone(msg_arg.name)
+            self.assertIsNone(msg_arg.arguments)
+            self.assertEqual(spec_arg, Specification(
+                role='assistant', 
+                goal=Goal(
+                    task='do', 
+                    instructions=['something']
                 ), 
-                Message(
-                    role=MessageRole.USER, 
-                    content='hi', 
-                    name=None, 
-                    arguments=None
-                )
-            )
+                rules=None, 
+                input_type=InputType.TEXT, 
+                output_type=OutputType.TEXT, 
+                settings=None, 
+                template_id='agent.md', 
+                template_vars=None
+            ))
             self.assertEqual(result, "ok")
             
             await orch.__aexit__(None, None, None)
