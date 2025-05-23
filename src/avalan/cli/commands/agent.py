@@ -2,6 +2,7 @@ from argparse import Namespace
 from ...agent.loader import Loader
 from ...cli import get_input
 from ...cli.commands.model import token_generation
+from ...event import EventStats, EventType
 from ...memory.permanent import VectorFunction
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text import TextGenerationResponse
@@ -124,6 +125,15 @@ async def agent_run(
     )
     load_recent_messages_limit=args.load_recent_messages_limit
 
+    event_stats = EventStats()
+    async def _event_listener(event):
+        nonlocal event_stats
+        event_stats.total_triggers += 1
+        if event.type not in event_stats.triggers:
+            event_stats.triggers[event.type] = 1
+        else:
+            event_stats.triggers[event.type] += 1
+
     async with AsyncExitStack() as stack:
         with console.status(
             _("Loading agent..."),
@@ -142,6 +152,8 @@ async def agent_run(
                 stack=stack,
                 disable_memory=args.no_session
             )
+            orchestrator.event_manager.add_listener(_event_listener)
+
             orchestrator = await stack.enter_async_context(orchestrator)
 
             logger.debug(f"Agent loaded from {specs_path}, models "
@@ -239,6 +251,7 @@ async def agent_run(
                         theme=theme,
                         logger=logger,
                         orchestrator=orchestrator,
+                        event_stats=event_stats,
                         lm=orchestrator.engine,
                         input_string=input_string,
                         response=output,

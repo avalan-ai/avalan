@@ -14,3 +14,8 @@ class EventType(StrEnum):
 class Event:
     type: EventType
     payload: dict[str, Any] | None = None
+
+class EventStats:
+    triggers: dict[EventType,int] = {}
+    total_triggers: int = 0
+

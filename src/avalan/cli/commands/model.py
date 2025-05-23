@@ -3,6 +3,7 @@ from asyncio import as_completed, create_task, gather, sleep, to_thread
 from ...agent.orchestrator import Orchestrator
 from ...cli import get_input
 from ...cli.commands.cache import cache_delete, cache_download
+from ...event import EventStats
 from ...model.entities import (
     EngineUri,
     GenerationSettings,
@@ -21,7 +22,7 @@ from rich.live import Live
 from rich.padding import Padding
 from rich.theme import Theme
 from time import perf_counter
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 
 def model_display(
     args: Namespace,
@@ -30,10 +31,10 @@ def model_display(
     hub: HuggingfaceHub,
     logger: Logger,
     *vargs,
-    is_sentence_transformer: Optional[bool]=None,
-    load: Optional[bool]=None,
-    model: Optional[Union[SentenceTransformerModel, TextGenerationModel]]=None,
-    summary: Optional[bool]=None,
+    is_sentence_transformer: bool | None=None,
+    load: bool | None=None,
+    model: Union[SentenceTransformerModel, TextGenerationModel] | None=None,
+    summary: bool | None=None,
 ) -> None:
     assert(args.model)
     _ = theme._
@@ -181,6 +182,7 @@ async def model_run(
                 theme=theme,
                 logger=logger,
                 orchestrator=None,
+                event_stats=None,
                 lm=lm,
                 input_string=input_string,
                 response=await output_generator,
@@ -261,7 +263,8 @@ async def token_generation(
     console: Console,
     theme: Theme,
     logger: Logger,
-    orchestrator: Optional[Orchestrator],
+    orchestrator: Orchestrator | None,
+    event_stats: EventStats | None,
     lm: TextGenerationModel,
     input_string: str,
     response: TextGenerationResponse,
@@ -301,11 +304,10 @@ async def token_generation(
             else orchestrator.input_token_count if orchestrator
             else lm.input_token_count(input_string)
         )
-        ttft: Optional[float] = None
-        ttnt: Optional[float] = None
-
-        token_frame_list: list[Tuple[Optional[Token],RenderableType]] = None
-        last_current_dtoken: Optional[Token] = None
+        ttft: float | None = None
+        ttnt: float | None = None
+        token_frame_list: list[Tuple[Token | None,RenderableType]] = None
+        last_current_dtoken: Token | None = None
 
         async for token in response:
             text_token = token.token if isinstance(token,Token) else token
@@ -351,6 +353,7 @@ async def token_generation(
                 ellapsed,
                 console.width,
                 logger,
+                event_stats,
                 height=6,
                 maximum_frames=1,
                 start_thinking=start_thinking
@@ -392,7 +395,7 @@ def get_model_settings(
     hub: HuggingfaceHub,
     logger: Logger,
     engine_uri: EngineUri,
-    is_sentence_transformer: Optional[bool]=None
+    is_sentence_transformer: bool | None=None
 ) -> dict:
     return dict(
         engine_uri=engine_uri,

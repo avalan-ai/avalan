@@ -187,12 +187,21 @@ class Orchestrator:
             ))
 
             tool_calls, tool_results = self._tool(output)
+
             if tool_calls:
                 for call in tool_calls:
                     await self._event_manager.trigger(Event(
                         type=EventType.TOOL_EXECUTE,
                         payload={"call": call}
                     ))
+
+            if tool_results:
+                for res in tool_results:
+                    await self._event_manager.trigger(Event(
+                        type=EventType.TOOL_RESULT,
+                        payload={"result": res}
+                    ))
+
             tool_messages = [
                 Message(
                     role=MessageRole.TOOL,
@@ -203,12 +212,7 @@ class Orchestrator:
                 for r in tool_results
             ] if tool_results else None
 
-            if tool_results:
-                for res in tool_results:
-                    await self._event_manager.trigger(Event(
-                        type=EventType.TOOL_RESULT,
-                        payload={"result": res}
-                    ))
+            self._logger.debug(f"Tool result messages: {tool_messages}")
 
             if tool_messages:
                 result = await engine_agent(
