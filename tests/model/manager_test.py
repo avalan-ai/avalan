@@ -106,6 +106,18 @@ class ManagerTestCase(TestCase):
                 "groq_key"
             ),
             (
+                "ai://hf_key:@huggingface/meta-llama/Llama-3-8B-Instruct",
+                "huggingface",
+                "meta-llama/Llama-3-8B-Instruct",
+                "hf_key"
+            ),
+            (
+                "ai://hf_key@huggingface/meta-llama/Llama-3-8B-Instruct",
+                "huggingface",
+                "meta-llama/Llama-3-8B-Instruct",
+                "hf_key"
+            ),
+            (
                 "ai://ollama/llama3",
                 "ollama",
                 "llama3",
