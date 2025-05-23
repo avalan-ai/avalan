@@ -80,6 +80,18 @@ class ManagerTestCase(TestCase):
                 "openrouter",
                 "gpt-3.5-turbo",
                 "router_api_key"
+            ),
+            (
+                "ai://seek_key:@deepseek/deepseek-chat",
+                "deepseek",
+                "deepseek-chat",
+                "seek_key"
+            ),
+            (
+                "ai://seek_key@deepseek/deepseek-chat",
+                "deepseek",
+                "deepseek-chat",
+                "seek_key"
             )
         ]
 

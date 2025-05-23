@@ -35,6 +35,7 @@ TextGenerationLoaderClass = Literal[
 
 Vendor = Literal[
     "anthropic",
+    "deepseek",
     "google",
     "local",
     "openai",
