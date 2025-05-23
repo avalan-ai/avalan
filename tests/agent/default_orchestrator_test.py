@@ -10,7 +10,6 @@ from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 
-
 class DefaultOrchestratorInitTestCase(TestCase):
     def test_initialization(self):
         engine_uri = EngineUri(host=None, port=None, user=None, password=None, vendor=None, model_id="m", params={})
@@ -91,7 +90,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
 
         agent_mock = AsyncMock(spec=TemplateEngineAgent)
         agent_mock.engine = engine
-        agent_mock.__call__.return_value = "ok"
+        agent_mock.return_value = "ok"
 
         with patch("avalan.agent.orchestrator.TemplateEngineAgent", return_value=agent_mock) as Agent:
             await orch.__aenter__()
@@ -101,7 +100,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(orch.model_ids, {"m"})
 
             result = await orch("hi")
-            agent_mock.__call__.assert_awaited_once()
+            agent_mock.assert_awaited_once_with("hi")
             self.assertEqual(result, "ok")
             await orch.__aexit__(None, None, None)
             memory.__exit__.assert_called_once()
