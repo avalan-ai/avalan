@@ -1,5 +1,5 @@
 from .....model import TextGenerationVendor
-from .....model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
+from .openai import OpenAIClient, OpenAIModel
 from transformers import PreTrainedModel
 
 class DeepSeekClient(OpenAIClient):
