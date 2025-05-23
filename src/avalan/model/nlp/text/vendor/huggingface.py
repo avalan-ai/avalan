@@ -5,7 +5,7 @@ from .....model.entities import (
     Token,
     TokenDetail,
 )
-from .....model.nlp.text.vendor import (
+from . import (
     TextGenerationVendorModel,
     TextGenerationVendorStream
 )
