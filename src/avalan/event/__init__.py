@@ -8,6 +8,7 @@ class EventType(StrEnum):
     TOOL_EXECUTE = "tool_execute"
     TOOL_RESULT = "tool_result"
     END = "end"
+    STREAM_END = "stream_end"
 
 @dataclass(frozen=True, kw_only=True)
 class Event:

@@ -1,18 +1,19 @@
 from avalan.agent import (
     Goal,
-    InputType, 
+    InputType,
     OutputType,
     Specification
 )
 from avalan.agent.orchestrators.default import DefaultOrchestrator
 from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
+from avalan.event import EventType
 from avalan.model.entities import (
-    EngineUri, 
-    Message, 
+    EngineUri,
     MessageRole,
     TransformerEngineSettings
 )
+from avalan.model.nlp.text import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -23,7 +24,15 @@ from uuid import uuid4
 
 class DefaultOrchestratorInitTestCase(TestCase):
     def test_initialization(self):
-        engine_uri = EngineUri(host=None, port=None, user=None, password=None, vendor=None, model_id="m", params={})
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={}
+        )
         logger = MagicMock(spec=Logger)
         model_manager = MagicMock(spec=ModelManager)
         memory = MagicMock(spec=MemoryManager)
@@ -64,8 +73,21 @@ class DefaultOrchestratorInitTestCase(TestCase):
 
 
 class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
-    async def test_aenter_call_aexit(self):
-        engine_uri = EngineUri(host=None, port=None, user=None, password=None, vendor=None, model_id="m", params={})
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(patch.stopall)
+
+    @patch("avalan.agent.orchestrator.TemplateEngineAgent")
+    async def test_stream_end_event(self, Agent):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={}
+        )
         logger = MagicMock(spec=Logger)
         model_manager = MagicMock(spec=ModelManager)
         memory = MagicMock(spec=MemoryManager)
@@ -78,7 +100,28 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         settings = TransformerEngineSettings()
 
-        orch = DefaultOrchestrator(
+        engine = MagicMock()
+        engine.__enter__.return_value = engine
+        engine.__exit__.return_value = False
+        engine.model_id = "m"
+        model_manager.load_engine.return_value = engine
+
+        async def output_gen():
+            yield "a"
+            yield "b"
+
+        def output_fn(*args, **kwargs):
+            return output_gen()
+
+        response = TextGenerationResponse(output_fn, use_async_generator=True)
+
+        agent_mock = AsyncMock(spec=TemplateEngineAgent)
+        agent_mock.engine = engine
+        agent_mock.return_value = response
+
+        Agent.return_value = agent_mock
+
+        async with DefaultOrchestrator(
             engine_uri,
             logger,
             model_manager,
@@ -91,47 +134,49 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             instructions="something",
             rules=None,
             settings=settings,
-        )
-
-        engine = MagicMock()
-        engine.__enter__.return_value = engine
-        engine.__exit__.return_value = False
-        engine.model_id = "m"
-        model_manager.load_engine.return_value = engine
-
-        agent_mock = AsyncMock(spec=TemplateEngineAgent)
-        agent_mock.engine = engine
-        agent_mock.return_value = "ok"
-
-        with patch("avalan.agent.orchestrator.TemplateEngineAgent", return_value=agent_mock) as Agent:
-            await orch.__aenter__()
-            model_manager.load_engine.assert_called_once_with(engine_uri, settings)
+        ) as orch:
+            model_manager.load_engine.assert_called_once_with(
+                engine_uri,
+                settings
+            )
             Agent.assert_called_once()
             self.assertIs(orch.engine_agent, agent_mock)
             self.assertEqual(orch.model_ids, {"m"})
 
-            result = await orch("hi")
-            
-            agent_mock.assert_awaited_once()
-            spec_arg, msg_arg = agent_mock.await_args.args
-            self.assertEqual(msg_arg.content, "hi")
-            self.assertEqual(msg_arg.role, MessageRole.USER)
-            self.assertIsNone(msg_arg.name)
-            self.assertIsNone(msg_arg.arguments)
-            self.assertEqual(spec_arg, Specification(
-                role='assistant', 
-                goal=Goal(
-                    task='do', 
-                    instructions=['something']
-                ), 
-                rules=None, 
-                input_type=InputType.TEXT, 
-                output_type=OutputType.TEXT, 
-                settings=None, 
-                template_id='agent.md', 
-                template_vars=None
-            ))
-            self.assertEqual(result, "ok")
-            
-            await orch.__aexit__(None, None, None)
-            memory.__exit__.assert_called_once()
+            result = await orch("hi", use_async_generator=True)
+
+            tokens = []
+            async for t in result:
+                tokens.append(t)
+
+        agent_mock.assert_awaited_once()
+        spec_arg, msg_arg = agent_mock.await_args.args
+        self.assertEqual(msg_arg.content, "hi")
+        self.assertEqual(msg_arg.role, MessageRole.USER)
+        self.assertIsNone(msg_arg.name)
+        self.assertIsNone(msg_arg.arguments)
+        self.assertEqual(spec_arg, Specification(
+            role='assistant',
+            goal=Goal(
+                task='do',
+                instructions=['something']
+            ),
+            rules=None,
+            input_type=InputType.TEXT,
+            output_type=OutputType.TEXT,
+            settings=None,
+            template_id='agent.md',
+            template_vars=None
+        ))
+
+        self.assertIsInstance(result, TextGenerationResponse)
+        self.assertEqual(tokens, ["a", "b"])
+        self.assertTrue(
+            any(
+                c.args[0].type == EventType.STREAM_END
+                for c in event_manager.trigger.await_args_list
+            )
+        )
+
+        memory.__exit__.assert_called_once()
+
