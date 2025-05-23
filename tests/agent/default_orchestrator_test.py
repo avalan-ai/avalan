@@ -113,7 +113,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             result = await orch("hi")
             
             agent_mock.assert_awaited_once()
-            arg, msg_arg = agent_mock.await_args.args
+            spec_arg, msg_arg = agent_mock.await_args.args
             self.assertEqual(msg_arg.content, "hi")
             self.assertEqual(msg_arg.role, MessageRole.USER)
             self.assertIsNone(msg_arg.name)
