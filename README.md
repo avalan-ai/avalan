@@ -464,8 +464,12 @@ Add a document to the memory index so its contents become searchable:
 avalan memory document index README.md \
                            --dsn postgresql://user:pass@localhost/db \
                            --participant 123e4567-e89b-12d3-a456-426614174000 \
-                           --namespace docs
+                           --namespace docs \
+                           --partitioner code \
+                           --language python \
+                           --encoding utf-8
 ```
+Use `--identifier` to override the default identifier (the source path or URL).
 
 ## model
 

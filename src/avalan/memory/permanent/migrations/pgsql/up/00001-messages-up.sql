@@ -11,7 +11,8 @@ CREATE TYPE "message_author_type" AS ENUM (
 CREATE TYPE "memory_types" AS ENUM (
     'code',
     'file',
-    'raw'
+    'raw',
+    'url'
 );
 
 CREATE TABLE IF NOT EXISTS "sessions" (

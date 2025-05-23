@@ -748,6 +748,28 @@ class CLI:
             help="Source to index (an URL or a file path)",
         )
         memory_doc_index_parser.add_argument(
+            "--partitioner",
+            choices=["text", "code"],
+            default="text",
+            help="Partitioner to use when indexing a file",
+        )
+        memory_doc_index_parser.add_argument(
+            "--language",
+            type=str,
+            help="Programming language for the code partitioner",
+        )
+        memory_doc_index_parser.add_argument(
+            "--encoding",
+            type=str,
+            default="utf-8",
+            help="File encoding used when reading a local file",
+        )
+        memory_doc_index_parser.add_argument(
+            "--identifier",
+            type=str,
+            help="Identifier for the memory entry (defaults to the source)",
+        )
+        memory_doc_index_parser.add_argument(
             "--dsn",
             type=str,
             required=True,

@@ -34,6 +34,7 @@ class VectorFunction(StrEnum):
 class MemoryType(StrEnum):
     CODE = "code"
     FILE = "file"
+    URL = "url"
     RAW = "raw"
 
 @dataclass(frozen=True, kw_only=True)

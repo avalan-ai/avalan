@@ -2,7 +2,8 @@ from argparse import Namespace
 from asyncio import to_thread
 from ...cli import get_input
 from ...cli.commands.model import get_model_settings, model_display
-from ...memory.partitioner.text import TextPartitioner
+from ...memory.partitioner.text import TextPartitioner, TextPartition
+from ...memory.partitioner.code import CodePartitioner
 from ...memory.permanent import MemoryType, VectorFunction
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from uuid import UUID
@@ -11,6 +12,8 @@ from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from faiss import IndexFlatL2
 from httpx import AsyncClient, Response
+from pathlib import Path
+from urllib.parse import urlparse
 from io import BytesIO
 from logging import Logger
 from markitdown import MarkItDown, DocumentConverterResult
@@ -18,7 +21,7 @@ from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
 from rich.theme import Theme
-from typing import Optional, Tuple
+from typing import Tuple
 
 async def memory_document_index(
     args: Namespace,
@@ -40,6 +43,7 @@ async def memory_document_index(
     participant_id = UUID(args.participant)
     namespace = args.namespace
     dsn = args.dsn
+    identifier = args.identifier or None
     display_partitions = (
         args.display_partitions if not args.no_display_partitions
         else None
@@ -66,40 +70,79 @@ async def memory_document_index(
                 summary=True
             )
 
-            contents : Optional[str]=None
+            contents: str | None = None
 
-            async with AsyncClient() as client:
-                response: Response = await client.get(source)
-                response.raise_for_status()
-                result = await to_thread(transform, response.content)
-                contents = result.text_content
+            is_url = urlparse(source).scheme in ("http", "https")
+            if is_url:
+                async with AsyncClient() as client:
+                    response: Response = await client.get(source)
+                    response.raise_for_status()
+                    result = await to_thread(transform, response.content)
+                    contents = result.text_content
+            else:
+                contents = Path(source).read_text(encoding=args.encoding)
 
+            if not identifier:
+                identifier = source if is_url else str(Path(source).resolve())
+
+            if is_url:
+                memory_type = MemoryType.URL
+            else:
+                memory_type = (
+                    MemoryType.CODE
+                    if args.partitioner == "code"
+                    else MemoryType.FILE
+                )
+
+            if is_url or args.partitioner == "text":
                 partitioner = TextPartitioner(
                     stm,
                     logger,
                     max_tokens=args.partition_max_tokens,
                     window_size=args.partition_window,
-                    overlap_size=args.partition_overlap
+                    overlap_size=args.partition_overlap,
                 )
                 partitions = await partitioner(contents)
-
-                memory_store = await PgsqlRawMemory.create_instance(dsn=dsn)
-                await memory_store.append_with_partitions(
-                    namespace,
-                    participant_id,
-                    memory_type=MemoryType.RAW,
-                    data=contents,
-                    identifier=source,
-                    partitions=partitions,
-                    symbols={},
-                    model_id=model_id,
+            else:
+                code_partitioner = CodePartitioner(logger)
+                code_partitions, _ = await to_thread(
+                    code_partitioner.partition,
+                    args.language or "python",
+                    contents,
+                    args.encoding,
+                    args.partition_max_tokens,
                 )
+                partitions: list[TextPartition] = []
+                for cp in code_partitions:
+                    embeddings = await stm(cp.data)
+                    tokens = stm.token_count(cp.data)
+                    partitions.append(
+                        TextPartition(
+                            data=cp.data,
+                            embeddings=embeddings,
+                            total_tokens=tokens,
+                        )
+                    )
 
-                if display_partitions:
-                    console.print(theme.memory_partitions(
+            memory_store = await PgsqlRawMemory.create_instance(dsn=dsn)
+            await memory_store.append_with_partitions(
+                namespace,
+                participant_id,
+                memory_type=memory_type,
+                data=contents,
+                identifier=identifier,
+                partitions=partitions,
+                symbols={},
+                model_id=model_id,
+            )
+
+            if display_partitions:
+                console.print(
+                    theme.memory_partitions(
                         partitions,
-                        display_partitions=display_partitions
-                    ))
+                        display_partitions=display_partitions,
+                    )
+                )
 
 async def memory_embeddings(
     args: Namespace,
