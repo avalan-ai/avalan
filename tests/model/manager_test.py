@@ -94,6 +94,18 @@ class ManagerTestCase(TestCase):
                 "seek_key"
             ),
             (
+                "ai://groq_key:@groq/llama3-8b-8192",
+                "groq",
+                "llama3-8b-8192",
+                "groq_key"
+            ),
+            (
+                "ai://groq_key@groq/llama3-8b-8192",
+                "groq",
+                "llama3-8b-8192",
+                "groq_key"
+            ),
+            (
                 "ai://ollama/llama3",
                 "ollama",
                 "llama3",
