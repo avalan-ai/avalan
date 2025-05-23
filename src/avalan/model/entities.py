@@ -37,6 +37,7 @@ Vendor = Literal[
     "anthropic",
     "deepseek",
     "google",
+    "groq",
     "local",
     "openai",
     "openrouter",
