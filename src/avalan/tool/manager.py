@@ -90,6 +90,7 @@ class ToolManager:
                     else tool()
                 )
                 tool_results.append(ToolCallResult(
+                    call=tool_call,
                     name=tool_call.name,
                     arguments=tool_call.arguments,
                     result=result

@@ -41,6 +41,7 @@ class ToolManagerCallTestCase(TestCase):
             arguments={"expression": "1 + 1"},
         )
         expected_result = ToolCallResult(
+            call=expected_call,
             name="calculator",
             arguments={"expression": "1 + 1"},
             result="2",
@@ -60,6 +61,7 @@ class ToolManagerCallTestCase(TestCase):
             arguments={"expression": "2"},
         )
         expected_result = ToolCallResult(
+            call=expected_call,
             name="calculator",
             arguments={"expression": "2"},
             result="2",
@@ -83,6 +85,7 @@ class ToolManagerCallTestCase(TestCase):
             arguments={"expression": "3"},
         )
         expected_result = ToolCallResult(
+            call=expected_call,
             name="math.calculator",
             arguments={"expression": "3"},
             result="3",

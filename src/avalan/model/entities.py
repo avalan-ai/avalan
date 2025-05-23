@@ -374,6 +374,7 @@ class ToolCall:
 
 @dataclass(frozen=True, kw_only=True)
 class ToolCallResult(ToolCall):
+    call: ToolCall
     result: Optional[ToolValue]=None
 
 @dataclass(frozen=True, kw_only=True)
