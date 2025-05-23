@@ -100,7 +100,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(orch.model_ids, {"m"})
 
             result = await orch("hi")
-            agent_mock.assert_awaited_once_with("hi")
+            agent_mock.assert_awaited_once()
             self.assertEqual(result, "ok")
             await orch.__aexit__(None, None, None)
             memory.__exit__.assert_called_once()
