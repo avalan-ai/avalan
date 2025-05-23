@@ -7,12 +7,14 @@ from avalan.agent import (
 from avalan.agent.orchestrators.default import DefaultOrchestrator
 from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
+from avalan.event import EventType
 from avalan.model.entities import (
-    EngineUri, 
-    Message, 
+    EngineUri,
+    Message,
     MessageRole,
     TransformerEngineSettings
 )
+from avalan.model.nlp.text import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -134,4 +136,69 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(result, "ok")
             
             await orch.__aexit__(None, None, None)
-            memory.__exit__.assert_called_once()
+        memory.__exit__.assert_called_once()
+
+    async def test_stream_end_event(self):
+        engine_uri = EngineUri(host=None, port=None, user=None, password=None, vendor=None, model_id="m", params={})
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        memory.has_permanent_message = False
+        memory.has_recent_message = False
+        memory.__exit__ = MagicMock()
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = True
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        settings = TransformerEngineSettings()
+
+        orch = DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role="assistant",
+            task="do",
+            instructions="something",
+            rules=None,
+            settings=settings,
+        )
+
+        engine = MagicMock()
+        engine.__enter__.return_value = engine
+        engine.__exit__.return_value = False
+        engine.model_id = "m"
+        model_manager.load_engine.return_value = engine
+
+        async def output_gen():
+            yield "a"
+            yield "b"
+
+        def output_fn(*args, **kwargs):
+            return output_gen()
+
+        response = TextGenerationResponse(output_fn, use_async_generator=True)
+
+        agent_mock = AsyncMock(spec=TemplateEngineAgent)
+        agent_mock.engine = engine
+        agent_mock.return_value = response
+
+        with patch("avalan.agent.orchestrator.TemplateEngineAgent", return_value=agent_mock):
+            await orch.__aenter__()
+            result = await orch("hi", use_async_generator=True)
+            tokens = []
+            async for t in result:
+                tokens.append(t)
+
+            await orch.__aexit__(None, None, None)
+
+            self.assertEqual(tokens, ["a", "b"])
+            self.assertTrue(
+                any(
+                    c.args[0].type == EventType.STREAM_END
+                    for c in event_manager.trigger.await_args_list
+                )
+            )

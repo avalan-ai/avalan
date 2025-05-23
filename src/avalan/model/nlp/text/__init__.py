@@ -5,9 +5,10 @@ from ....model.nlp import (
     OutputGenerator
 )
 from io import StringIO
+from inspect import iscoroutine
 from json import loads, JSONDecodeError
 from re import compile, DOTALL, Pattern
-from typing import Optional
+from typing import Optional, Callable, Awaitable
 
 class TextGenerationResponse:
     _json_patterns: list[Pattern] = [
@@ -22,6 +23,8 @@ class TextGenerationResponse:
     _input_token_count: int=0
     _output: OutputGenerator | None=None
     _buffer: StringIO=StringIO()
+    _on_consumed: Callable[[], Awaitable[None] | None] | None=None
+    _consumed: bool=False
 
     def __init__(
         self,
@@ -40,9 +43,23 @@ class TextGenerationResponse:
             self._input_token_count = len(inputs["input_ids"][0]) \
                 if inputs and "input_ids" in inputs else 0
 
+    def add_done_callback(
+        self, callback: Callable[[], Awaitable[None] | None]
+    ) -> None:
+        self._on_consumed = callback
+
     @property
     def input_token_count(self) -> int:
         return self._input_token_count
+
+    async def _trigger_consumed(self) -> None:
+        if self._consumed:
+            return
+        self._consumed = True
+        if self._on_consumed:
+            result = self._on_consumed()
+            if iscoroutine(result):
+                await result
 
     def __aiter__(self):
         # Create a fresh async generator each time we start iterating
@@ -50,13 +67,20 @@ class TextGenerationResponse:
         return self
 
     async def __anext__(self) -> Token | TokenDetail | str:
-        token = await self._output.__anext__()
+        try:
+            token = await self._output.__anext__()
+        except StopAsyncIteration:
+            await self._trigger_consumed()
+            raise
         self._buffer.write(token if isinstance(token,str) else token.token)
         return token
 
     async def to_str(self) -> str:
         if not self._use_async_generator:
-            return self._output_fn(*self._args, **self._kwargs)
+            result = self._output_fn(*self._args, **self._kwargs)
+            self._buffer.write(result)
+            await self._trigger_consumed()
+            return result
 
         # Ensure buffer is filled, wether we were already iterating or not
         if not self._output:
@@ -65,6 +89,7 @@ class TextGenerationResponse:
         async for token in self._output:
             self._buffer.write(token)
 
+        await self._trigger_consumed()
         return self._buffer.getvalue()
 
     async def to_json(self) -> str:

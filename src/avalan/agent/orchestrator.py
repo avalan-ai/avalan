@@ -221,6 +221,13 @@ class Orchestrator:
             type=EventType.END
         ))
 
+        if isinstance(result, TextGenerationResponse):
+            async def on_end():
+                await self._event_manager.trigger(Event(
+                    type=EventType.STREAM_END
+                ))
+            result.add_done_callback(on_end)
+
         return result
 
     async def __aenter__(self):
