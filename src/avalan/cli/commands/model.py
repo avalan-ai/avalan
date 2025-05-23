@@ -15,6 +15,7 @@ from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text import TextGenerationResponse
 from ...model.nlp.text.generation import TextGenerationModel
+from ...event import EventType
 from logging import Logger
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -303,6 +304,18 @@ async def token_generation(
         )
         ttft: Optional[float] = None
         ttnt: Optional[float] = None
+        events_count = 0
+        tool_call_count = 0
+        tool_result_count = 0
+        if orchestrator:
+            async def _event_listener(event):
+                nonlocal events_count, tool_call_count, tool_result_count
+                events_count += 1
+                if event.type == EventType.TOOL_EXECUTE:
+                    tool_call_count += 1
+                elif event.type == EventType.TOOL_RESULT:
+                    tool_result_count += 1
+            orchestrator.event_manager.add_listener(_event_listener)
 
         token_frame_list: list[Tuple[Optional[Token],RenderableType]] = None
         last_current_dtoken: Optional[Token] = None
@@ -351,6 +364,9 @@ async def token_generation(
                 ellapsed,
                 console.width,
                 logger,
+                events_count,
+                tool_call_count,
+                tool_result_count,
                 height=6,
                 maximum_frames=1,
                 start_thinking=start_thinking
