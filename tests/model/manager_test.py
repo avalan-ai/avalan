@@ -92,6 +92,12 @@ class ManagerTestCase(TestCase):
                 "deepseek",
                 "deepseek-chat",
                 "seek_key"
+            ),
+            (
+                "ai://ollama/llama3",
+                "ollama",
+                "llama3",
+                None
             )
         ]
 

@@ -130,6 +130,9 @@ class ModelManager(ContextDecorator):
         elif engine_uri.vendor == "deepseek":
             from ..model.nlp.text.vendor.deepseek import DeepSeekModel
             model = DeepSeekModel(**model_load_args)
+        elif engine_uri.vendor == "ollama":
+            from ..model.nlp.text.vendor.ollama import OllamaModel
+            model = OllamaModel(**model_load_args)
 
         self._stack.enter_context(model)
         return model
