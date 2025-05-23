@@ -99,6 +99,7 @@ class ToolCallParser:
                     pass
 
                 if tool_call is not None:
+                    assert "name" in tool_call and "arguments" in tool_call
                     tool_calls.append(ToolCall(
                         name=tool_call["name"],
                         arguments=tool_call["arguments"]
