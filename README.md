@@ -216,6 +216,13 @@ folder.
         * [delete](#cache-delete)
         * [download](#cache-download)
         * [list](#cache-list)
+    - [flow](#flow)
+        * [run](#flow-run)
+    - [memory](#memory)
+        * [embeddings](#memory-embeddings)
+        * [search](#memory-search)
+        * [document](#memory-document)
+            - [index](#memory-document-index)
     - [model](#model)
         * [display](#model-display)
         * [install](#model-install)
@@ -293,6 +300,8 @@ The CLI offers the following commands, some of them with multiple subcommands:
 
 * [agent](#agent): Run and manage AI agents.
 * [cache](#cache): Manage the local cache for model data, and download models.
+* [flow](#flow): Execute flows describing multiple processing steps.
+* [memory](#memory): Generate embeddings, search them and index documents.
 * [model](#model): Search for models, install and manage them, show
 their information, and run them.
 * [tokenizer](#tokenizer): Manage tokenizers and save them to filesystem.
@@ -407,6 +416,56 @@ avalan cache list --model 'Qwen/Qwen2.5-7B-Instruct'
 > When the same file appears in multiple revisions of a model, that does
 > not mean the file is stored multiple times. If a file hasn't changed
 > across revisions, a symlink is used, to only keep one version of the file.
+
+## flow
+
+### flow run
+
+Run a flow definition. Provide the path to the flow description file:
+
+```bash
+avalan flow run docs/examples/my_flow.toml
+```
+
+## memory
+
+### memory embeddings
+
+Generate embeddings from text. You can compare the generated embeddings or
+search across them:
+
+```bash
+avalan memory embeddings --model microsoft/Phi-4-mini-instruct \
+                         --compare 'hello there' \
+                         --search 'hola mundo' \
+                         --search-k 3
+```
+
+Use `--partition` to split long inputs into windows when indexing and
+`--display-partitions` to show a summary of the generated partitions.
+
+### memory search
+
+Look for memories stored in PostgreSQL using vector search:
+
+```bash
+avalan memory search --dsn postgresql://user:pass@localhost/db \
+                    --participant 123e4567-e89b-12d3-a456-426614174000 \
+                    --namespace chat \
+                    --function l2_distance \
+                    --limit 5
+```
+
+### memory document index
+
+Add a document to the memory index so its contents become searchable:
+
+```bash
+avalan memory document index README.md \
+                           --dsn postgresql://user:pass@localhost/db \
+                           --participant 123e4567-e89b-12d3-a456-426614174000 \
+                           --namespace docs
+```
 
 ## model
 
