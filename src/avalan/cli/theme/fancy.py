@@ -1,4 +1,5 @@
 from ...agent.orchestrator import Orchestrator
+from ...event import EventStats, EventType
 from ...memory.partitioner.text import TextPartition
 from ...model.entities import (
     EngineMessage,
@@ -1247,9 +1248,7 @@ class FancyTheme(Theme):
         ellapsed: float,
         console_width: int,
         logger: Logger,
-        events: Optional[int]=None,
-        tool_calls: Optional[int]=None,
-        tool_call_results: Optional[int]=None,
+        event_stats: Optional[EventStats]=None,
         maximum_frames: Optional[int]=None,
         logits_count: Optional[int]=None,
         think_height: int=6,
@@ -1324,15 +1323,15 @@ class FancyTheme(Theme):
             _f("tokens_rate", _("{tokens_rate} t/s").format(
                 tokens_rate=f"{total_tokens/ellapsed:.2f}"
             )),
-            _f("events", _("{events} events").format(
-                events=events
-            )) if events is not None else None,
-            _f("tool_calls", _("{tool_calls} tool calls").format(
-                tool_calls=tool_calls
-            )) if tool_calls is not None else None,
-            _f("tool_call_results", _("{tool_call_results} results").format(
-                tool_call_results=tool_call_results
-            )) if tool_call_results is not None else None,
+            _f("events", _("{total} events").format(
+                total=event_stats.total_triggers
+            )) if event_stats else None,
+            _f("tool_calls", _("{total} tool calls").format(
+                total=event_stats.triggers[EventType.TOOL_EXECUTE]
+            )) if event_stats.triggers[EventType.TOOL_EXECUTE] else None,
+            _f("tool_call_results", _("{total} results").format(
+                total=event_stats.triggers[EventType.TOOL_RESULT]
+            )) if event_stats.triggers[EventType.TOOL_RESULT] else None,
         ]))
         think_pannel = Panel(
             f"[bright_black]{think_wrapped_output}[/bright_black]",
