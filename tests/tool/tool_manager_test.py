@@ -1,4 +1,5 @@
 from avalan.model.entities import ToolCall, ToolCallResult
+from avalan.tool import ToolSet
 from avalan.tool.calculator import calculator
 from avalan.tool.manager import ToolManager
 from unittest import TestCase, main
@@ -10,13 +11,19 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertIsNone(manager.tools)
 
     def test_instance_with_enabled_tool(self):
-        manager = ToolManager.create_instance(enable_tools=["calculator"])
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])]
+        )
         self.assertFalse(manager.is_empty)
         self.assertEqual(manager.tools, [calculator])
 
 class ToolManagerCallTestCase(TestCase):
     def setUp(self):
-        self.manager = ToolManager.create_instance(enable_tools=["calculator"])
+        self.manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])]
+        )
 
     def test_call_no_tool_call(self):
         calls, results = self.manager("no tools here")
@@ -60,6 +67,28 @@ class ToolManagerCallTestCase(TestCase):
         self.assertEqual(calls, [expected_call])
         self.assertEqual(results, [expected_result])
         self.assertEqual(self.manager._parser._eos_token, "<END>")
+
+    def test_namespaced_tool(self):
+        namespaced_manager = ToolManager.create_instance(
+            enable_tools=["math.calculator"],
+            available_toolsets=[ToolSet(namespace="math", tools=[calculator])]
+        )
+        text = (
+            '<tool_call>{"name": "math.calculator", '
+            '"arguments": {"expression": "3"}}</tool_call>'
+        )
+        calls, results = namespaced_manager(text)
+        expected_call = ToolCall(
+            name="math.calculator",
+            arguments={"expression": "3"},
+        )
+        expected_result = ToolCallResult(
+            name="math.calculator",
+            arguments={"expression": "3"},
+            result="3",
+        )
+        self.assertEqual(calls, [expected_call])
+        self.assertEqual(results, [expected_result])
 
 if __name__ == "__main__":
     main()
