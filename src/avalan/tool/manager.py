@@ -1,35 +1,41 @@
 from ..model.entities import ToolCall, ToolCallResult, ToolFormat
+from ..tool import ToolSet
 from ..tool.calculator import calculator
 from ..tool.parser import ToolCallParser
 from types import FunctionType
-from typing import Optional, Tuple
+from typing import Sequence, Tuple
 
 class ToolManager:
     _parser: ToolCallParser
-    _tools: Optional[dict[str,FunctionType]]
+    _tools: dict[str, FunctionType] | None
 
     @classmethod
     def create_instance(
         cls,
         *args,
-        eos_token: Optional[str]=None,
-        enable_tools: Optional[list[str]]=None,
-        tool_format: Optional[ToolFormat]=None,
-        available_tools: Optional[list[FunctionType]]=None
+        eos_token: str | None = None,
+        enable_tools: list[str] | None = None,
+        tool_format: ToolFormat | None = None,
+        available_toolsets: Sequence[ToolSet] | None = None,
     ):
-        enabled_tools: Optional[list[FunctionType]] = None
+        enabled_toolsets: list[ToolSet] | None = None
 
-        if not available_tools:
-            available_tools = [
-                calculator
-            ]
+        if not available_toolsets:
+            available_toolsets = [ToolSet(tools=[calculator])]
 
-        if available_tools and enable_tools:
-            enabled_tools = [
-                tool
-                for tool in available_tools
-                if tool.__name__ in enable_tools
-            ]
+        if enable_tools:
+            enabled_toolsets = []
+            for toolset in available_toolsets:
+                prefix = f"{toolset.namespace}." if toolset.namespace else ""
+                tools = [
+                    tool
+                    for tool in toolset.tools
+                    if f"{prefix}{tool.__name__}" in enable_tools
+                ]
+                if tools:
+                    enabled_toolsets.append(
+                        ToolSet(tools=tools, namespace=toolset.namespace)
+                    )
 
         parser = ToolCallParser(
             eos_token=eos_token,
@@ -37,7 +43,7 @@ class ToolManager:
         )
         return cls(
             parser=parser,
-            tools=enabled_tools
+            toolsets=enabled_toolsets,
         )
 
     @property
@@ -45,29 +51,31 @@ class ToolManager:
         return not bool(self._tools)
 
     @property
-    def tools(self) -> Optional[list[FunctionType]]:
+    def tools(self) -> list[FunctionType] | None:
         return list(self._tools.values()) if self._tools else None
 
     def __init__(
         self,
         *args,
         parser: ToolCallParser,
-        tools: Optional[list[FunctionType]]=None
+        toolsets: Sequence[ToolSet] | None = None,
     ):
         self._parser = parser
         self._tools = None
 
-        if tools:
+        if toolsets:
             self._tools = {}
-            for tool in tools:
-                self._tools[tool.__name__] = tool
+            for toolset in toolsets:
+                prefix = f"{toolset.namespace}." if toolset.namespace else ""
+                for tool in toolset.tools:
+                    self._tools[f"{prefix}{tool.__name__}"] = tool
 
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
 
     def __call__(self, text: str) -> Tuple[
-        Optional[list[ToolCall]],
-        Optional[list[ToolCallResult]]
+        list[ToolCall] | None,
+        list[ToolCallResult] | None
     ]:
         tool_calls = self._parser(text)
         if not tool_calls:
