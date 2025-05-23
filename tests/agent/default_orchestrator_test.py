@@ -1,7 +1,17 @@
+from avalan.agent import (
+    InputType, 
+    OutputType,
+    Specification
+)
 from avalan.agent.orchestrators.default import DefaultOrchestrator
 from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
-from avalan.model.entities import EngineUri, TransformerEngineSettings
+from avalan.model.entities import (
+    EngineUri, 
+    Message, 
+    MessageRole
+    TransformerEngineSettings
+)
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -100,7 +110,28 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(orch.model_ids, {"m"})
 
             result = await orch("hi")
-            agent_mock.assert_awaited_once()
+            agent_mock.assert_awaited_once_with(
+                Specification(
+                    role='assistant', 
+                    goal=Goal(
+                        task='do', 
+                        instructions=['something']
+                    ), 
+                    rules=None, 
+                    input_type=InputType.TEXT, 
+                    output_type=OutputType.TEXT, 
+                    settings=None, 
+                    template_id='agent.md', 
+                    template_vars=None
+                ), 
+                Message(
+                    role=MessageRole.USER, 
+                    content='hi', 
+                    name=None, 
+                    arguments=None
+                )
+            )
             self.assertEqual(result, "ok")
+            
             await orch.__aexit__(None, None, None)
             memory.__exit__.assert_called_once()
