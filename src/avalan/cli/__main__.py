@@ -12,7 +12,8 @@ from ..cli.commands.agent import (
 from ..cli.commands.cache import cache_delete, cache_download, cache_list
 from ..cli.commands.memory import (
     memory_document_index,
-    memory_embeddings
+    memory_embeddings,
+    memory_search
 )
 from ..cli.commands.model import (
     model_display,
@@ -684,6 +685,47 @@ class CLI:
             default=DistanceType.L2,
             help="Sort comparison results using the given similarity measure",
         )
+
+        memory_search_parser = memory_command_parsers.add_parser(
+            name="search",
+            description="Search memories",
+            parents=[
+                global_parser,
+                model_options_parser,
+                memory_partitions_parser
+            ]
+        )
+        memory_search_parser.add_argument(
+            "--dsn",
+            type=str,
+            required=True,
+            help="PostgreSQL DSN for searching"
+        )
+        memory_search_parser.add_argument(
+            "--participant",
+            type=str,
+            required=True,
+            help="Participant ID to search"
+        )
+        memory_search_parser.add_argument(
+            "--namespace",
+            type=str,
+            required=True,
+            help="Namespace to search"
+        )
+        memory_search_parser.add_argument(
+            "--function",
+            type=VectorFunction,
+            choices=list(VectorFunction),
+            required=True,
+            default=VectorFunction.L2_DISTANCE,
+            help="Vector function to use for searching"
+        )
+        memory_search_parser.add_argument(
+            "--limit",
+            type=int,
+            help="Return up to this many memories"
+        )
         memory_doc_parser = memory_command_parsers.add_parser(
             name="document",
             description="Manage memory indexed documents",
@@ -1084,6 +1126,14 @@ class CLI:
                                     hub,
                                     self._logger
                                 )
+                    case "search":
+                        await memory_search(
+                            args,
+                            console,
+                            theme,
+                            hub,
+                            self._logger
+                        )
                     case "embeddings":
                         await memory_embeddings(
                             args,

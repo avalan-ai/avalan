@@ -15,6 +15,7 @@ from ...model.entities import (
     User
 )
 from ...cli.theme import Data, Spinner, Theme
+from ...memory.permanent import Memory
 from ...utils import _j, _lf
 from humanize import clamp, intcomma, intword, naturalday, naturalsize
 from locale import format_string
@@ -1098,6 +1099,33 @@ class FancyTheme(Theme):
                 box=box.SQUARE
             )
             for engine_message in messages
+        ]))
+        return group
+
+    def memory_search_matches(
+        self,
+        participant_id: UUID,
+        namespace: str,
+        memories: list[Memory]
+    ) -> RenderableType:
+        _, _f, _i = self._, self._f, self._icons
+        group = Group(*_lf([
+            Panel(
+                memory.data,
+                title=(
+                    _i["memory"] + " " +
+                    _f("id", memory.identifier)
+                ),
+                title_align="left",
+                subtitle=_("Participant: {participant} – Namespace: {ns}").format(
+                    participant=_f("participant_id", participant_id),
+                    ns=_f("id", namespace)
+                ),
+                subtitle_align="left",
+                expand=True,
+                box=box.SQUARE
+            )
+            for memory in memories
         ]))
         return group
 
