@@ -14,6 +14,7 @@ from ...model.entities import (
     TokenizerConfig,
     User
 )
+from ...memory.permanent import Memory
 from ...model.nlp import Token
 from dataclasses import fields
 from datetime import datetime
@@ -256,6 +257,15 @@ class Theme(ABC):
         agent: Orchestrator,
         messages: list[EngineMessageScored]
     ):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def memory_search_matches(
+        self,
+        participant_id: UUID,
+        namespace: str,
+        memories: list[Memory]
+    ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod

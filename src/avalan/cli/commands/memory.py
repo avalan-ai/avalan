@@ -3,7 +3,7 @@ from asyncio import to_thread
 from ...cli import get_input
 from ...cli.commands.model import get_model_settings, model_display
 from ...memory.partitioner.text import TextPartitioner
-from ...memory.permanent import MemoryType
+from ...memory.permanent import MemoryType, VectorFunction
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from uuid import UUID
 from ...model.entities import DistanceType, SearchMatch, Similarity
@@ -330,4 +330,77 @@ async def memory_embeddings(
                 console.print(theme.memory_embeddings_search(
                     search_matches
                 ))
+
+
+async def memory_search(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+    hub: HuggingfaceHub,
+    logger: Logger
+) -> None:
+    assert args.model and args.dsn and args.participant and args.namespace
+    assert args.function
+
+    _, _i = theme._, theme.icons
+    model_id = args.model
+    participant_id = UUID(args.participant)
+    namespace = args.namespace
+    dsn = args.dsn
+    limit = args.limit
+
+    input_string = get_input(
+        console,
+        _i["user_input"] + " ",
+        echo_stdin=not args.no_repl,
+        is_quiet=args.quiet,
+    )
+    if not input_string:
+        return
+
+    model_settings = get_model_settings(
+        args,
+        hub,
+        logger,
+        model_id,
+        is_sentence_transformer=True
+    )
+
+    with ModelManager(hub, logger) as manager:
+        with manager.load(**model_settings) as stm:
+            logger.debug(f"Loaded model {stm.config.__repr__()}")
+
+            model_display(
+                args,
+                console,
+                theme,
+                hub,
+                logger,
+                model=stm,
+                summary=True
+            )
+
+            partitioner = TextPartitioner(
+                stm,
+                logger,
+                max_tokens=args.partition_max_tokens,
+                window_size=args.partition_window,
+                overlap_size=args.partition_overlap
+            )
+            search_partitions = await partitioner(input_string)
+
+            memory_store = await PgsqlRawMemory.create_instance(dsn=dsn)
+            memories = await memory_store.search_memories(
+                search_partitions=search_partitions,
+                participant_id=participant_id,
+                namespace=namespace,
+                function=args.function,
+                limit=limit,
+            )
+
+            console.print(theme.memory_search_matches(
+                participant_id,
+                namespace,
+                memories
+            ))
 
