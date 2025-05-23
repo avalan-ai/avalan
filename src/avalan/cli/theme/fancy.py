@@ -1323,7 +1323,7 @@ class FancyTheme(Theme):
             )) if ttnt else None,
             _f("tokens_rate", _("{tokens_rate} t/s").format(
                 tokens_rate=f"{total_tokens/ellapsed:.2f}"
-            ))
+            )),
             _f("events", _("{events} events").format(
                 events=events
             )) if events is not None else None,
