@@ -9,6 +9,7 @@ from ..model.entities import (
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..model.nlp.text.generation import TextGenerationModel
+from ..secrets import KeyringSecrets
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
 from typing import Any, get_args
@@ -18,10 +19,12 @@ class ModelManager(ContextDecorator):
     _hub: HuggingfaceHub
     _stack: ExitStack
     _logger: Logger
+    _secrets: KeyringSecrets
 
-    def __init__(self, hub: HuggingfaceHub, logger: Logger):
+    def __init__(self, hub: HuggingfaceHub, logger: Logger, secrets: KeyringSecrets | None = None):
         self._hub, self._logger = hub, logger
         self._stack = ExitStack()
+        self._secrets = secrets or KeyringSecrets()
 
     def __enter__(self):
         return self
@@ -42,14 +45,18 @@ class ModelManager(ContextDecorator):
     ) -> TransformerEngineSettings:
         engine_settings_args = settings or {}
 
-        if (
-            not is_sentence_transformer
-            and not engine_uri.is_local
-            and engine_uri.user
-        ):
-            engine_settings_args.update(
-                access_token=engine_uri.user
-            )
+        if not is_sentence_transformer and not engine_uri.is_local:
+            token = None
+            if engine_uri.password and engine_uri.user:
+                if engine_uri.user == "secret":
+                    token = self._secrets.read(engine_uri.password)
+                else:
+                    token = None
+            elif engine_uri.user:
+                token = engine_uri.user
+
+            if token:
+                engine_settings_args.update(access_token=token)
 
         engine_settings = TransformerEngineSettings(**engine_settings_args)
         return engine_settings

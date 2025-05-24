@@ -120,6 +120,14 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def ask_secret_password(self, key: str) -> str:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def ask_override_secret(self, key: str) -> str:
+        raise NotImplementedError()
+
+    @abstractmethod
     def bye(self) -> RenderableType:
         raise NotImplementedError()
 
