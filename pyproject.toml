@@ -68,6 +68,7 @@ server = [
   "fastapi",
   "mcp",
   "uvicorn",
+  "mlx-lm",
 ]
 test = [
   "pytest",
@@ -92,6 +93,9 @@ vision = [
 ]
 vllm = [
   "vllm[cpu]"
+]
+mlx = [
+  "mlx-lm"
 ]
 all = [
   "accelerate",
@@ -119,4 +123,5 @@ all = [
   "tree-sitter",
   "tree-sitter-python",
   "uvicorn",
+  "mlx-lm",
 ]
