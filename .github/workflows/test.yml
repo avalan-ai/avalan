@@ -1,4 +1,4 @@
-name: Test
+name: Unit Tests
 
 on:
   push:
@@ -13,9 +13,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: Install Poetry
+      - name: PIP Install Poetry
         run: pip install poetry
-      - name: Install dependencies
-        run: poetry install --extras all
-      - name: Run tests
+      - name: Install poetry test dependencies
+        run: poetry sync --extras "test"
+      - name: Run verbose Unit Tests without stdout capture
         run: poetry run pytest --verbose -s
