@@ -3,6 +3,7 @@ from ..agent.engine import EngineAgent
 from ..memory.manager import MemoryManager
 from ..model.engine import Engine
 from ..tool.manager import ToolManager
+from ..event.manager import EventManager
 from jinja2 import (
     Environment as TemplateEnvironment,
     FileSystemLoader,
@@ -61,6 +62,7 @@ class TemplateEngineAgent(EngineAgent):
         model: Engine,
         memory: MemoryManager,
         tool: ToolManager,
+        event_manager: EventManager,
         renderer: Renderer,
         *args,
         name: Optional[str]=None,
@@ -70,6 +72,7 @@ class TemplateEngineAgent(EngineAgent):
             model,
             memory,
             tool,
+            event_manager,
             name=name,
             id=id,
         )
