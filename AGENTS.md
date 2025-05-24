@@ -9,16 +9,10 @@ This repository contains the **avalan** framework, a Python project that orchest
 
 ## Running Tests
 
-1. Create and activate the project's virtual environment with Poetry:
+Run the full test suite before every commit:
 
    ```bash
-   poetry install --extras all
-   ```
-
-2. Run the full test suite before every commit:
-
-   ```bash
-   poetry run pytest --verbose
+   poetry run pytest --verbose -s
    ```
 
 Tests must pass before you commit.
