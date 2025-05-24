@@ -1,5 +1,4 @@
 from avalan.model.entities import TransformerEngineSettings
-from avalan.model.nlp.text.mlxlm import MlxLmModel
 from logging import Logger
 from pytest import importorskip
 from unittest import TestCase, main, skip
@@ -20,6 +19,7 @@ class MlxLmModelTestCase(TestCase):
         MLXLm.generate.return_value = ""
 
         logger_mock = MagicMock(spec=Logger)
+        from avalan.model.nlp.text.mlxlm import MlxLmModel
         model = MlxLmModel(
             self.model_id,
             TransformerEngineSettings(),
