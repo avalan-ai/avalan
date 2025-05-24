@@ -205,18 +205,27 @@ class Engine(ABC):
                f"cache {self._settings.cache_dir}")
             self._model = self._load_model()
 
+            is_mlx = False
+            is_sentence_transformer = False
+
             if (
                 not isinstance(self._model, PreTrainedModel)
                 and not isinstance(self._model, TextGenerationVendor)
-                and find_spec("sentence_transformers")
             ):
-                from sentence_transformers import SentenceTransformer
-                assert isinstance(self._model, SentenceTransformer)
-                is_sentence_transformer = True
+                if find_spec("mlx"):
+                    from mlx.nn import Module
+                    is_mlx = isinstance(self._model, Module)
+                elif find_spec("sentence_transformers"):
+                    from sentence_transformers import SentenceTransformer
+                    is_sentence_transformer = isinstance(
+                        self._model,
+                        SentenceTransformer
+                    )
             assert (
-                is_sentence_transformer or
                 isinstance(self._model, PreTrainedModel) or
-                isinstance(self._model, TextGenerationVendor)
+                isinstance(self._model, TextGenerationVendor) or
+                is_mlx or
+                is_sentence_transformer
             ), f"Unexpected pretrained model type: {type(self._model)}"
 
             _l(f"Loaded pretrained model {self._model_id} from "

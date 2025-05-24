@@ -1,18 +1,16 @@
-from asyncio import to_thread
-from dataclasses import replace
-from ....model.entities import GenerationSettings, Input, TransformerEngineSettings
+from ....model.entities import (
+    GenerationSettings,
+    Input,
+    TransformerEngineSettings
+)
 from ....model.nlp.text.generation import TextGenerationModel
 from ....model.nlp.text.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
+from asyncio import to_thread
+from dataclasses import replace
 from logging import Logger
+from mlx_lm import load, generate
 from typing import AsyncGenerator
-
-try:
-    from mlx_lm import load, generate
-except Exception:  # pragma: no cover - mlx-lm may not be installed
-    load = None
-    generate = None
-
 
 class MlxLmStream(TextGenerationVendorStream):
     """Async wrapper around a synchronous token generator."""
@@ -27,7 +25,6 @@ class MlxLmStream(TextGenerationVendorStream):
         except StopIteration:
             raise StopAsyncIteration
         return chunk
-
 
 class MlxLmModel(TextGenerationModel):
     """Text generation model using the ``mlx_lm`` backend."""
@@ -68,9 +65,14 @@ class MlxLmModel(TextGenerationModel):
         prompt: str,
         settings: GenerationSettings,
     ) -> AsyncGenerator[str, None]:
-        assert generate, "mlx-lm is not available"
         params = self._build_params(settings)
-        iterator = generate(self._model, self._tokenizer, prompt, stream=True, **params)
+        iterator = generate(
+            self._model,
+            self._tokenizer,
+            prompt,
+            stream=True,
+            **params
+        )
         stream = MlxLmStream(iter(iterator))
         async for chunk in stream:
             yield chunk
@@ -80,7 +82,6 @@ class MlxLmModel(TextGenerationModel):
         prompt: str,
         settings: GenerationSettings,
     ) -> str:
-        assert generate, "mlx-lm is not available"
         params = self._build_params(settings)
         return generate(self._model, self._tokenizer, prompt, **params)
 
