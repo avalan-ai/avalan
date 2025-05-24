@@ -80,6 +80,9 @@ test = [
 tool = [
   "sympy",
 ]
+secrets = [
+  "keyring",
+]
 translation = [
   "protobuf",
   "sentencepiece",
@@ -121,6 +124,7 @@ all = [
   "pytest",
   "sentence-transformers",
   "sentencepiece",
+  "keyring",
   "sympy",
   "tiktoken",
   "torchaudio",

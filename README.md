@@ -266,7 +266,7 @@ poetry lock && poetry install
 > for example with:
 >
 > ```bash
-> poetry install --extras 'agent audio cpu memory server test translation vision'
+> poetry install --extras 'agent audio cpu memory secrets server test translation vision'
 > ```
 >
 > Or you can install all extras at once with:

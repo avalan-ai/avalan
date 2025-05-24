@@ -1,7 +1,7 @@
 from argparse import Namespace
 from asyncio import as_completed, create_task, gather, sleep, to_thread
 from ...agent.orchestrator import Orchestrator
-from ...cli import get_input
+from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
 from ...event import EventStats
 from ...model.entities import (
@@ -16,6 +16,8 @@ from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text import TextGenerationResponse
 from ...model.nlp.text.generation import TextGenerationModel
+from ...secrets import KeyringSecrets
+from rich.prompt import Prompt
 from logging import Logger
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -90,6 +92,21 @@ def model_install(
     hub: HuggingfaceHub
 ) -> None:
     assert(args.model)
+    engine_uri = ModelManager.parse_uri(args.model)
+    if (
+        engine_uri.vendor
+        and engine_uri.password
+        and engine_uri.user == "secret"
+    ):
+        secrets = KeyringSecrets()
+        token = secrets.read(engine_uri.password)
+        if token is None:
+            secret_value = Prompt.ask(theme.ask_secret_password(engine_uri.password))
+            secrets.write(engine_uri.password, secret_value)
+        elif confirm(console, theme.ask_override_secret(engine_uri.password)):
+            secret_value = Prompt.ask(theme.ask_secret_password(engine_uri.password))
+            secrets.write(engine_uri.password, secret_value)
+
     cache_download(args, console, theme, hub)
 
 async def model_run(
@@ -256,6 +273,15 @@ def model_uninstall(
     hub: HuggingfaceHub
 ) -> None:
     assert(args.model)
+    engine_uri = ModelManager.parse_uri(args.model)
+    if (
+        engine_uri.vendor
+        and engine_uri.password
+        and engine_uri.user == "secret"
+    ):
+        secrets = KeyringSecrets()
+        secrets.delete(engine_uri.password)
+
     cache_delete(args, console, theme, hub, is_full_deletion=True)
 
 async def token_generation(

@@ -224,6 +224,14 @@ class FancyTheme(Theme):
         _ = self._
         return _("Login to huggingface?")
 
+    def ask_secret_password(self, key: str) -> str:
+        _ = self._
+        return _("Enter secret for {key}").format(key=key)
+
+    def ask_override_secret(self, key: str) -> str:
+        _ = self._
+        return _("Secret {key} exists, override?").format(key=key)
+
     def bye(self) -> RenderableType:
         _, _i = self._, self._icons
         return _i["bye"] + " " + _("bye :)")
