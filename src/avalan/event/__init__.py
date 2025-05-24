@@ -9,6 +9,14 @@ class EventType(StrEnum):
     TOOL_RESULT = "tool_result"
     END = "end"
     STREAM_END = "stream_end"
+    CALL_PREPARE_BEFORE = "call_prepare_before"
+    CALL_PREPARE_AFTER = "call_prepare_after"
+    MEMORY_APPEND_BEFORE = "memory_append_before"
+    MEMORY_APPEND_AFTER = "memory_append_after"
+    MODEL_EXECUTE_BEFORE = "model_execute_before"
+    MODEL_EXECUTE_AFTER = "model_execute_after"
+    INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"
+    INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
 
 @dataclass(frozen=True, kw_only=True)
 class Event:

@@ -12,6 +12,8 @@ from ..model.entities import (
 from ..model.nlp.text import TextGenerationResponse
 from ..model.nlp.text.vendor import TextGenerationVendorModel
 from ..tool.manager import ToolManager
+from ..event import Event, EventType
+from ..event.manager import EventManager
 from dataclasses import replace
 from typing import Any, Optional, Union, Tuple
 from uuid import UUID, uuid4
@@ -22,6 +24,7 @@ class EngineAgent(ABC):
     _model: Engine
     _memory: MemoryManager
     _tool: ToolManager
+    _event_manager: EventManager
     _last_output: Optional[TextGenerationResponse]=None
     _last_prompt: Optional[Tuple[Input,Optional[str]]]=None
 
@@ -46,18 +49,25 @@ class EngineAgent(ABC):
     def output(self) -> Optional[TextGenerationResponse]:
         return self._last_output
 
-    @property
-    def input_token_count(self) -> Optional[int]:
-        return self._model.input_token_count(
+    async def input_token_count(self) -> Optional[int]:
+        if not self._last_prompt:
+            return None
+        await self._event_manager.trigger(Event(type=EventType.INPUT_TOKEN_COUNT_BEFORE))
+        count = self._model.input_token_count(
             self._last_prompt[0],
             system_prompt=self._last_prompt[1]
-        ) if self._last_prompt else None
+        )
+        await self._event_manager.trigger(
+            Event(type=EventType.INPUT_TOKEN_COUNT_AFTER, payload={"count": count})
+        )
+        return count
 
     def __init__(
         self,
         model: Engine,
         memory: MemoryManager,
         tool: ToolManager,
+        event_manager: EventManager,
         *args,
         name: Optional[str]=None,
         id: Optional[UUID]=None,
@@ -67,6 +77,7 @@ class EngineAgent(ABC):
         self._model = model
         self._memory = memory
         self._tool = tool
+        self._event_manager = event_manager
 
     async def __call__(
         self,
@@ -77,7 +88,9 @@ class EngineAgent(ABC):
         TextGenerationResponse,
         str
     ]:
+        await self._event_manager.trigger(Event(type=EventType.CALL_PREPARE_BEFORE))
         run_args = self._prepare_call(specification, input, **kwargs)
+        await self._event_manager.trigger(Event(type=EventType.CALL_PREPARE_AFTER))
         return await self._run(input, **run_args)
 
     async def _run(
@@ -126,16 +139,34 @@ class EngineAgent(ABC):
 
             # Append messages
             if previous_message:
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.MEMORY_APPEND_BEFORE,
+                        payload={"message": previous_message},
+                    )
+                )
                 await self._memory.append_message(EngineMessage(
                     agent_id=self._id,
                     model_id=self._model.model_id,
                     message=previous_message
                 ))
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.MEMORY_APPEND_AFTER,
+                        payload={"message": previous_message},
+                    )
+                )
+            await self._event_manager.trigger(
+                Event(type=EventType.MEMORY_APPEND_BEFORE, payload={"message": new_message})
+            )
             await self._memory.append_message(EngineMessage(
                 agent_id=self._id,
                 model_id=self._model.model_id,
                 message=new_message
             ))
+            await self._event_manager.trigger(
+                Event(type=EventType.MEMORY_APPEND_AFTER, payload={"message": new_message})
+            )
 
             # Make recent memory the new model input
             input = [ rm.message for rm in self._memory.recent_messages ]
@@ -150,7 +181,9 @@ class EngineAgent(ABC):
         if not isinstance(self._model, TextGenerationVendorModel):
             model_settings["skip_special_tokens"] = skip_special_tokens
 
+        await self._event_manager.trigger(Event(type=EventType.MODEL_EXECUTE_BEFORE))
         output = await self._model(input, **model_settings)
+        await self._event_manager.trigger(Event(type=EventType.MODEL_EXECUTE_AFTER))
 
         # Update memory
         if self._memory.has_recent_message:

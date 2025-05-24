@@ -256,6 +256,7 @@ class Orchestrator:
                     engine,
                     self._memory,
                     self._tool,
+                    self._event_manager,
                     self._renderer,
                     name=self._name,
                     id=self._id
