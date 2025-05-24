@@ -3,11 +3,10 @@ from avalan.model.hubs.huggingface import HuggingfaceHub
 from contextlib import AsyncExitStack
 from logging import Logger
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from os import chmod
+from os import chmod, geteuid
 from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
-import os
 
 class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
     async def test_file_not_found(self):
@@ -24,7 +23,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         await stack.aclose()
 
     async def test_permission_error(self):
-        if os.geteuid() == 0:
+        if geteuid() == 0:
             self.skipTest("Running as root; permission error won't occur")
         with NamedTemporaryFile(delete=False) as tmp:
             path = tmp.name
