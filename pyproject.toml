@@ -67,8 +67,7 @@ server = [
   "pydantic",
   "fastapi",
   "mcp",
-  "uvicorn",
-  "mlx-lm",
+  "uvicorn"
 ]
 test = [
   "pytest",
@@ -107,6 +106,7 @@ all = [
   "jinja2",
   "markitdown[pdf]",
   "mcp",
+  "mlx-lm",
   "openai",
   "pillow",
   "protobuf",
@@ -123,5 +123,4 @@ all = [
   "tree-sitter",
   "tree-sitter-python",
   "uvicorn",
-  "mlx-lm",
 ]

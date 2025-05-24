@@ -1552,6 +1552,66 @@ files = [
 ]
 
 [[package]]
+name = "mlx"
+version = "0.25.2"
+description = "A framework for machine learning on Apple silicon."
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "extra == \"mlx\" or extra == \"all\""
+files = [
+    {file = "mlx-0.25.2-cp310-cp310-macosx_13_0_arm64.whl", hash = "sha256:112a02030b14c0e08eeb4e6a1c6e0d259d2c6ae28cfb684d02a32e720e8656da"},
+    {file = "mlx-0.25.2-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:5b1173bafca02c2e4b7902a2440bf635d2588f5ab40f68fa83bad43ceca818f2"},
+    {file = "mlx-0.25.2-cp310-cp310-macosx_15_0_arm64.whl", hash = "sha256:22f5e80bf2424dc73052e48eeb769056514b78ea28d66a33a5daf1cb83e1acaa"},
+    {file = "mlx-0.25.2-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:e44385a2f5d37d586b245bd7f6ed79998429129880cff0e89f308da73d8f4b56"},
+    {file = "mlx-0.25.2-cp311-cp311-macosx_13_0_arm64.whl", hash = "sha256:ab9d9eda941004d805d7365006d65789c88a37b6df896bf8c7e9ea1ca85630d3"},
+    {file = "mlx-0.25.2-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:c89ec8726e8cb48196fc07435579482a49d3d2d484b5e2c4d15dfd3a390eec91"},
+    {file = "mlx-0.25.2-cp311-cp311-macosx_15_0_arm64.whl", hash = "sha256:f3ef4e8e9a6adc43371f242445423147cce338d1b1368366b84f9dd74483a980"},
+    {file = "mlx-0.25.2-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:3bbce1ad8f6066376ed82002af05fe2451776fd345600e7d4743777898aaaf49"},
+    {file = "mlx-0.25.2-cp312-cp312-macosx_13_0_arm64.whl", hash = "sha256:c9d35eac8d3224c9e005e7d469dd927dbdecd3d01b2e23390fd0d496e0010b7f"},
+    {file = "mlx-0.25.2-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:c965289d64814005f85c4b121d5df00889a0ea5160883a62edb396b360bf5736"},
+    {file = "mlx-0.25.2-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:24055a8fba9a6261d94dbfd31c37ede75106c7a832cb0609cb5b65e7e903e1fb"},
+    {file = "mlx-0.25.2-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:d7cc749e66e759ccad70d736896e0bc71d15f99fdbccfaa292da65fd6988bab8"},
+    {file = "mlx-0.25.2-cp313-cp313-macosx_13_0_arm64.whl", hash = "sha256:836e224efabbcdd55340c59148a6f36c69bd80e08b2e73fe6f6a6b02a00888b1"},
+    {file = "mlx-0.25.2-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:a39fef63444a7642f090ee09aaed8c59592962104d91bc655f330169dfacb8c0"},
+    {file = "mlx-0.25.2-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:20f36ebf454b12a77d8b82a7a510dd235ab2cb24ef83011e9dd1daef1933617d"},
+    {file = "mlx-0.25.2-cp313-cp313-manylinux_2_31_x86_64.whl", hash = "sha256:7af0708c8b80f71d5a6f583d788e2d6086b7dc37019ed5419e0143cc7c7e7002"},
+    {file = "mlx-0.25.2-cp39-cp39-macosx_13_0_arm64.whl", hash = "sha256:8d4d2a78053f2bf9ff0796316cc3a2e1b4c5fabc262f65cdc614e37316f1abca"},
+    {file = "mlx-0.25.2-cp39-cp39-macosx_14_0_arm64.whl", hash = "sha256:63ade62972c19f3ea0f150f66a346457f302232fd529d6b593026ec6eff8e79c"},
+    {file = "mlx-0.25.2-cp39-cp39-macosx_15_0_arm64.whl", hash = "sha256:dfc156b39493f2fa1c727bb199a42bb88901635047f57de01dcfa98db99d97b7"},
+    {file = "mlx-0.25.2-cp39-cp39-manylinux_2_31_x86_64.whl", hash = "sha256:9a349eec06663be9cf8013aa4bee3175aae2f87b089a9b76a4ca995b2763194e"},
+]
+
+[package.extras]
+dev = ["nanobind (==2.4.0)", "numpy", "pre-commit", "setuptools (>=42)", "torch", "typing_extensions"]
+
+[[package]]
+name = "mlx-lm"
+version = "0.24.1"
+description = "LLMs on Apple silicon with MLX and the Hugging Face Hub"
+optional = true
+python-versions = ">=3.8"
+groups = ["main"]
+markers = "extra == \"mlx\" or extra == \"all\""
+files = [
+    {file = "mlx_lm-0.24.1-py3-none-any.whl", hash = "sha256:8a47c2ac73b1ea5f1f4569d48420b4cd2fdb38972eb14fd45340c3341bf0689f"},
+    {file = "mlx_lm-0.24.1.tar.gz", hash = "sha256:5df8aa87504df28bd77c91be09f68c551bde6f141f204d3b37157f3c3ede26c1"},
+]
+
+[package.dependencies]
+jinja2 = "*"
+mlx = ">=0.25.0"
+numpy = "*"
+protobuf = "*"
+pyyaml = "*"
+transformers = {version = ">=4.39.3", extras = ["sentencepiece"]}
+
+[package.extras]
+evaluate = ["lm-eval", "tqdm"]
+lwq = ["datasets"]
+test = ["datasets"]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 description = "Python library for arbitrary-precision floating-point arithmetic"
@@ -2580,7 +2640,7 @@ description = ""
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"memory\" or extra == \"all\" or extra == \"translation\" or extra == \"vllm\""
+markers = "extra == \"memory\" or extra == \"all\" or extra == \"translation\" or extra == \"vllm\" or extra == \"mlx\""
 files = [
     {file = "protobuf-6.31.0-cp310-abi3-win32.whl", hash = "sha256:10bd62802dfa0588649740a59354090eaf54b8322f772fbdcca19bc78d27f0d6"},
     {file = "protobuf-6.31.0-cp310-abi3-win_amd64.whl", hash = "sha256:3e987c99fd634be8347246a02123250f394ba20573c953de133dc8b2c107dd71"},
@@ -3693,7 +3753,7 @@ description = "SentencePiece python wrapper"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "extra == \"translation\" or extra == \"all\" or extra == \"vllm\""
+markers = "extra == \"translation\" or extra == \"all\" or extra == \"vllm\" or extra == \"mlx\""
 files = [
     {file = "sentencepiece-0.2.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:188779e1298a1c8b8253c7d3ad729cb0a9891e5cef5e5d07ce4592c54869e227"},
     {file = "sentencepiece-0.2.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:bed9cf85b296fa2b76fc2547b9cbb691a523864cebaee86304c43a7b4cb1b452"},
@@ -4172,10 +4232,12 @@ filelock = "*"
 huggingface-hub = ">=0.30.0,<1.0"
 numpy = ">=1.17"
 packaging = ">=20.0"
+protobuf = {version = "*", optional = true, markers = "extra == \"sentencepiece\""}
 pyyaml = ">=5.1"
 regex = "!=2019.12.17"
 requests = "*"
 safetensors = ">=0.4.3"
+sentencepiece = {version = ">=0.1.91,<0.1.92 || >0.1.92", optional = true, markers = "extra == \"sentencepiece\""}
 tokenizers = ">=0.21,<0.22"
 tqdm = ">=4.27"
 
@@ -4682,10 +4744,11 @@ propcache = ">=0.2.1"
 
 [extras]
 agent = ["jinja2"]
-all = ["accelerate", "anthropic", "bitsandbytes", "faiss-cpu", "fastapi", "google-genai", "jinja2", "markitdown", "mcp", "openai", "pgvector", "pillow", "protobuf", "psycopg", "pydantic", "pytest", "sentence-transformers", "sentencepiece", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn"]
+all = ["accelerate", "anthropic", "bitsandbytes", "faiss-cpu", "fastapi", "google-genai", "jinja2", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "protobuf", "psycopg", "pydantic", "pytest", "sentence-transformers", "sentencepiece", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn"]
 audio = ["torchaudio"]
 cpu = ["accelerate"]
 memory = ["faiss-cpu", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
+mlx = ["mlx-lm"]
 quantization = ["bitsandbytes"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
 test = ["pytest"]
@@ -4698,4 +4761,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.11"
-content-hash = "0c8bb2d0d6ed80a0113d62464f3f26f512491386b87c5c098e03d87581fd026b"
+content-hash = "7e3055646ad1310319189fec83878d7ad35f071ac03171e59427d12a628cf23c"
