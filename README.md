@@ -242,7 +242,6 @@ folder.
 * [Development](#development)
 	- [Building](#building)
     - [Running tests](#running-tests)
-    - [Adding packages](#adding-packages)
     - [Translations](#translations)
     - [TODO](#todo)
 
@@ -289,10 +288,18 @@ poetry install --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 ```
 
 > [!TIP]
-> If you are on an Apple silicon chip, run the
-> [configure_mlx.sh](https://github.com/avalan-ai/avalan/blob/main/scripts/configure_mlx.sh)
-> script, created by [@AlexCheema](https://github.com/AlexCheema), which empirically reduces the time to
-> first token and the tokens per second ratio.
+> At time of this writing, while Python 3.12 is stable and available
+> in Homebrew, sentenpiece, a package added by the extra `translation`,
+> requires Python 3.11, so you may want to force the python version when
+> creating the virtual environment: `python-3.11 -m venv .venv/`
+
+> [!TIP]
+> On MacOS, sentencepiece may have issues while installing. If so,
+> ensure Xcode CLI is installed, and install needed Homebrew packages
+> with:
+>
+> `xcode-select --install`
+> `brew install cmake pkg-config protobuf sentencepiece`
 
 # The CLI
 
@@ -338,6 +345,12 @@ avalan model run meta-llama/Meta-Llama-3-8B-Instruct --locale es
 ![Running the CLI in spanish](https://avalan.ai/images/spanish_translation.png)
 
 You'll need your Huggingface access token exported as `HF_ACCESS_TOKEN`.
+
+> [!TIP]
+> If you are on an Apple silicon chip, run the
+> [configure_mlx.sh](https://github.com/avalan-ai/avalan/blob/main/scripts/configure_mlx.sh)
+> script, created by [@AlexCheema](https://github.com/AlexCheema), which
+> empirically reduces the time to first token and the tokens per second ratio.
 
 ## agent
 
@@ -748,7 +761,7 @@ If you're going to work on this package, install it in editable mode so changes
 are reflected instantly:
 
 ```bash
-pip install -e .
+poetry install
 ```
 
 ## Building
@@ -764,42 +777,13 @@ python -m build
 If you want to run the tests, install the `tests` extra packages:
 
 ```bash
-pip install -e '.[test]'
+poetry install --extras test
 ```
 
 You can run the tests with:
 
 ```bash
 poetry run pytest --verbose
-```
-
-## Adding packages
-
-Add your package to `requirements.in` and then compile it to
-`requirements.txt`:
-
-```bash
-pip-compile --pre requirements.in --output-file requirements.txt
-```
-
-Depending on your architecture, you may need to add pytorch's index:
-
-```bash
-pip-compile --pre requirements.in --output-file requirements.txt \
-    --extra-index-url https://download.pytorch.org/whl/nightly/cpu
-```
-
-Install updated packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-Remember to add pytorch's index if needed by your architecture:
-
-```bash
-pip install -r requirements.txt \
-    --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 ```
 
 ## Translations

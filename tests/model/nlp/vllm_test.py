@@ -30,7 +30,6 @@ class VllmModelTestCase(TestCase):
                 auto_tokenizer_mock.reset_mock()
                 auto_tokenizer_mock.return_value = tokenizer_mock
 
-
                 logger_mock = MagicMock(spec=Logger)
                 model = VllmModel(
                     self.model_id,

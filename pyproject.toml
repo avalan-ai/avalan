@@ -67,7 +67,7 @@ server = [
   "pydantic",
   "fastapi",
   "mcp",
-  "uvicorn",
+  "uvicorn"
 ]
 test = [
   "pytest",
@@ -93,6 +93,9 @@ vision = [
 vllm = [
   "vllm[cpu]"
 ]
+mlx = [
+  "mlx-lm"
+]
 all = [
   "accelerate",
   "anthropic",
@@ -103,6 +106,7 @@ all = [
   "jinja2",
   "markitdown[pdf]",
   "mcp",
+  "mlx-lm",
   "openai",
   "pillow",
   "protobuf",
