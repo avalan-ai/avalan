@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from argparse import Namespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, AsyncMock, patch, call
 
 from avalan.cli.commands import model as model_cmds
 
@@ -137,6 +137,144 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             with_stats=False,
         )
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
+
+
+class CliModelRunTestCase(IsolatedAsyncioTestCase):
+    async def test_returns_when_no_input(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=False,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = MagicMock()
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri.return_value = engine_uri
+        manager.load.return_value = load_cm
+
+        with patch.object(model_cmds, "ModelManager", return_value=manager) as mm_patch, \
+             patch.object(model_cmds, "get_model_settings", return_value={"engine_uri": engine_uri}) as gms_patch, \
+             patch.object(model_cmds, "get_input", return_value=None) as gi_patch, \
+             patch.object(model_cmds, "token_generation", new_callable=AsyncMock) as tg_patch:
+            await model_cmds.model_run(args, console, theme, hub, logger)
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri, is_sentence_transformer=False)
+        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        lm.assert_not_called()
+        tg_patch.assert_not_called()
+        hub.can_access.assert_called_once_with("id")
+        hub.model.assert_called_once_with("id")
+        theme.model.assert_called_once_with("hub_model", can_access=True, summary=True)
+        console.print.assert_called_once()
+
+    async def test_run_local_model(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=2,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=False,
+            do_sample=True,
+            enable_gradient_calculation=True,
+            min_p=0.1,
+            repetition_penalty=1.1,
+            temperature=0.5,
+            top_k=5,
+            top_p=0.9,
+            use_cache=False,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock()
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+        lm.return_value = "resp"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri.return_value = engine_uri
+        manager.load.return_value = load_cm
+
+        with patch.object(model_cmds, "ModelManager", return_value=manager) as mm_patch, \
+             patch.object(model_cmds, "get_model_settings", return_value={"engine_uri": engine_uri}) as gms_patch, \
+             patch.object(model_cmds, "get_input", return_value="hi") as gi_patch, \
+             patch.object(model_cmds, "token_generation", new_callable=AsyncMock) as tg_patch:
+            await model_cmds.model_run(args, console, theme, hub, logger)
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri, is_sentence_transformer=False)
+        manager.load.assert_called_once_with(engine_uri=engine_uri)
+
+        lm.assert_awaited_once()
+        call_kwargs = lm.await_args.kwargs
+        self.assertEqual(call_kwargs["system_prompt"], None)
+        self.assertEqual(call_kwargs["manual_sampling"], 0)
+        self.assertEqual(call_kwargs["pick"], 0)
+        self.assertFalse(call_kwargs["skip_special_tokens"])
+        settings = call_kwargs["settings"]
+        self.assertIsInstance(settings, model_cmds.GenerationSettings)
+        self.assertEqual(settings.max_new_tokens, args.max_new_tokens)
+
+        tg_patch.assert_awaited_once()
+        tg_kwargs = tg_patch.await_args.kwargs
+        self.assertEqual(tg_kwargs["input_string"], "hi")
+        self.assertEqual(tg_kwargs["response"], "resp")
 
 
 if __name__ == "__main__":
