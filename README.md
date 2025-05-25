@@ -48,6 +48,9 @@ distributed infrastructures, avalan provides flexibility,
 visibility, and performance to confidently accelerate your 
 AI innovation journey.
 
+Check out [the CLI documentation](docs/CLI.md) to see what 
+it can do, but if you want to jump right in, run a model:
+
 ```bash
 avalan model run meta-llama/Meta-Llama-3-8B-Instruct
 ```
