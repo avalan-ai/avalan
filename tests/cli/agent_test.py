@@ -143,5 +143,95 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
 
 
+class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.args = Namespace(
+            specifications_file="spec.toml",
+            use_sync_generator=False,
+            display_tokens=0,
+            stats=False,
+            id="aid",
+            participant="pid",
+            session="sid",
+            no_session=False,
+            skip_load_recent_messages=False,
+            load_recent_messages_limit=1,
+            no_repl=False,
+            quiet=False,
+            skip_hub_access_check=False,
+            conversation=False,
+            tty=None,
+        )
+        self.console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        self.console.status.return_value = status_cm
+        self.theme = MagicMock()
+        self.theme._ = lambda s: s
+        self.theme.icons = {"user_input": ">", "agent_output": "<"}
+        self.theme.get_spinner.return_value = "sp"
+        self.theme.agent.return_value = "agent_panel"
+        self.theme.recent_messages.return_value = "recent_panel"
+        self.hub = MagicMock()
+        self.hub.can_access.return_value = True
+        self.hub.model.side_effect = lambda m: f"mdl-{m}"
+        self.logger = MagicMock()
+
+        self.orch = AsyncMock()
+        self.orch.engine_agent = True
+        self.orch.engine = MagicMock(model_id="m")
+        self.orch.model_ids = ["m"]
+        self.orch.event_manager.add_listener = MagicMock()
+        self.orch.memory = MagicMock()
+        self.orch.memory.has_recent_message = False
+        self.orch.memory.has_permanent_message = False
+        self.orch.memory.recent_message = MagicMock(is_empty=True, size=0, data=[])
+        self.orch.memory.continue_session = AsyncMock()
+        self.orch.memory.start_session = AsyncMock()
+
+        self.dummy_stack = AsyncMock()
+        self.dummy_stack.__aenter__.return_value = self.dummy_stack
+        self.dummy_stack.__aexit__.return_value = False
+        self.dummy_stack.enter_async_context = AsyncMock(return_value=self.orch)
+
+    async def test_returns_when_no_input(self):
+        with patch.object(agent_cmds, "get_input", return_value=None), \
+             patch.object(agent_cmds, "AsyncExitStack", return_value=self.dummy_stack), \
+             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock(return_value=self.orch)), \
+             patch.object(agent_cmds, "token_generation", new_callable=AsyncMock):
+            await agent_cmds.agent_run(self.args, self.console, self.theme, self.hub, self.logger, 1)
+
+        self.orch.assert_not_awaited()
+        self.orch.memory.continue_session.assert_awaited_once_with(
+            session_id="sid",
+            load_recent_messages=True,
+            load_recent_messages_limit=1,
+        )
+        self.console.print.assert_any_call("agent_panel")
+        self.assertEqual(len(self.console.print.call_args_list), 1)
+
+    async def test_run_with_text_response(self):
+        class DummyResponse:
+            def __aiter__(self_inner):
+                async def gen():
+                    yield "t"
+                return gen()
+
+        with patch.object(agent_cmds, "get_input", return_value="hi"), \
+             patch.object(agent_cmds, "AsyncExitStack", return_value=self.dummy_stack), \
+             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock(return_value=self.orch)), \
+             patch.object(agent_cmds, "token_generation", new_callable=AsyncMock) as tg_patch, \
+             patch.object(agent_cmds, "TextGenerationResponse", DummyResponse):
+            self.orch.return_value = DummyResponse()
+            await agent_cmds.agent_run(self.args, self.console, self.theme, self.hub, self.logger, 1)
+
+        self.orch.assert_awaited_once_with("hi", use_async_generator=True)
+        tg_patch.assert_awaited_once()
+        self.orch.memory.continue_session.assert_awaited()
+        self.console.print.assert_any_call("agent_panel")
+        self.console.print.assert_any_call("< ", end="")
+
+
 if __name__ == "__main__":
     unittest.main()
