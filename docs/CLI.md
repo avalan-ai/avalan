@@ -9,6 +9,7 @@ The CLI offers the following commands, some of them with multiple subcommands:
 * [model](#model): Search for models, install and manage them, show
 their information, and run them.
 * [tokenizer](#tokenizer): Manage tokenizers and save them to filesystem.
+
 If you want to list all available commands and global options, run:
 
 ```bash
