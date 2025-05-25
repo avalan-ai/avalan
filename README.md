@@ -19,12 +19,6 @@
 
   <!-- Latest commit -->
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="GitHub last commit" />
-
-  <!-- Dependencies health (Depfu) -->
-  <img src="https://img.shields.io/depfu/avalan-ai/avalan.svg" alt="Dependencies" />
-
-  <!-- Documentation status (Read the Docs) -->
-  <img src="https://readthedocs.org/projects/avalan/badge/?version=latest" alt="Documentation Status" />
 </p>
 
 **avalan**[^1] is a framework that leverages [transformers](https://github.com/huggingface/transformers)
