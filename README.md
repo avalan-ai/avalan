@@ -48,13 +48,6 @@ distributed infrastructures, avalan provides flexibility,
 visibility, and performance to confidently accelerate your 
 AI innovation journey.
 
-
-is a framework that leverages 
-and  to facilitate the
-orchestration of AI agents as well as the execution, distillation, and
-training of LMs, either directly via source code, or with its CLI.
-Go through [the CLI documentation](docs/CLI.md) to see what it can do, but if you want to jump right in, run a model:
-
 ```bash
 avalan model run meta-llama/Meta-Llama-3-8B-Instruct
 ```
