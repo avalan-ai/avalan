@@ -8,9 +8,6 @@
   <!-- Supported Python versions -->
   <img src="https://img.shields.io/pypi/pyversions/avalan.svg" alt="Python versions" />
 
-  <!-- Total downloads -->
-  <img src="https://img.shields.io/pypi/dm/avalan.svg" alt="Downloads" />
-
   <!-- Code coverage (Codecov) -->
   <img src="https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg" alt="Coverage" />
 
