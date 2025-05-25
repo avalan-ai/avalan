@@ -17,7 +17,9 @@
 effortlessly build, orchestrate, and deploy intelligent 
 AI agents—locally or in the cloud—across millions of models through 
 an intuitive, unified SDK and CLI. With robust 
-multi-backend support (transformers, vLLM, mlx-lm), first-class
+multi-backend support ([transformers](https://github.com/huggingface/transformers), 
+[vLLM](https://github.com/vllm-project/vllm), 
+[mlx-lm](https://github.com/ml-explore/mlx-lm)), first-class
 support of multiple AI protocols (MCP, A2A), plus native 
 integrations for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and 
 beyond, avalan enables you to select the optimal  engine 
@@ -47,8 +49,8 @@ visibility, and performance to confidently accelerate your
 AI innovation journey.
 
 
-is a framework that leverages [transformers](https://github.com/huggingface/transformers)
-and [vLLM](https://github.com/vllm-project/vllm) to facilitate the
+is a framework that leverages 
+and  to facilitate the
 orchestration of AI agents as well as the execution, distillation, and
 training of LMs, either directly via source code, or with its CLI.
 Go through [the CLI documentation](docs/CLI.md) to see what it can do, but if you want to jump right in, run a model:
