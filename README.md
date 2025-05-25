@@ -1,21 +1,16 @@
 <p align="center">
   <!-- Build status via GitHub Actions -->
   <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
-
-  <!-- PyPI version -->
-  <img src="https://badge.fury.io/py/avalan.svg" alt="PyPI version" />
-
-  <!-- Supported Python versions -->
-  <img src="https://img.shields.io/pypi/pyversions/avalan.svg" alt="Python versions" />
-
   <!-- Code coverage (Codecov) -->
   <img src="https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg" alt="Coverage" />
-
+  <!-- Latest commit -->
+  <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
+  <!-- PyPI version -->
+  <img src="https://badge.fury.io/py/avalan.svg" alt="PyPI version" />
+  <!-- Supported Python versions -->
+  <img src="https://img.shields.io/pypi/pyversions/avalan.svg" alt="Python versions" />
   <!-- License -->
   <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
-
-  <!-- Latest commit -->
-  <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="GitHub last commit" />
 </p>
 
 **avalan**[^1] is a framework that leverages [transformers](https://github.com/huggingface/transformers)
