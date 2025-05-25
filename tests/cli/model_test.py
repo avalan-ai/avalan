@@ -138,6 +138,184 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
 
+    async def test_token_generation_with_stats(self):
+        token = model_cmds.Token(id=0, token="a", probability=0.4)
+
+        class Resp:
+            def __init__(self, toks):
+                self._toks = toks
+                self.input_token_count = 1
+
+            def __aiter__(self):
+                async def gen():
+                    for t in self._toks:
+                        yield t
+                return gen()
+
+        response = Resp([token])
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=True,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+
+        captured: dict[str, list] = {}
+
+        async def fake_tokens(*p, **kw):
+            captured["text_tokens"] = list(p[7])
+            captured["input_token_count"] = p[9]
+            yield (token, "frame1")
+            yield (None, "frame2")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        lm = SimpleNamespace(model_id="m", tokenizer_config=None, input_token_count=MagicMock())
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=response,
+                display_tokens=1,
+                dtokens_pick=1,
+                with_stats=True,
+            )
+
+        theme.tokens.assert_called_once()
+        self.assertEqual(captured["text_tokens"], ["a"])
+        self.assertEqual(captured["input_token_count"], 1)
+        live.update.assert_has_calls([call("frame1"), call("frame2")])
+        lm.input_token_count.assert_not_called()
+
+    async def test_token_generation_input_count_fallback(self):
+        token = model_cmds.Token(id=0, token="a")
+
+        class Resp:
+            def __init__(self, toks, count):
+                self._toks = toks
+                self.input_token_count = count
+
+            def __aiter__(self):
+                async def gen():
+                    for t in self._toks:
+                        yield t
+                return gen()
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+        def gen_frame(*a, **k):
+            async def g():
+                yield (None, "frame")
+            return g()
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=gen_frame)
+
+        lm = MagicMock()
+        lm.model_id = "m"
+        lm.tokenizer_config = None
+        lm.input_token_count = MagicMock(return_value=33)
+
+        # Response provides count, orchestrator should be ignored
+        response = Resp([token], count=5)
+        orchestrator = SimpleNamespace(input_token_count=7)
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=orchestrator,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=response,
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+            )
+
+        self.assertEqual(theme.tokens.call_args[0][9], 5)
+        lm.input_token_count.assert_not_called()
+
+        # Response has zero count, fall back to orchestrator
+        response_zero = Resp([token], count=0)
+        theme.tokens.reset_mock()
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=orchestrator,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=response_zero,
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+            )
+
+        self.assertEqual(theme.tokens.call_args[0][9], 7)
+
+        # Response zero and orchestrator none -> use lm.input_token_count
+        theme.tokens.reset_mock()
+        lm.input_token_count.reset_mock()
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="text",
+                response=response_zero,
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+            )
+
+        self.assertEqual(theme.tokens.call_args[0][9], 33)
+        lm.input_token_count.assert_called_once_with("text")
+
 
 class CliModelRunTestCase(IsolatedAsyncioTestCase):
     async def test_returns_when_no_input(self):
