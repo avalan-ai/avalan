@@ -219,8 +219,6 @@ There are more agent, NLP, multimodal, audio, and vision examples in the
 [docs/examples](https://github.com/avalan-ai/avalan/blob/main/docs/examples)
 folder.
 
-    - [TODO](#todo)
-
 # Install
 
 Create your virtual environment and install packages:
