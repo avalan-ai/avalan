@@ -13,11 +13,40 @@
   <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
 </p>
 
-**avalan**[^1] is a framework that leverages [transformers](https://github.com/huggingface/transformers)
-and [vLLM](https://github.com/vllm-project/vllm) to facilitate the
-orchestration of AI agents as well as the execution, distillation, and
-training of LMs, either directly via source code, or with its CLI.
-Go through [the CLI documentation](docs/CLI.md) to see what it can do, but if you want to jump right in, run a model:
+**avalan**[^1] empowers developers and enterprises to 
+effortlessly build, orchestrate, and deploy intelligent 
+AI agents—locally or in the cloud—across millions of models through 
+an intuitive, unified SDK and CLI. With robust 
+multi-backend support ([transformers](https://github.com/huggingface/transformers), 
+[vLLM](https://github.com/vllm-project/vllm), 
+[mlx-lm](https://github.com/ml-explore/mlx-lm)), first-class
+support of multiple AI protocols (MCP, A2A), plus native 
+integrations for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and 
+beyond, avalan enables you to select the optimal  engine 
+tailored specifically to each use case.
+
+Its versatile multi-modal architecture bridges NLP, vision, and 
+audio domains, allowing seamless integration and interaction among 
+diverse models within sophisticated workflows. Enhanced by built-in 
+memory management and state-of-the-art reasoning 
+capabilities—including ReACT tooling, 
+adaptive planning, and persistent long-term context—your agents 
+continuously learn, evolve, and intelligently respond to changing 
+environments.
+
+avalan’s intuitive pipeline design supports advanced branching, 
+conditional filtering, and recursive flow-of-flows execution, 
+empowering you to create intricate, scalable AI workflows with 
+precision and ease. Comprehensive observability ensures complete 
+transparency through real-time metrics, detailed event tracing, 
+and statistical dashboards, facilitating deep insights, 
+optimization, and robust governance.
+
+From solo developers prototyping innovative ideas locally to 
+enterprises deploying mission-critical AI systems across 
+distributed infrastructures, avalan provides flexibility, 
+visibility, and performance to confidently accelerate your 
+AI innovation journey.
 
 ```bash
 avalan model run meta-llama/Meta-Llama-3-8B-Instruct
