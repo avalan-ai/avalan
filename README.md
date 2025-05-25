@@ -226,7 +226,7 @@ folder.
 Create your virtual environment and install packages:
 
 ```bash
-poetry lock && poetry install
+poetry install avalan
 ```
 
 > [!TIP]
@@ -242,13 +242,13 @@ poetry lock && poetry install
 > for example with:
 >
 > ```bash
-> poetry install --extras 'agent audio cpu memory secrets server test translation vision'
+> poetry install avalan --extras 'agent audio cpu memory secrets server test translation vision'
 > ```
 >
 > Or you can install all extras at once with:
 >
 > ```bash
-> poetry install --extras all
+> poetry install avalan --extras all
 > ```
 
 > [!TIP]
@@ -256,18 +256,6 @@ poetry lock && poetry install
 > made it into a transformers package released version, install transformers
 > development edition:
 > `poetry install git+https://github.com/huggingface/transformers --no-cache`
-
-Depending on your architecture, you may need to add pytorch's index:
-
-```bash
-poetry install --extra-index-url https://download.pytorch.org/whl/nightly/cpu
-```
-
-> [!TIP]
-> At time of this writing, while Python 3.12 is stable and available
-> in Homebrew, sentenpiece, a package added by the extra `translation`,
-> requires Python 3.11, so you may want to force the python version when
-> creating the virtual environment: `python-3.11 -m venv .venv/`
 
 > [!TIP]
 > On MacOS, sentencepiece may have issues while installing. If so,
@@ -277,14 +265,7 @@ poetry install --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 > `xcode-select --install`
 > `brew install cmake pkg-config protobuf sentencepiece`
 
-## Documentation
 # Development
-
-If you're going to work on this package, install it in editable mode so changes are reflected instantly:
-
-```bash
-poetry install
-```
 
 ## Building
 
