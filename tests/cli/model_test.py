@@ -277,5 +277,59 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tg_kwargs["response"], "resp")
 
 
+class CliModelSearchTestCase(IsolatedAsyncioTestCase):
+    async def test_model_search(self):
+        args = Namespace(filter="f", search="q", limit=2)
+
+        console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.get_spinner.return_value = "sp"
+        theme.model.side_effect = lambda m, **kw: f"{m.id}-{kw.get('can_access')}"
+
+        model1 = SimpleNamespace(id="m1")
+        model2 = SimpleNamespace(id="m2")
+        hub = MagicMock()
+        hub.models.return_value = [model1, model2]
+        hub.can_access.side_effect = lambda mid: mid == "m1"
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        updates: list[tuple] = []
+        live.update.side_effect = lambda g: updates.append(g)
+
+        groups: list[tuple] = []
+        def fake_group(*items):
+            groups.append(items)
+            return items
+
+        async def to_thread_stub(fn, *a, **kw):
+            return fn()
+
+        with patch.object(model_cmds, "Live", return_value=live) as live_patch, \
+             patch.object(model_cmds, "Group", side_effect=fake_group) as group_patch, \
+             patch.object(model_cmds, "to_thread", side_effect=to_thread_stub):
+            await model_cmds.model_search(args, console, theme, hub, 5)
+
+        console.status.assert_called_once_with(
+            "Loading models...",
+            spinner=theme.get_spinner.return_value,
+            refresh_per_second=5,
+        )
+        hub.models.assert_called_once_with(filter="f", search="q", limit=2)
+        hub.can_access.assert_has_calls([call("m1"), call("m2")], any_order=True)
+        # Initial render without access info
+        self.assertIn(("m1-None", "m2-None"), groups)
+        # Final update includes access results
+        self.assertIn(("m1-True", "m2-False"), updates)
+        self.assertEqual(live.update.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
