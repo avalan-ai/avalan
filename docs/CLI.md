@@ -1741,6 +1741,63 @@ echo 'Leo Messi is the GOAT' |
 
 ![Tokenization of text](https://avalan.ai/images/running_tokenization_simple_example.png)
 
+### Usage
+
+#### `avalan tokenizer --help`
+
+```text
+usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                        [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
+                        [--locale LOCALE]
+                        [--loader-class {auto,gemma3,mistral3}]
+                        [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                        [--no-repl] [--quiet] [--revision REVISION]
+                        [--skip-hub-access-check] [--verbose]
+                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                        --tokenizer TOKENIZER [--save SAVE]
+                        [--special-token SPECIAL_TOKEN] [--token TOKEN]
+
+Manage tokenizers, loading, modifying and saving them
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --tokenizer TOKENIZER, -t TOKENIZER
+                        Tokenizer to load
+  --save SAVE           Save tokenizer (useful if modified via --special-token
+                        or --token) to given path, only if model is loaded
+  --special-token SPECIAL_TOKEN
+                        Special token to add to tokenizer
+  --token TOKEN         Token to add to tokenizer
+```
+
 ### Adding tokens and special tokens
 
 When viewing token displays, you may have noticed some of the token boxes
