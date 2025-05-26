@@ -139,6 +139,20 @@ class ManagerTestCase(TestCase):
                 None
             ),
             (
+                "ai://di_key:@deepinfra/openchat-3.5",
+                "deepinfra",
+                "openchat-3.5",
+                "di_key",
+                None
+            ),
+            (
+                "ai://di_key@deepinfra/openchat-3.5",
+                "deepinfra",
+                "openchat-3.5",
+                "di_key",
+                None
+            ),
+            (
                 "ai://groq_key:@groq/llama3-8b-8192",
                 "groq",
                 "llama3-8b-8192",
@@ -316,6 +330,12 @@ class ManagerLoadEngineTestCase(TestCase):
                 "ai://d@deepseek/deepseek-chat",
                 "avalan.model.nlp.text.vendor.deepseek.DeepSeekModel",
                 "deepseek-chat",
+                False,
+            ),
+            "deepinfra": (
+                "ai://di@deepinfra/openchat-3.5",
+                "avalan.model.nlp.text.vendor.deepinfra.DeepInfraModel",
+                "openchat-3.5",
                 False,
             ),
             "groq": (
