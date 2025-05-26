@@ -6,7 +6,7 @@
   <!-- Latest commit -->
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
   <!-- PyPI version -->
-  <img src="https://badge.fury.io/py/avalan.svg" alt="PyPI version" />
+  <img src="https://img.shields.io/pypi/v/avalan.svg" alt="PyPI version" />
   <!-- Supported Python versions -->
   <img src="https://img.shields.io/pypi/pyversions/avalan.svg" alt="Python versions" />
   <!-- License -->
