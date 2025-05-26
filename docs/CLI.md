@@ -859,6 +859,209 @@ To run models locally you'll need to cache their data on a filesystem. A
 default location of `$HOME/.cache/huggingface/hub` will be assumed, unless
 the `--cache-dir` global option is utilized.
 
+### Usage
+
+#### `avalan cache --help`
+
+```text
+usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                    [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
+                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
+                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                    [--no-repl] [--quiet] [--revision REVISION]
+                    [--skip-hub-access-check] [--verbose]
+                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                    {delete,download,list} ...
+
+Manage models cache
+
+positional arguments:
+  {delete,download,list}
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+
+#### `avalan cache delete --help`
+
+```text
+usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                           [--disable-loading-progress-bar]
+                           [--hf-token HF_TOKEN] [--locale LOCALE]
+                           [--loader-class {auto,gemma3,mistral3}]
+                           [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                           [--no-repl] [--quiet] [--revision REVISION]
+                           [--skip-hub-access-check] [--verbose]
+                           [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                           [--delete] --model MODEL
+                           [--delete-revision DELETE_REVISION]
+
+Delete cached model data
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --delete              Actually delete. If not provided, a dry run is
+                        performed and data that would be deleted is shown, yet
+                        not deleted
+  --model MODEL, -m MODEL
+                        Model to delete
+  --delete-revision DELETE_REVISION
+                        Revision to delete
+
+#### `avalan cache download --help`
+
+```text
+usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                             [--disable-loading-progress-bar]
+                             [--hf-token HF_TOKEN] [--locale LOCALE]
+                             [--loader-class {auto,gemma3,mistral3}]
+                             [--locales LOCALES] [--low-cpu-mem-usage]
+                             [--login] [--no-repl] [--quiet]
+                             [--revision REVISION] [--skip-hub-access-check]
+                             [--verbose]
+                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                             --model MODEL
+
+Download model data to cache
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --model MODEL, -m MODEL
+                        Model to load
+
+#### `avalan cache list --help`
+
+```text
+usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                         [--disable-loading-progress-bar]
+                         [--hf-token HF_TOKEN] [--locale LOCALE]
+                         [--loader-class {auto,gemma3,mistral3}]
+                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                         [--no-repl] [--quiet] [--revision REVISION]
+                         [--skip-hub-access-check] [--verbose]
+                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                         [--model MODEL] [--summary]
+
+List cache contents
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --model MODEL         Models to show content details on
+  --summary             If specified, when showing one or more models show
+                        only summary
+```
+
 ### cache delete
 
 You can delete all cached data for a model:
