@@ -5,7 +5,7 @@ from logging import Logger
 def agents_server(
     name: str,
     version: str,
-    agents: list[Orchestrator],
+    orchestrators: list[Orchestrator],
     host: str,
     port: int,
     reload: bool,
@@ -23,7 +23,7 @@ def agents_server(
 
     logger.debug(f"Creating {name} server")
     app = FastAPI(title=name, version=version)
-    app.state.agent = agents[0]
+    app.state.orchestrator = orchestrators[0]
 
     logger.debug(f"Adding routes to {name} server")
     app.include_router(chat.router, prefix=prefix_openai)

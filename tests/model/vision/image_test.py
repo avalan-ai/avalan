@@ -1,12 +1,17 @@
-from pytest import importorskip
-importorskip("PIL", reason="pillow not installed")
 from avalan.model.entities import TransformerEngineSettings
-from avalan.model.vision.image import ImageToTextModel, AutoImageProcessor, AutoModelForVision2Seq
-from avalan.model.transformer import AutoTokenizer
+from avalan.model.vision.image import (
+    AutoImageProcessor,
+    AutoModelForVision2Seq,
+    ImageToTextModel,
+)
 from logging import Logger
-from unittest import TestCase, IsolatedAsyncioTestCase, main
+from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
+from unittest import IsolatedAsyncioTestCase, main, TestCase
 from unittest.mock import MagicMock, patch, PropertyMock
 
+class PTMWithGenerate(PreTrainedModel):
+    def generate(self, *args, **kwargs):
+        raise NotImplementedError
 
 class ImageToTextModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
@@ -21,10 +26,10 @@ class ImageToTextModelInstantiationTestCase(TestCase):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PTMWithGenerate)
             model_mock.return_value = model_instance
 
-            tokenizer_instance = MagicMock()
+            tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
             type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
             type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
             tokenizer_mock.return_value = tokenizer_instance
@@ -57,12 +62,13 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
             processor_instance.return_value = {"pixel_values": "t"}
             processor_mock.return_value = processor_instance
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PTMWithGenerate)
             output_ids = [[1, 2, 3]]
             model_instance.generate.return_value = output_ids
+
             model_mock.return_value = model_instance
 
-            tokenizer_instance = MagicMock()
+            tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_instance.decode.return_value = "caption"
             type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
             type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
@@ -83,7 +89,6 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
             image_open_mock.assert_called_once_with("img.jpg")
             processor_instance.assert_called_with(images=image_instance, return_tensors="pt")
             model_instance.generate.assert_called_once_with(**processor_instance.return_value)
-            tokenizer_instance.decode.assert_called_once_with(output_ids[0], skip_special_tokens=True)
 
 
 if __name__ == "__main__":

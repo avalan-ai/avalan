@@ -215,12 +215,14 @@ class Engine(ABC):
                 if find_spec("mlx"):
                     from mlx.nn import Module
                     is_mlx = isinstance(self._model, Module)
-                elif find_spec("sentence_transformers"):
+
+                if find_spec("sentence_transformers"):
                     from sentence_transformers import SentenceTransformer
                     is_sentence_transformer = isinstance(
                         self._model,
                         SentenceTransformer
                     )
+
             assert (
                 isinstance(self._model, PreTrainedModel) or
                 isinstance(self._model, TextGenerationVendor) or

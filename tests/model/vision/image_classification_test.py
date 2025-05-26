@@ -1,19 +1,15 @@
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
-from contextlib import nullcontext
-from logging import Logger
-from pytest import importorskip
-
 from avalan.model.entities import EngineSettings, ImageEntity
-
-importorskip("PIL", reason="Pillow not installed")
-
 from avalan.model.vision.image import (
     ImageClassificationModel,
     AutoImageProcessor,
     AutoModelForImageClassification,
     BaseVisionModel,
 )
+from contextlib import nullcontext
+from logging import Logger
+from transformers import PreTrainedModel
+from unittest import TestCase, IsolatedAsyncioTestCase, main
+from unittest.mock import call, MagicMock, patch, PropertyMock
 
 
 class ImageClassificationModelInstantiationTestCase(TestCase):
@@ -44,7 +40,7 @@ class ImageClassificationModelInstantiationTestCase(TestCase):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PreTrainedModel)
             model_mock.return_value = model_instance
 
             settings = EngineSettings()
@@ -82,7 +78,7 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             argmax_result.item.return_value = 0
             logits.argmax.return_value = argmax_result
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PreTrainedModel)
             model_instance.return_value = MagicMock(logits=logits)
             config_mock = MagicMock()
             config_mock.id2label = {0: "cat"}
@@ -103,7 +99,12 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             self.assertIsInstance(result, ImageEntity)
             self.assertEqual(result.label, "cat")
             processor_instance.assert_called_once_with(image_mock, return_tensors="pt")
-            model_instance.assert_called_once_with(**{"pixel_values": "inputs"})
+            model_instance.assert_called_once()
+            self.assertEqual(model_instance.call_count, 1)
+            self.assertEqual(model_instance.call_args, call(**{
+                "pixel_values": "inputs"
+            }))
+
 
 
 if __name__ == "__main__":

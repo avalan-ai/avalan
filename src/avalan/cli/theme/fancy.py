@@ -1336,10 +1336,14 @@ class FancyTheme(Theme):
             )) if event_stats else None,
             _f("tool_calls", _("{total} tool calls").format(
                 total=event_stats.triggers[EventType.TOOL_EXECUTE]
-            )) if event_stats.triggers[EventType.TOOL_EXECUTE] else None,
+            )) if EventType.TOOL_EXECUTE in event_stats.triggers
+               and event_stats.triggers[EventType.TOOL_EXECUTE]
+               else None,
             _f("tool_call_results", _("{total} results").format(
                 total=event_stats.triggers[EventType.TOOL_RESULT]
-            )) if event_stats.triggers[EventType.TOOL_RESULT] else None,
+            )) if EventType.TOOL_RESULT in event_stats.triggers
+               and event_stats.triggers[EventType.TOOL_RESULT]
+               else None,
         ]))
         think_pannel = Panel(
             f"[bright_black]{think_wrapped_output}[/bright_black]",

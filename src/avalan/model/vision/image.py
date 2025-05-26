@@ -26,7 +26,7 @@ class ImageClassificationModel(BaseVisionModel):
 
     async def __call__(
         self,
-        image_source: str | Image,
+        image_source: str | Image.Image,
         tensor_format: Literal["pt"]="pt"
     ) -> ImageEntity:
         image = BaseVisionModel._get_image(image_source)
@@ -48,7 +48,6 @@ class ImageToTextModel(TransformerModel):
             use_fast=True
         )
         model = AutoModelForVision2Seq.from_pretrained(self._model_id)
-        model.eval()
         return model
 
     def _tokenize_input(
@@ -64,7 +63,7 @@ class ImageToTextModel(TransformerModel):
 
     async def __call__(
         self,
-        image_source: str | Image,
+        image_source: str | Image.Image,
         skip_special_tokens: bool=True,
         tensor_format: Literal["pt"]="pt"
     ) -> str:
