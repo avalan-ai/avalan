@@ -424,6 +424,397 @@ options:
                         not deleted
 ```
 
+### `avalan agent --help`
+
+```text
+usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                    [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
+                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
+                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                    [--no-repl] [--quiet] [--revision REVISION]
+                    [--skip-hub-access-check] [--verbose]
+                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                    {message,run,serve,init} ...
+
+Manage AI agents
+
+positional arguments:
+  {message,run,serve,init}
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+```
+
+### `avalan agent message --help`
+
+```text
+usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                            [--disable-loading-progress-bar]
+                            [--hf-token HF_TOKEN] [--locale LOCALE]
+                            [--loader-class {auto,gemma3,mistral3}]
+                            [--locales LOCALES] [--low-cpu-mem-usage]
+                            [--login] [--no-repl] [--quiet]
+                            [--revision REVISION] [--skip-hub-access-check]
+                            [--verbose]
+                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            {search} ...
+
+Manage AI agent messages
+
+positional arguments:
+  {search}
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+```
+
+### `avalan agent message search --help`
+
+```text
+usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
+                                   [--device DEVICE]
+                                   [--disable-loading-progress-bar]
+                                   [--hf-token HF_TOKEN] [--locale LOCALE]
+                                   [--loader-class {auto,gemma3,mistral3}]
+                                   [--locales LOCALES] [--low-cpu-mem-usage]
+                                   [--login] [--no-repl] [--quiet]
+                                   [--revision REVISION]
+                                   [--skip-hub-access-check] [--verbose]
+                                   [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                   --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+                                   --id ID [--limit LIMIT] --participant PARTICIPANT --session SESSION
+                                   specifications_file
+
+Search within an agent's message memory
+
+positional arguments:
+  specifications_file   File that holds the agent specifications
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+                        Vector function to use for searching
+  --id ID
+  --limit LIMIT         If specified, load up to these many recent messages
+  --participant PARTICIPANT
+                        Search messages with given participant
+  --session SESSION     Search within the given session
+```
+
+### `avalan agent run --help`
+
+```text
+usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                        [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
+                        [--locale LOCALE]
+                        [--loader-class {auto,gemma3,mistral3}]
+                        [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                        [--no-repl] [--quiet] [--revision REVISION]
+                        [--skip-hub-access-check] [--verbose]
+                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                        [--display-pause [DISPLAY_PAUSE]]
+                        [--display-probabilities]
+                        [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
+                        [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
+                        [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
+                        [--display-tokens [DISPLAY_TOKENS]] [--conversation]
+                        [--id ID] [--no-session | --session SESSION]
+                        [--skip-load-recent-messages]
+                        [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
+                        [--participant PARTICIPANT] [--stats] [--sync]
+                        [--tty TTY]
+                        specifications_file
+
+Run an AI agent
+
+positional arguments:
+  specifications_file   File that holds the agent specifications
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --display-pause [DISPLAY_PAUSE]
+                        Pause (in ms.) when cycling through selected tokens as
+                        defined by --display-probabilities
+  --display-probabilities
+                        If --display-tokens specified, show also the token
+                        probability distribution
+  --display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM
+                        When --display-probabilities is used, select tokens
+                        which logit probability is no higher than this value.
+                        Defaults to 0.8
+  --display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM
+                        When --display-probabilities is used, select tokens
+                        that have alternate tokens with a logit probability at
+                        least or higher than this value. Defaults to 0.1
+  --display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]
+                        Display the time it takes to reach the given Nth token
+                        (defaults to 256)
+  --display-tokens [DISPLAY_TOKENS]
+                        How many tokens with full information to display at a
+                        time
+  --conversation        Activate conversation mode with the agent
+  --id ID               Use given ID as the agent ID
+  --no-session          If specified, don't use sessions in persistent message
+                        memory
+  --session SESSION     Continue the conversation on the given session
+  --skip-load-recent-messages
+                        If specified, skips loading recent messages
+  --load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT
+                        If specified, load up to these many recent messages
+  --participant PARTICIPANT
+                        If specified, this is the participant ID interacting
+                        with the agent
+  --stats               Show token generation statistics for agent output
+  --sync                Don't use an async generator (token streaming)
+  --tty TTY             TTY stream (only applicable if combining
+                        --conversation with input piping)
+```
+
+### `avalan agent serve --help`
+
+```text
+usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                          [--disable-loading-progress-bar]
+                          [--hf-token HF_TOKEN] [--locale LOCALE]
+                          [--loader-class {auto,gemma3,mistral3}]
+                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                          [--no-repl] [--quiet] [--revision REVISION]
+                          [--skip-hub-access-check] [--verbose]
+                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                          [--host HOST] [--port PORT]
+                          [--prefix-mcp PREFIX_MCP]
+                          [--prefix-openai PREFIX_OPENAI] [--reload]
+                          specifications_file
+
+Serve an AI agent as an API endpoint
+
+positional arguments:
+  specifications_file   File that holds the agent specifications
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --host HOST           Host (defaults to 127.0.0.1)
+  --port PORT           Port (defaults to 9001, HAL 9000+1)
+  --prefix-mcp PREFIX_MCP
+                        URL prefix for MCP endpoints (defaults to /mcp)
+  --prefix-openai PREFIX_OPENAI
+                        URL prefix fir OpenAI endpoints (defaults to /v1)
+  --reload              Hot reload on code changes
+```
+
+### `avalan agent init --help`
+
+```text
+usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                         [--disable-loading-progress-bar]
+                         [--hf-token HF_TOKEN] [--locale LOCALE]
+                         [--loader-class {auto,gemma3,mistral3}]
+                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                         [--no-repl] [--quiet] [--revision REVISION]
+                         [--skip-hub-access-check] [--verbose]
+                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                         [--name NAME] [--role ROLE] [--task TASK]
+                         [--instructions INSTRUCTIONS] [--memory-recent]
+                         [--no-memory-recent]
+                         [--memory-permanent MEMORY_PERMANENT]
+                         [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
+                         [--engine-uri ENGINE_URI] [--use-cache] [--no-cache]
+                         [--max-new-tokens MAX_NEW_TOKENS]
+                         [--skip-special-tokens]
+
+Create an agent definition
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --name NAME           Agent name
+  --role ROLE           Agent role
+  --task TASK           Agent task
+  --instructions INSTRUCTIONS
+                        Agent instructions
+  --memory-recent       Enable recent message memory
+  --no-memory-recent
+  --memory-permanent MEMORY_PERMANENT
+                        Permanent memory DSN
+  --memory-engine-model-id MEMORY_ENGINE_MODEL_ID
+                        Sentence transformer model for memory
+  --engine-uri ENGINE_URI
+                        Agent engine URI
+  --use-cache           Cache model locally
+  --no-cache
+  --max-new-tokens MAX_NEW_TOKENS
+                        Max new tokens
+  --skip-special-tokens
+                        Skip special tokens
+```
+
 ## agent
 
 ### agent run
