@@ -134,6 +134,9 @@ class ModelManager(ContextDecorator):
         elif engine_uri.vendor == "openrouter":
             from ..model.nlp.text.vendor.openrouter import OpenRouterModel
             model = OpenRouterModel(**model_load_args)
+        elif engine_uri.vendor == "anyscale":
+            from ..model.nlp.text.vendor.anyscale import AnyScaleModel
+            model = AnyScaleModel(**model_load_args)
         elif engine_uri.vendor == "together":
             from ..model.nlp.text.vendor.together import TogetherModel
             model = TogetherModel(**model_load_args)

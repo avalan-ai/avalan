@@ -8,7 +8,7 @@ This document describes the formal structure of the `ai://` Uniform Resource Ide
 <userinfo>      ::= <user> [":" <password>]
 <hostport>      ::= <host> [":" <port>]
 <host>          ::= <vendor> | <model-host>
-<vendor>        ::= "anthropic" | "deepseek" | "google" | \
+<vendor>        ::= "anthropic" | "anyscale" | "deepseek" | "google" | \
                     "groq" | "huggingface" | "local" | \
                     "openai" | "openrouter" | "ollama" | "litellm" | "together"
 <path>          ::= 1*( pchar | "/" )
