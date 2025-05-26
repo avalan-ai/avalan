@@ -177,6 +177,20 @@ class TextGenerationModelMethodsTestCase(TestCase):
         tok.assert_called_once_with("hi", None, context=None)
         self.assertEqual(count, 3)
 
+    def test_save_tokenizer(self):
+        path = "/tmp/tok"
+        tokenizer = MagicMock(spec=PreTrainedTokenizerFast)
+        tokenizer.save_pretrained.return_value = ["f1", "f2"]
+        type(tokenizer).name_or_path = PropertyMock(return_value="m")
+        tokenizer.__len__.return_value = 1
+
+        self.model._tokenizer = tokenizer
+
+        files = self.model.save_tokenizer(path)
+
+        tokenizer.save_pretrained.assert_called_once_with(path)
+        self.assertEqual(files, ["f1", "f2"])
+
     def test_special_tokens_added(self):
         special_tokens = ["<s>", "</s>"]
         with patch.object(AutoTokenizer, "from_pretrained") as auto_tok:
@@ -184,6 +198,7 @@ class TextGenerationModelMethodsTestCase(TestCase):
             tokenizer.all_special_tokens = []
             tokenizer.model_max_length = 10
             type(tokenizer).name_or_path = PropertyMock(return_value="m")
+            tokenizer.__len__.return_value = 1
             auto_tok.return_value = tokenizer
 
             TextGenerationModel(
@@ -203,6 +218,31 @@ class TextGenerationModelMethodsTestCase(TestCase):
                 [t.content for t in args["additional_special_tokens"]],
                 special_tokens,
             )
+
+    def test_tokens_added(self):
+        tokens = ["a", "b"]
+        with (
+            patch.object(AutoTokenizer, "from_pretrained") as auto_tok,
+            patch.object(TextGenerationModel, "_tokens", tokens, create=True)
+        ):
+            tokenizer = MagicMock(spec=PreTrainedTokenizerFast)
+            tokenizer.all_special_tokens = []
+            tokenizer.model_max_length = 10
+            type(tokenizer).name_or_path = PropertyMock(return_value="m")
+            tokenizer.__len__.return_value = 1
+            auto_tok.return_value = tokenizer
+
+            TextGenerationModel(
+                "m",
+                TransformerEngineSettings(
+                    auto_load_model=False,
+                    auto_load_tokenizer=True,
+                    tokens=tokens,
+                ),
+            )
+
+            auto_tok.assert_called_once_with("m", use_fast=True)
+            tokenizer.add_tokens.assert_called_once_with(tokens)
 
 if __name__ == '__main__':
     main()
