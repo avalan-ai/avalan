@@ -17,6 +17,7 @@ class EventType(StrEnum):
     MODEL_EXECUTE_AFTER = "model_execute_after"
     INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"
     INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
+    TOKEN_GENERATED = "token_generated"
 
 @dataclass(frozen=True, kw_only=True)
 class Event:
