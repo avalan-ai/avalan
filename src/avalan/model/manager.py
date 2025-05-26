@@ -146,6 +146,9 @@ class ModelManager(ContextDecorator):
         elif engine_uri.vendor == "huggingface":
             from ..model.nlp.text.vendor.huggingface import HuggingfaceModel
             model = HuggingfaceModel(**model_load_args)
+        elif engine_uri.vendor == "litellm":
+            from ..model.nlp.text.vendor.litellm import LiteLLMModel
+            model = LiteLLMModel(**model_load_args)
 
         self._stack.enter_context(model)
         return model
