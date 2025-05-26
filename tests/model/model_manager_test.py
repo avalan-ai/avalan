@@ -97,6 +97,20 @@ class ManagerTestCase(TestCase):
                 None
             ),
             (
+                "ai://scale_key:@anyscale/gpt-3.5-turbo",
+                "anyscale",
+                "gpt-3.5-turbo",
+                "scale_key",
+                None
+            ),
+            (
+                "ai://scale_key@anyscale/gpt-3.5-turbo",
+                "anyscale",
+                "gpt-3.5-turbo",
+                "scale_key",
+                None
+            ),
+            (
                 "ai://tog_key:@together/mistral-7b",
                 "together",
                 "mistral-7b",
@@ -269,6 +283,12 @@ class ManagerLoadEngineTestCase(TestCase):
             "openrouter": (
                 "ai://router@openrouter/gpt-3.5-turbo",
                 "avalan.model.nlp.text.vendor.openrouter.OpenRouterModel",
+                "gpt-3.5-turbo",
+                False,
+            ),
+            "anyscale": (
+                "ai://as@anyscale/gpt-3.5-turbo",
+                "avalan.model.nlp.text.vendor.anyscale.AnyScaleModel",
                 "gpt-3.5-turbo",
                 False,
             ),
