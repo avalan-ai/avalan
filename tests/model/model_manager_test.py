@@ -97,6 +97,20 @@ class ManagerTestCase(TestCase):
                 None
             ),
             (
+                "ai://tog_key:@together/mistral-7b",
+                "together",
+                "mistral-7b",
+                "tog_key",
+                None
+            ),
+            (
+                "ai://tog_key@together/mistral-7b",
+                "together",
+                "mistral-7b",
+                "tog_key",
+                None
+            ),
+            (
                 "ai://seek_key:@deepseek/deepseek-chat",
                 "deepseek",
                 "deepseek-chat",
@@ -256,6 +270,12 @@ class ManagerLoadEngineTestCase(TestCase):
                 "ai://router@openrouter/gpt-3.5-turbo",
                 "avalan.model.nlp.text.vendor.openrouter.OpenRouterModel",
                 "gpt-3.5-turbo",
+                False,
+            ),
+            "together": (
+                "ai://tg@together/mistral-7b",
+                "avalan.model.nlp.text.vendor.together.TogetherModel",
+                "mistral-7b",
                 False,
             ),
             "deepseek": (

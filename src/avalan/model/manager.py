@@ -134,6 +134,9 @@ class ModelManager(ContextDecorator):
         elif engine_uri.vendor == "openrouter":
             from ..model.nlp.text.vendor.openrouter import OpenRouterModel
             model = OpenRouterModel(**model_load_args)
+        elif engine_uri.vendor == "together":
+            from ..model.nlp.text.vendor.together import TogetherModel
+            model = TogetherModel(**model_load_args)
         elif engine_uri.vendor == "deepseek":
             from ..model.nlp.text.vendor.deepseek import DeepSeekModel
             model = DeepSeekModel(**model_load_args)
