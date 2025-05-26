@@ -152,6 +152,9 @@ class ModelManager(ContextDecorator):
         elif engine_uri.vendor == "huggingface":
             from ..model.nlp.text.vendor.huggingface import HuggingfaceModel
             model = HuggingfaceModel(**model_load_args)
+        elif engine_uri.vendor == "hyperbolic":
+            from ..model.nlp.text.vendor.hyperbolic import HyperbolicModel
+            model = HyperbolicModel(**model_load_args)
         elif engine_uri.vendor == "litellm":
             from ..model.nlp.text.vendor.litellm import LiteLLMModel
             model = LiteLLMModel(**model_load_args)

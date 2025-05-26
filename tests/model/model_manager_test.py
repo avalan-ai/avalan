@@ -167,6 +167,20 @@ class ManagerTestCase(TestCase):
                 None
             ),
             (
+                "ai://hyper_key:@hyperbolic/hyper-model",
+                "hyperbolic",
+                "hyper-model",
+                "hyper_key",
+                None
+            ),
+            (
+                "ai://hyper_key@hyperbolic/hyper-model",
+                "hyperbolic",
+                "hyper-model",
+                "hyper_key",
+                None
+            ),
+            (
                 "ai://secret:openai_key@openai/gpt-4o",
                 "openai",
                 "gpt-4o",
@@ -326,6 +340,12 @@ class ManagerLoadEngineTestCase(TestCase):
                 "ai://hf@huggingface/meta-llama/Llama-3-8B-Instruct",
                 "avalan.model.nlp.text.vendor.huggingface.HuggingfaceModel",
                 "meta-llama/Llama-3-8B-Instruct",
+                False,
+            ),
+            "hyperbolic": (
+                "ai://hyper@hyperbolic/hyper-model",
+                "avalan.model.nlp.text.vendor.hyperbolic.HyperbolicModel",
+                "hyper-model",
                 False,
             ),
         }

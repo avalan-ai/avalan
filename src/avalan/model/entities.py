@@ -40,6 +40,7 @@ Vendor = Literal[
     "google",
     "groq",
     "huggingface",
+    "hyperbolic",
     "local",
     "openai",
     "openrouter",
