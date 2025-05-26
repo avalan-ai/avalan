@@ -43,6 +43,7 @@ Vendor = Literal[
     "openai",
     "openrouter",
     "ollama",
+    "litellm",
 ]
 
 WeightType = Literal[

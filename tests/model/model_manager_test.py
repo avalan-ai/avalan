@@ -151,6 +151,13 @@ class ManagerTestCase(TestCase):
                 "llama3",
                 None,
                 None
+            ),
+            (
+                "ai://litellm/gpt-3.5-turbo",
+                "litellm",
+                "gpt-3.5-turbo",
+                None,
+                None
             )
         ]
 
@@ -267,6 +274,12 @@ class ManagerLoadEngineTestCase(TestCase):
                 "ai://ollama/llama3",
                 "avalan.model.nlp.text.vendor.ollama.OllamaModel",
                 "llama3",
+                False,
+            ),
+            "litellm": (
+                "ai://litellm/gpt-3.5-turbo",
+                "avalan.model.nlp.text.vendor.litellm.LiteLLMModel",
+                "gpt-3.5-turbo",
                 False,
             ),
             "huggingface": (

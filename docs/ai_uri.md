@@ -10,7 +10,7 @@ This document describes the formal structure of the `ai://` Uniform Resource Ide
 <host>          ::= <vendor> | <model-host>
 <vendor>        ::= "anthropic" | "deepseek" | "google" | \
                     "groq" | "huggingface" | "local" | \
-                    "openai" | "openrouter" | "ollama"
+                    "openai" | "openrouter" | "ollama" | "litellm"
 <path>          ::= 1*( pchar | "/" )
 <query>         ::= *( pchar | "=" | "&" )
 ```
@@ -47,6 +47,7 @@ When `vendor` is `None`, the model is considered local.  Otherwise, the URI desc
 | `ai://hf_key:@huggingface/meta-llama/Llama-3-8B-Instruct` | vendor `huggingface`, user `hf_key`, model `meta-llama/Llama-3-8B-Instruct` |
 | `ai://secret:openai_key@openai/gpt-4o`     | vendor `openai`, secret key `openai_key`, model `gpt-4o`       |
 | `ai://ollama/llama3`                        | vendor `ollama`, model `llama3`                                |
+| `ai://litellm/gpt-3.5-turbo`                | vendor `litellm`, model `gpt-3.5-turbo`                        |
 
 These examples correspond to those used in the test-suite and highlight both local and remote forms.
 
