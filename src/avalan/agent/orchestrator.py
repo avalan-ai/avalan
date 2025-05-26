@@ -19,15 +19,12 @@ from ..model.entities import (
 )
 from ..model.manager import ModelManager
 from ..model.nlp.text import TextGenerationResponse
-
-from typing import Any
-
 from ..tool.manager import ToolManager
 from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
 from logging import Logger
-from typing import Optional, Union, Type
+from typing import Any, Optional, Union, Type
 from uuid import UUID, uuid4
 
 
