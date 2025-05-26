@@ -1,10 +1,8 @@
+from avalan.server import agents_server
 import sys
 from types import ModuleType
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
-
-from avalan.server import agents_server
-
 
 class AgentsServerTestCase(TestCase):
     def test_agents_server_constructs_server(self):
@@ -86,7 +84,7 @@ class AgentsServerTestCase(TestCase):
                 result = agents_server(
                     name="srv",
                     version="v",
-                    agents=[orch],
+                    orchestrators=[orch],
                     host="h",
                     port=1,
                     reload=False,
@@ -97,7 +95,7 @@ class AgentsServerTestCase(TestCase):
 
         self.assertIs(result, server_instance)
         FastAPI.assert_called_once_with(title="srv", version="v")
-        self.assertIs(app.state.agent, orch)
+        self.assertIs(app.state.orchestrator, orch)
         app.include_router.assert_any_call(chat_router, prefix="/o")
         SseServerTransport.assert_called_once_with("/m/messages/")
         app.mount.assert_called_once_with("/m/messages/", app=sse_instance.handle_post_message)

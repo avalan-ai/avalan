@@ -1,14 +1,10 @@
-from pytest import importorskip
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
-from logging import Logger
-from contextlib import nullcontext
-
-importorskip("torchaudio", reason="torchaudio not installed")
-
 from avalan.model.entities import EngineSettings
 from avalan.model.audio import SpeechRecognitionModel, AutoProcessor, AutoModelForCTC
-
+from contextlib import nullcontext
+from logging import Logger
+from transformers import PreTrainedModel
+from unittest import TestCase, IsolatedAsyncioTestCase, main
+from unittest.mock import MagicMock, patch, PropertyMock
 
 class SpeechRecognitionModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
@@ -39,7 +35,7 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
             type(processor_instance.tokenizer).pad_token_id = PropertyMock(return_value=1)
             processor_mock.return_value = processor_instance
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PreTrainedModel)
             model_mock.return_value = model_instance
 
             settings = EngineSettings()
@@ -81,7 +77,7 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             type(processor_instance.tokenizer).pad_token_id = PropertyMock(return_value=1)
             processor_mock.return_value = processor_instance
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PreTrainedModel)
             call_result = MagicMock(logits="logits")
             model_instance.return_value = call_result
             model_mock.return_value = model_instance

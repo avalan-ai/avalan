@@ -1,4 +1,4 @@
-from ...agent import Agent
+from ...agent.orchestrator import Orchestrator
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -23,15 +23,15 @@ router = APIRouter(
     tags=["completions"],
 )
 
-def dependency_get_agent(request: Request) -> Agent:
-    return request.app.state.agent
+def dependency_get_orchestrator(request: Request) -> Orchestrator:
+    return request.app.state.orchestrator
 
 @router.post("/completions", response_model=ChatCompletionResponse)
 async def create_chat_completion(
     request: ChatCompletionRequest,
-    agent: Agent = Depends(dependency_get_agent),
+    orchestrator: Orchestrator = Depends(dependency_get_orchestrator),
 ):
-    assert agent and isinstance(agent, Agent)
+    assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert request and request.messages
 
     # request = model='gpt-4o' messages=[ChatMessage(role='user', content='Explain LLM distillation')] temperature=1.0 top_p=1.0 n=1 stream=True stop=None max_tokens=None presence_penalty=0.0 frequency_penalty=0.0 logit_bias=None user=None
@@ -55,7 +55,7 @@ async def create_chat_completion(
         #num_return_sequences=request.n
     )
 
-    response = await agent(input, settings=settings)
+    response = await orchestrator(input, settings=settings)
 
     # Streaming through SSE (server-sent events with text/event-stream)
     if request.stream:

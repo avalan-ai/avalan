@@ -1,18 +1,17 @@
-from pytest import importorskip
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
-from logging import Logger
-
-importorskip("torch", reason="torch not installed")
-importorskip("PIL", reason="Pillow not installed")
-
 from avalan.model.entities import EngineSettings, ImageEntity
 from avalan.model.vision.detection import (
     ObjectDetectionModel,
     AutoImageProcessor,
     AutoModelForObjectDetection,
 )
+from pytest import importorskip
+from transformers import PreTrainedModel
+from unittest import TestCase, IsolatedAsyncioTestCase, main
+from unittest.mock import call, MagicMock, patch, PropertyMock
+from logging import Logger
 
+importorskip("torch", reason="torch not installed")
+importorskip("PIL", reason="Pillow not installed")
 
 class ObjectDetectionModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
@@ -20,8 +19,10 @@ class ObjectDetectionModelInstantiationTestCase(TestCase):
     def test_instantiation_no_load(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForObjectDetection, "from_pretrained") as model_mock,
+            patch.object(AutoImageProcessor, "from_pretrained")
+                as processor_mock,
+            patch.object(AutoModelForObjectDetection, "from_pretrained")
+                as model_mock,
         ):
             model = ObjectDetectionModel(
                 self.model_id,
@@ -35,13 +36,15 @@ class ObjectDetectionModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_model(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForObjectDetection, "from_pretrained") as model_mock,
+            patch.object(AutoImageProcessor, "from_pretrained")
+                as processor_mock,
+            patch.object(AutoModelForObjectDetection, "from_pretrained")
+                as model_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
 
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PreTrainedModel)
             model_mock.return_value = model_instance
 
             model = ObjectDetectionModel(
@@ -67,9 +70,12 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
     async def test_call(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForObjectDetection, "from_pretrained") as model_mock,
-            patch("avalan.model.vision.detection.BaseVisionModel._get_image") as get_image_mock,
+            patch.object(AutoImageProcessor, "from_pretrained")
+                as processor_mock,
+            patch.object(AutoModelForObjectDetection, "from_pretrained")
+                as model_mock,
+            patch("avalan.model.vision.detection.BaseVisionModel._get_image")
+                as get_image_mock,
             patch("avalan.model.vision.detection.tensor") as tensor_mock,
         ):
             # mock processor
@@ -89,10 +95,12 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
             processor_mock.return_value = processor_instance
 
             # mock model
-            model_instance = MagicMock()
+            model_instance = MagicMock(spec=PreTrainedModel)
             config_mock = MagicMock()
             config_mock.id2label = {1: "label"}
-            type(model_instance).config = PropertyMock(return_value=config_mock)
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
             model_instance.return_value = "outputs"
             model_mock.return_value = model_instance
 
@@ -112,14 +120,23 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 entities,
-                [ImageEntity(label="label", score=0.9, box=[0.1, 0.2, 0.3, 0.4])],
+                [ImageEntity(
+                    label="label",
+                    score=0.9,
+                    box=[0.1, 0.2, 0.3, 0.4]
+                )],
             )
             get_image_mock.assert_called_once_with("path.jpg")
             processor_instance.assert_called_once_with(
                 images=image_mock,
                 return_tensors="pt",
             )
-            model_instance.assert_called_once_with(**{"pixel_values": "inputs"})
+            model_instance.assert_called_once()
+            self.assertEqual(model_instance.call_count, 1)
+            self.assertEqual(model_instance.call_args, call(**{
+                "pixel_values": "inputs"
+            }))
+
             tensor_mock.assert_called_once_with([image_mock.size[::-1]])
             processor_instance.post_process_object_detection.assert_called_once_with(
                 "outputs",

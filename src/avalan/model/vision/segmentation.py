@@ -24,7 +24,7 @@ class SemanticSegmentationModel(BaseVisionModel):
 
     async def __call__(
         self,
-        image_source: str | Image,
+        image_source: str | Image.Image,
         tensor_format: Literal["pt"]="pt"
     ) -> list[str]:
         image = BaseVisionModel._get_image(image_source)

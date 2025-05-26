@@ -38,7 +38,7 @@ class ObjectDetectionModel(ImageClassificationModel):
 
     async def __call__(
         self,
-        image_source: str | Image,
+        image_source: str | Image.Image,
         threshold: float | None=0.3,
         tensor_format: Literal["pt"]="pt"
     ) -> list[ImageEntity]:

@@ -11,9 +11,9 @@ This repository contains the **avalan** framework, a Python project that orchest
 
 Run the full test suite before every commit:
 
-   ```bash
-   poetry run pytest --verbose -s
-   ```
+```bash
+poetry run pytest --verbose -s
+```
 
 Tests must pass before you commit.
 
