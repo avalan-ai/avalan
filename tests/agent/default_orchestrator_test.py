@@ -104,6 +104,8 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         engine.__enter__.return_value = engine
         engine.__exit__.return_value = False
         engine.model_id = "m"
+        engine.tokenizer = MagicMock()
+        engine.tokenizer.encode.side_effect = [[1], [2]]
         model_manager.load_engine.return_value = engine
 
         async def output_gen():
@@ -171,11 +173,25 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(result, TextGenerationResponse)
         self.assertEqual(tokens, ["a", "b"])
+
+        calls = event_manager.trigger.await_args_list
         self.assertTrue(
-            any(
-                c.args[0].type == EventType.STREAM_END
-                for c in event_manager.trigger.await_args_list
-            )
+            any(c.args[0].type == EventType.STREAM_END for c in calls)
+        )
+
+        token_events = [
+            c.args[0]
+            for c in calls
+            if c.args[0].type == EventType.TOKEN_GENERATED
+        ]
+        self.assertEqual(len(token_events), 2)
+        self.assertEqual(
+            token_events[0].payload,
+            {"token_id": 1, "model_id": "m", "token": "a", "step": 0},
+        )
+        self.assertEqual(
+            token_events[1].payload,
+            {"token_id": 2, "model_id": "m", "token": "b", "step": 1},
         )
 
         memory.__exit__.assert_called_once()

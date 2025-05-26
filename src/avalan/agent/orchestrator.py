@@ -19,13 +19,76 @@ from ..model.entities import (
 )
 from ..model.manager import ModelManager
 from ..model.nlp.text import TextGenerationResponse
+
+from typing import Any
+
 from ..tool.manager import ToolManager
 from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
 from logging import Logger
-from typing import Any, Optional, Union, Type
+from typing import Optional, Union, Type
 from uuid import UUID, uuid4
+
+
+class ObservableTextGenerationResponse(TextGenerationResponse):
+    """Wrap a TextGenerationResponse to emit token and end events."""
+
+    def __init__(
+        self,
+        response: TextGenerationResponse,
+        event_manager: EventManager,
+        model_id: str,
+        tokenizer: Any | None,
+    ) -> None:
+        self._response = response
+        self._event_manager = event_manager
+        self._model_id = model_id
+        self._tokenizer = tokenizer
+        self._step = 0
+        self._response.add_done_callback(self._on_consumed)
+
+    async def _on_consumed(self) -> None:
+        await self._event_manager.trigger(Event(type=EventType.STREAM_END))
+
+    @property
+    def input_token_count(self) -> int:
+        return self._response.input_token_count
+
+    def __aiter__(self) -> "ObservableTextGenerationResponse":
+        self._response.__aiter__()
+        return self
+
+    async def __anext__(self) -> Any:
+        token = await self._response.__anext__()
+        token_str = token.token if hasattr(token, "token") else token
+        token_id = getattr(token, "id", None)
+        if token_id is None and self._tokenizer:
+            ids = self._tokenizer.encode(token_str, add_special_tokens=False)
+            token_id = ids[0] if ids else None
+
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                payload={
+                    "token_id": token_id,
+                    "model_id": self._model_id,
+                    "token": token_str,
+                    "step": self._step,
+                },
+            )
+        )
+        self._step += 1
+        return token
+
+    async def to_str(self) -> str:
+        return await self._response.to_str()
+
+    async def to_json(self) -> str:
+        return await self._response.to_json()
+
+    async def to(self, entity_class: type) -> Any:
+        return await self._response.to(entity_class)
 
 class Orchestrator:
     _id: UUID
@@ -226,11 +289,12 @@ class Orchestrator:
         ))
 
         if isinstance(result, TextGenerationResponse):
-            async def on_end():
-                await self._event_manager.trigger(Event(
-                    type=EventType.STREAM_END
-                ))
-            result.add_done_callback(on_end)
+            result = ObservableTextGenerationResponse(
+                result,
+                self._event_manager,
+                engine_agent.engine.model_id,
+                engine_agent.engine.tokenizer,
+            )
 
         return result
 
