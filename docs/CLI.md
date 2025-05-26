@@ -51,7 +51,7 @@ You'll need your Huggingface access token exported as `HF_ACCESS_TOKEN`.
 
 ## Usage
 
-### `avalan model --help`
+### `avalan model`
 
 ```text
 usage: avalan model [-h] {display,install,run,search,uninstall} ...
@@ -65,7 +65,7 @@ options:
   -h, --help            show this help message and exit
 ```
 
-### `avalan model display --help`
+### `avalan model display`
 
 ```text
 usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -128,7 +128,7 @@ options:
   --summary
 ```
 
-### `avalan model install --help`
+### `avalan model install`
 
 ```text
 usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -187,7 +187,7 @@ options:
                         only if model is loaded
 ```
 
-### `avalan model run --help`
+### `avalan model run`
 
 ```text
 usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -312,7 +312,7 @@ options:
   --trust-remote-code
 ```
 
-### `avalan model search --help`
+### `avalan model search`
 
 ```text
 usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -361,7 +361,7 @@ options:
   --limit LIMIT         Maximum number of models to return
 ```
 
-### `avalan model uninstall --help`
+### `avalan model uninstall`
 
 ```text
 usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -424,7 +424,7 @@ options:
                         not deleted
 ```
 
-### `avalan agent --help`
+### `avalan agent`
 
 ```text
 usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -473,7 +473,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-### `avalan agent message --help`
+### `avalan agent message`
 
 ```text
 usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -524,7 +524,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-### `avalan agent message search --help`
+### `avalan agent message search`
 
 ```text
 usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
@@ -585,7 +585,7 @@ options:
   --session SESSION     Search within the given session
 ```
 
-### `avalan agent run --help`
+### `avalan agent run`
 
 ```text
 usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -682,7 +682,7 @@ options:
                         --conversation with input piping)
 ```
 
-### `avalan agent serve --help`
+### `avalan agent serve`
 
 ```text
 usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -742,7 +742,7 @@ options:
   --reload              Hot reload on code changes
 ```
 
-### `avalan agent init --help`
+### `avalan agent init`
 
 ```text
 usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -859,9 +859,8 @@ To run models locally you'll need to cache their data on a filesystem. A
 default location of `$HOME/.cache/huggingface/hub` will be assumed, unless
 the `--cache-dir` global option is utilized.
 
-### Usage
 
-#### `avalan cache --help`
+#### `avalan cache`
 
 ```text
 usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -909,7 +908,7 @@ options:
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 
-#### `avalan cache delete --help`
+#### `avalan cache delete`
 
 ```text
 usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -963,7 +962,7 @@ options:
   --delete-revision DELETE_REVISION
                         Revision to delete
 
-#### `avalan cache download --help`
+#### `avalan cache download`
 
 ```text
 usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1012,7 +1011,7 @@ options:
   --model MODEL, -m MODEL
                         Model to load
 
-#### `avalan cache list --help`
+#### `avalan cache list`
 
 ```text
 usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1147,9 +1146,8 @@ avalan flow run docs/examples/my_flow.toml
 
 ## memory
 
-### Usage
 
-#### `avalan memory --help`
+#### `avalan memory`
 
 ```text
 usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1198,7 +1196,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-#### `avalan memory embeddings --help`
+#### `avalan memory embeddings`
 
 ```text
 usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1285,7 +1283,7 @@ options:
                         measure
 ```
 
-#### `avalan memory search --help`
+#### `avalan memory search`
 
 ```text
 usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1374,7 +1372,7 @@ options:
   --limit LIMIT         Return up to this many memories
 ```
 
-#### `avalan memory document --help`
+#### `avalan memory document`
 
 ```text
 usage: avalan memory document [-h] {index} ...
@@ -1388,7 +1386,7 @@ options:
   -h, --help  show this help message and exit
 ```
 
-#### `avalan memory document index --help`
+#### `avalan memory document index`
 
 ```text
 usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
@@ -1741,9 +1739,8 @@ echo 'Leo Messi is the GOAT' |
 
 ![Tokenization of text](https://avalan.ai/images/running_tokenization_simple_example.png)
 
-### Usage
 
-#### `avalan tokenizer --help`
+#### `avalan tokenizer`
 
 ```text
 usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
