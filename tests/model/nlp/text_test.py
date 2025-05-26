@@ -1,5 +1,5 @@
 from avalan.model.transformer import AutoTokenizer
-from avalan.model.entities import TransformerEngineSettings
+from avalan.model.entities import TransformerEngineSettings, Token
 from avalan.model.nlp.text.generation import (
     AutoModelForCausalLM,
     TextGenerationModel
@@ -11,6 +11,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerFast
 )
+from torch import tensor
 from unittest import main, TestCase
 from unittest.mock import patch, MagicMock, PropertyMock
 
@@ -127,6 +128,81 @@ class TextGenerationModelTestCase(TestCase):
                     model_id,
                     use_fast=True
                 )
+
+class TextGenerationModelMethodsTestCase(TestCase):
+    def setUp(self):
+        self.settings = TransformerEngineSettings(
+            auto_load_model=False,
+            auto_load_tokenizer=False,
+        )
+        self.model = TextGenerationModel("m", self.settings)
+
+    def test_tokenize(self):
+        self.model._tokenizer = MagicMock()
+        self.model._tokenizer.encode.return_value = [1, 2]
+        self.model._tokenizer.decode.side_effect = (
+            lambda i, skip_special_tokens=False: f"t{i}"
+        )
+        self.model._loaded_tokenizer = False
+        self.model.load = MagicMock()
+
+        result = self.model.tokenize("hi")
+
+        self.model.load.assert_called_once_with(
+            load_model=False,
+            load_tokenizer=True,
+            tokenizer_name_or_path=None,
+        )
+        self.model._tokenizer.encode.assert_called_once_with(
+            "hi", add_special_tokens=True
+        )
+        self.assertEqual(
+            result,
+            [
+                Token(id=1, token="t1", probability=1),
+                Token(id=2, token="t2", probability=1),
+            ],
+        )
+
+    def test_input_token_count(self):
+        self.model._tokenizer = MagicMock()
+        self.model._loaded_tokenizer = True
+        with patch.object(
+            TextGenerationModel,
+            "_tokenize_input",
+            return_value={"input_ids": tensor([[1, 2, 3]])},
+        ) as tok:
+            count = self.model.input_token_count("hi")
+
+        tok.assert_called_once_with("hi", None, context=None)
+        self.assertEqual(count, 3)
+
+    def test_special_tokens_added(self):
+        special_tokens = ["<s>", "</s>"]
+        with patch.object(AutoTokenizer, "from_pretrained") as auto_tok:
+            tokenizer = MagicMock(spec=PreTrainedTokenizerFast)
+            tokenizer.all_special_tokens = []
+            tokenizer.model_max_length = 10
+            type(tokenizer).name_or_path = PropertyMock(return_value="m")
+            auto_tok.return_value = tokenizer
+
+            TextGenerationModel(
+                "m",
+                TransformerEngineSettings(
+                    auto_load_model=False,
+                    auto_load_tokenizer=True,
+                    special_tokens=special_tokens,
+                ),
+            )
+
+            auto_tok.assert_called_once_with("m", use_fast=True)
+            tokenizer.add_special_tokens.assert_called_once()
+            args = tokenizer.add_special_tokens.call_args.args[0]
+            self.assertIn("additional_special_tokens", args)
+            self.assertEqual(
+                [t.content for t in args["additional_special_tokens"]],
+                special_tokens,
+            )
 
 if __name__ == '__main__':
     main()
