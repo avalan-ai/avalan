@@ -1,14 +1,10 @@
 from asyncio import run
 from avalan.model.entities import GenerationSettings
 from avalan.model.vision.image import ConditionalVisionGenerationModel
-from os import environ
 from os.path import isfile
 from sys import argv, exit
 
 async def example(path: str) -> None:
-    api_key = environ["OPENAI_API_KEY"]
-    assert api_key, "Need an $OPENAI_API_KEY environment variable set"
-
     print("Loading model... ", end="", flush=True)
     with ConditionalVisionGenerationModel(
         "prithivMLmods/Qwen2-VL-OCR-2B-Instruct"
