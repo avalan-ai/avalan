@@ -3,12 +3,67 @@
 The CLI offers the following commands, some of them with multiple subcommands:
 
 * [agent](#agent): Run and manage AI agents.
+  * [agent run](#agent-run)
+  * [agent serve](#agent-serve)
+  * [agent message search](#agent-message-search)
+  * [agent init](#agent-init)
+  * [Usage](#usage)
+    * [avalan agent](#avalan-agent)
+    * [avalan agent message](#avalan-agent-message)
+    * [avalan agent message search](#avalan-agent-message-search)
+    * [avalan agent run](#avalan-agent-run)
+    * [avalan agent serve](#avalan-agent-serve)
+    * [avalan agent init](#avalan-agent-init)
 * [cache](#cache): Manage the local cache for model data, and download models.
+  * [cache delete](#cache-delete)
+  * [cache download](#cache-download)
+  * [cache list](#cache-list)
+  * [Usage](#usage-1)
+    * [avalan cache](#avalan-cache)
+    * [avalan cache delete](#avalan-cache-delete)
+    * [avalan cache download](#avalan-cache-download)
+    * [avalan cache list](#avalan-cache-list)
+* [deploy](#deploy)
+  * [deploy run](#deploy-run)
 * [flow](#flow): Execute flows describing multiple processing steps.
+  * [flow run](#flow-run)
 * [memory](#memory): Generate embeddings, search them and index documents.
-* [model](#model): Search for models, install and manage them, show
-their information, and run them.
+  * [memory embeddings](#memory-embeddings)
+  * [memory search](#memory-search)
+  * [memory document index](#memory-document-index)
+  * [Usage](#usage-2)
+    * [avalan memory](#avalan-memory)
+    * [avalan memory embeddings](#avalan-memory-embeddings)
+    * [avalan memory search](#avalan-memory-search)
+    * [avalan memory document](#avalan-memory-document)
+    * [avalan memory document index](#avalan-memory-document-index)
+* [model](#model): Search for models, install and manage them, show their information, and run them.
+  * [model display](#model-display)
+  * [model install](#model-install)
+  * [model run](#model-run)
+    * [Quiet mode](#quiet-mode)
+    * [Attention implementation](#attention-implementation)
+    * [Stopping patterns and token limitation](#stopping-patterns-and-token-limitation)
+    * [Reasoning support](#reasoning-support)
+    * [Displaying generation details](#displaying-generation-details)
+      * [Showing generation performance](#showing-generation-performance)
+      * [Probability distributions](#probability-distributions)
+  * [model search](#model-search)
+  * [model uninstall](#model-uninstall)
+  * [Usage](#usage-3)
+    * [avalan model](#avalan-model)
+    * [avalan model display](#avalan-model-display)
+    * [avalan model install](#avalan-model-install)
+    * [avalan model run](#avalan-model-run)
+    * [avalan model search](#avalan-model-search)
+    * [avalan model uninstall](#avalan-model-uninstall)
 * [tokenizer](#tokenizer): Manage tokenizers and save them to filesystem.
+  * [Adding tokens and special tokens](#adding-tokens-and-special-tokens)
+  * [Saving and loading modified tokenizers](#saving-and-loading-modified-tokenizers)
+  * [Usage](#usage-4)
+    * [avalan tokenizer](#avalan-tokenizer)
+* [train](#train)
+  * [train run](#train-run)
 
 If you want to list all available commands and global options, run:
 
@@ -87,7 +142,7 @@ avalan agent init --name "Leo Messi" --engine-uri microsoft/Phi-4-mini-instruct
 
 ### Usage
 
-#### `avalan agent`
+#### avalan agent
 
 ```text
 usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -136,7 +191,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-#### `avalan agent message`
+#### avalan agent message
 
 ```text
 usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -187,7 +242,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-#### `avalan agent message search`
+#### avalan agent message search
 
 ```text
 usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
@@ -248,7 +303,7 @@ options:
   --session SESSION     Search within the given session
 ```
 
-#### `avalan agent run`
+#### avalan agent run
 
 ```text
 usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -345,7 +400,7 @@ options:
                         --conversation with input piping)
 ```
 
-#### `avalan agent serve`
+#### avalan agent serve
 
 ```text
 usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -405,7 +460,7 @@ options:
   --reload              Hot reload on code changes
 ```
 
-#### `avalan agent init`
+#### avalan agent init
 
 ```text
 usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -545,7 +600,7 @@ avalan cache list --model 'Qwen/Qwen2.5-7B-Instruct'
 
 ### Usage
 
-#### `avalan cache`
+#### avalan cache
 
 ```text
 usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -594,7 +649,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-#### `avalan cache delete`
+#### avalan cache delete
 
 ```text
 usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -649,7 +704,7 @@ options:
                         Revision to delete
 ```
 
-#### `avalan cache download`
+#### avalan cache download
 
 ```text
 usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -699,7 +754,7 @@ options:
                         Model to load
 ```
 
-#### `avalan cache list`
+#### avalan cache list
 
 ```text
 usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -815,7 +870,7 @@ Use `--identifier` to override the default identifier (the source path or URL).
 
 ## Usage
 
-#### `avalan memory`
+#### avalan memory
 
 ```text
 usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -864,7 +919,7 @@ options:
                         Weight type to use (defaults to best available)
 ```
 
-#### `avalan memory embeddings`
+#### avalan memory embeddings
 
 ```text
 usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -951,7 +1006,7 @@ options:
                         measure
 ```
 
-#### `avalan memory search`
+#### avalan memory search
 
 ```text
 usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1040,7 +1095,7 @@ options:
   --limit LIMIT         Return up to this many memories
 ```
 
-#### `avalan memory document`
+#### avalan memory document
 
 ```text
 usage: avalan memory document [-h] {index} ...
@@ -1054,7 +1109,7 @@ options:
   -h, --help  show this help message and exit
 ```
 
-#### `avalan memory document index`
+#### avalan memory document index
 
 ```text
 usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
@@ -1355,7 +1410,7 @@ avalan model uninstall microsoft/Phi-4-mini-instruct
 
 ### Usage
 
-#### `avalan model`
+#### avalan model
 
 ```text
 usage: avalan model [-h] {display,install,run,search,uninstall} ...
@@ -1369,7 +1424,7 @@ options:
   -h, --help            show this help message and exit
 ```
 
-#### `avalan model display`
+#### avalan model display
 
 ```text
 usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1432,7 +1487,7 @@ options:
   --summary
 ```
 
-#### `avalan model install`
+#### avalan model install
 
 ```text
 usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1491,7 +1546,7 @@ options:
                         only if model is loaded
 ```
 
-#### `avalan model run`
+#### avalan model run
 
 ```text
 usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1616,7 +1671,7 @@ options:
   --trust-remote-code
 ```
 
-#### `avalan model search`
+#### avalan model search
 
 ```text
 usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1665,7 +1720,7 @@ options:
   --limit LIMIT         Maximum number of models to return
 ```
 
-#### `avalan model uninstall`
+#### avalan model uninstall
 
 ```text
 usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
@@ -1798,7 +1853,7 @@ echo 'is <avalan_special_token> a special token?' | \
 
 ### Usage
 
-#### `avalan tokenizer`
+#### avalan tokenizer
 
 ```text
 usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
