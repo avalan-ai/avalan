@@ -9,6 +9,7 @@ from transformers import (
     AutoModelForImageClassification,
     AutoModelForVision2Seq,
     PreTrainedModel,
+    VisionEncoderDecoderModel as HFVisionEncoderDecoderModel,
 )
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
@@ -75,4 +76,15 @@ class ImageToTextModel(TransformerModel):
             skip_special_tokens=skip_special_tokens
         )
         return caption
+
+
+class VisionEncoderDecoderModel(ImageToTextModel):
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+        self._processor = AutoImageProcessor.from_pretrained(
+            self._model_id,
+            # default behavior in transformers v4.48
+            use_fast=True,
+        )
+        model = HFVisionEncoderDecoderModel.from_pretrained(self._model_id)
+        return model
 
