@@ -1,6 +1,6 @@
 from asyncio import sleep
 from ....compat import override
-from ....model import TextGenerationVendor
+from ....model import TextGenerationResponse, TextGenerationVendor
 from ....model.entities import (
     GenerationSettings,
     Input,
@@ -13,7 +13,6 @@ from ....model.entities import (
     TransformerEngineSettings
 )
 from ....model.nlp import BaseNLPModel
-from ....model.nlp.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from dataclasses import replace
 from importlib.util import find_spec

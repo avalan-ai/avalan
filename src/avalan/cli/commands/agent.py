@@ -2,10 +2,10 @@ from argparse import Namespace
 from ...agent.loader import Loader
 from ...cli import get_input
 from ...cli.commands.model import token_generation
-from ...event import EventStats, EventType
+from ...event import EventStats
 from ...memory.permanent import VectorFunction
+from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
-from ...model.nlp.text import TextGenerationResponse
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...server import agents_server
 from contextlib import AsyncExitStack

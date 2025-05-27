@@ -4,6 +4,7 @@ from ...agent.orchestrator import Orchestrator
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
 from ...event import EventStats
+from ...model import TextGenerationResponse
 from ...model.entities import (
     EngineUri,
     GenerationSettings,
@@ -14,7 +15,6 @@ from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
-from ...model.nlp.text import TextGenerationResponse
 from ...model.nlp.text.generation import TextGenerationModel
 from ...secrets import KeyringSecrets
 from rich.prompt import Prompt

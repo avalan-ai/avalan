@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 from ..model import (
     ModelAlreadyLoadedException,
+    TextGenerationResponse,
     TextGenerationVendor,
+    TextGenerationVendorStream,
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException
 )
@@ -18,6 +20,7 @@ from ..model.entities import (
 from contextlib import ExitStack
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
+from numpy import ndarray
 from torch import cuda
 from torch.backends import mps
 from transformers import (
@@ -116,12 +119,15 @@ class Engine(ABC):
         input: Input,
         **kwargs
     ) -> Union[
+        TextGenerationResponse,
+        TextGenerationVendorStream,
         Generator[str,None,None],
         Generator[Union[Token,TokenDetail],None,None],
         ImageEntity,
         list[ImageEntity],
         list[str],
         dict[str,str],
+        ndarray,
         str
     ]:
         raise NotImplementedError()

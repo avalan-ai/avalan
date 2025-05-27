@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from ..agent import Specification
 from ..memory.manager import MemoryManager
+from ..model import TextGenerationResponse
 from ..model.engine import Engine
 from ..model.entities import (
     EngineMessage,
@@ -9,7 +10,6 @@ from ..model.entities import (
     Message,
     MessageRole,
 )
-from ..model.nlp.text import TextGenerationResponse
 from ..model.nlp.text.vendor import TextGenerationVendorModel
 from ..tool.manager import ToolManager
 from ..event import Event, EventType

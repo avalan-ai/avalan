@@ -10,6 +10,7 @@ from ..agent.renderer import Renderer, TemplateEngineAgent
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
+from ..model import TextGenerationResponse
 from ..model.engine import Engine
 from ..model.entities import (
     EngineMessage,
@@ -18,7 +19,6 @@ from ..model.entities import (
     MessageRole,
 )
 from ..model.manager import ModelManager
-from ..model.nlp.text import TextGenerationResponse
 from ..tool.manager import ToolManager
 from contextlib import ExitStack
 from dataclasses import asdict

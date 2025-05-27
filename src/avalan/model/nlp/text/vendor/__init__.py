@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
-from .....model import TextGenerationVendor, TextGenerationStream
+from .....model import TextGenerationResponse, TextGenerationVendor
 from .....model.entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings
 )
 from .....model.nlp.text.generation import TextGenerationModel
-from .....model.nlp.text import TextGenerationResponse
 from .....tool.manager import ToolManager
 from dataclasses import replace
 from logging import Logger
@@ -14,21 +13,8 @@ from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import PreTrainedModel
-from typing import AsyncGenerator, Literal
+from typing import Literal
 from .....compat import override
-
-class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncGenerator
-
-    def __init__(self, generator: AsyncGenerator):
-        self._generator = generator
-
-    def __call__(self, *args, **kwargs):
-        return self.__aiter__()
-
-    def __aiter__(self):
-        assert self._generator
-        return self
 
 class TextGenerationVendorModel(TextGenerationModel, ABC):
     _TIKTOKEN_DEFAULT_MODEL = "cl100k_base"

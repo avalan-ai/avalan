@@ -2,8 +2,6 @@ from abc import ABC
 from ...model.transformer import TransformerModel
 from ...model.entities import (
     GenerationSettings,
-    Token,
-    TokenDetail,
     WeightType
 )
 from contextlib import nullcontext
@@ -24,13 +22,8 @@ from torch import (
 )
 from transformers import AsyncTextIteratorStreamer
 from transformers.generation import StoppingCriteria
-from typing import AsyncGenerator, Callable, Literal
+from typing import Literal
 
-OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
-OutputFunction = Callable[..., OutputGenerator | str]
-
-class InvalidJsonResponseException(Exception):
-    pass
 
 class BaseNLPModel(TransformerModel,ABC):
     def _generate_output(
