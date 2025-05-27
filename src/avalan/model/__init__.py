@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from ..model.entities import (
     GenerationSettings,
+    ImageEntity,
     Message,
     Token,
     TokenDetail
@@ -10,12 +11,15 @@ from io import StringIO
 from inspect import iscoroutine
 from json import loads, JSONDecodeError
 from re import compile, DOTALL, Pattern
+from numpy import ndarray
 from typing import (
     AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
     Literal,
+    Generator,
+    Union,
     TypedDict,
 )
 
@@ -210,4 +214,18 @@ class TextGenerationVendorStream(TextGenerationStream):
     def __aiter__(self):
         assert self._generator
         return self
+
+
+EngineResponse = Union[
+    TextGenerationResponse,
+    TextGenerationVendorStream,
+    Generator[str, None, None],
+    Generator[Union[Token, TokenDetail], None, None],
+    ImageEntity,
+    list[ImageEntity],
+    list[str],
+    dict[str, str],
+    ndarray,
+    str,
+]
 
