@@ -1,10 +1,10 @@
-from avalan.agent import Goal, InputType, OutputType, Role
-from avalan.agent.orchestrators.json import JsonOrchestrator, JsonSpecification, Property
+from avalan.agent import InputType, OutputType, Role
+from avalan.agent.orchestrators.json import JsonOrchestrator, JsonSpecification
 from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
 from avalan.event import EventType
+from avalan.model import TextGenerationResponse
 from avalan.model.entities import EngineUri, MessageRole, TransformerEngineSettings
-from avalan.model.nlp.text import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager

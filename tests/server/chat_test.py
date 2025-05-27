@@ -1,5 +1,5 @@
 from avalan.agent.orchestrator import Orchestrator
-from avalan.model.nlp.text import TextGenerationResponse
+from avalan.model import TextGenerationResponse
 import importlib
 from pathlib import Path
 import sys

@@ -1,12 +1,12 @@
 from asyncio import to_thread
 from ....compat import override
+from ....model import TextGenerationVendorStream
 from ....model.entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings,
 )
 from ....model.nlp.text.generation import TextGenerationModel
-from ....model.nlp.text.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
 from dataclasses import replace
 from logging import Logger

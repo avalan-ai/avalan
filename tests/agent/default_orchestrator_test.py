@@ -8,12 +8,12 @@ from avalan.agent.orchestrators.default import DefaultOrchestrator
 from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
 from avalan.event import EventType
+from avalan.model import TextGenerationResponse
 from avalan.model.entities import (
     EngineUri,
     MessageRole,
     TransformerEngineSettings
 )
-from avalan.model.nlp.text import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager

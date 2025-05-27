@@ -1,8 +1,8 @@
 from avalan.agent.orchestrator import ObservableTextGenerationResponse
 from avalan.event.manager import EventManager
 from avalan.event import EventType
+from avalan.model import TextGenerationResponse
 from avalan.model.entities import Token
-from avalan.model.nlp.text import TextGenerationResponse
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock
 

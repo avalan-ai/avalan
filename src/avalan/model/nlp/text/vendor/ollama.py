@@ -1,5 +1,5 @@
 from .....compat import override
-from .....model import TextGenerationVendor
+from .....model import TextGenerationVendor, TextGenerationVendorStream
 from .....model.entities import (
     GenerationSettings,
     Message,
@@ -7,10 +7,7 @@ from .....model.entities import (
     TokenDetail,
     TransformerEngineSettings,
 )
-from .....model.nlp.text.vendor import (
-    TextGenerationVendorModel,
-    TextGenerationVendorStream,
-)
+from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from dataclasses import replace

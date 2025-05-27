@@ -1,15 +1,12 @@
 from .....compat import override
-from .....model import TextGenerationVendor
+from .....model import TextGenerationVendor, TextGenerationVendorStream
 from .....model.entities import (
     GenerationSettings,
     Message,
     Token,
     TokenDetail,
 )
-from . import (
-    TextGenerationVendorModel,
-    TextGenerationVendorStream
-)
+from . import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from huggingface_hub import AsyncInferenceClient
 from transformers import PreTrainedModel

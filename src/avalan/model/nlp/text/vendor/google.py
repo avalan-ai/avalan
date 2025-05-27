@@ -1,17 +1,14 @@
 from google.genai import Client
 from google.genai.types import GenerateContentResponse
 from .....compat import override
-from .....model import TextGenerationVendor
+from .....model import TextGenerationVendor, TextGenerationVendorStream
 from .....model.entities import (
     GenerationSettings,
     Message,
     Token,
     TokenDetail
 )
-from .....model.nlp.text.vendor import (
-    TextGenerationVendorModel,
-    TextGenerationVendorStream
-)
+from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from transformers import PreTrainedModel
 from typing import AsyncIterator
