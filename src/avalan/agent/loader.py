@@ -201,7 +201,7 @@ class Loader:
 
             # Agent creation
 
-            logger.debug(f"Creating agent {orchestrator_type} #{agent_id}")
+            logger.debug(f"Creating orchestrator {orchestrator_type} #{agent_id}")
 
             model_manager = ModelManager(hub, logger)
             model_manager = stack.enter_context(model_manager)
