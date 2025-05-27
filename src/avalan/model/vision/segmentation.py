@@ -1,3 +1,4 @@
+from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from PIL import Image
@@ -17,11 +18,13 @@ class SemanticSegmentationModel(BaseVisionModel):
             use_fast=True
         )
         model = AutoModelForSemanticSegmentation.from_pretrained(
-            self._model_id
+            self._model_id,
+            device_map=self._device,
         )
         model.eval()
         return model
 
+    @override
     async def __call__(
         self,
         image_source: str | Image.Image,

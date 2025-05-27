@@ -1,4 +1,5 @@
 from avalan.model.entities import TransformerEngineSettings
+from avalan.model.engine import Engine
 from avalan.model.nlp.sequence import SequenceClassificationModel
 from logging import Logger
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, PreTrainedModel, PreTrainedTokenizerFast
@@ -62,6 +63,7 @@ class SequenceClassificationModelInstantiationTestCase(TestCase):
                 state_dict=None,
                 local_files_only=False,
                 token=None,
+                device_map=Engine.get_default_device(),
             )
             auto_tokenizer_mock.assert_called_once_with(
                 self.model_id,

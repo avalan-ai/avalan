@@ -1,5 +1,6 @@
 from avalan.model.transformer import AutoTokenizer
 from avalan.model.entities import TransformerEngineSettings
+from avalan.model.engine import Engine
 from avalan.model.nlp.token import TokenClassificationModel, AutoModelForTokenClassification
 from logging import Logger
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
@@ -89,6 +90,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 state_dict=None,
                 local_files_only=False,
                 token=None,
+                device_map=Engine.get_default_device(),
             )
             auto_tokenizer_mock.assert_called_once_with(self.model_id, use_fast=True)
 

@@ -1,4 +1,5 @@
 from avalan.model.entities import EngineSettings, ImageEntity
+from avalan.model.engine import Engine
 from avalan.model.vision.image import (
     ImageClassificationModel,
     AutoImageProcessor,
@@ -55,7 +56,10 @@ class ImageClassificationModelInstantiationTestCase(TestCase):
                 self.model_id,
                 use_fast=True,
             )
-            model_mock.assert_called_once_with(self.model_id)
+            model_mock.assert_called_once_with(
+                self.model_id,
+                device_map=Engine.get_default_device(),
+            )
 
 
 class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):

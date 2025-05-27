@@ -1,4 +1,5 @@
 from asyncio import sleep
+from ....compat import override
 from ....model import TextGenerationVendor
 from ....model.entities import (
     GenerationSettings,
@@ -100,6 +101,7 @@ class TextGenerationModel(BaseNLPModel):
         )
         return model
 
+    @override
     async def __call__(
         self,
         input: Input,

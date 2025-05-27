@@ -31,9 +31,13 @@ class ImageClassificationModel(BaseVisionModel):
             # default behavior in transformers v4.48
             use_fast=True
         )
-        model = AutoModelForImageClassification.from_pretrained(self._model_id)
+        model = AutoModelForImageClassification.from_pretrained(
+            self._model_id,
+            device_map=self._device,
+        )
         return model
 
+    @override
     async def __call__(
         self,
         image_source: str | Image.Image,
@@ -57,7 +61,10 @@ class ImageToTextModel(TransformerModel):
             # default behavior in transformers v4.48
             use_fast=True
         )
-        model = AutoModelForVision2Seq.from_pretrained(self._model_id)
+        model = AutoModelForVision2Seq.from_pretrained(
+            self._model_id,
+            device_map=self._device,
+        )
         return model
 
     def _tokenize_input(
@@ -71,6 +78,7 @@ class ImageToTextModel(TransformerModel):
     ):
         raise NotImplementedError()
 
+    @override
     async def __call__(
         self,
         image_source: str | Image.Image,
@@ -166,7 +174,10 @@ class VisionEncoderDecoderModel(ImageToTextModel):
             self._model_id,
             use_fast=True,
         )
-        model = HFVisionEncoderDecoderModel.from_pretrained(self._model_id)
+        model = HFVisionEncoderDecoderModel.from_pretrained(
+            self._model_id,
+            device_map=self._device,
+        )
         return model
 
 

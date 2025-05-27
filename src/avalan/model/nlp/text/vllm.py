@@ -1,4 +1,5 @@
 from asyncio import to_thread
+from ....compat import override
 from ....model.entities import (
     GenerationSettings,
     Input,
@@ -101,6 +102,7 @@ class VllmModel(TextGenerationModel):
         results = list(self._model.generate([prompt], params))
         return results[0].outputs[0].text if results else ""
 
+    @override
     async def __call__(
         self,
         input: Input,

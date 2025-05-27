@@ -1,3 +1,4 @@
+from .....compat import override
 from .....model import TextGenerationVendor
 from .....model.entities import (
     GenerationSettings,
@@ -32,6 +33,7 @@ class OpenAIClient(TextGenerationVendor):
             api_key = api_key
         )
 
+    @override
     async def __call__(
         self,
         model_id: str,
