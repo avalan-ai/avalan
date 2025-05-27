@@ -1,3 +1,6 @@
+<h1 align="center">avalan</h1>
+<h3 align="center"></h3>
+
 <p align="center">
   <!-- Build status via GitHub Actions -->
   <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
@@ -14,6 +17,8 @@
 </p>
 
 avalan empowers developers and enterprises to easily build, orchestrate, and deploy intelligent AI agents—locally or in the cloud—across millions of models via a unified SDK and CLI, featuring multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm)), multi-modal integration (NLP, vision, audio), and native adapters for platforms like OpenRouter, Ollama, OpenAI, DeepSeek, and Gemini. Enhanced by sophisticated memory management, advanced reasoning (including ReACT tooling and adaptive planning), and intuitive pipelines with branching, filtering, and recursive workflows, avalan ensures agents continuously learn and adapt. Comprehensive observability through real-time metrics, event tracing, and statistical dashboards provides deep insights and robust governance, making avalan ideal for everything from individual experimentation to enterprise-scale AI deployments.
+
+# Quick Look
 
 Check out [the CLI documentation](docs/CLI.md) to see what 
 it can do, but if you want to jump right in, run a model:
