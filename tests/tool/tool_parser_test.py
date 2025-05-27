@@ -165,6 +165,12 @@ class ToolCallParserTagTestCase(TestCase):
     def test_no_tool_call(self):
         self.assertIsNone(self.parser("hello"))
 
+    def test_react_invalid_json_with_action_input(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        text = 'Action: calc\nAction Input: {"expression": "1"'
+        self.assertIsNone(parser(text))
+
 
 if __name__ == "__main__":
     main()
+
