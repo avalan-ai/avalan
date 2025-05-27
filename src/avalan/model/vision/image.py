@@ -157,7 +157,7 @@ class ConditionalVisionGenerationModel(ImageToTextModel):
             skip_special_tokens=skip_special_tokens,
             clean_up_tokenization_spaces=False
         )
-        return output_text
+        return output_text[0] if isinstance(output_text,list) else output_text
 
 
 class VisionEncoderDecoderModel(ImageToTextModel):
