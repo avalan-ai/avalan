@@ -1,5 +1,12 @@
+from ...compat import override
 from ...model import TextGenerationVendor
-from ...model.entities import ImageEntity, Input
+from ...model.entities import (
+    GenerationSettings,
+    ImageEntity,
+    Input,
+    MessageRole
+)
+from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
 from ...model.transformer import TransformerModel
 from PIL import Image
@@ -8,7 +15,9 @@ from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
     AutoModelForVision2Seq,
+    AutoProcessor,
     PreTrainedModel,
+    Qwen2VLForConditionalGeneration,
     VisionEncoderDecoderModel as HFVisionEncoderDecoderModel,
 )
 from transformers.tokenization_utils_base import BatchEncoding
@@ -65,6 +74,7 @@ class ImageToTextModel(TransformerModel):
     async def __call__(
         self,
         image_source: str | Image.Image,
+        *,
         skip_special_tokens: bool=True,
         tensor_format: Literal["pt"]="pt"
     ) -> str:
@@ -78,13 +88,85 @@ class ImageToTextModel(TransformerModel):
         return caption
 
 
+class ConditionalVisionGenerationModel(ImageToTextModel):
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+        self._processor = AutoProcessor.from_pretrained(
+            self._model_id,
+            use_fast=True,
+        )
+        model = Qwen2VLForConditionalGeneration.from_pretrained(
+            self._model_id,
+            torch_dtype=BaseNLPModel._get_weight_type(
+                self._settings.weight_type
+            ),
+            device_map=self._device,
+        )
+        return model
+
+    @override
+    async def __call__(
+        self,
+        image_source: str | Image.Image,
+        prompt: str,
+        settings: GenerationSettings | None=None,
+        *,
+        skip_special_tokens: bool=True,
+        tensor_format: Literal["pt"]="pt"
+    ) -> str:
+        image = BaseVisionModel._get_image(image_source).convert("RGB")
+
+        messages = [
+            {
+                "role": str(MessageRole.USER),
+                "content": [
+                    {
+                        "type": "image",
+                        "image": image
+                    },
+                    {
+                        "type": "text",
+                        "text": prompt
+                    },
+                ],
+            }
+        ]
+
+        text = self._processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        inputs = self._processor(
+            text=[text],
+            images=image,
+            videos=None,
+            padding=True,
+            return_tensors=tensor_format,
+        )
+        inputs = inputs.to(self._device)
+        generated_ids = self._model.generate(
+            **inputs,
+            max_new_tokens=settings.max_new_tokens
+        )
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :]
+            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self._processor.batch_decode(
+            generated_ids_trimmed,
+            skip_special_tokens=skip_special_tokens,
+            clean_up_tokenization_spaces=False
+        )
+        return output_text[0] if isinstance(output_text,list) else output_text
+
+
 class VisionEncoderDecoderModel(ImageToTextModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
-            # default behavior in transformers v4.48
             use_fast=True,
         )
         model = HFVisionEncoderDecoderModel.from_pretrained(self._model_id)
         return model
+
 
