@@ -42,3 +42,21 @@ class NodeExecuteTestCase(TestCase):
         result = node.execute({'val': 5})
         self.assertEqual(result, 13)
 
+
+class NodeExtraTestCase(TestCase):
+    def test_execute_output_schema_mismatch_subgraph(self):
+        sub = Flow()
+        sub.add_node(Node('A', func=lambda inp: 42))
+        node = Node('sub', subgraph=sub, output_schema=str)
+        with self.assertRaises(TypeError):
+            node.execute({'val': 1})
+
+    def test_execute_input_schema_mismatch_multiple_inputs(self):
+        node = Node('n', input_schema=int, func=lambda inputs: sum(inputs.values()))
+        with self.assertRaises(TypeError):
+            node.execute({'a': 1, 'b': 2})
+
+    def test_repr(self):
+        node = Node('repr')
+        self.assertEqual(repr(node), '<Node repr>')
+
