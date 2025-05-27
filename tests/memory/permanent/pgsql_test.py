@@ -11,7 +11,7 @@ from psycopg import AsyncConnection, AsyncCursor
 from re import sub
 
 from unittest import main, IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, ANY
+from unittest.mock import AsyncMock, MagicMock, ANY, patch
 from uuid import uuid4, UUID
 
 class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
@@ -105,6 +105,109 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 ],
             ),
         ]
+
+    async def test_create_session(self):
+        pool_mock, connection_mock, cursor_mock = self.mock_query({})
+        memory = await PgsqlMessageMemory.create_instance_from_pool(pool=pool_mock)
+        agent_id = uuid4()
+        participant_id = uuid4()
+        sess_id = UUID("11111111-1111-1111-1111-111111111111")
+
+        with patch("avalan.memory.permanent.pgsql.message.uuid4", return_value=sess_id):
+            result = await memory.create_session(agent_id=agent_id, participant_id=participant_id)
+
+        cursor_mock.execute.assert_awaited_once_with(
+            """
+                    INSERT INTO "sessions"(
+                        "id",
+                        "agent_id",
+                        "participant_id",
+                        "messages",
+                        "created_at"
+                    ) VALUES (
+                        %s, %s, %s, %s, %s
+                    )
+                """,
+            (
+                str(sess_id),
+                str(agent_id),
+                str(participant_id),
+                0,
+                ANY,
+            ),
+        )
+        cursor_mock.close.assert_awaited_once()
+        self.assertEqual(result, sess_id)
+
+    async def test_append_with_partitions(self):
+        pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()
+        memory = await PgsqlMessageMemory.create_instance_from_pool(pool=pool_mock)
+        session_id = uuid4()
+        memory._session_id = session_id
+        agent_id = uuid4()
+
+        engine_message = EngineMessage(
+            agent_id=agent_id,
+            model_id="model",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+        partitions = [
+            TextPartition(data="a", embeddings=rand(1), total_tokens=1),
+            TextPartition(data="b", embeddings=rand(1), total_tokens=1),
+        ]
+
+        msg_id = UUID("22222222-2222-2222-2222-222222222222")
+        with patch("avalan.memory.permanent.pgsql.message.uuid4", return_value=msg_id):
+            await memory.append_with_partitions(engine_message, partitions=partitions)
+
+        connection_mock.transaction.assert_called_once()
+
+        exec_calls = cursor_mock.execute.await_args_list
+        self.assertEqual(len(exec_calls), 2)
+
+        def norm(txt: str) -> str:
+            return sub(r"\s+", " ", txt.strip())
+
+        insert_query = """
+                        INSERT INTO "messages"(
+                            "id",
+                            "agent_id",
+                            "model_id",
+                            "session_id",
+                            "author",
+                            "data",
+                            "partitions",
+                            "created_at"
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """
+        self.assertEqual(norm(exec_calls[0].args[0]), norm(insert_query))
+        self.assertEqual(
+            exec_calls[0].args[1],
+            (
+                str(msg_id),
+                str(agent_id),
+                "model",
+                str(session_id),
+                str(MessageRole.USER),
+                "hi",
+                len(partitions),
+                ANY,
+            ),
+        )
+
+        update_query = """
+                            UPDATE "sessions"
+                            SET "messages" = "messages" + 1
+                            WHERE "id" = %s
+                        """
+        self.assertEqual(norm(exec_calls[1].args[0]), norm(update_query))
+        self.assertEqual(exec_calls[1].args[1], (str(session_id),))
+
+        cursor_mock.executemany.assert_awaited_once()
+        self.assertTrue(cursor_mock.executemany.call_args[0][0].strip().startswith("INSERT INTO"))
+        cursor_mock.close.assert_awaited_once()
 
     async def test_continue_session(self):
         for fixture in self.fixture_sessions:
@@ -427,6 +530,21 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     self.assertEqual(result_item.symbols, symbols)
                     if i == expected_count - 1:
                         break
+
+    @staticmethod
+    def mock_insert():
+        cursor_mock = AsyncMock(spec=AsyncCursor)
+        cursor_mock.__aenter__.return_value = cursor_mock
+        transaction_mock = AsyncMock()
+        transaction_mock.__aenter__.return_value = transaction_mock
+        connection_mock = AsyncMock(spec=AsyncConnection)
+        connection_mock.cursor.return_value = cursor_mock
+        connection_mock.transaction = MagicMock(return_value=transaction_mock)
+        connection_mock.__aenter__.return_value = connection_mock
+        pool_mock = AsyncMock(spec=AsyncConnectionPool)
+        pool_mock.connection.return_value = connection_mock
+        pool_mock.__aenter__.return_value = pool_mock
+        return pool_mock, connection_mock, cursor_mock, transaction_mock
 
     @staticmethod
     def mock_query(
