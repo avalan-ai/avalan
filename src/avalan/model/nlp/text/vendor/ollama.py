@@ -1,3 +1,4 @@
+from .....compat import override
 from .....model import TextGenerationVendor
 from .....model.entities import (
     GenerationSettings,
@@ -37,6 +38,7 @@ class OllamaClient(TextGenerationVendor):
         assert AsyncClient, "ollama is not available"
         self._client = AsyncClient(host=base_url) if base_url else AsyncClient()
 
+    @override
     async def __call__(
         self,
         model_id: str,

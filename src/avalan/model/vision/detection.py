@@ -1,3 +1,4 @@
+from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.entities import ImageEntity, EngineSettings
 from ...model.vision import BaseVisionModel
@@ -32,10 +33,12 @@ class ObjectDetectionModel(ImageClassificationModel):
         )
         model = AutoModelForObjectDetection.from_pretrained(
             self._model_id,
-            revision=self._revision
+            revision=self._revision,
+            device_map=self._device,
         )
         return model
 
+    @override
     async def __call__(
         self,
         image_source: str | Image.Image,

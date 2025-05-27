@@ -1,3 +1,4 @@
+from ....compat import override
 from ....model.entities import (
     GenerationSettings,
     Input,
@@ -85,6 +86,7 @@ class MlxLmModel(TextGenerationModel):
         params = self._build_params(settings)
         return generate(self._model, self._tokenizer, prompt, **params)
 
+    @override
     async def __call__(
         self,
         input: Input,

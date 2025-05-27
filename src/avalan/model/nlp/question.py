@@ -1,3 +1,4 @@
+from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.entities import Input
 from ...model.nlp import BaseNLPModel
@@ -27,6 +28,7 @@ class QuestionAnsweringModel(BaseNLPModel):
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,
+            device_map=self._device,
         )
         return model
 
@@ -46,6 +48,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         inputs = inputs.to(self._model.device)
         return inputs
 
+    @override
     async def __call__(
         self,
         input: Input,

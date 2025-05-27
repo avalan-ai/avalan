@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from ..compat import override
 from ..model import TextGenerationVendor, TokenizerNotSupportedException
 from ..model.engine import Engine
 from PIL import Image
@@ -50,9 +51,11 @@ class SpeechRecognitionModel(BaseAudioModel):
             trust_remote_code=self._settings.trust_remote_code,
             pad_token_id=self._processor.tokenizer.pad_token_id,
             ctc_loss_reduction="mean",
+            device_map=self._device,
         )
         return model
 
+    @override
     async def __call__(
         self,
         audio_source: str,

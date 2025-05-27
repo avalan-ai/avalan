@@ -1,3 +1,4 @@
+from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from torch import argmax, no_grad
@@ -26,6 +27,7 @@ class TokenClassificationModel(BaseNLPModel):
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,
+            device_map=self._device,
         )
         return model
 
@@ -45,6 +47,7 @@ class TokenClassificationModel(BaseNLPModel):
         inputs = inputs.to(self._model.device)
         return inputs
 
+    @override
     async def __call__(
         self,
         input: str

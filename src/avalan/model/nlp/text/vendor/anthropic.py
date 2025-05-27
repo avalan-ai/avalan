@@ -1,5 +1,6 @@
 from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
+from .....compat import override
 from .....model import TextGenerationVendor
 from .....model.entities import (
     GenerationSettings,
@@ -45,6 +46,7 @@ class AnthropicClient(TextGenerationVendor):
     def __init__(self, api_key: str, base_url: str | None = None):
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
 
+    @override
     async def __call__(
         self,
         model_id: str,

@@ -1,5 +1,6 @@
 from google.genai import Client
 from google.genai.types import GenerateContentResponse
+from .....compat import override
 from .....model import TextGenerationVendor
 from .....model.entities import (
     GenerationSettings,
@@ -29,6 +30,7 @@ class GoogleClient(TextGenerationVendor):
     def __init__(self, api_key: str):
         self._client = Client(api_key=api_key)
 
+    @override
     async def __call__(
         self,
         model_id: str,

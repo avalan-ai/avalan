@@ -1,4 +1,5 @@
 from avalan.model.entities import EngineSettings
+from avalan.model.engine import Engine
 from avalan.model.audio import SpeechRecognitionModel, AutoProcessor, AutoModelForCTC
 from contextlib import nullcontext
 from logging import Logger
@@ -55,6 +56,7 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
                 trust_remote_code=False,
                 pad_token_id=processor_instance.tokenizer.pad_token_id,
                 ctc_loss_reduction="mean",
+                device_map=Engine.get_default_device(),
             )
 
 

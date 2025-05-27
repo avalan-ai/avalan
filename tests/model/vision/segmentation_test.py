@@ -1,4 +1,5 @@
 from avalan.model.entities import EngineSettings
+from avalan.model.engine import Engine
 from avalan.model.vision.segmentation import (
     AutoImageProcessor,
     AutoModelForSemanticSegmentation,
@@ -36,7 +37,10 @@ class SemanticSegmentationModelInstantiationTestCase(TestCase):
 
             self.assertIs(model.model, model_instance)
             processor_mock.assert_called_once_with(self.model_id, use_fast=True)
-            model_mock.assert_called_once_with(self.model_id)
+            model_mock.assert_called_once_with(
+                self.model_id,
+                device_map=Engine.get_default_device(),
+            )
             #model_instance.eval.assert_called_once_with()
 
 

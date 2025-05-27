@@ -1,4 +1,5 @@
 from avalan.model.entities import EngineSettings, ImageEntity
+from avalan.model.engine import Engine
 from avalan.model.vision.detection import (
     ObjectDetectionModel,
     AutoImageProcessor,
@@ -61,6 +62,7 @@ class ObjectDetectionModelInstantiationTestCase(TestCase):
             model_mock.assert_called_once_with(
                 self.model_id,
                 revision="no_timm",
+                device_map=Engine.get_default_device(),
             )
 
 

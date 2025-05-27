@@ -1,3 +1,4 @@
+from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.entities import GenerationSettings, Input
 from ...model.nlp import BaseNLPModel
@@ -33,6 +34,7 @@ class SequenceClassificationModel(BaseNLPModel):
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,
+            device_map=self._device,
         )
         return model
 
@@ -52,6 +54,7 @@ class SequenceClassificationModel(BaseNLPModel):
         inputs = inputs.to(self._model.device)
         return inputs
 
+    @override
     async def __call__(
         self,
         input: Input
@@ -90,6 +93,7 @@ class SequenceToSequenceModel(BaseNLPModel):
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,
+            device_map=self._device,
         )
         return model
 
@@ -109,6 +113,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         inputs = inputs.to(self._model.device)
         return inputs["input_ids"]
 
+    @override
     async def __call__(
         self,
         input: Input,
@@ -136,6 +141,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         )
 
 class TranslationModel(SequenceToSequenceModel):
+    @override
     async def __call__(
         self,
         input: Input,
