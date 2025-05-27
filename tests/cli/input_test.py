@@ -1,7 +1,7 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch, call
 
-from avalan.cli import get_input, CommandAbortException
+from avalan.cli import get_input, CommandAbortException, confirm, has_input
 
 
 class CliGetInputTestCase(TestCase):
@@ -55,3 +55,19 @@ class CliGetInputTestCase(TestCase):
 
         self.assertIsNone(result)
         self.console.print.assert_not_called()
+
+class CliConfirmHasInputTestCase(TestCase):
+    def test_confirm(self):
+        with patch("avalan.cli.Confirm.ask", return_value=True) as ask:
+            result = confirm(MagicMock(), "p?")
+        ask.assert_called_once_with("p?")
+        self.assertTrue(result)
+
+    def test_has_input_true(self):
+        with patch("avalan.cli.select", return_value=([object()], [], [])):
+            self.assertTrue(has_input(MagicMock()))
+
+    def test_has_input_false(self):
+        with patch("avalan.cli.select", return_value=([], [], [])):
+            self.assertFalse(has_input(MagicMock()))
+

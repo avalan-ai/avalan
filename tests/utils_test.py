@@ -3,7 +3,7 @@ from avalan.utils import _lf, _j, logger_replace
 from avalan.compat import override
 from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 class UtilsListJoinTestCase(TestCase):
     def test_lf_filters_falsy(self):
@@ -67,4 +67,38 @@ class CliDownloadTestCase(TestCase):
             self.assertIsInstance(bar._progress, DummyProgress)
             self.assertEqual(bar._progress.args, progress_tpl)
             self.assertEqual(bar._task_id, 1)
+
+
+    def test_tqdm_rich_progress_close_and_reset(self):
+        class DummyProgress:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                self.exited = True
+            def add_task(self, desc, **fmt):
+                return 1
+            def update(self, *_, **__):
+                pass
+            def reset(self, *_, **__):
+                self.reset_total = True
+
+        with patch("avalan.cli.download.Progress", DummyProgress), \
+             patch("avalan.cli.download.std_tqdm.close") as super_close, \
+             patch("avalan.cli.download.std_tqdm.reset") as super_reset:
+            LiveTqdm = create_live_tqdm_class((object(),))
+            bar = LiveTqdm(total=1, desc="t", leave=False, disable=False)
+            bar.display = MagicMock()
+            bar._progress.__exit__ = MagicMock()
+            bar._progress.reset = MagicMock()
+
+            bar.close()
+            bar.display.assert_called_once()
+            bar._progress.__exit__.assert_called_once_with(None, None, None)
+            super_close.assert_called_once()
+
+            bar.reset(total=2)
+            bar._progress.reset.assert_called_once_with(total=2)
+            super_reset.assert_called_once_with(total=2)
 
