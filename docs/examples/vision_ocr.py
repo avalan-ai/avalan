@@ -1,15 +1,12 @@
 from asyncio import run
-from avalan.model.entities import GenerationSettings, TransformerEngineSettings
+from avalan.model.entities import GenerationSettings
 from avalan.model.vision.image import ImageTextToTextModel
 from os.path import isfile
 from sys import argv, exit
 
 async def example(path: str) -> None:
     print("Loading model... ", end="", flush=True)
-    with ImageTextToTextModel(
-        "google/gemma-3-12b-it",
-        settings=TransformerEngineSettings(loader_class="gemma3")
-    ) as vm:
+    with ImageTextToTextModel("google/gemma-3-12b-it") as vm:
         print(f"DONE. Running image recognition for {path}", flush=True)
 
         text = await vm(
