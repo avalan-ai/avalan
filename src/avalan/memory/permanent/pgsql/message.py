@@ -14,18 +14,16 @@ from pgvector.psycopg import Vector
 from typing import Optional
 from uuid import UUID, uuid4
 
-class PgsqlMessageMemory(
-    PgsqlMemory[PermanentMessage],
-    PermanentMessageMemory
-):
+
+class PgsqlMessageMemory(PgsqlMemory[PermanentMessage], PermanentMessageMemory):
     @classmethod
     async def create_instance(
         cls,
         dsn: str,
         *args,
-        pool_minimum: int=1,
-        pool_maximum: int=10,
-        pool_open: bool=True,
+        pool_minimum: int = 1,
+        pool_maximum: int = 10,
+        pool_open: bool = True,
         **kwargs,
     ):
         memory = cls(
@@ -33,17 +31,14 @@ class PgsqlMessageMemory(
             composite_types=["message_author_type"],
             pool_minimum=pool_minimum,
             pool_maximum=pool_maximum,
-            **kwargs
+            **kwargs,
         )
         if pool_open:
             await memory.open()
         return memory
 
     async def create_session(
-        self,
-        *args,
-        agent_id: UUID,
-        participant_id: UUID
+        self, *args, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         now_utc = datetime.now(timezone.utc)
         session = Session(
@@ -51,11 +46,12 @@ class PgsqlMessageMemory(
             agent_id=agent_id,
             participant_id=participant_id,
             messages=0,
-            created_at=now_utc
+            created_at=now_utc,
         )
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute("""
+                await cursor.execute(
+                    """
                     INSERT INTO "sessions"(
                         "id",
                         "agent_id",
@@ -65,13 +61,15 @@ class PgsqlMessageMemory(
                     ) VALUES (
                         %s, %s, %s, %s, %s
                     )
-                """, (
-                    str(session.id),
-                    str(session.agent_id),
-                    str(session.participant_id),
-                    session.messages,
-                    session.created_at
-                ))
+                """,
+                    (
+                        str(session.id),
+                        str(session.agent_id),
+                        str(session.participant_id),
+                        session.messages,
+                        session.created_at,
+                    ),
+                )
                 await cursor.close()
         return session.id
 
@@ -82,18 +80,18 @@ class PgsqlMessageMemory(
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
-        session_id = await self._fetch_field("id", """
+        session_id = await self._fetch_field(
+            "id",
+            """
             SELECT "sessions"."id"
             FROM "sessions"
             WHERE "agent_id" = %s
             AND "participant_id" = %s
             AND "id" = %s
             LIMIT 1
-        """, (
-            str(agent_id),
-            str(participant_id),
-            str(session_id)
-        ))
+        """,
+            (str(agent_id), str(participant_id), str(session_id)),
+        )
         assert session_id
         return session_id if isinstance(session_id, UUID) else UUID(session_id)
 
@@ -101,7 +99,7 @@ class PgsqlMessageMemory(
         self,
         engine_message: EngineMessage,
         *args,
-        partitions: list[TextPartition]
+        partitions: list[TextPartition],
     ) -> None:
         assert engine_message and partitions
         now_utc = datetime.now(timezone.utc)
@@ -131,7 +129,8 @@ class PgsqlMessageMemory(
         async with self._database.connection() as connection:
             async with connection.transaction():
                 async with connection.cursor() as cursor:
-                    await cursor.execute("""
+                    await cursor.execute(
+                        """
                         INSERT INTO "messages"(
                             "id",
                             "agent_id",
@@ -144,29 +143,33 @@ class PgsqlMessageMemory(
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s, %s
                         )
-                    """, (
-                        str(message.id),
-                        str(message.agent_id),
-                        str(message.model_id),
-                        str(message.session_id)
+                    """,
+                        (
+                            str(message.id),
+                            str(message.agent_id),
+                            str(message.model_id),
+                            str(message.session_id)
                             if message.session_id
                             else None,
-                        str(message.author),
-                        message.data,
-                        message.partitions,
-                        message.created_at
-                    ))
+                            str(message.author),
+                            message.data,
+                            message.partitions,
+                            message.created_at,
+                        ),
+                    )
 
                     if message.session_id:
-                        await cursor.execute("""
+                        await cursor.execute(
+                            """
                             UPDATE "sessions"
                             SET "messages" = "messages" + 1
                             WHERE "id" = %s
-                        """, (
-                            str(message.session_id),
-                        ))
+                        """,
+                            (str(message.session_id),),
+                        )
 
-                    await cursor.executemany("""
+                    await cursor.executemany(
+                        """
                         INSERT INTO "message_partitions"(
                             "agent_id",
                             "session_id",
@@ -178,18 +181,20 @@ class PgsqlMessageMemory(
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s
                         )
-                    """, [
-                        (
-                            str(mp.agent_id),
-                            str(mp.session_id) if mp.session_id else None,
-                            str(mp.message_id),
-                            mp.partition + 1,
-                            mp.data,
-                            Vector(mp.embedding),
-                            mp.created_at
-                        )
-                        for mp in message_partitions
-                    ])
+                    """,
+                        [
+                            (
+                                str(mp.agent_id),
+                                str(mp.session_id) if mp.session_id else None,
+                                str(mp.message_id),
+                                mp.partition + 1,
+                                mp.data,
+                                Vector(mp.embedding),
+                                mp.created_at,
+                            )
+                            for mp in message_partitions
+                        ],
+                    )
 
                     await cursor.close()
 
@@ -198,9 +203,11 @@ class PgsqlMessageMemory(
         session_id: UUID,
         participant_id: UUID,
         *args,
-        limit: Optional[int]=None
+        limit: Optional[int] = None,
     ) -> list[EngineMessage]:
-        messages = await self._fetch_all(PermanentMessage, """
+        messages = await self._fetch_all(
+            PermanentMessage,
+            """
             SELECT
                 "messages"."id",
                 "messages"."agent_id",
@@ -217,15 +224,11 @@ class PgsqlMessageMemory(
             AND "messages"."is_deleted" = FALSE
             ORDER BY "messages"."created_at" DESC
             LIMIT %s
-        """, (
-            str(session_id),
-            str(participant_id),
-            limit
-        ))
+        """,
+            (str(session_id), str(participant_id), limit),
+        )
         engine_messages = self._to_engine_messages(
-            messages,
-            limit=limit,
-            reverse=True
+            messages, limit=limit, reverse=True
         )
         return engine_messages
 
@@ -237,12 +240,14 @@ class PgsqlMessageMemory(
         session_id: UUID,
         participant_id: UUID,
         function: VectorFunction,
-        limit: Optional[int]=None
+        limit: Optional[int] = None,
     ) -> list[EngineMessageScored]:
         assert agent_id and session_id and participant_id and search_partitions
         search_function = str(function)
         search_vector = Vector(search_partitions[0].embeddings)
-        messages = await self._fetch_all(PermanentMessageScored, f"""
+        messages = await self._fetch_all(
+            PermanentMessageScored,
+            f"""
             SELECT
                 "messages"."id",
                 "messages"."agent_id",
@@ -269,13 +274,15 @@ class PgsqlMessageMemory(
             AND "messages"."is_deleted" = FALSE
             ORDER BY "score" ASC
             LIMIT %s
-        """, (
-            search_vector,
-            str(session_id),
-            str(participant_id),
-            str(agent_id),
-            limit
-        ))
+        """,
+            (
+                search_vector,
+                str(session_id),
+                str(participant_id),
+                str(agent_id),
+                limit,
+            ),
+        )
         engine_messages = self._to_engine_messages(
             messages,
             limit=limit,

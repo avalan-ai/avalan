@@ -4,16 +4,11 @@ from ...model.entities import (
     HubCacheDeletion,
     HubCacheFile,
     HubCache,
-    User
+    User,
 )
 from ...model.hubs import HubAccessDeniedException
 from datetime import datetime
-from huggingface_hub import (
-    HfApi,
-    login,
-    ModelInfo,
-    scan_cache_dir
-)
+from huggingface_hub import HfApi, login, ModelInfo, scan_cache_dir
 from huggingface_hub.errors import GatedRepoError
 from logging import Logger
 from os.path import expanduser
@@ -21,6 +16,7 @@ from os import getenv
 from tqdm import tqdm
 from typing import Callable, Iterable, Type
 from urllib.parse import urlparse
+
 
 class HuggingfaceHub:
     DEFAULT_ENDPOINT: str = "https://huggingface.co"
@@ -46,32 +42,31 @@ class HuggingfaceHub:
         access_token: str,
         cache_dir: str,
         logger: Logger,
-        endpoint: str=DEFAULT_ENDPOINT
+        endpoint: str = DEFAULT_ENDPOINT,
     ) -> None:
-        assert(access_token and cache_dir)
+        assert access_token and cache_dir
         self._access_token = access_token
         self._hf = HfApi(
             endpoint=endpoint,
             token=access_token,
             library_name=name(),
-            library_version=version()
+            library_version=version(),
         )
         self._cache_dir = expanduser(cache_dir)
         self._domain = urlparse(endpoint).netloc
         self._logger = logger
 
     def cache_delete(
-        self,
-        model_id: str,
-        revisions: list[str] | None = None
+        self, model_id: str, revisions: list[str] | None = None
     ) -> (HubCacheDeletion | None, Callable[[], None] | None):
         scan_results = scan_cache_dir(self._cache_dir)
         delete_revisions = [
             revision.commit_hash
-            for info in scan_results.repos if info.repo_id == model_id
-            for revision in info.revisions if not revisions or any(
-                revision.commit_hash.startswith(r) for r in revisions
-            )
+            for info in scan_results.repos
+            if info.repo_id == model_id
+            for revision in info.revisions
+            if not revisions
+            or any(revision.commit_hash.startswith(r) for r in revisions)
         ]
         if not delete_revisions:
             return (None, None)
@@ -84,14 +79,12 @@ class HuggingfaceHub:
             deletable_blobs=[str(p) for p in strategy.blobs],
             deletable_refs=[str(p) for p in strategy.refs],
             deletable_repos=[str(p) for p in strategy.repos],
-            deletable_snapshots=[str(p) for p in strategy.snapshots]
+            deletable_snapshots=[str(p) for p in strategy.snapshots],
         )
         return cache_deletion, lambda: strategy.execute()
 
     def cache_scan(
-        self,
-        sort_models_by_size: bool=True,
-        sort_files_by_size: bool=True
+        self, sort_models_by_size: bool = True, sort_files_by_size: bool = True
     ) -> list[HubCache]:
         scan_results = scan_cache_dir(self._cache_dir)
         model_caches = sorted(
@@ -112,28 +105,25 @@ class HuggingfaceHub:
                                     ),
                                     last_modified=datetime.fromtimestamp(
                                         rfile.blob_last_modified
-                                    )
+                                    ),
                                 )
                                 for rfile in revision.files
                             ],
                             key=lambda f: f.size_on_disk
-                                if sort_files_by_size
-                                else f.name,
-                            reverse=sort_files_by_size
+                            if sort_files_by_size
+                            else f.name,
+                            reverse=sort_files_by_size,
                         )
                         for revision in info.revisions
                     },
-                    revisions=[
-                        r.commit_hash
-                        for r in info.revisions
-                    ],
+                    revisions=[r.commit_hash for r in info.revisions],
                     total_files=info.nb_files,
-                    total_revisions=len(info.revisions)
+                    total_revisions=len(info.revisions),
                 )
                 for info in scan_results.repos
             ],
             key=lambda m: m.size_on_disk if sort_models_by_size else m.name,
-            reverse=sort_models_by_size
+            reverse=sort_models_by_size,
         )
         return model_caches
 
@@ -147,14 +137,14 @@ class HuggingfaceHub:
     def download(
         self,
         model_id: str,
-        tqdm_class: Type[tqdm] | Callable[..., tqdm] | None = None
+        tqdm_class: Type[tqdm] | Callable[..., tqdm] | None = None,
     ) -> str:
         try:
             path = self._hf.snapshot_download(
                 model_id,
                 cache_dir=self._cache_dir,
                 tqdm_class=tqdm_class,
-                force_download=False
+                force_download=False,
             )
             return path
         except GatedRepoError as e:
@@ -164,10 +154,7 @@ class HuggingfaceHub:
         files = self._hf.list_repo_files(model_id)
         for file in files:
             self._hf.hf_hub_download(
-                model_id,
-                file,
-                cache_dir=self._cache_dir,
-                force_download=False
+                model_id, file, cache_dir=self._cache_dir, force_download=False
             )
         return files
 
@@ -180,10 +167,10 @@ class HuggingfaceHub:
 
     def models(
         self,
-        filter: str | None=None,
-        name: str | None=None,
-        search: str | None=None,
-        limit: int | None=None
+        filter: str | None = None,
+        name: str | None = None,
+        search: str | None = None,
+        limit: int | None = None,
     ) -> Iterable[Model]:
         yield from (
             HuggingfaceHub._model(model_info)
@@ -192,7 +179,7 @@ class HuggingfaceHub:
                 filter=filter,
                 search=search,
                 limit=limit,
-                full=True
+                full=True,
             )
         )
 
@@ -204,43 +191,44 @@ class HuggingfaceHub:
         return User(
             name=user_result["name"],
             full_name=user_result["fullname"],
-            access_token_name=user_result["auth"]["accessToken"]["displayName"]
+            access_token_name=user_result["auth"]["accessToken"]["displayName"],
         )
 
     @staticmethod
     def _model(model_info: ModelInfo) -> Model:
         model = Model(
             id=model_info.id,
-            parameters=model_info.safetensors.total if model_info.safetensors
-                       else None,
+            parameters=model_info.safetensors.total
+            if model_info.safetensors
+            else None,
             parameter_types=list(model_info.safetensors.parameters.keys())
-                            if model_info.safetensors and
-                               model_info.safetensors.parameters
-                            else None,
+            if model_info.safetensors and model_info.safetensors.parameters
+            else None,
             inference=model_info.inference,
-            library_name=model_info.library_name if model_info.library_name
-                         else model_info.card_data["library_name"]
-                            if model_info.card_data
-                            and "library_name" in model_info.card_data
-                         else None,
+            library_name=model_info.library_name
+            if model_info.library_name
+            else model_info.card_data["library_name"]
+            if model_info.card_data and "library_name" in model_info.card_data
+            else None,
             license=model_info.card_data["license"]
-                    if model_info.card_data
-                        and "license" in model_info.card_data
-                    else None,
+            if model_info.card_data and "license" in model_info.card_data
+            else None,
             pipeline_tag=model_info.pipeline_tag,
             tags=model_info.tags,
             architectures=model_info.config["architectures"]
-                if model_info.config and "architectures" in model_info.config
-                else None,
+            if model_info.config and "architectures" in model_info.config
+            else None,
             model_type=model_info.config["model_type"]
-                if model_info.config and "model_type" in model_info.config
-                else None,
+            if model_info.config and "model_type" in model_info.config
+            else None,
             auto_model=model_info.transformers_info["auto_model"]
-                if model_info.transformers_info
-                and "auto_model" in model_info.transformers_info else None,
+            if model_info.transformers_info
+            and "auto_model" in model_info.transformers_info
+            else None,
             processor=model_info.transformers_info["processor"]
-                if model_info.transformers_info
-                and "processor" in model_info.transformers_info else None,
+            if model_info.transformers_info
+            and "processor" in model_info.transformers_info
+            else None,
             gated=model_info.gated,
             private=model_info.private,
             disabled=model_info.disabled,

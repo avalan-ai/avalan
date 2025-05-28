@@ -5,6 +5,7 @@ except Exception:  # pragma Module may not be installed
     get_keyring = None  # type: ignore
     KeyringBackend = object  # type: ignore
 
+
 class KeyringSecrets:
     _SERVICE = "avalan"
 
@@ -27,4 +28,3 @@ class KeyringSecrets:
             self._ring.delete_password(self._SERVICE, key)
         except Exception:
             pass
-

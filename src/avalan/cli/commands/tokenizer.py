@@ -1,9 +1,6 @@
 from argparse import Namespace
 from ...cli import get_input
-from ...model.entities import (
-    Token,
-    TransformerEngineSettings
-)
+from ...model.entities import Token, TransformerEngineSettings
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.generation import TextGenerationModel
 from logging import Logger
@@ -11,12 +8,13 @@ from rich.console import Console
 from rich.theme import Theme
 from typing import Optional
 
+
 async def tokenize(
     args: Namespace,
     console: Console,
     theme: Theme,
     hub: HuggingfaceHub,
-    logger: Logger
+    logger: Logger,
 ) -> Optional[list[Token]]:
     assert args.tokenizer
 
@@ -30,10 +28,11 @@ async def tokenize(
             hub.cache_dir,
             tokenizer_name_or_path=tokenizer_name_or_path,
             tokens=args.token
-                if args.token and isinstance(args.token,list) else None,
+            if args.token and isinstance(args.token, list)
+            else None,
             special_tokens=args.special_token
-                if args.special_token and isinstance(args.special_token,list)
-                else None,
+            if args.special_token and isinstance(args.special_token, list)
+            else None,
             auto_load_model=False,
             auto_load_tokenizer=True,
             disable_loading_progress_bar=args.disable_loading_progress_bar,
@@ -66,7 +65,6 @@ async def tokenize(
                 tokens,
                 lm.tokenizer_config.tokens,
                 lm.tokenizer_config.special_tokens,
-                display_details=True
+                display_details=True,
             )
             console.print(panel)
-

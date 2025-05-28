@@ -12,6 +12,7 @@ from huggingface_hub import AsyncInferenceClient
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 
+
 class HuggingfaceStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator):
         super().__init__(stream.__aiter__())
@@ -21,6 +22,7 @@ class HuggingfaceStream(TextGenerationVendorStream):
         delta = chunk.choices[0].delta
         text = getattr(delta, "content", None) or ""
         return text
+
 
 class HuggingfaceClient(TextGenerationVendor):
     _client: AsyncInferenceClient
@@ -36,7 +38,7 @@ class HuggingfaceClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         tool: ToolManager | None = None,
-        use_async_generator: bool = True
+        use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
         settings = settings or GenerationSettings()
         template_messages = self._template_messages(messages)
@@ -52,9 +54,12 @@ class HuggingfaceClient(TextGenerationVendor):
         if use_async_generator:
             return HuggingfaceStream(response)
         else:
+
             async def single_gen():
                 yield response.choices[0].message.content or ""
+
             return single_gen()
+
 
 class HuggingfaceModel(TextGenerationVendorModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:

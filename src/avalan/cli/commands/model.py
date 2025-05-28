@@ -5,11 +5,7 @@ from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
 from ...event import EventStats
 from ...model import TextGenerationResponse
-from ...model.entities import (
-    GenerationSettings,
-    Model,
-    Token
-)
+from ...model.entities import GenerationSettings, Model, Token
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...model.criteria import KeywordStoppingCriteria
@@ -26,6 +22,7 @@ from rich.theme import Theme
 from time import perf_counter
 from typing import Tuple, Union
 
+
 def model_display(
     args: Namespace,
     console: Console,
@@ -33,12 +30,12 @@ def model_display(
     hub: HuggingfaceHub,
     logger: Logger,
     *vargs,
-    is_sentence_transformer: bool | None=None,
-    load: bool | None=None,
-    model: Union[SentenceTransformerModel, TextGenerationModel] | None=None,
-    summary: bool | None=None,
+    is_sentence_transformer: bool | None = None,
+    load: bool | None = None,
+    model: Union[SentenceTransformerModel, TextGenerationModel] | None = None,
+    summary: bool | None = None,
 ) -> None:
-    assert(args.model)
+    assert args.model
     _ = theme._
 
     with ModelManager(hub, logger) as manager:
@@ -46,52 +43,55 @@ def model_display(
         model_id = args.model
         can_access = args.skip_hub_access_check or hub.can_access(model_id)
         hub_model = hub.model(model_id)
-        console.print(theme.model(
-            hub_model,
-            can_access=can_access,
-            expand=(summary is not None and not summary)
+        console.print(
+            theme.model(
+                hub_model,
+                can_access=can_access,
+                expand=(summary is not None and not summary)
                 or (summary is None and not args.summary),
-            summary=False,
-        ))
+                summary=False,
+            )
+        )
 
         if not model and (
-            (load is not None and load) or
-            (load is None and args.load)
+            (load is not None and load) or (load is None and args.load)
         ):
             model_settings = get_model_settings(
                 args,
                 hub,
                 logger,
                 engine_uri,
-                is_sentence_transformer=is_sentence_transformer
+                is_sentence_transformer=is_sentence_transformer,
             )
             with manager.load(**model_settings) as lm:
                 logger.debug(f"Loaded model {lm.config.__repr__()}")
-                console.print(Padding(
-                    theme.model_display(
-                        lm.config,
-                        lm.tokenizer_config,
-                        summary=summary or False
-                    ),
-                    pad=(0,0,0,0)
-                ))
+                console.print(
+                    Padding(
+                        theme.model_display(
+                            lm.config,
+                            lm.tokenizer_config,
+                            summary=summary or False,
+                        ),
+                        pad=(0, 0, 0, 0),
+                    )
+                )
         elif model:
-            console.print(Padding(
-                theme.model_display(
-                    model.config,
-                    model.tokenizer_config,
-                    summary=summary or False
-                ),
-                pad=(0,0,0,0)
-            ))
+            console.print(
+                Padding(
+                    theme.model_display(
+                        model.config,
+                        model.tokenizer_config,
+                        summary=summary or False,
+                    ),
+                    pad=(0, 0, 0, 0),
+                )
+            )
+
 
 def model_install(
-    args: Namespace,
-    console: Console,
-    theme: Theme,
-    hub: HuggingfaceHub
+    args: Namespace, console: Console, theme: Theme, hub: HuggingfaceHub
 ) -> None:
-    assert(args.model)
+    assert args.model
     engine_uri = ModelManager.parse_uri(args.model)
     if (
         engine_uri.vendor
@@ -101,22 +101,27 @@ def model_install(
         secrets = KeyringSecrets()
         token = secrets.read(engine_uri.password)
         if token is None:
-            secret_value = Prompt.ask(theme.ask_secret_password(engine_uri.password))
+            secret_value = Prompt.ask(
+                theme.ask_secret_password(engine_uri.password)
+            )
             secrets.write(engine_uri.password, secret_value)
         elif confirm(console, theme.ask_override_secret(engine_uri.password)):
-            secret_value = Prompt.ask(theme.ask_secret_password(engine_uri.password))
+            secret_value = Prompt.ask(
+                theme.ask_secret_password(engine_uri.password)
+            )
             secrets.write(engine_uri.password, secret_value)
 
     cache_download(args, console, theme, hub)
+
 
 async def model_run(
     args: Namespace,
     console: Console,
     theme: Theme,
     hub: HuggingfaceHub,
-    logger: Logger
+    logger: Logger,
 ) -> None:
-    assert(args.model and args.device and args.max_new_tokens)
+    assert args.model and args.device and args.max_new_tokens
     _, _i = theme._, theme.icons
 
     system_prompt = args.system or None
@@ -124,11 +129,7 @@ async def model_run(
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
         model_settings = get_model_settings(
-            args,
-            hub,
-            logger,
-            engine_uri,
-            is_sentence_transformer=False
+            args, hub, logger, engine_uri, is_sentence_transformer=False
         )
 
         if not args.quiet:
@@ -140,9 +141,12 @@ async def model_run(
                 )
 
                 model = hub.model(engine_uri.model_id)
-                console.print(Padding(
-                    theme.model(model, can_access=can_access, summary=True)
-                , pad=(0,0,1,0)))
+                console.print(
+                    Padding(
+                        theme.model(model, can_access=can_access, summary=True),
+                        pad=(0, 0, 1, 0),
+                    )
+                )
 
         with manager.load(**model_settings) as lm:
             logger.debug(f"Loaded model {lm.config.__repr__()}")
@@ -172,16 +176,18 @@ async def model_run(
             dtokens_pick = 10 if display_tokens > 0 else 0
 
             if engine_uri.is_local:
-                stopping_criteria = KeywordStoppingCriteria(
-                    args.stop_on_keyword,
-                    lm.tokenizer
-                ) if args.stop_on_keyword else None
+                stopping_criteria = (
+                    KeywordStoppingCriteria(args.stop_on_keyword, lm.tokenizer)
+                    if args.stop_on_keyword
+                    else None
+                )
                 output_generator = lm(
                     input_string,
                     system_prompt=system_prompt,
                     settings=settings,
                     stopping_criterias=[stopping_criteria]
-                        if stopping_criteria else None,
+                    if stopping_criteria
+                    else None,
                     manual_sampling=display_tokens,
                     pick=dtokens_pick,
                     skip_special_tokens=args.quiet or args.skip_special_tokens,
@@ -208,30 +214,34 @@ async def model_run(
                 with_stats=not args.quiet,
             )
 
+
 async def model_search(
     args: Namespace,
     console: Console,
     theme: Theme,
     hub: HuggingfaceHub,
-    refresh_per_second: int
+    refresh_per_second: int,
 ) -> None:
-    assert(args.limit)
+    assert args.limit
     _ = theme._
 
     models: list[Model] = []
-    model_access: dict[str,bool] = {}
+    model_access: dict[str, bool] = {}
 
     # Fetch matching models
     with console.status(
         _("Loading models..."),
         spinner=theme.get_spinner("downloading"),
-        refresh_per_second=refresh_per_second
+        refresh_per_second=refresh_per_second,
     ):
-        models = [model for model in hub.models(
-            filter=args.filter or None,
-            search=args.search or None,
-            limit=args.limit
-        )]
+        models = [
+            model
+            for model in hub.models(
+                filter=args.filter or None,
+                search=args.search or None,
+                limit=args.limit,
+            )
+        ]
 
     # Tasks to check model access
     tasks = [
@@ -240,14 +250,14 @@ async def model_search(
     ]
 
     def _render(
-        models: list[Model],
-        model_access: dict[str,bool]
+        models: list[Model], model_access: dict[str, bool]
     ) -> list[RenderableType]:
         return [
             theme.model(
                 model,
                 can_access=model_access[model.id]
-                           if model.id in model_access else None
+                if model.id in model_access
+                else None,
             )
             for model in models
         ]
@@ -256,7 +266,7 @@ async def model_search(
     with Live(
         Group(*_render(models, model_access)),
         console=console,
-        refresh_per_second=refresh_per_second
+        refresh_per_second=refresh_per_second,
     ) as live:
         for completed_task in as_completed(tasks):
             model_id, can_access = await completed_task
@@ -266,13 +276,11 @@ async def model_search(
 
         await gather(*tasks)
 
+
 def model_uninstall(
-    args: Namespace,
-    console: Console,
-    theme: Theme,
-    hub: HuggingfaceHub
+    args: Namespace, console: Console, theme: Theme, hub: HuggingfaceHub
 ) -> None:
-    assert(args.model)
+    assert args.model
     engine_uri = ModelManager.parse_uri(args.model)
     if (
         engine_uri.vendor
@@ -283,6 +291,7 @@ def model_uninstall(
         secrets.delete(engine_uri.password)
 
     cache_delete(args, console, theme, hub, is_full_deletion=True)
+
 
 async def token_generation(
     args: Namespace,
@@ -297,46 +306,49 @@ async def token_generation(
     *,
     display_tokens: int,
     dtokens_pick: int,
-    with_stats: bool=True
+    with_stats: bool = True,
 ):
     # If no statistics needed, return as early as possible
     if not with_stats:
         async for token in response:
-            text_token = token.token if isinstance(token,Token) else token
+            text_token = token.token if isinstance(token, Token) else token
             console.print(text_token, end="")
         return
 
     # From here on, display includes stats and may include token probabilities
 
     display_time_to_n_token = args.display_time_to_n_token or 256
-    display_pause = args.display_pause \
-                    if args.display_pause and args.display_pause > 0 else 0
+    display_pause = (
+        args.display_pause
+        if args.display_pause and args.display_pause > 0
+        else 0
+    )
     start_thinking = (
-        args.start_thinking
-        if hasattr(args, "start_thinking")
-        else False
+        args.start_thinking if hasattr(args, "start_thinking") else False
     )
     tokens = []
     text_tokens = []
     total_tokens = 0
-    frame_minimum_pause_ms = 100 \
-                             if display_pause > 0 and display_tokens > 0 else 0
+    frame_minimum_pause_ms = (
+        100 if display_pause > 0 and display_tokens > 0 else 0
+    )
 
     with Live() as live:
         start = perf_counter()
         input_token_count = (
             response.input_token_count
             if response.input_token_count
-            else orchestrator.input_token_count if orchestrator
+            else orchestrator.input_token_count
+            if orchestrator
             else lm.input_token_count(input_string)
         )
         ttft: float | None = None
         ttnt: float | None = None
-        token_frame_list: list[Tuple[Token | None,RenderableType]] = None
+        token_frame_list: list[Tuple[Token | None, RenderableType]] = None
         last_current_dtoken: Token | None = None
 
         async for token in response:
-            text_token = token.token if isinstance(token,Token) else token
+            text_token = token.token if isinstance(token, Token) else token
 
             total_tokens = total_tokens + 1
             ellapsed = perf_counter() - start
@@ -346,30 +358,37 @@ async def token_generation(
                 ttnt = ellapsed
             text_tokens.append(text_token)
 
-            if display_tokens and isinstance(token,Token):
+            if display_tokens and isinstance(token, Token):
                 tokens.append(token)
 
             token_frames_promise = theme.tokens(
                 lm.model_id,
                 lm.tokenizer_config.tokens if lm.tokenizer_config else None,
-                lm.tokenizer_config.special_tokens \
-                    if lm.tokenizer_config else None,
+                lm.tokenizer_config.special_tokens
+                if lm.tokenizer_config
+                else None,
                 display_tokens,
                 args.display_probabilities if dtokens_pick > 0 else False,
                 dtokens_pick,
                 # Which tokens to mark as interesting
                 lambda dtoken: (
                     dtoken.probability < args.display_probabilities_maximum
-                    or len([
-                        t for t in dtoken.tokens
-                        if t.id != dtoken.id
-                           and t.probability
+                    or len(
+                        [
+                            t
+                            for t in dtoken.tokens
+                            if t.id != dtoken.id
+                            and t.probability
                             >= args.display_probabilities_sample_minimum
-                    ]) > 0
-                ) if display_tokens and args.display_probabilities
-                    and args.display_probabilities_maximum > 0
-                    and args.display_probabilities_maximum > 0
-                    else None,
+                        ]
+                    )
+                    > 0
+                )
+                if display_tokens
+                and args.display_probabilities
+                and args.display_probabilities_maximum > 0
+                and args.display_probabilities_maximum > 0
+                else None,
                 text_tokens,
                 tokens or None,
                 input_token_count,
@@ -382,12 +401,11 @@ async def token_generation(
                 event_stats,
                 height=6,
                 maximum_frames=1,
-                start_thinking=start_thinking
+                start_thinking=start_thinking,
             )
 
             token_frame_list = [
-                token_frame
-                async for token_frame in token_frames_promise
+                token_frame async for token_frame in token_frames_promise
             ]
 
             # We prioritize a single selected dtoken at a time, it being
@@ -395,7 +413,7 @@ async def token_generation(
             # minimum_frames=1 when calling theme.tokens()
             token_frames = [token_frame_list[0]]
 
-            for (current_dtoken, frame) in token_frames:
+            for current_dtoken, frame in token_frames:
                 live.update(frame)
                 if current_dtoken and current_dtoken != last_current_dtoken:
                     last_current_dtoken = current_dtoken
@@ -403,16 +421,22 @@ async def token_generation(
                         await sleep(display_pause / 1000)
                     elif frame_minimum_pause_ms > 0:
                         await sleep(frame_minimum_pause_ms / 1000)
-                elif dtokens_pick > 0 and not args.display_probabilities \
-                    and display_pause > 0:
+                elif (
+                    dtokens_pick > 0
+                    and not args.display_probabilities
+                    and display_pause > 0
+                ):
                     await sleep(display_pause / 1000)
 
-        if dtokens_pick > 0 and args.display_probabilities \
-            and token_frame_list and len(token_frame_list) > 0:
-            for (current_dtoken, frame) in token_frame_list[1:]:
+        if (
+            dtokens_pick > 0
+            and args.display_probabilities
+            and token_frame_list
+            and len(token_frame_list) > 0
+        ):
+            for current_dtoken, frame in token_frame_list[1:]:
                 live.update(frame)
                 if current_dtoken and display_pause > 0:
                     await sleep(display_pause / 1000)
                 elif frame_minimum_pause_ms > 0:
                     await sleep(frame_minimum_pause_ms / 1000)
-

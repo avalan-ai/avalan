@@ -4,6 +4,7 @@ from types import ModuleType
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+
 class AgentsServerTestCase(TestCase):
     def test_agents_server_constructs_server(self):
         # Dummy modules and classes
@@ -98,14 +99,19 @@ class AgentsServerTestCase(TestCase):
         self.assertIs(app.state.orchestrator, orch)
         app.include_router.assert_any_call(chat_router, prefix="/o")
         SseServerTransport.assert_called_once_with("/m/messages/")
-        app.mount.assert_called_once_with("/m/messages/", app=sse_instance.handle_post_message)
+        app.mount.assert_called_once_with(
+            "/m/messages/", app=sse_instance.handle_post_message
+        )
         app.include_router.assert_any_call(mcp_router, prefix="/m")
         Config.assert_called_once_with(app, host="h", port=1, reload=False)
         Server.assert_called_once_with(config_instance)
-        lr.assert_called_once_with(logger, [
-            "uvicorn",
-            "uvicorn.error",
-            "uvicorn.access",
-            "uvicorn.asgi",
-            "uvicorn.lifespan",
-        ])
+        lr.assert_called_once_with(
+            logger,
+            [
+                "uvicorn",
+                "uvicorn.error",
+                "uvicorn.access",
+                "uvicorn.asgi",
+                "uvicorn.lifespan",
+            ],
+        )

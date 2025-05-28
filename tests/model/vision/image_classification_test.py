@@ -19,8 +19,12 @@ class ImageClassificationModelInstantiationTestCase(TestCase):
     def test_instantiation_no_load(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForImageClassification, "from_pretrained") as model_mock,
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
+            patch.object(
+                AutoModelForImageClassification, "from_pretrained"
+            ) as model_mock,
         ):
             settings = EngineSettings(auto_load_model=False)
             model = ImageClassificationModel(
@@ -35,8 +39,12 @@ class ImageClassificationModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_model(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForImageClassification, "from_pretrained") as model_mock,
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
+            patch.object(
+                AutoModelForImageClassification, "from_pretrained"
+            ) as model_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
@@ -68,9 +76,15 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
     async def test_call(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForImageClassification, "from_pretrained") as model_mock,
-            patch("avalan.model.vision.image.no_grad", new=lambda: nullcontext()),
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
+            patch.object(
+                AutoModelForImageClassification, "from_pretrained"
+            ) as model_mock,
+            patch(
+                "avalan.model.vision.image.no_grad", new=lambda: nullcontext()
+            ),
             patch.object(BaseVisionModel, "_get_image") as get_image_mock,
         ):
             processor_instance = MagicMock()
@@ -102,13 +116,14 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertIsInstance(result, ImageEntity)
             self.assertEqual(result.label, "cat")
-            processor_instance.assert_called_once_with(image_mock, return_tensors="pt")
+            processor_instance.assert_called_once_with(
+                image_mock, return_tensors="pt"
+            )
             model_instance.assert_called_once()
             self.assertEqual(model_instance.call_count, 1)
-            self.assertEqual(model_instance.call_args, call(**{
-                "pixel_values": "inputs"
-            }))
-
+            self.assertEqual(
+                model_instance.call_args, call(**{"pixel_values": "inputs"})
+            )
 
 
 if __name__ == "__main__":

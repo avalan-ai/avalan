@@ -7,11 +7,12 @@ from torch import argmax, no_grad, softmax, Tensor
 from transformers import (
     AutoModelForSequenceClassification,
     AutoModelForSeq2SeqLM,
-    PreTrainedModel
+    PreTrainedModel,
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
+
 
 class SequenceClassificationModel(BaseNLPModel):
     @property
@@ -43,11 +44,13 @@ class SequenceClassificationModel(BaseNLPModel):
         input: Input,
         system_prompt: str | None,
         context: str | None,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> BatchEncoding:
-        assert not system_prompt, "Sequence classification model " + \
-                                 f"{self._model_id} does not support chat " + \
-                                  "templates"
+        assert not system_prompt, (
+            "Sequence classification model "
+            + f"{self._model_id} does not support chat "
+            + "templates"
+        )
         _l = self._log
         _l(f"Tokenizing input {input}")
         inputs = self._tokenizer(input, return_tensors=tensor_format)
@@ -55,14 +58,15 @@ class SequenceClassificationModel(BaseNLPModel):
         return inputs
 
     @override
-    async def __call__(
-        self,
-        input: Input
-    ) -> str:
-        assert self._tokenizer, f"Model {self._model} can't be executed " + \
-                                 "without a tokenizer loaded first"
-        assert self._model, f"Model {self._model} can't be executed, it " + \
-                             "needs to be loaded first"
+    async def __call__(self, input: Input) -> str:
+        assert self._tokenizer, (
+            f"Model {self._model} can't be executed "
+            + "without a tokenizer loaded first"
+        )
+        assert self._model, (
+            f"Model {self._model} can't be executed, it "
+            + "needs to be loaded first"
+        )
         inputs = self._tokenize_input(input, system_prompt=None, context=None)
         with no_grad():
             outputs = self._model(**inputs)
@@ -71,6 +75,7 @@ class SequenceClassificationModel(BaseNLPModel):
             label_id = argmax(label_probs, dim=-1).item()
             label = self._model.config.id2label[label_id]
             return label
+
 
 class SequenceToSequenceModel(BaseNLPModel):
     @property
@@ -102,11 +107,13 @@ class SequenceToSequenceModel(BaseNLPModel):
         input: Input,
         system_prompt: str | None,
         context: str | None,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> Tensor:
-        assert not system_prompt, "SequenceToSequence model " + \
-                                 f"{self._model_id} does not support chat " + \
-                                  "templates"
+        assert not system_prompt, (
+            "SequenceToSequence model "
+            + f"{self._model_id} does not support chat "
+            + "templates"
+        )
         _l = self._log
         _l(f"Tokenizing input {input}")
         inputs = self._tokenizer(input, return_tensors=tensor_format)
@@ -118,16 +125,22 @@ class SequenceToSequenceModel(BaseNLPModel):
         self,
         input: Input,
         settings: GenerationSettings,
-        stopping_criterias: list[StoppingCriteria] | None=None,
+        stopping_criterias: list[StoppingCriteria] | None = None,
     ) -> str:
-        assert self._tokenizer, f"Model {self._model} can't be executed " + \
-                                 "without a tokenizer loaded first"
-        assert self._model, f"Model {self._model} can't be executed, it " + \
-                             "needs to be loaded first"
+        assert self._tokenizer, (
+            f"Model {self._model} can't be executed "
+            + "without a tokenizer loaded first"
+        )
+        assert self._model, (
+            f"Model {self._model} can't be executed, it "
+            + "needs to be loaded first"
+        )
         assert settings.temperature is None or (
             settings.temperature > 0 and settings.temperature != 0.0
-        ), "Temperature has to be a strictly positive float, otherwise " + \
-           "your next token scores will be invalid"
+        ), (
+            "Temperature has to be a strictly positive float, otherwise "
+            + "your next token scores will be invalid"
+        )
 
         inputs = self._tokenize_input(input, system_prompt=None, context=None)
         output_ids = self._generate_output(
@@ -135,10 +148,8 @@ class SequenceToSequenceModel(BaseNLPModel):
             settings,
             stopping_criterias,
         )
-        return self._tokenizer.decode(
-            output_ids[0],
-            skip_special_tokens=True
-        )
+        return self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
 
 class TranslationModel(SequenceToSequenceModel):
     @override
@@ -148,19 +159,26 @@ class TranslationModel(SequenceToSequenceModel):
         source_language: str,
         destination_language: str,
         settings: GenerationSettings,
-        stopping_criterias: list[StoppingCriteria] | None=None,
-        skip_special_tokens: bool=True
+        stopping_criterias: list[StoppingCriteria] | None = None,
+        skip_special_tokens: bool = True,
     ) -> str:
-        assert self._tokenizer, f"Model {self._model} can't be executed " + \
-                                 "without a tokenizer loaded first"
-        assert self._model, f"Model {self._model} can't be executed, it " + \
-                             "needs to be loaded first"
+        assert self._tokenizer, (
+            f"Model {self._model} can't be executed "
+            + "without a tokenizer loaded first"
+        )
+        assert self._model, (
+            f"Model {self._model} can't be executed, it "
+            + "needs to be loaded first"
+        )
         assert settings.temperature is None or (
             settings.temperature > 0 and settings.temperature != 0.0
-        ), "Temperature has to be a strictly positive float, otherwise " + \
-           "your next token scores will be invalid"
-        assert hasattr(self._tokenizer, "src_lang") \
-               and hasattr(self._tokenizer, "lang_code_to_id")
+        ), (
+            "Temperature has to be a strictly positive float, otherwise "
+            + "your next token scores will be invalid"
+        )
+        assert hasattr(self._tokenizer, "src_lang") and hasattr(
+            self._tokenizer, "lang_code_to_id"
+        )
 
         previous_language = self._tokenizer.src_lang
         self._tokenizer.src_lang = source_language
@@ -181,9 +199,7 @@ class TranslationModel(SequenceToSequenceModel):
             stopping_criterias,
         )
         text = self._tokenizer.decode(
-            output_ids[0],
-            skip_special_tokens=skip_special_tokens
+            output_ids[0], skip_special_tokens=skip_special_tokens
         )
         self._tokenizer.src_lang = previous_language
         return text
-

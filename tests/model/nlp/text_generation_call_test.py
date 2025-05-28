@@ -28,7 +28,9 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         )
         response = await self.model("hi", settings=settings)
 
-        tokenize_mock.assert_called_once_with("hi", None, context=None, tool=None)
+        tokenize_mock.assert_called_once_with(
+            "hi", None, context=None, tool=None
+        )
         self.assertIs(response._output_fn, string_output)
         self.assertEqual(response._kwargs["inputs"], tok_inputs)
         self.assertTrue(response._kwargs["settings"].do_sample)
@@ -44,7 +46,9 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         stream_output = MagicMock()
         self.model._stream_generator = stream_output
 
-        settings = GenerationSettings(temperature=None, use_async_generator=True)
+        settings = GenerationSettings(
+            temperature=None, use_async_generator=True
+        )
         response = await self.model("go", settings=settings)
 
         self.assertIs(response._output_fn, stream_output)
@@ -57,14 +61,20 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         token_gen = MagicMock()
         self.model._token_generator = token_gen
 
-        settings = GenerationSettings(temperature=None, use_async_generator=True)
-        response = await self.model("ok", settings=settings, manual_sampling=True)
+        settings = GenerationSettings(
+            temperature=None, use_async_generator=True
+        )
+        response = await self.model(
+            "ok", settings=settings, manual_sampling=True
+        )
 
         self.assertIs(response._output_fn, token_gen)
         self.assertTrue(response._use_async_generator)
 
     async def test_do_sample_without_temperature_raises(self):
-        self.model._tokenize_input = MagicMock(return_value={"input_ids": [[1]]})
+        self.model._tokenize_input = MagicMock(
+            return_value={"input_ids": [[1]]}
+        )
         with self.assertRaises(AssertionError):
             await self.model(
                 "bad",
@@ -72,7 +82,9 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             )
 
     async def test_temperature_without_support_raises(self):
-        self.model._tokenize_input = MagicMock(return_value={"input_ids": [[1]]})
+        self.model._tokenize_input = MagicMock(
+            return_value={"input_ids": [[1]]}
+        )
         with patch.object(
             TextGenerationModel,
             "supports_sample_generation",

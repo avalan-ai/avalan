@@ -59,7 +59,10 @@ class GetModelSettingsTestCase(unittest.TestCase):
         )
 
         result = get_model_settings(
-            args, MagicMock(), MagicMock(), engine_uri, is_sentence_transformer=True
+            args,
+            MagicMock(),
+            MagicMock(),
+            engine_uri,
+            is_sentence_transformer=True,
         )
         self.assertTrue(result["is_sentence_transformer"])
-

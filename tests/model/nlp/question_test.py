@@ -152,9 +152,7 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
                 context="ctx",
             )
             model_instance.assert_called_once()
-            called_tensor = (
-                tokenizer_instance.decode.call_args_list[-1][0][0]
-            )
+            called_tensor = tokenizer_instance.decode.call_args_list[-1][0][0]
             self.assertEqual(called_tensor.tolist(), [2, 3])
             tokenizer_instance.decode.assert_called_with(
                 called_tensor, skip_special_tokens=True
@@ -163,4 +161,3 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     main()
-

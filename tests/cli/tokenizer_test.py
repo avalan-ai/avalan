@@ -77,13 +77,19 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
             def save_tokenizer(self, path):
                 return [path]
 
-            tokenizer_config = SimpleNamespace(tokens=["t"], special_tokens=["s"], tokenizer_model_max_length=10)
+            tokenizer_config = SimpleNamespace(
+                tokens=["t"],
+                special_tokens=["s"],
+                tokenizer_model_max_length=10,
+            )
             config = "cfg"
 
         nlp.TextGenerationModel = TextGenerationModel
         sys.modules["avalan.model.nlp.text.generation"] = nlp
 
-        cls.tokenizer_mod = importlib.import_module("avalan.cli.commands.tokenizer")
+        cls.tokenizer_mod = importlib.import_module(
+            "avalan.cli.commands.tokenizer"
+        )
         cls.TransformerEngineSettings = TransformerEngineSettings
 
     @classmethod
@@ -131,9 +137,17 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         dummy_model.tokenizer_config = self.TransformerEngineSettings()
         dummy_model.save_tokenizer.return_value = ["f1", "f2"]
 
-        with patch.object(self.tokenizer_mod, "TextGenerationModel", return_value=dummy_model) as Model, \
-             patch.object(self.tokenizer_mod, "get_input") as get_input:
-            await self.tokenizer_mod.tokenize(args, self.console, self.theme, self.hub, self.logger)
+        with (
+            patch.object(
+                self.tokenizer_mod,
+                "TextGenerationModel",
+                return_value=dummy_model,
+            ) as Model,
+            patch.object(self.tokenizer_mod, "get_input") as get_input,
+        ):
+            await self.tokenizer_mod.tokenize(
+                args, self.console, self.theme, self.hub, self.logger
+            )
 
         Model.assert_called_once()
         settings = Model.call_args.kwargs["settings"]
@@ -142,9 +156,14 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(settings.auto_load_model)
         self.assertTrue(settings.auto_load_tokenizer)
         dummy_model.save_tokenizer.assert_called_once_with(args.save)
-        self.theme.tokenizer_config.assert_called_once_with(dummy_model.tokenizer_config)
+        self.theme.tokenizer_config.assert_called_once_with(
+            dummy_model.tokenizer_config
+        )
         self.theme.saved_tokenizer_files.assert_called_once_with(args.save, 2)
-        self.assertEqual(self.console.print.call_args_list, [call("cfg_panel"), call("save_panel")])
+        self.assertEqual(
+            self.console.print.call_args_list,
+            [call("cfg_panel"), call("save_panel")],
+        )
         get_input.assert_not_called()
 
     async def test_tokenize_input(self):
@@ -153,12 +172,24 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         dummy_model = MagicMock()
         dummy_model.__enter__.return_value = dummy_model
         dummy_model.__exit__.return_value = False
-        dummy_model.tokenizer_config = SimpleNamespace(tokens=["x"], special_tokens=["y"])
+        dummy_model.tokenizer_config = SimpleNamespace(
+            tokens=["x"], special_tokens=["y"]
+        )
         dummy_model.tokenize.return_value = ["tok"]
 
-        with patch.object(self.tokenizer_mod, "TextGenerationModel", return_value=dummy_model) as Model, \
-             patch.object(self.tokenizer_mod, "get_input", return_value="hello") as get_input:
-            await self.tokenizer_mod.tokenize(args, self.console, self.theme, self.hub, self.logger)
+        with (
+            patch.object(
+                self.tokenizer_mod,
+                "TextGenerationModel",
+                return_value=dummy_model,
+            ) as Model,
+            patch.object(
+                self.tokenizer_mod, "get_input", return_value="hello"
+            ) as get_input,
+        ):
+            await self.tokenizer_mod.tokenize(
+                args, self.console, self.theme, self.hub, self.logger
+            )
 
         Model.assert_called_once()
         dummy_model.tokenize.assert_called_once_with("hello")
@@ -174,5 +205,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
             dummy_model.tokenizer_config.special_tokens,
             display_details=True,
         )
-        self.assertEqual(self.console.print.call_args_list, [call("cfg_panel"), call("tokens_panel")])
-
+        self.assertEqual(
+            self.console.print.call_args_list,
+            [call("cfg_panel"), call("tokens_panel")],
+        )

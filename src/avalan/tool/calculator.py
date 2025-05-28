@@ -1,5 +1,6 @@
 from sympy import sympify
 
+
 class CalculatorTool:
     """Safely evaluate arithmetic expressions using sympy."""
 
@@ -11,7 +12,9 @@ class CalculatorTool:
         result = sympify(expression, evaluate=True)
         return str(result)
 
+
 tool = CalculatorTool()
+
 
 def calculator(expression: str) -> str:
     """

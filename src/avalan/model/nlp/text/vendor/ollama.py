@@ -19,6 +19,7 @@ try:
 except Exception:  # pragma: no cover - ollama may not be installed
     AsyncClient = None
 
+
 class OllamaStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[dict]):
         super().__init__(stream)
@@ -27,6 +28,7 @@ class OllamaStream(TextGenerationVendorStream):
         chunk = await self._generator.__anext__()
         message = chunk.get("message", {}) if isinstance(chunk, dict) else {}
         return message.get("content", "")
+
 
 class OllamaClient(TextGenerationVendor):
     _client: AsyncClient
@@ -43,7 +45,7 @@ class OllamaClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         tool: ToolManager | None = None,
-        use_async_generator: bool = True
+        use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
         template_messages = self._template_messages(messages)
         if use_async_generator:
@@ -59,9 +61,12 @@ class OllamaClient(TextGenerationVendor):
                 messages=template_messages,
                 stream=False,
             )
+
             async def single_gen():
                 yield response["message"]["content"]
+
             return single_gen()
+
 
 class OllamaModel(TextGenerationVendorModel):
     def __init__(

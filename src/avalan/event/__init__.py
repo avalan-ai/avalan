@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+
 class EventType(StrEnum):
     START = "start"
     TOOL_PROCESS = "tool_process"
@@ -19,12 +20,13 @@ class EventType(StrEnum):
     INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
     TOKEN_GENERATED = "token_generated"
 
+
 @dataclass(frozen=True, kw_only=True)
 class Event:
     type: EventType
     payload: dict[str, Any] | None = None
 
-class EventStats:
-    triggers: dict[EventType,int] = {}
-    total_triggers: int = 0
 
+class EventStats:
+    triggers: dict[EventType, int] = {}
+    total_triggers: int = 0

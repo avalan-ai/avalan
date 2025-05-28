@@ -7,7 +7,9 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock
 
 
-class ObservableTextGenerationResponseIterationTestCase(IsolatedAsyncioTestCase):
+class ObservableTextGenerationResponseIterationTestCase(
+    IsolatedAsyncioTestCase
+):
     async def test_iteration_emits_events_and_stream_end(self):
         async def output_gen():
             yield "a"
@@ -23,7 +25,9 @@ class ObservableTextGenerationResponseIterationTestCase(IsolatedAsyncioTestCase)
         tokenizer = MagicMock()
         tokenizer.encode.return_value = [42]
 
-        obs = ObservableTextGenerationResponse(response, event_manager, "m", tokenizer)
+        obs = ObservableTextGenerationResponse(
+            response, event_manager, "m", tokenizer
+        )
 
         self.assertIs(obs.__aiter__(), obs)
         tokens = []
@@ -33,7 +37,11 @@ class ObservableTextGenerationResponseIterationTestCase(IsolatedAsyncioTestCase)
         self.assertEqual(tokens, ["a", Token(id=5, token="b")])
 
         calls = event_manager.trigger.await_args_list
-        token_events = [c.args[0] for c in calls if c.args[0].type == EventType.TOKEN_GENERATED]
+        token_events = [
+            c.args[0]
+            for c in calls
+            if c.args[0].type == EventType.TOKEN_GENERATED
+        ]
         self.assertEqual(len(token_events), 2)
         self.assertEqual(
             token_events[0].payload,
@@ -43,11 +51,15 @@ class ObservableTextGenerationResponseIterationTestCase(IsolatedAsyncioTestCase)
             token_events[1].payload,
             {"token_id": 5, "model_id": "m", "token": "b", "step": 1},
         )
-        self.assertTrue(any(c.args[0].type == EventType.STREAM_END for c in calls))
+        self.assertTrue(
+            any(c.args[0].type == EventType.STREAM_END for c in calls)
+        )
         self.assertEqual(obs.input_token_count, response.input_token_count)
 
 
-class ObservableTextGenerationResponseDelegationTestCase(IsolatedAsyncioTestCase):
+class ObservableTextGenerationResponseDelegationTestCase(
+    IsolatedAsyncioTestCase
+):
     async def test_delegated_methods(self):
         response = MagicMock(spec=TextGenerationResponse)
         response.input_token_count = 10
@@ -60,7 +72,9 @@ class ObservableTextGenerationResponseDelegationTestCase(IsolatedAsyncioTestCase
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        obs = ObservableTextGenerationResponse(response, event_manager, "m", None)
+        obs = ObservableTextGenerationResponse(
+            response, event_manager, "m", None
+        )
 
         self.assertEqual(obs.input_token_count, 10)
         self.assertIs(obs.__aiter__(), obs)

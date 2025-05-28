@@ -13,6 +13,7 @@ from .....tool.manager import ToolManager
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 
+
 class AnthropicStream(TextGenerationVendorStream):
     _stream: AsyncIterator
 
@@ -27,15 +28,19 @@ class AnthropicStream(TextGenerationVendorStream):
             if isinstance(event, RawContentBlockDeltaEvent):
                 delta = event.delta
                 value = (
-                    delta.text if hasattr(delta, "text") else
-                    delta.partial_json if hasattr(delta, "partial_json") else
-                    delta.thinking if hasattr(delta, "thinking")
+                    delta.text
+                    if hasattr(delta, "text")
+                    else delta.partial_json
+                    if hasattr(delta, "partial_json")
+                    else delta.thinking
+                    if hasattr(delta, "thinking")
                     else None
                 )
                 if value is not None:
                     return value
             elif isinstance(event, RawMessageStopEvent):
                 raise StopAsyncIteration
+
 
 class AnthropicClient(TextGenerationVendor):
     _client: AsyncAnthropic
@@ -51,7 +56,7 @@ class AnthropicClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         tool: ToolManager | None = None,
-        use_async_generator: bool = True
+        use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
@@ -62,15 +67,15 @@ class AnthropicClient(TextGenerationVendor):
             messages=template_messages,
             max_tokens=settings.max_new_tokens,
             temperature=settings.temperature,
-            stream=use_async_generator
+            stream=use_async_generator,
         )
         return AnthropicStream(stream=stream)
+
 
 class AnthropicModel(TextGenerationVendorModel):
     def _load_model(self) -> TextGenerationVendor | PreTrainedModel:
         assert self._settings.access_token
         return AnthropicClient(
             api_key=self._settings.access_token,
-            base_url=self._settings.base_url
+            base_url=self._settings.base_url,
         )
-

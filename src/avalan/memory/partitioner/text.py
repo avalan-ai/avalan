@@ -6,14 +6,16 @@ from re import split
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from typing import Union
 
+
 @dataclass(frozen=True, kw_only=True)
 class TextPartition:
     data: str
     total_tokens: int
     embeddings: ndarray
 
+
 class TextPartitioner:
-    _PARAGRAPH_PATTERN = r'(?:\r\n|\r|\n){2,}'
+    _PARAGRAPH_PATTERN = r"(?:\r\n|\r|\n){2,}"
     _model: SentenceTransformerModel
     _tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
     _logger: Logger
@@ -37,7 +39,7 @@ class TextPartitioner:
         self.configure(
             max_tokens=max_tokens,
             overlap_size=overlap_size,
-            window_size=window_size
+            window_size=window_size,
         )
 
     def configure(
@@ -48,10 +50,15 @@ class TextPartitioner:
         window_size: int,
     ) -> None:
         assert (
-            max_tokens and window_size and overlap_size and
-            max_tokens > 0 and window_size > 0 and overlap_size > 0 and
-            window_size < max_tokens and overlap_size < max_tokens and
-            window_size > overlap_size
+            max_tokens
+            and window_size
+            and overlap_size
+            and max_tokens > 0
+            and window_size > 0
+            and overlap_size > 0
+            and window_size < max_tokens
+            and overlap_size < max_tokens
+            and window_size > overlap_size
         )
         self._max_tokens = max_tokens
         self._window_size = window_size
@@ -75,11 +82,13 @@ class TextPartitioner:
             length = len(token_ids)
             if length <= self._max_tokens:
                 embeddings = await self._model(paragraph)
-                partitions.append(TextPartition(
-                    data=paragraph,
-                    embeddings=embeddings,
-                    total_tokens=length
-                ))
+                partitions.append(
+                    TextPartition(
+                        data=paragraph,
+                        embeddings=embeddings,
+                        total_tokens=length,
+                    )
+                )
             else:
                 step = self._window_size - self._overlap_size
 
@@ -89,14 +98,15 @@ class TextPartitioner:
                     ]
                     section_length = len(window_token_ids)
                     section = self._tokenizer.decode(
-                        window_token_ids,
-                        skip_special_tokens=True
+                        window_token_ids, skip_special_tokens=True
                     )
                     embeddings = await self._model(section)
-                    partitions.append(TextPartition(
-                        data=section,
-                        embeddings=embeddings,
-                        total_tokens=section_length
-                    ))
+                    partitions.append(
+                        TextPartition(
+                            data=section,
+                            embeddings=embeddings,
+                            total_tokens=section_length,
+                        )
+                    )
 
         return partitions

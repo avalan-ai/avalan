@@ -9,6 +9,7 @@ from ...tool.manager import ToolManager
 from typing import Optional
 from uuid import UUID
 
+
 class DefaultOrchestrator(Orchestrator):
     def __init__(
         self,
@@ -24,21 +25,20 @@ class DefaultOrchestrator(Orchestrator):
         task: str,
         instructions: str,
         rules: Optional[list[str]],
-        template_id: Optional[str]=None,
-        settings: Optional[TransformerEngineSettings]=None,
-        call_options: Optional[dict]=None,
-        template_vars: Optional[dict]=None,
-        id: Optional[UUID]=None
+        template_id: Optional[str] = None,
+        settings: Optional[TransformerEngineSettings] = None,
+        call_options: Optional[dict] = None,
+        template_vars: Optional[dict] = None,
+        id: Optional[UUID] = None,
     ):
         specification = Specification(
             role=role,
-            goal=Goal(
-                task=task,
-                instructions=[instructions]
-            ) if task and instructions else None,
+            goal=Goal(task=task, instructions=[instructions])
+            if task and instructions
+            else None,
             rules=rules,
             template_id=template_id or "agent.md",
-            template_vars=template_vars
+            template_vars=template_vars,
         )
         super().__init__(
             logger,
@@ -49,12 +49,10 @@ class DefaultOrchestrator(Orchestrator):
             Operation(
                 specification=specification,
                 environment=EngineEnvironment(
-                    engine_uri=engine_uri,
-                    settings=settings
+                    engine_uri=engine_uri, settings=settings
                 ),
             ),
             call_options=call_options,
             id=id,
-            name=name
+            name=name,
         )
-

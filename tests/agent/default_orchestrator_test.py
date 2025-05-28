@@ -1,9 +1,4 @@
-from avalan.agent import (
-    Goal,
-    InputType,
-    OutputType,
-    Specification
-)
+from avalan.agent import Goal, InputType, OutputType, Specification
 from avalan.agent.orchestrators.default import DefaultOrchestrator
 from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
@@ -12,7 +7,7 @@ from avalan.model import TextGenerationResponse
 from avalan.model.entities import (
     EngineUri,
     MessageRole,
-    TransformerEngineSettings
+    TransformerEngineSettings,
 )
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
@@ -21,6 +16,7 @@ from logging import Logger
 from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
+
 
 class DefaultOrchestratorInitTestCase(TestCase):
     def test_initialization(self):
@@ -31,7 +27,7 @@ class DefaultOrchestratorInitTestCase(TestCase):
             password=None,
             vendor=None,
             model_id="m",
-            params={}
+            params={},
         )
         logger = MagicMock(spec=Logger)
         model_manager = MagicMock(spec=ModelManager)
@@ -86,7 +82,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             password=None,
             vendor=None,
             model_id="m",
-            params={}
+            params={},
         )
         logger = MagicMock(spec=Logger)
         model_manager = MagicMock(spec=ModelManager)
@@ -138,8 +134,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         ) as orch:
             model_manager.load_engine.assert_called_once_with(
-                engine_uri,
-                settings
+                engine_uri, settings
             )
             Agent.assert_called_once()
             self.assertIs(orch.engine_agent, agent_mock)
@@ -157,19 +152,19 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(msg_arg.role, MessageRole.USER)
         self.assertIsNone(msg_arg.name)
         self.assertIsNone(msg_arg.arguments)
-        self.assertEqual(spec_arg, Specification(
-            role='assistant',
-            goal=Goal(
-                task='do',
-                instructions=['something']
+        self.assertEqual(
+            spec_arg,
+            Specification(
+                role="assistant",
+                goal=Goal(task="do", instructions=["something"]),
+                rules=None,
+                input_type=InputType.TEXT,
+                output_type=OutputType.TEXT,
+                settings=None,
+                template_id="agent.md",
+                template_vars=None,
             ),
-            rules=None,
-            input_type=InputType.TEXT,
-            output_type=OutputType.TEXT,
-            settings=None,
-            template_id='agent.md',
-            template_vars=None
-        ))
+        )
 
         self.assertIsInstance(result, TextGenerationResponse)
         self.assertEqual(tokens, ["a", "b"])
@@ -195,4 +190,3 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         )
 
         memory.__exit__.assert_called_once()
-

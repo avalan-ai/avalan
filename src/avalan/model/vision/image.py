@@ -5,7 +5,7 @@ from ...model.entities import (
     ImageEntity,
     ImageTextGenerationLoaderClass,
     Input,
-    MessageRole
+    MessageRole,
 )
 from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
@@ -26,13 +26,14 @@ from transformers import (
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
 
+
 # model predicts one of the 1000 ImageNet classes
 class ImageClassificationModel(BaseVisionModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
-            use_fast=True
+            use_fast=True,
         )
         model = AutoModelForImageClassification.from_pretrained(
             self._model_id,
@@ -44,7 +45,7 @@ class ImageClassificationModel(BaseVisionModel):
     async def __call__(
         self,
         image_source: str | Image.Image,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> ImageEntity:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(image, return_tensors=tensor_format)
@@ -53,16 +54,15 @@ class ImageClassificationModel(BaseVisionModel):
             logits = self._model(**inputs).logits
 
         label_index = logits.argmax(dim=1).item()
-        return ImageEntity(
-            label=self._model.config.id2label[label_index]
-        )
+        return ImageEntity(label=self._model.config.id2label[label_index])
+
 
 class ImageToTextModel(TransformerModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
-            use_fast=True
+            use_fast=True,
         )
         model = AutoModelForVision2Seq.from_pretrained(
             self._model_id,
@@ -73,12 +73,10 @@ class ImageToTextModel(TransformerModel):
     def _tokenize_input(
         self,
         input: Input,
-        context: str | None=None,
-        tensor_format: Literal["pt"]="pt",
-        **kwargs
-    ) -> (
-        dict[str,Tensor] | BatchEncoding | Tensor
-    ):
+        context: str | None = None,
+        tensor_format: Literal["pt"] = "pt",
+        **kwargs,
+    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
     @override
@@ -86,15 +84,14 @@ class ImageToTextModel(TransformerModel):
         self,
         image_source: str | Image.Image,
         *,
-        skip_special_tokens: bool=True,
-        tensor_format: Literal["pt"]="pt"
+        skip_special_tokens: bool = True,
+        tensor_format: Literal["pt"] = "pt",
     ) -> str:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(images=image, return_tensors=tensor_format)
         output_ids = self._model.generate(**inputs)
         caption = self._tokenizer.decode(
-            output_ids[0],
-            skip_special_tokens=skip_special_tokens
+            output_ids[0], skip_special_tokens=skip_special_tokens
         )
         return caption
 
@@ -107,8 +104,9 @@ class ImageTextToTextModel(ImageToTextModel):
     }
 
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
-        assert self._settings.loader_class in self._loaders, \
+        assert self._settings.loader_class in self._loaders, (
             f"Unrecognized loader {self._settings.loader_class}"
+        )
 
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
@@ -130,43 +128,34 @@ class ImageTextToTextModel(ImageToTextModel):
         self,
         image_source: str | Image.Image,
         prompt: str,
-        system_prompt: str | None=None,
-        settings: GenerationSettings | None=None,
+        system_prompt: str | None = None,
+        settings: GenerationSettings | None = None,
         *,
-        skip_special_tokens: bool=True,
-        tensor_format: Literal["pt"]="pt"
+        skip_special_tokens: bool = True,
+        tensor_format: Literal["pt"] = "pt",
     ) -> str:
         image = BaseVisionModel._get_image(image_source).convert("RGB")
 
         messages = []
         if system_prompt:
-            messages.append({
-                "role": str(MessageRole.SYSTEM),
+            messages.append(
+                {
+                    "role": str(MessageRole.SYSTEM),
+                    "content": [{"type": "text", "text": system_prompt}],
+                }
+            )
+        messages.append(
+            {
+                "role": str(MessageRole.USER),
                 "content": [
-                    {
-                        "type": "text",
-                        "text": system_prompt
-                    }
-                ]
-            })
-        messages.append({
-            "role": str(MessageRole.USER),
-            "content": [
-                {
-                    "type": "image",
-                    "image": image
-                },
-                {
-                    "type": "text",
-                    "text": prompt
-                },
-            ],
-        })
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        )
 
         text = self._processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+            messages, tokenize=False, add_generation_prompt=True
         )
         inputs = self._processor(
             text=[text],
@@ -177,8 +166,7 @@ class ImageTextToTextModel(ImageToTextModel):
         )
         inputs = inputs.to(self._device)
         generated_ids = self._model.generate(
-            **inputs,
-            max_new_tokens=settings.max_new_tokens
+            **inputs, max_new_tokens=settings.max_new_tokens
         )
         generated_ids_trimmed = [
             out_ids[len(in_ids) :]
@@ -187,9 +175,9 @@ class ImageTextToTextModel(ImageToTextModel):
         output_text = self._processor.batch_decode(
             generated_ids_trimmed,
             skip_special_tokens=skip_special_tokens,
-            clean_up_tokenization_spaces=False
+            clean_up_tokenization_spaces=False,
         )
-        return output_text[0] if isinstance(output_text,list) else output_text
+        return output_text[0] if isinstance(output_text, list) else output_text
 
 
 class VisionEncoderDecoderModel(ImageToTextModel):
@@ -203,5 +191,3 @@ class VisionEncoderDecoderModel(ImageToTextModel):
             device_map=self._device,
         )
         return model
-
-

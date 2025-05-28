@@ -5,6 +5,7 @@ from ..tool.parser import ToolCallParser
 from types import FunctionType
 from typing import Sequence, Tuple
 
+
 class ToolManager:
     _parser: ToolCallParser
     _tools: dict[str, FunctionType] | None
@@ -37,10 +38,7 @@ class ToolManager:
                         ToolSet(tools=tools, namespace=toolset.namespace)
                     )
 
-        parser = ToolCallParser(
-            eos_token=eos_token,
-            tool_format=tool_format
-        )
+        parser = ToolCallParser(eos_token=eos_token, tool_format=tool_format)
         return cls(
             parser=parser,
             toolsets=enabled_toolsets,
@@ -73,10 +71,9 @@ class ToolManager:
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
 
-    def __call__(self, text: str) -> Tuple[
-        list[ToolCall] | None,
-        list[ToolCallResult] | None
-    ]:
+    def __call__(
+        self, text: str
+    ) -> Tuple[list[ToolCall] | None, list[ToolCallResult] | None]:
         tool_calls = self._parser(text)
         if not tool_calls:
             return None, None
@@ -86,13 +83,16 @@ class ToolManager:
             tool = self._tools.get(tool_call.name, None)
             if tool:
                 result = (
-                    tool(*tool_call.arguments.values()) if tool_call.arguments
+                    tool(*tool_call.arguments.values())
+                    if tool_call.arguments
                     else tool()
                 )
-                tool_results.append(ToolCallResult(
-                    call=tool_call,
-                    name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    result=result
-                ))
+                tool_results.append(
+                    ToolCallResult(
+                        call=tool_call,
+                        name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        result=result,
+                    )
+                )
         return tool_calls, tool_results

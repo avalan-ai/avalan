@@ -2,6 +2,7 @@ from asyncio import run
 from avalan.model.entities import GenerationSettings
 from avalan.model.nlp.sequence import SequenceToSequenceModel
 
+
 async def example() -> None:
     print("Loading model... ", end="", flush=True)
     with SequenceToSequenceModel("facebook/bart-large-cnn") as s:
@@ -21,6 +22,6 @@ async def example() -> None:
         summary = await s(text, GenerationSettings(num_beams=4, max_length=60))
         print(summary)
 
+
 if __name__ == "__main__":
     run(example())
-

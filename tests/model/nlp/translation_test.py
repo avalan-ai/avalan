@@ -19,8 +19,12 @@ class TranslationModelCallTestCase(IsolatedAsyncioTestCase):
 
         inputs = MagicMock()
         with (
-            patch.object(TranslationModel, "_tokenize_input", return_value=inputs) as tok_mock,
-            patch.object(TranslationModel, "_generate_output", return_value=[[42]]) as gen_mock,
+            patch.object(
+                TranslationModel, "_tokenize_input", return_value=inputs
+            ) as tok_mock,
+            patch.object(
+                TranslationModel, "_generate_output", return_value=[[42]]
+            ) as gen_mock,
         ):
             gen_settings = GenerationSettings(max_length=5)
             result = await model(
@@ -44,7 +48,9 @@ class TranslationModelCallTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(settings_arg.temperature)
         self.assertEqual(settings_arg.forced_bos_token_id, 1)
         self.assertEqual(model._tokenizer.src_lang, "en_US")
-        model._tokenizer.decode.assert_called_once_with([42], skip_special_tokens=True)
+        model._tokenizer.decode.assert_called_once_with(
+            [42], skip_special_tokens=True
+        )
 
     async def test_skip_special_tokens_parameter(self):
         settings = TransformerEngineSettings(
@@ -59,8 +65,12 @@ class TranslationModelCallTestCase(IsolatedAsyncioTestCase):
         model._tokenizer.decode.return_value = "hola"
 
         with (
-            patch.object(TranslationModel, "_tokenize_input", return_value=MagicMock()),
-            patch.object(TranslationModel, "_generate_output", return_value=[[42]]),
+            patch.object(
+                TranslationModel, "_tokenize_input", return_value=MagicMock()
+            ),
+            patch.object(
+                TranslationModel, "_generate_output", return_value=[[42]]
+            ),
         ):
             await model(
                 "hi",
@@ -71,7 +81,9 @@ class TranslationModelCallTestCase(IsolatedAsyncioTestCase):
                 skip_special_tokens=False,
             )
 
-        model._tokenizer.decode.assert_called_once_with([42], skip_special_tokens=False)
+        model._tokenizer.decode.assert_called_once_with(
+            [42], skip_special_tokens=False
+        )
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from ...model.entities import (
     Similarity,
     Token,
     TokenizerConfig,
-    User
+    User,
 )
 from ...memory.permanent import Memory
 from dataclasses import fields
@@ -27,37 +27,26 @@ from typing import Callable, Generator, Literal, Optional, Tuple, Union
 from uuid import UUID
 
 Formatter = Union[
-    Callable[[datetime],str],
-    Callable[[float],str],
-    Callable[[int],str]
+    Callable[[datetime], str], Callable[[float], str], Callable[[int], str]
 ]
-Formatters = dict[
-    Literal[
-        "datetime",
-        "number",
-        "quantity",
-        "size"
-    ],
-    Formatter
-]
-Spinner = Literal[
-    "cache_accessing",
-    "connecting",
-    "thinking",
-    "downloading"
-]
-Data = StrEnum("Data", {
-    **{ field.name: field.name for field in fields(Model) },
-    **{ field.name: field.name for field in fields(User) }
-})
-DataValue = Union[datetime,float,int,str,None]
-Stylers = dict[Data,Callable[[DataValue],str]]
+Formatters = dict[Literal["datetime", "number", "quantity", "size"], Formatter]
+Spinner = Literal["cache_accessing", "connecting", "thinking", "downloading"]
+Data = StrEnum(
+    "Data",
+    {
+        **{field.name: field.name for field in fields(Model)},
+        **{field.name: field.name for field in fields(User)},
+    },
+)
+DataValue = Union[datetime, float, int, str, None]
+Stylers = dict[Data, Callable[[DataValue], str]]
+
 
 class Theme(ABC):
-    _all_spinners: dict[Spinner,str]
+    _all_spinners: dict[Spinner, str]
     _all_stylers: Stylers
-    _all_styles: dict[Data,str]
-    _icons: dict[Data,str]
+    _all_styles: dict[Data, str]
+    _icons: dict[Data, str]
     _: Callable[[str], str]
 
     @property
@@ -65,7 +54,7 @@ class Theme(ABC):
         return {}
 
     @property
-    def icons(self) -> dict[Data,str]:
+    def icons(self) -> dict[Data, str]:
         return {}
 
     @property
@@ -73,7 +62,7 @@ class Theme(ABC):
         return []
 
     @property
-    def spinners(self) -> dict[Spinner,str]:
+    def spinners(self) -> dict[Spinner, str]:
         return {}
 
     @property
@@ -81,7 +70,7 @@ class Theme(ABC):
         return {}
 
     @property
-    def styles(self) -> dict[Data,str]:
+    def styles(self) -> dict[Data, str]:
         return {}
 
     @abstractmethod
@@ -93,7 +82,7 @@ class Theme(ABC):
         model_id: str,
         library_name: str,
         highlight: bool,
-        finished: bool
+        finished: bool,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -103,7 +92,7 @@ class Theme(ABC):
         agent: Orchestrator,
         *args,
         models: list[Model | str],
-        cans_access: Optional[bool]
+        cans_access: Optional[bool],
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -133,9 +122,7 @@ class Theme(ABC):
 
     @abstractmethod
     def cache_delete(
-        self,
-        cache_deletion: Optional[HubCacheDeletion],
-        deleted: bool
+        self, cache_deletion: Optional[HubCacheDeletion], deleted: bool
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -144,16 +131,14 @@ class Theme(ABC):
         self,
         cache_dir: str,
         cached_models: list[HubCache],
-        display_models: Optional[list[str]]=None,
-        show_summary: bool=False
+        display_models: Optional[list[str]] = None,
+        show_summary: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def download_access_denied(
-        self,
-        model_id: str,
-        model_url: str
+        self, model_id: str, model_url: str
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -185,38 +170,30 @@ class Theme(ABC):
         meanv: float,
         stdv: float,
         normv: float,
-        embedding_peek: Optional[int]=3,
-        horizontal: bool=True,
-        input_string_peek: int=40,
-        show_stats: bool=True,
-        partition: Optional[int]=None,
-        total_partitions: Optional[int]=None,
+        embedding_peek: Optional[int] = 3,
+        horizontal: bool = True,
+        input_string_peek: int = 40,
+        show_stats: bool = True,
+        partition: Optional[int] = None,
+        total_partitions: Optional[int] = None,
     ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def memory_embeddings_comparison(
-        self,
-        similarities: dict[str,Similarity],
-        most_similar: str
+        self, similarities: dict[str, Similarity], most_similar: str
     ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def memory_embeddings_search(
-        self,
-        matches: list[SearchMatch],
-        *args,
-        match_preview_length: int=300
+        self, matches: list[SearchMatch], *args, match_preview_length: int = 300
     ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def memory_partitions(
-        self,
-        partitions: list[TextPartition],
-        *args,
-        display_partitions: int
+        self, partitions: list[TextPartition], *args, display_partitions: int
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -225,20 +202,19 @@ class Theme(ABC):
         self,
         model: Model,
         *args,
-        can_access: Optional[bool]=None,
-        expand: bool=False,
-        summary: bool=False,
+        can_access: Optional[bool] = None,
+        expand: bool = False,
+        summary: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def model_display(
         self,
-        model_config: Optional[Union[
-            ModelConfig,
-            SentenceTransformerModelConfig
-        ]],
-        tokenizer_config: TokenizerConfig
+        model_config: Optional[
+            Union[ModelConfig, SentenceTransformerModelConfig]
+        ],
+        tokenizer_config: TokenizerConfig,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -247,14 +223,13 @@ class Theme(ABC):
         self,
         participant_id: UUID,
         agent: Orchestrator,
-        messages: list[EngineMessage]
+        messages: list[EngineMessage],
     ):
         raise NotImplementedError()
 
     @abstractmethod
     def saved_tokenizer_files(
-        directory_path: str,
-        total_files: int
+        directory_path: str, total_files: int
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -263,16 +238,13 @@ class Theme(ABC):
         self,
         participant_id: UUID,
         agent: Orchestrator,
-        messages: list[EngineMessageScored]
+        messages: list[EngineMessageScored],
     ):
         raise NotImplementedError()
 
     @abstractmethod
     def memory_search_matches(
-        self,
-        participant_id: UUID,
-        namespace: str,
-        memories: list[Memory]
+        self, participant_id: UUID, namespace: str, memories: list[Memory]
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -286,8 +258,8 @@ class Theme(ABC):
         dtokens: list[Token],
         added_tokens: Optional[list[str]],
         special_tokens: Optional[list[str]],
-        current_dtoken: Optional[Token]=None,
-        dtokens_selected: list[Token]=[]
+        current_dtoken: Optional[Token] = None,
+        dtokens_selected: list[Token] = [],
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -300,7 +272,7 @@ class Theme(ABC):
         display_token_size: Optional[int],
         display_probabilities: bool,
         pick: int,
-        focus_on_token_when: Optional[Callable[[Token],bool]],
+        focus_on_token_when: Optional[Callable[[Token], bool]],
         text_tokens: list[str],
         tokens: Optional[list[Token]],
         input_token_count: int,
@@ -310,17 +282,17 @@ class Theme(ABC):
         ellapsed: float,
         console_width: int,
         logger: Logger,
-        events: Optional[int]=None,
-        tool_calls: Optional[int]=None,
-        tool_call_results: Optional[int]=None,
-        maximum_frames: Optional[int]=None,
-        logits_count: Optional[int]=None,
-        think_height: int=6,
-        think_padding: int=1,
-        height: int=12,
-        padding: int=1,
-        wrap_padding: int=4,
-    ) -> Generator[Tuple[Optional[Token],RenderableType],None,None]:
+        events: Optional[int] = None,
+        tool_calls: Optional[int] = None,
+        tool_call_results: Optional[int] = None,
+        maximum_frames: Optional[int] = None,
+        logits_count: Optional[int] = None,
+        think_height: int = 6,
+        think_padding: int = 1,
+        height: int = 12,
+        padding: int = 1,
+        wrap_padding: int = 4,
+    ) -> Generator[Tuple[Optional[Token], RenderableType], None, None]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -330,94 +302,97 @@ class Theme(ABC):
         name: str,
         version: str,
         license: str,
-        user: Optional[User]
+        user: Optional[User],
     ) -> RenderableType:
         raise NotImplementedError()
 
     def __init__(
         self,
         translator: Callable[[str], str],
-        translator_plurals: Callable[[str,str,int], str],
-        formatters: Formatters={},
-        stylers: Stylers={},
-        styles: dict[Data,str]={},
-        spinners: dict[Spinner,str]={},
-        icons: dict[Data,str]={},
-        quantity_data: list[str]=[]
+        translator_plurals: Callable[[str, str, int], str],
+        formatters: Formatters = {},
+        stylers: Stylers = {},
+        styles: dict[Data, str] = {},
+        spinners: dict[Spinner, str] = {},
+        icons: dict[Data, str] = {},
+        quantity_data: list[str] = [],
     ):
-        data_keys = list(map(str,Data))
+        data_keys = list(map(str, Data))
 
         formatters = {
             **{
                 "datetime": lambda v: naturaltime(v),
                 "number": lambda v: intcomma(v),
                 "quantity": lambda v: intword(v),
-                "size": lambda v: naturalsize(v)
+                "size": lambda v: naturalsize(v),
             },
-            **self.formatters
+            **self.formatters,
         }
 
         all_icons = {
-            **{ data: None for data in data_keys },
+            **{data: None for data in data_keys},
             **self.icons,
-            **icons
+            **icons,
         }
 
         data_keys.extend(all_icons)
         data_keys.extend(self.styles.keys())
 
         self._all_spinners = {
-            **{ spinner: None for spinner in Spinner.__args__ },
-            **self.spinners
+            **{spinner: None for spinner in Spinner.__args__},
+            **self.spinners,
         }
         self._all_stylers = {
             **{
-                data: lambda data, value, prefix=None, icon=True: "".join([
-                    prefix or "",
-                    f"{all_icons[data]} "
-                        if isinstance(icon,bool) and icon and data in self._icons and all_icons[data]
-                        else icon if isinstance(icon,str)
+                data: lambda data, value, prefix=None, icon=True: "".join(
+                    [
+                        prefix or "",
+                        f"{all_icons[data]} "
+                        if isinstance(icon, bool)
+                        and icon
+                        and data in self._icons
+                        and all_icons[data]
+                        else icon
+                        if isinstance(icon, str)
                         else "",
-                    f"[{data}]",
-                        formatters['quantity'](value)
-                           if data in quantity_data else
-                        formatters['datetime'](value)
-                            if isinstance(value,datetime) else
-                        formatters['number'](value)
-                            if isinstance(value,int) or isinstance(value,float)
+                        f"[{data}]",
+                        formatters["quantity"](value)
+                        if data in quantity_data
+                        else formatters["datetime"](value)
+                        if isinstance(value, datetime)
+                        else formatters["number"](value)
+                        if isinstance(value, int) or isinstance(value, float)
                         else value,
-                    f"[/{data}]",
-                ])
+                        f"[/{data}]",
+                    ]
+                )
                 for data in data_keys
             },
-            **self.stylers
+            **self.stylers,
         }
-        self._all_styles = {
-            **{ data: "" for data in data_keys },
-            **self.styles
-        }
+        self._all_styles = {**{data: "" for data in data_keys}, **self.styles}
         self._icons = all_icons
         self._ = translator
         self._n = translator_plurals
 
-    def get_styles(self) -> dict[Data,str]:
+    def get_styles(self) -> dict[Data, str]:
         return self._all_styles
 
     def get_spinner(self, spinner_name: str) -> Spinner:
         return self._all_spinners[spinner_name]
 
     def __call__(self, item: Model | str) -> RenderableType:
-        return \
-            self.model(item) if isinstance(item, Model) else \
-            str(item)
+        return self.model(item) if isinstance(item, Model) else str(item)
 
     def _f(
         self,
         data: Data,
         value: DataValue,
-        prefix: Optional[str]=None,
-        icon: Union[bool,str]=True
+        prefix: Optional[str] = None,
+        icon: Union[bool, str] = True,
     ) -> str:
-        return self._all_stylers[data](data, value, prefix, icon) \
-               if data in self._all_stylers and self._all_stylers[data] \
-               else str(value)
+        return (
+            self._all_stylers[data](data, value, prefix, icon)
+            if data in self._all_stylers and self._all_stylers[data]
+            else str(value)
+        )

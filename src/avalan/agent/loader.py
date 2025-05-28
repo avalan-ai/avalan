@@ -53,7 +53,7 @@ class OrchestrationLoader:
         logger: Logger,
         participant_id: UUID,
         stack: AsyncExitStack,
-        disable_memory: bool=False
+        disable_memory: bool = False,
     ) -> Orchestrator:
         if not exists(path):
             raise FileNotFoundError(path)
@@ -68,49 +68,54 @@ class OrchestrationLoader:
             # Validate settings
 
             assert "agent" in config, "No agent section in configuration"
-            assert "engine" in config, \
+            assert "engine" in config, (
                 "No engine section defined in configuration"
-            assert "uri" in config["engine"], \
+            )
+            assert "uri" in config["engine"], (
                 "No uri defined in engine section of configuration"
+            )
 
             agent_config = config["agent"]
             for setting in ["role"]:
-                assert setting in agent_config, \
+                assert setting in agent_config, (
                     f"No {setting} defined in agent section of configuration"
+                )
 
-            assert "engine" in config, \
+            assert "engine" in config, (
                 "No engine section defined in configuration"
-            assert "uri" in config["engine"], \
+            )
+            assert "uri" in config["engine"], (
                 "No uri defined in engine section of configuration"
+            )
 
             uri = config["engine"]["uri"]
             engine_config = config["engine"]
             enable_tools = (
-                engine_config["tools"]
-                if "tools" in engine_config
-                else None
+                engine_config["tools"] if "tools" in engine_config else None
             )
             engine_config.pop("uri", None)
             engine_config.pop("tools", None)
             orchestrator_type = (
-                config["agent"]["type"] if "type" in config["agent"]
-                else None
+                config["agent"]["type"] if "type" in config["agent"] else None
             )
             agent_id = (
-                agent_id if agent_id
-                else config["agent"]["id"] if "id" in config["agent"]
+                agent_id
+                if agent_id
+                else config["agent"]["id"]
+                if "id" in config["agent"]
                 else uuid4()
             )
 
-            assert orchestrator_type is None or orchestrator_type in ["json"], \
-                f"Unknown type {config['agent']['type']} in agent section " + \
-                 "of configuration"
-            assert "role" in agent_config, \
+            assert orchestrator_type is None or orchestrator_type in ["json"], (
+                f"Unknown type {config['agent']['type']} in agent section "
+                + "of configuration"
+            )
+            assert "role" in agent_config, (
                 "No role defined in agent section of configuration"
+            )
 
             call_options = config["run"] if "run" in config else None
-            template_vars = config["template"] \
-                            if "template" in config else None
+            template_vars = config["template"] if "template" in config else None
 
             # Memory configuration
 
@@ -125,43 +130,43 @@ class OrchestrationLoader:
                 if memory_options and "permanent" in memory_options
                 else None
             )
-            assert not memory_permanent or isinstance(memory_permanent,str), \
+            assert not memory_permanent or isinstance(memory_permanent, str), (
                 "Permanent message memory should be a string"
+            )
             memory_recent = (
                 memory_options["recent"]
                 if memory_options and "recent" in memory_options
                 else False
             )
-            assert isinstance(memory_recent,bool), \
+            assert isinstance(memory_recent, bool), (
                 "Recent message memory can only be set or unset"
+            )
 
             sentence_model_id = (
                 config["memory.engine"]["model_id"]
-                if "memory.engine" in config and
-                   "model_id" in config["memory.engine"]
+                if "memory.engine" in config
+                and "model_id" in config["memory.engine"]
                 else OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID
             )
             sentence_model_engine_config = (
-                config["memory.engine"]
-                if "memory.engine" in config
-                else None
+                config["memory.engine"] if "memory.engine" in config else None
             )
             sentence_model_max_tokens = (
                 config["memory.engine"]["max_tokens"]
                 if sentence_model_engine_config
-                   and "max_tokens" in sentence_model_engine_config
+                and "max_tokens" in sentence_model_engine_config
                 else 500
             )
             sentence_model_overlap_size = (
                 config["memory.engine"]["overlap_size"]
                 if sentence_model_engine_config
-                   and "overlap_size" in sentence_model_engine_config
+                and "overlap_size" in sentence_model_engine_config
                 else 125
             )
             sentence_model_window_size = (
                 config["memory.engine"]["window_size"]
                 if sentence_model_engine_config
-                   and "window_size" in sentence_model_engine_config
+                and "window_size" in sentence_model_engine_config
                 else 250
             )
 
@@ -187,7 +192,9 @@ class OrchestrationLoader:
                 sentence_model_max_tokens=sentence_model_max_tokens,
                 sentence_model_overlap_size=sentence_model_overlap_size,
                 sentence_model_window_size=sentence_model_window_size,
-                json_config=config.get("json") if isinstance(config, dict) else None,
+                json_config=config.get("json")
+                if isinstance(config, dict)
+                else None,
             )
 
             return await cls.load_from_settings(
@@ -262,7 +269,9 @@ class OrchestrationLoader:
         )
 
         logger.debug(
-            "Creating orchestrator %s #%s", settings.orchestrator_type, settings.agent_id
+            "Creating orchestrator %s #%s",
+            settings.orchestrator_type,
+            settings.agent_id,
         )
 
         model_manager = ModelManager(hub, logger)
@@ -321,24 +330,29 @@ class OrchestrationLoader:
         config: dict,
         agent_config: dict,
         call_options: Optional[dict],
-        template_vars: Optional[dict]
+        template_vars: Optional[dict],
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
-        assert "instructions" in agent_config, \
+        assert "instructions" in agent_config, (
             "No instructions defined in agent section of configuration"
-        assert "task" in agent_config, \
+        )
+        assert "task" in agent_config, (
             "No task defined in agent section of configuration"
-        assert "role" in agent_config, \
+        )
+        assert "role" in agent_config, (
             "No role defined in agent section of configuration"
+        )
 
-        properties : list[Property] = []
+        properties: list[Property] = []
         for property_name in config.get("json", []):
             output_property = config["json"][property_name]
-            properties.append(Property(
-                name=property_name,
-                data_type=output_property["type"],
-                description=output_property["description"]
-            ))
+            properties.append(
+                Property(
+                    name=property_name,
+                    data_type=output_property["type"],
+                    description=output_property["description"],
+                )
+            )
 
         assert properties, "No properties defined in configuration"
 
@@ -357,7 +371,6 @@ class OrchestrationLoader:
             rules=agent_config["rules"] if "rules" in agent_config else None,
             settings=engine_settings,
             call_options=call_options,
-            template_vars=template_vars
+            template_vars=template_vars,
         )
         return agent
-

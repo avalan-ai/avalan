@@ -4,7 +4,7 @@ from ....memory.permanent import (
     PermanentMemory,
     PermanentMemoryPartition,
     PermanentMessageScored,
-    VectorFunction
+    VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
 from ....model.entities import (
@@ -15,10 +15,8 @@ from pgvector.psycopg import Vector
 from typing import Optional
 from uuid import UUID, uuid4
 
-class PgsqlRawMemory(
-    PgsqlMemory[Memory],
-    PermanentMemory
-):
+
+class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
     @classmethod
     async def create_instance(
         cls,
@@ -33,17 +31,14 @@ class PgsqlRawMemory(
             dsn=dsn,
             pool_minimum=pool_minimum,
             pool_maximum=pool_maximum,
-            **kwargs
+            **kwargs,
         )
         if pool_open:
             await memory.open()
         return memory
 
     async def append_with_partitions(
-        self,
-        memory: Memory,
-        *args,
-        partitions: list[TextPartition]
+        self, memory: Memory, *args, partitions: list[TextPartition]
     ) -> None:
         assert memory and partitions
         now_utc = datetime.now(timezone.utc)
@@ -187,12 +182,14 @@ class PgsqlRawMemory(
         session_id: UUID,
         participant_id: UUID,
         function: VectorFunction,
-        limit: Optional[int]=None
+        limit: Optional[int] = None,
     ) -> list[EngineMessageScored]:
         assert agent_id and session_id and participant_id and search_partitions
         search_function = str(function)
         search_vector = Vector(search_partitions[0].embeddings)
-        messages = await self._fetch_all(PermanentMessageScored, f"""
+        messages = await self._fetch_all(
+            PermanentMessageScored,
+            f"""
             SELECT
                 "messages"."id",
                 "messages"."agent_id",
@@ -219,17 +216,18 @@ class PgsqlRawMemory(
             AND "messages"."is_deleted" = FALSE
             ORDER BY "score" ASC
             LIMIT %s
-        """, (
-            search_vector,
-            str(session_id),
-            str(participant_id),
-            str(agent_id),
-            limit
-        ))
+        """,
+            (
+                search_vector,
+                str(session_id),
+                str(participant_id),
+                str(agent_id),
+                limit,
+            ),
+        )
         engine_messages = self._to_engine_messages(
             messages,
             limit=limit,
             scored=True,
         )
         return engine_messages
-

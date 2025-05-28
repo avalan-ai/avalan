@@ -1,11 +1,16 @@
 from avalan.model.entities import EngineSettings
 from avalan.model.engine import Engine
-from avalan.model.audio import SpeechRecognitionModel, AutoProcessor, AutoModelForCTC
+from avalan.model.audio import (
+    SpeechRecognitionModel,
+    AutoProcessor,
+    AutoModelForCTC,
+)
 from contextlib import nullcontext
 from logging import Logger
 from transformers import PreTrainedModel
 from unittest import TestCase, IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch, PropertyMock
+
 
 class SpeechRecognitionModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
@@ -33,7 +38,9 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
         ):
             processor_instance = MagicMock()
-            type(processor_instance.tokenizer).pad_token_id = PropertyMock(return_value=1)
+            type(processor_instance.tokenizer).pad_token_id = PropertyMock(
+                return_value=1
+            )
             processor_mock.return_value = processor_instance
 
             model_instance = MagicMock(spec=PreTrainedModel)
@@ -76,7 +83,9 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             processor_instance = MagicMock()
             processor_instance.return_value = MagicMock(input_values="inputs")
             processor_instance.batch_decode.return_value = ["ok"]
-            type(processor_instance.tokenizer).pad_token_id = PropertyMock(return_value=1)
+            type(processor_instance.tokenizer).pad_token_id = PropertyMock(
+                return_value=1
+            )
             processor_mock.return_value = processor_instance
 
             model_instance = MagicMock(spec=PreTrainedModel)
@@ -107,7 +116,9 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, "ok")
             load_mock.assert_called_once_with("file.wav")
-            resample_mock.assert_called_once_with(orig_freq=8000, new_freq=16000)
+            resample_mock.assert_called_once_with(
+                orig_freq=8000, new_freq=16000
+            )
             resampler_instance.assert_called_once_with(audio_wave)
             processor_instance.assert_called_with(
                 "audio",

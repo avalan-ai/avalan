@@ -1,4 +1,8 @@
-from avalan.model.entities import GenerationSettings, TransformerEngineSettings, MessageRole
+from avalan.model.entities import (
+    GenerationSettings,
+    TransformerEngineSettings,
+    MessageRole,
+)
 from avalan.model.vision.image import (
     AutoModelForImageTextToText,
     AutoProcessor,
@@ -38,9 +42,13 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
         settings = TransformerEngineSettings()
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForImageTextToText, "from_pretrained") as model_mock,
+            patch.object(
+                AutoModelForImageTextToText, "from_pretrained"
+            ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch.object(BaseNLPModel, "_get_weight_type", return_value="dtype") as wt_mock,
+            patch.object(
+                BaseNLPModel, "_get_weight_type", return_value="dtype"
+            ) as wt_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
@@ -49,8 +57,12 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
             model_mock.return_value = model_instance
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
-            type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             tokenizer_mock.return_value = tokenizer_instance
 
             model = ImageTextToTextModel(
@@ -73,9 +85,13 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
         logger_mock = MagicMock(spec=Logger)
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForImageTextToText, "from_pretrained") as model_mock,
+            patch.object(
+                AutoModelForImageTextToText, "from_pretrained"
+            ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch.object(BaseNLPModel, "_get_weight_type", return_value="dtype") as wt_mock,
+            patch.object(
+                BaseNLPModel, "_get_weight_type", return_value="dtype"
+            ) as wt_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
@@ -84,8 +100,12 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
             model_mock.return_value = model_instance
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
-            type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             tokenizer_mock.return_value = tokenizer_instance
 
             settings = TransformerEngineSettings()
@@ -109,9 +129,13 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
         logger_mock = MagicMock(spec=Logger)
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
-            patch.object(Gemma3ForConditionalGeneration, "from_pretrained") as gemma_mock,
+            patch.object(
+                Gemma3ForConditionalGeneration, "from_pretrained"
+            ) as gemma_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch.object(BaseNLPModel, "_get_weight_type", return_value="dtype") as wt_mock,
+            patch.object(
+                BaseNLPModel, "_get_weight_type", return_value="dtype"
+            ) as wt_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
@@ -120,8 +144,12 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
             gemma_mock.return_value = model_instance
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
-            type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             tokenizer_mock.return_value = tokenizer_instance
 
             settings = TransformerEngineSettings(loader_class="gemma3")
@@ -161,7 +189,9 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
         logger_mock = MagicMock(spec=Logger)
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
-            patch.object(AutoModelForImageTextToText, "from_pretrained") as model_mock,
+            patch.object(
+                AutoModelForImageTextToText, "from_pretrained"
+            ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
             patch.object(BaseVisionModel, "_get_image") as get_image_mock,
         ):
@@ -173,8 +203,12 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
             processor_mock.return_value = processor_instance
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
-            type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             tokenizer_mock.return_value = tokenizer_instance
 
             model_instance = MagicMock(spec=PTMWithGenerate)
@@ -199,22 +233,31 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 settings=GenerationSettings(max_new_tokens=5),
             )
 
-            self.assertEqual(result, batch_decode_return[0] if isinstance(batch_decode_return, list) else batch_decode_return)
+            self.assertEqual(
+                result,
+                batch_decode_return[0]
+                if isinstance(batch_decode_return, list)
+                else batch_decode_return,
+            )
             get_image_mock.assert_called_once_with("img.jpg")
             image.convert.assert_called_once_with("RGB")
             expected_messages = []
             if system_prompt:
-                expected_messages.append({
-                    "role": str(MessageRole.SYSTEM),
-                    "content": [{"type": "text", "text": system_prompt}],
-                })
-            expected_messages.append({
-                "role": str(MessageRole.USER),
-                "content": [
-                    {"type": "image", "image": rgb_image},
-                    {"type": "text", "text": "prompt"},
-                ],
-            })
+                expected_messages.append(
+                    {
+                        "role": str(MessageRole.SYSTEM),
+                        "content": [{"type": "text", "text": system_prompt}],
+                    }
+                )
+            expected_messages.append(
+                {
+                    "role": str(MessageRole.USER),
+                    "content": [
+                        {"type": "image", "image": rgb_image},
+                        {"type": "text", "text": "prompt"},
+                    ],
+                }
+            )
             processor_instance.apply_chat_template.assert_called_once_with(
                 expected_messages,
                 tokenize=False,

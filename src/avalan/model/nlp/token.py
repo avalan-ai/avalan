@@ -6,6 +6,7 @@ from transformers import AutoModelForTokenClassification, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
 
+
 class TokenClassificationModel(BaseNLPModel):
     @property
     def supports_sample_generation(self) -> bool:
@@ -36,11 +37,13 @@ class TokenClassificationModel(BaseNLPModel):
         input: input,
         system_prompt: str | None,
         context: str | None,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> BatchEncoding:
-        assert not system_prompt, "Token classification model " + \
-                                 f"{self._model_id} does not support chat " + \
-                                  "templates"
+        assert not system_prompt, (
+            "Token classification model "
+            + f"{self._model_id} does not support chat "
+            + "templates"
+        )
         _l = self._log
         _l(f"Tokenizing input {input}")
         inputs = self._tokenizer(input, return_tensors=tensor_format)
@@ -48,14 +51,15 @@ class TokenClassificationModel(BaseNLPModel):
         return inputs
 
     @override
-    async def __call__(
-        self,
-        input: str
-    ) -> dict[str,str]:
-        assert self._tokenizer, f"Model {self._model} can't be executed " + \
-                                 "without a tokenizer loaded first"
-        assert self._model, f"Model {self._model} can't be executed, it " + \
-                             "needs to be loaded first"
+    async def __call__(self, input: str) -> dict[str, str]:
+        assert self._tokenizer, (
+            f"Model {self._model} can't be executed "
+            + "without a tokenizer loaded first"
+        )
+        assert self._model, (
+            f"Model {self._model} can't be executed, it "
+            + "needs to be loaded first"
+        )
         inputs = self._tokenize_input(input, system_prompt=None, context=None)
         with no_grad():
             outputs = self._model(**inputs)
@@ -70,4 +74,3 @@ class TokenClassificationModel(BaseNLPModel):
             ]
             tokens_to_labels = dict(zip(tokens, labels))
             return tokens_to_labels
-

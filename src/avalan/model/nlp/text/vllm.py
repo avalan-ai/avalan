@@ -14,9 +14,10 @@ from typing import AsyncGenerator
 
 try:
     from vllm import LLM, SamplingParams
-except Exception: # pragma: no cover - vllm may not be installed
+except Exception:  # pragma: no cover - vllm may not be installed
     LLM = None
     SamplingParams = None
+
 
 class VllmStream(TextGenerationVendorStream):
     def __init__(self, generator):
@@ -53,8 +54,7 @@ class VllmModel(TextGenerationModel):
         )
 
     def _build_sampling_params(
-        self,
-        settings: GenerationSettings
+        self, settings: GenerationSettings
     ) -> SamplingParams:
         assert SamplingParams, "vLLM is not available"
         return SamplingParams(
@@ -66,9 +66,7 @@ class VllmModel(TextGenerationModel):
         )
 
     def _prompt(
-        self,
-        input: Input, system_prompt: str | None,
-        tool: ToolManager | None
+        self, input: Input, system_prompt: str | None, tool: ToolManager | None
     ) -> str:
         inputs = super()._tokenize_input(
             input,
@@ -78,8 +76,7 @@ class VllmModel(TextGenerationModel):
             tool=tool,
         )
         return self._tokenizer.decode(
-            inputs["input_ids"][0],
-            skip_special_tokens=False
+            inputs["input_ids"][0], skip_special_tokens=False
         )
 
     async def _stream_generator(

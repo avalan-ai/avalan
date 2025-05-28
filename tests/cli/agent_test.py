@@ -35,8 +35,12 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         self.logger = MagicMock()
 
     async def test_returns_when_no_input(self):
-        with patch.object(agent_cmds, "get_input", return_value=None) as gi, \
-             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock()) as lf:
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None) as gi,
+            patch.object(
+                agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock()
+            ) as lf,
+        ):
             await agent_cmds.agent_message_search(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
@@ -57,9 +61,17 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.__aexit__.return_value = False
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
 
-        with patch.object(agent_cmds, "get_input", return_value="hi"), \
-             patch.object(agent_cmds, "AsyncExitStack", return_value=dummy_stack), \
-             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=orch)) as lf:
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestrationLoader,
+                "from_file",
+                new=AsyncMock(return_value=orch),
+            ) as lf,
+        ):
             await agent_cmds.agent_message_search(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
@@ -98,9 +110,19 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         server = MagicMock()
         server.serve = AsyncMock()
 
-        with patch.object(agent_cmds, "AsyncExitStack", return_value=dummy_stack), \
-             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=orch)) as lf, \
-             patch.object(agent_cmds, "agents_server", return_value=server) as asrv:
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestrationLoader,
+                "from_file",
+                new=AsyncMock(return_value=orch),
+            ) as lf,
+            patch.object(
+                agent_cmds, "agents_server", return_value=server
+            ) as asrv,
+        ):
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
         lf.assert_awaited_once()
@@ -133,10 +155,14 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         env.get_template.return_value = template
         template.render.return_value = "rendered"
 
-        with patch.object(agent_cmds.Prompt, "ask", side_effect=["A", "", "uri"]), \
-             patch.object(agent_cmds, "get_input", side_effect=["r", "t", "i"]), \
-             patch.object(agent_cmds.Confirm, "ask", side_effect=[True, False]), \
-             patch.object(agent_cmds, "Environment", return_value=env):
+        with (
+            patch.object(
+                agent_cmds.Prompt, "ask", side_effect=["A", "", "uri"]
+            ),
+            patch.object(agent_cmds, "get_input", side_effect=["r", "t", "i"]),
+            patch.object(agent_cmds.Confirm, "ask", side_effect=[True, False]),
+            patch.object(agent_cmds, "Environment", return_value=env),
+        ):
             await agent_cmds.agent_init(args, console, theme)
 
         template.render.assert_called_once()
@@ -186,7 +212,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.orch.memory = MagicMock()
         self.orch.memory.has_recent_message = False
         self.orch.memory.has_permanent_message = False
-        self.orch.memory.recent_message = MagicMock(is_empty=True, size=0, data=[])
+        self.orch.memory.recent_message = MagicMock(
+            is_empty=True, size=0, data=[]
+        )
         self.orch.memory.continue_session = AsyncMock()
         self.orch.memory.start_session = AsyncMock()
 
@@ -196,11 +224,23 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.dummy_stack.enter_async_context = AsyncMock(return_value=self.orch)
 
     async def test_returns_when_no_input(self):
-        with patch.object(agent_cmds, "get_input", return_value=None), \
-             patch.object(agent_cmds, "AsyncExitStack", return_value=self.dummy_stack), \
-             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=self.orch)), \
-             patch.object(agent_cmds, "token_generation", new_callable=AsyncMock):
-            await agent_cmds.agent_run(self.args, self.console, self.theme, self.hub, self.logger, 1)
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestrationLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
 
         self.orch.assert_not_awaited()
         self.orch.memory.continue_session.assert_awaited_once_with(
@@ -216,15 +256,28 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             def __aiter__(self_inner):
                 async def gen():
                     yield "t"
+
                 return gen()
 
-        with patch.object(agent_cmds, "get_input", return_value="hi"), \
-             patch.object(agent_cmds, "AsyncExitStack", return_value=self.dummy_stack), \
-             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=self.orch)), \
-             patch.object(agent_cmds, "token_generation", new_callable=AsyncMock) as tg_patch, \
-             patch.object(agent_cmds, "TextGenerationResponse", DummyResponse):
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestrationLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+            patch.object(agent_cmds, "TextGenerationResponse", DummyResponse),
+        ):
             self.orch.return_value = DummyResponse()
-            await agent_cmds.agent_run(self.args, self.console, self.theme, self.hub, self.logger, 1)
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
 
         self.orch.assert_awaited_once_with("hi", use_async_generator=True)
         tg_patch.assert_awaited_once()
