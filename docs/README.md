@@ -41,16 +41,28 @@ You'll need the [github CLI](https://github.com/cli/cli)
 for publishing versions. On MacOS, a simple `brew install gh` will do,
 after which login with `gh auth login`.
 
-Ensure you have the poetry-dynamic-versioning plugina:
+Ensure you have the poetry-dynamic-versioning plugin:
 
 ```bash
 poetry self add "poetry-dynamic-versioning[plugin]"
 ```
 
+Patch new version (adjust to `minor` or `major` as appropriate):
+
+```bash
+poetry version patch
+```
+
+Commit the version patch:
+
+```bash
+git commit -m "Bumping version to vX.Y.Z"
+```
+
 Release version X.Y.Z:
 
 ```bash
-git tag vX.Y.Z -m "Release X.Y.Z"
+git tag vX.Y.Z -m "Release vX.Y.Z"
 ```
 
 Push:
