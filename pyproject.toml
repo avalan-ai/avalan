@@ -70,7 +70,9 @@ server = [
   "uvicorn==0.34.2",
 ]
 test = [
+  "faiss-cpu==1.11.0",
   "fastapi==0.115.12",
+  "markitdown[pdf]==0.1.1",
   "mlx-lm==0.24.1",
   "mcp==1.9.1",
   "pgvector==0.4.1",
