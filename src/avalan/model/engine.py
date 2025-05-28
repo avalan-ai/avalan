@@ -8,13 +8,10 @@ from ..model import (
 )
 from ..model.entities import (
     EngineSettings,
-    ImageEntity,
     Input,
     ModelConfig,
     SentenceTransformerModelConfig,
-    Token,
     TokenizerConfig,
-    TokenDetail,
 )
 from contextlib import ExitStack
 from importlib.util import find_spec
@@ -33,7 +30,7 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Any, Generator, Optional, Type, Union
+from typing import Any, Type, Union
 
 class Engine(ABC):
     _device: str
@@ -44,20 +41,20 @@ class Engine(ABC):
     _transformers_logging_level: int
     _loaded_model: bool=False
     _loaded_tokenizer: bool=False
-    _tokenizer: Optional[Union[
+    _tokenizer: Union[
         PreTrainedTokenizer,
         PreTrainedTokenizerFast
-    ]]=None
-    _model: Optional[Union[PreTrainedModel,TextGenerationVendor]]=None
-    _config: Optional[Union[ModelConfig,SentenceTransformerModelConfig]]=None
-    _tokenizer_config: Optional[TokenizerConfig]=None
+    ] | None=None
+    _model: Union[PreTrainedModel,TextGenerationVendor] | None=None
+    _config: Union[ModelConfig,SentenceTransformerModelConfig] | None=None
+    _tokenizer_config: TokenizerConfig | None=None
     _exit_stack: ExitStack=ExitStack()
 
     def __init__(
         self,
         model_id: str,
-        settings: Optional[EngineSettings]=None,
-        logger: Optional[Logger]=None,
+        settings: EngineSettings | None=None,
+        logger: Logger | None=None,
     ):
         assert(model_id)
         self._logger = logger if logger else getLogger()
@@ -86,14 +83,14 @@ class Engine(ABC):
         return False
 
     @property
-    def config(self) -> Optional[Union[
+    def config(self) -> Union[
         ModelConfig,
         SentenceTransformerModelConfig
-    ]]:
+    ] | None:
         return self._config
 
     @property
-    def model(self) -> Optional[PreTrainedModel]:
+    def model(self) -> PreTrainedModel | None:
         return self._model
 
     @property
@@ -101,14 +98,14 @@ class Engine(ABC):
         return self._model_id
 
     @property
-    def tokenizer_config(self) -> Optional[TokenizerConfig]:
+    def tokenizer_config(self) -> TokenizerConfig | None:
         return self._tokenizer_config
 
     @property
-    def tokenizer(self) -> Optional[Union[
+    def tokenizer(self) -> Union[
         PreTrainedTokenizer,
         PreTrainedTokenizerFast
-    ]]:
+    ] | None:
         return self._tokenizer
 
     @abstractmethod
@@ -125,7 +122,7 @@ class Engine(ABC):
 
     def _load_tokenizer_with_tokens(
         self,
-        tokenizer_name_or_path: Optional[str],
+        tokenizer_name_or_path: str | None,
         use_fast: bool=True
     ) -> Union[PreTrainedTokenizer,PreTrainedTokenizerFast]:
         raise TokenizerNotSupportedException() \
@@ -144,9 +141,9 @@ class Engine(ABC):
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any]
+        exc_type: Type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any | None
     ):
         _l = self._log
         if self._transformers_logging_logger \
@@ -163,7 +160,7 @@ class Engine(ABC):
         self,
         *args,
         load_tokenizer: bool,
-        tokenizer_name_or_path: Optional[str]
+        tokenizer_name_or_path: str | None
     ) -> None:
         if self._settings.auto_load_model \
            and hasattr(self, "_loaded_model") \
@@ -243,10 +240,10 @@ class Engine(ABC):
             self._loaded_model = True
 
         if self._model and not self._config:
-            config: Optional[Union[
+            config: Union[
                 ModelConfig,
                 SentenceTransformerModelConfig
-            ]] = None
+            ] | None = None
             mc = (
                 self._model.config if hasattr(self._model, "config") else
                 self._model[0].auto_model.config if is_sentence_transformer

@@ -6,7 +6,6 @@ from ...cli.commands.cache import cache_delete, cache_download
 from ...event import EventStats
 from ...model import TextGenerationResponse
 from ...model.entities import (
-    EngineUri,
     GenerationSettings,
     Model,
     Token
