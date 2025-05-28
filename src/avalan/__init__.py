@@ -14,7 +14,6 @@ def _config() -> dict:
 
 config = _config()
 
-
 def license() -> str:
     assert (
         "project" in config
@@ -30,8 +29,12 @@ def name() -> str:
 
 
 def version() -> Version:
-    assert "project" in config and "version" in config["project"]
-    version = config["project"]["version"]
+    assert (
+        "tool" in config
+        and "poetry" in config["tool"]
+        and "version" in config["tool"]["poetry"]
+    )
+    version = config["tool"]["poetry"]["version"]
     return parse(version)
 
 
