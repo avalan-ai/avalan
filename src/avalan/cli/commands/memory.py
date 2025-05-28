@@ -1,7 +1,8 @@
 from argparse import Namespace
 from asyncio import to_thread
 from ...cli import get_input
-from ...cli.commands.model import get_model_settings, model_display
+from ...cli.commands import get_model_settings
+from ...cli.commands.model import model_display
 from ...memory.partitioner.text import TextPartitioner, TextPartition
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.permanent import MemoryType, VectorFunction
