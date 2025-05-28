@@ -5,6 +5,7 @@ from typing import Awaitable, Callable, Iterable
 
 Listener = Callable[[Event], Awaitable[None] | None]
 
+
 class EventManager:
     _listeners: dict[EventType, list[Listener]]
 
@@ -12,9 +13,7 @@ class EventManager:
         self._listeners = defaultdict(list)
 
     def add_listener(
-        self,
-        listener: Listener,
-        event_types: Iterable[EventType] | None = None
+        self, listener: Listener, event_types: Iterable[EventType] | None = None
     ) -> None:
         types = list(event_types) if event_types else list(EventType)
         for event_type in types:

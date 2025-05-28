@@ -103,6 +103,7 @@ class MCPCallToolTestCase(IsolatedAsyncioTestCase):
                 def decorator(func):
                     captured["fn"] = func
                     return func
+
                 return decorator
 
             mcp_server.call_tool.side_effect = call_tool

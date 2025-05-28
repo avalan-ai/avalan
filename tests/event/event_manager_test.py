@@ -2,6 +2,7 @@ from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from unittest import IsolatedAsyncioTestCase, main
 
+
 class EventManagerTestCase(IsolatedAsyncioTestCase):
     async def test_trigger(self):
         manager = EventManager()
@@ -22,11 +23,8 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         self.assertIn(("a", EventType.START), called)
         self.assertIn(("s", EventType.START), called)
         self.assertIn(("s", EventType.END), called)
-        self.assertEqual(len([
-            c
-            for c in called
-            if c[1] == EventType.START
-        ]), 2)
+        self.assertEqual(len([c for c in called if c[1] == EventType.START]), 2)
+
 
 if __name__ == "__main__":
     main()

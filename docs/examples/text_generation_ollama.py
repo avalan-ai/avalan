@@ -2,6 +2,7 @@ from asyncio import run
 from avalan.model.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vendor.ollama import OllamaModel
 
+
 async def example() -> None:
     print("Loading model... ", end="", flush=True)
     with OllamaModel("llama3", TransformerEngineSettings()) as lm:
@@ -18,6 +19,7 @@ async def example() -> None:
             settings=GenerationSettings(temperature=0.9, max_new_tokens=256),
         ):
             print(token, end="", flush=True)
+
 
 if __name__ == "__main__":
     run(example())

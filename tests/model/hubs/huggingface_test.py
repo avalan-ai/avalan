@@ -50,7 +50,8 @@ class HuggingfaceHubTestCase(TestCase):
             delete_revisions=MagicMock(return_value=strategy),
         )
         with patch(
-            "avalan.model.hubs.huggingface.scan_cache_dir", return_value=scan_result
+            "avalan.model.hubs.huggingface.scan_cache_dir",
+            return_value=scan_result,
         ) as scan_mock:
             deletion, execute = self.hub.cache_delete("model")
         scan_mock.assert_called_once_with("/cache")
@@ -87,7 +88,8 @@ class HuggingfaceHubTestCase(TestCase):
         )
         scan_result = SimpleNamespace(repos=[info])
         with patch(
-            "avalan.model.hubs.huggingface.scan_cache_dir", return_value=scan_result
+            "avalan.model.hubs.huggingface.scan_cache_dir",
+            return_value=scan_result,
         ):
             caches = self.hub.cache_scan()
         self.assertEqual(len(caches), 1)
@@ -114,7 +116,9 @@ class HuggingfaceHubTestCase(TestCase):
             tqdm_class=None,
             force_download=False,
         )
-        self.hf_instance.snapshot_download.side_effect = GatedRepoError("denied")
+        self.hf_instance.snapshot_download.side_effect = GatedRepoError(
+            "denied"
+        )
         with self.assertRaises(HubAccessDeniedException):
             self.hub.download("model")
 

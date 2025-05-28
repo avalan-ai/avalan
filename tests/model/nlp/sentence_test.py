@@ -28,6 +28,7 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
 
     def test_instantiation_with_load_model_and_tokenizer(self):
         logger_mock = MagicMock(spec=Logger)
+
         class DummySentenceTransformer:
             def __init__(self, *args, **kwargs):
                 self.init_args = args
@@ -44,6 +45,7 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
             def __getitem__(self, idx):
                 class Wrapper:
                     auto_model = types.SimpleNamespace(config=None)
+
                 return Wrapper()
 
             def state_dict(self):
@@ -53,10 +55,16 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
         dummy.SentenceTransformer = DummySentenceTransformer
         dummy.__spec__ = ModuleSpec("sentence_transformers", loader=None)
         with patch.dict("sys.modules", {"sentence_transformers": dummy}):
-            with patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock:
+            with patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock:
                 tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
-                type(tokenizer_mock).all_special_tokens = PropertyMock(return_value=[])
-                type(tokenizer_mock).name_or_path = PropertyMock(return_value=self.model_id)
+                type(tokenizer_mock).all_special_tokens = PropertyMock(
+                    return_value=[]
+                )
+                type(tokenizer_mock).name_or_path = PropertyMock(
+                    return_value=self.model_id
+                )
                 auto_tokenizer_mock.return_value = tokenizer_mock
 
                 model = SentenceTransformerModel(
@@ -100,11 +108,17 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
         dummy.SentenceTransformer = MagicMock()
         dummy.__spec__ = ModuleSpec("sentence_transformers", loader=None)
         with patch.dict("sys.modules", {"sentence_transformers": dummy}):
-            with patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock:
+            with patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock:
                 tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
                 tokenizer_mock.encode.return_value = [1, 2, 3]
-                type(tokenizer_mock).all_special_tokens = PropertyMock(return_value=[])
-                type(tokenizer_mock).name_or_path = PropertyMock(return_value=self.model_id)
+                type(tokenizer_mock).all_special_tokens = PropertyMock(
+                    return_value=[]
+                )
+                type(tokenizer_mock).name_or_path = PropertyMock(
+                    return_value=self.model_id
+                )
                 auto_tokenizer_mock.return_value = tokenizer_mock
 
                 model = SentenceTransformerModel(
@@ -116,11 +130,14 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
                     logger=logger_mock,
                 )
                 count = model.token_count("hi")
-                tokenizer_mock.encode.assert_called_once_with("hi", add_special_tokens=False)
+                tokenizer_mock.encode.assert_called_once_with(
+                    "hi", add_special_tokens=False
+                )
                 self.assertEqual(count, 3)
 
     async def test_call(self):
         logger_mock = MagicMock(spec=Logger)
+
         class DummySentenceTransformer:
             def __init__(self, *args, **kwargs):
                 self.init_args = args
@@ -137,6 +154,7 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
             def __getitem__(self, idx):
                 class Wrapper:
                     auto_model = types.SimpleNamespace(config=None)
+
                 return Wrapper()
 
             def state_dict(self):
@@ -146,10 +164,16 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
         dummy.SentenceTransformer = DummySentenceTransformer
         dummy.__spec__ = ModuleSpec("sentence_transformers", loader=None)
         with patch.dict("sys.modules", {"sentence_transformers": dummy}):
-            with patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock:
+            with patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock:
                 tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
-                type(tokenizer_mock).all_special_tokens = PropertyMock(return_value=[])
-                type(tokenizer_mock).name_or_path = PropertyMock(return_value=self.model_id)
+                type(tokenizer_mock).all_special_tokens = PropertyMock(
+                    return_value=[]
+                )
+                type(tokenizer_mock).name_or_path = PropertyMock(
+                    return_value=self.model_id
+                )
                 auto_tokenizer_mock.return_value = tokenizer_mock
 
                 model = SentenceTransformerModel(
@@ -162,8 +186,10 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
                 )
                 result = await model("hello")
                 self.assertIsInstance(model._model, DummySentenceTransformer)
-                self.assertEqual(model._model.called_with,
-                                 (("hello",), {"convert_to_numpy": True}))
+                self.assertEqual(
+                    model._model.called_with,
+                    (("hello",), {"convert_to_numpy": True}),
+                )
                 self.assertEqual(result, [0.1, 0.2])
 
 

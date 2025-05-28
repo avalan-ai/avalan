@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 from unittest.mock import patch
 
+
 def load_renderer():
     spec = spec_from_file_location(
         "avalan.agent.renderer",
@@ -53,18 +54,12 @@ class RendererTestCase(TestCase):
             with open(path_greet, "w", encoding="utf-8") as fh:
                 fh.write("Hello {{name}}!")
             renderer = self.Renderer(tmp)
-            self.assertEqual(
-                renderer("greet.txt", name="Bob"),
-                "Hello Bob!"
-            )
+            self.assertEqual(renderer("greet.txt", name="Bob"), "Hello Bob!")
 
     def test_from_string(self):
         renderer = self.Renderer()
         tmpl = "Hi {{name}}"
-        self.assertEqual(
-            renderer.from_string(tmpl, {"name": "Ada"}),
-            b"Hi Ada"
-        )
+        self.assertEqual(renderer.from_string(tmpl, {"name": "Ada"}), b"Hi Ada")
         self.assertEqual(renderer.from_string(tmpl), tmpl)
 
     def test_template_caching(self):
@@ -83,10 +78,11 @@ class RendererTestCase(TestCase):
     def test_no_clean_spaces(self):
         renderer = self.Renderer(clean_spaces=False)
         result = renderer("agent.md", name="Leo")
-        self.assertTrue(result.strip().startswith(
-            "You are a helpful assistant."
-        ))
+        self.assertTrue(
+            result.strip().startswith("You are a helpful assistant.")
+        )
         self.assertIn("Your name is Leo.", result)
+
 
 if __name__ == "__main__":
     main()

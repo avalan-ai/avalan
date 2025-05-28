@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 importorskip("vllm.LLM", reason="vllm not installed")
 
+
 class VllmModelTestCase(TestCase):
     model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
 
@@ -20,8 +21,9 @@ class VllmModelTestCase(TestCase):
         with patch.dict("sys.modules", {"vllm": vllm_mock}):
             with (
                 self.subTest(),
-                patch.object(AutoTokenizer, "from_pretrained")
-                    as auto_tokenizer_mock
+                patch.object(
+                    AutoTokenizer, "from_pretrained"
+                ) as auto_tokenizer_mock,
             ):
                 tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
                 type(tokenizer_mock).name_or_path = PropertyMock(
@@ -38,10 +40,10 @@ class VllmModelTestCase(TestCase):
                 )
                 self.assertIs(model._model, llm_instance)
                 auto_tokenizer_mock.assert_called_once_with(
-                    self.model_id,
-                    use_fast=True
+                    self.model_id, use_fast=True
                 )
                 vllm_mock.LLM.assert_called_once()
+
 
 if __name__ == "__main__":
     main()

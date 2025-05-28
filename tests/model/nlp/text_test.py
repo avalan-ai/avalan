@@ -2,18 +2,19 @@ from avalan.model.transformer import AutoTokenizer
 from avalan.model.entities import TransformerEngineSettings, Token
 from avalan.model.nlp.text.generation import (
     AutoModelForCausalLM,
-    TextGenerationModel
+    TextGenerationModel,
 )
 from avalan.model.engine import Engine
 from logging import Logger
 from transformers import (
     PretrainedConfig,
     PreTrainedModel,
-    PreTrainedTokenizerFast
+    PreTrainedTokenizerFast,
 )
 from torch import tensor
 from unittest import main, TestCase
 from unittest.mock import patch, MagicMock, PropertyMock
+
 
 class TextGenerationModelTestCase(TestCase):
     @classmethod
@@ -25,7 +26,7 @@ class TextGenerationModelTestCase(TestCase):
             "google/owlvit-base-patch16",
             "hf-internal-testing/tiny-random-bert",
             "qingy2024/UwU-7B-Instruct",
-            "Qwen/Qwen2.5-7B-Instruct"
+            "Qwen/Qwen2.5-7B-Instruct",
         ]
 
     def test_instantiation_no_load(self):
@@ -35,8 +36,7 @@ class TextGenerationModelTestCase(TestCase):
                 model = TextGenerationModel(
                     model_id,
                     TransformerEngineSettings(
-                        auto_load_model=False,
-                        auto_load_tokenizer=False
+                        auto_load_model=False, auto_load_tokenizer=False
                     ),
                     logger=logger_mock,
                 )
@@ -48,8 +48,9 @@ class TextGenerationModelTestCase(TestCase):
         for model_id in self.model_ids:
             with (
                 self.subTest(),
-                patch.object(AutoTokenizer, "from_pretrained")
-                    as auto_tokenizer_mock
+                patch.object(
+                    AutoTokenizer, "from_pretrained"
+                ) as auto_tokenizer_mock,
             ):
                 tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
                 type(tokenizer_mock).name_or_path = PropertyMock(
@@ -60,15 +61,13 @@ class TextGenerationModelTestCase(TestCase):
                 model = TextGenerationModel(
                     model_id,
                     TransformerEngineSettings(
-                        auto_load_model=False,
-                        auto_load_tokenizer=True
+                        auto_load_model=False, auto_load_tokenizer=True
                     ),
                     logger=logger_mock,
                 )
                 self.assertIsInstance(model, TextGenerationModel)
                 auto_tokenizer_mock.assert_called_once_with(
-                    model_id,
-                    use_fast=True
+                    model_id, use_fast=True
                 )
 
     def test_instantiation_with_load_model_and_tokenizer(self):
@@ -76,10 +75,12 @@ class TextGenerationModelTestCase(TestCase):
         for model_id in self.model_ids:
             with (
                 self.subTest(),
-                patch.object(AutoTokenizer, "from_pretrained")
-                    as auto_tokenizer_mock,
-                patch.object(AutoModelForCausalLM, "from_pretrained")
-                    as auto_model_mock
+                patch.object(
+                    AutoTokenizer, "from_pretrained"
+                ) as auto_tokenizer_mock,
+                patch.object(
+                    AutoModelForCausalLM, "from_pretrained"
+                ) as auto_model_mock,
             ):
                 auto_model_mock.reset_mock()
                 model_mock = MagicMock(spec=PreTrainedModel)
@@ -103,8 +104,7 @@ class TextGenerationModelTestCase(TestCase):
                 model = TextGenerationModel(
                     model_id,
                     TransformerEngineSettings(
-                        auto_load_model=True,
-                        auto_load_tokenizer=True
+                        auto_load_model=True, auto_load_tokenizer=True
                     ),
                     logger=logger_mock,
                 )
@@ -122,12 +122,12 @@ class TextGenerationModelTestCase(TestCase):
                     device_map=Engine.get_default_device(),
                     token=None,
                     quantization_config=None,
-                    revision=None
+                    revision=None,
                 )
                 auto_tokenizer_mock.assert_called_once_with(
-                    model_id,
-                    use_fast=True
+                    model_id, use_fast=True
                 )
+
 
 class TextGenerationModelMethodsTestCase(TestCase):
     def setUp(self):
@@ -223,7 +223,7 @@ class TextGenerationModelMethodsTestCase(TestCase):
         tokens = ["a", "b"]
         with (
             patch.object(AutoTokenizer, "from_pretrained") as auto_tok,
-            patch.object(TextGenerationModel, "_tokens", tokens, create=True)
+            patch.object(TextGenerationModel, "_tokens", tokens, create=True),
         ):
             tokenizer = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer.all_special_tokens = []
@@ -244,5 +244,6 @@ class TextGenerationModelMethodsTestCase(TestCase):
             auto_tok.assert_called_once_with("m", use_fast=True)
             tokenizer.add_tokens.assert_called_once_with(tokens)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

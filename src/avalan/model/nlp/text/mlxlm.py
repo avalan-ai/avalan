@@ -3,7 +3,7 @@ from ....model import TextGenerationVendorStream
 from ....model.entities import (
     GenerationSettings,
     Input,
-    TransformerEngineSettings
+    TransformerEngineSettings,
 )
 from ....model import TextGenerationModel
 from ....tool.manager import ToolManager
@@ -12,6 +12,7 @@ from dataclasses import replace
 from logging import Logger
 from mlx_lm import load, generate
 from typing import AsyncGenerator
+
 
 class MlxLmStream(TextGenerationVendorStream):
     """Async wrapper around a synchronous token generator."""
@@ -26,6 +27,7 @@ class MlxLmStream(TextGenerationVendorStream):
         except StopIteration:
             raise StopAsyncIteration
         return chunk
+
 
 class MlxLmModel(TextGenerationModel):
     """Text generation model using the ``mlx_lm`` backend."""
@@ -68,11 +70,7 @@ class MlxLmModel(TextGenerationModel):
     ) -> AsyncGenerator[str, None]:
         params = self._build_params(settings)
         iterator = generate(
-            self._model,
-            self._tokenizer,
-            prompt,
-            stream=True,
-            **params
+            self._model, self._tokenizer, prompt, stream=True, **params
         )
         stream = MlxLmStream(iter(iterator))
         async for chunk in stream:
@@ -111,4 +109,3 @@ class MlxLmModel(TextGenerationModel):
         if settings.use_async_generator:
             return await self._stream_generator(prompt, generation_settings)
         return self._string_output(prompt, generation_settings)
-

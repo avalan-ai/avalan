@@ -2,6 +2,7 @@ from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 from unittest import TestCase, main
 
+
 class FlowParseMermaidTestCase(TestCase):
     def test_parse_mermaid(self):
         mermaid = """
@@ -50,6 +51,7 @@ class FlowParseMermaidTestCase(TestCase):
         self.assertEqual(len(flow.connections), 1)
         self.assertEqual(flow.connections[0].src.name, "A")
         self.assertEqual(flow.connections[0].dest.name, "B")
+
 
 class FlowExecutionTestCase(TestCase):
     def test_manual_execution(self):
@@ -123,6 +125,7 @@ class FlowAddConnectionTestCase(TestCase):
         flow.add_node(Node("A"))
         with self.assertRaises(KeyError):
             flow.add_connection("A", "B")
+
 
 if __name__ == "__main__":
     main()

@@ -1,7 +1,10 @@
 from avalan.model.transformer import AutoTokenizer
 from avalan.model.entities import TransformerEngineSettings
 from avalan.model.engine import Engine
-from avalan.model.nlp.token import TokenClassificationModel, AutoModelForTokenClassification
+from avalan.model.nlp.token import (
+    TokenClassificationModel,
+    AutoModelForTokenClassification,
+)
 from logging import Logger
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 from unittest import TestCase, IsolatedAsyncioTestCase, main
@@ -16,8 +19,12 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
     def test_instantiation_no_load(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock,
-            patch.object(AutoModelForTokenClassification, "from_pretrained") as auto_model_mock,
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForTokenClassification, "from_pretrained"
+            ) as auto_model_mock,
         ):
             model = TokenClassificationModel(
                 self.model_id,
@@ -34,8 +41,12 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_tokenizer(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock,
-            patch.object(AutoModelForTokenClassification, "from_pretrained") as auto_model_mock,
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForTokenClassification, "from_pretrained"
+            ) as auto_model_mock,
         ):
             tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_mock.name_or_path = self.model_id
@@ -52,14 +63,20 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 logger=logger_mock,
             )
             self.assertIsInstance(model, TokenClassificationModel)
-            auto_tokenizer_mock.assert_called_once_with(self.model_id, use_fast=True)
+            auto_tokenizer_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             auto_model_mock.assert_not_called()
 
     def test_instantiation_with_load_model_and_tokenizer(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock,
-            patch.object(AutoModelForTokenClassification, "from_pretrained") as auto_model_mock,
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForTokenClassification, "from_pretrained"
+            ) as auto_model_mock,
         ):
             tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_mock.name_or_path = self.model_id
@@ -92,7 +109,9 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 token=None,
                 device_map=Engine.get_default_device(),
             )
-            auto_tokenizer_mock.assert_called_once_with(self.model_id, use_fast=True)
+            auto_tokenizer_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
 
 
 class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
@@ -102,9 +121,15 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
         logger_mock = MagicMock(spec=Logger)
         inputs = {"input_ids": tensor([[1, 2, 3]])}
         with (
-            patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock,
-            patch.object(AutoModelForTokenClassification, "from_pretrained") as auto_model_mock,
-            patch.object(TokenClassificationModel, "_tokenize_input", return_value=inputs) as tokenize_mock,
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForTokenClassification, "from_pretrained"
+            ) as auto_model_mock,
+            patch.object(
+                TokenClassificationModel, "_tokenize_input", return_value=inputs
+            ) as tokenize_mock,
             patch("avalan.model.nlp.token.argmax") as argmax_mock,
             patch("avalan.model.nlp.token.no_grad", new=lambda: nullcontext()),
         ):
@@ -135,10 +160,14 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             result = await model("text")
 
             self.assertEqual(result, {"a": "A", "b": "B", "c": "A"})
-            tokenize_mock.assert_called_once_with("text", system_prompt=None, context=None)
+            tokenize_mock.assert_called_once_with(
+                "text", system_prompt=None, context=None
+            )
             model_instance.assert_called_once()
             tokenizer_mock.convert_ids_to_tokens.assert_called_once()
-            auto_tokenizer_mock.assert_called_once_with(self.model_id, use_fast=True)
+            auto_tokenizer_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             auto_model_mock.assert_called_once()
 
 

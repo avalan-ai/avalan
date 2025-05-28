@@ -5,14 +5,15 @@ from re import DOTALL, search
 from typing import Any, Optional, Tuple
 from xml.etree import ElementTree
 
+
 class ToolCallParser:
     _eos_token: Optional[str]
     _tool_format: Optional[ToolFormat]
 
     def __init__(
         self,
-        tool_format: Optional[ToolFormat]=None,
-        eos_token: Optional[str]=None
+        tool_format: Optional[ToolFormat] = None,
+        eos_token: Optional[str] = None,
     ) -> None:
         self._tool_format = tool_format
         self._eos_token = eos_token
@@ -20,13 +21,13 @@ class ToolCallParser:
     def __call__(self, text: str) -> Optional[list[ToolCall]]:
         calls = (
             self._parse_json(text)
-                if self._tool_format is ToolFormat.JSON else
-            self._parse_react(text)
-                if self._tool_format is ToolFormat.REACT else
-            self._parse_bracket(text)
-                if self._tool_format is ToolFormat.BRACKET else
-            self._parse_openai_json(text)
-                if self._tool_format is ToolFormat.OPENAI
+            if self._tool_format is ToolFormat.JSON
+            else self._parse_react(text)
+            if self._tool_format is ToolFormat.REACT
+            else self._parse_bracket(text)
+            if self._tool_format is ToolFormat.BRACKET
+            else self._parse_openai_json(text)
+            if self._tool_format is ToolFormat.OPENAI
             else None
         )
         if not calls:
@@ -53,18 +54,14 @@ class ToolCallParser:
                 pass
         return None
 
-    def _parse_bracket(
-        self,
-        text: str
-    ) -> Optional[Tuple[str, dict[str, Any]]]:
+    def _parse_bracket(self, text: str) -> Optional[Tuple[str, dict[str, Any]]]:
         m = search(r"\[(\w+)\]\(([^)]+)\)", text)
         if m:
             return m.group(1), {"input": m.group(2)}
         return None
 
     def _parse_openai_json(
-        self,
-        text: str
+        self, text: str
     ) -> Optional[Tuple[str, dict[str, Any]]]:
         try:
             payload = loads(text)
@@ -103,10 +100,12 @@ class ToolCallParser:
                     and "name" in tool_call
                     and "arguments" in tool_call
                 ):
-                    tool_calls.append(ToolCall(
-                        name=tool_call["name"],
-                        arguments=tool_call["arguments"]
-                    ))
+                    tool_calls.append(
+                        ToolCall(
+                            name=tool_call["name"],
+                            arguments=tool_call["arguments"],
+                        )
+                    )
         except ElementTree.ParseError:
             pass
 
@@ -114,9 +113,7 @@ class ToolCallParser:
             return tool_calls
 
         m = search(
-            r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
-            text,
-            flags=DOTALL
+            r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, flags=DOTALL
         )
         if m:
             tool_call_payload = m.group(1)
@@ -127,10 +124,12 @@ class ToolCallParser:
                     and "name" in tool_call
                     and "arguments" in tool_call
                 ):
-                    tool_calls.append(ToolCall(
-                        name=tool_call["name"],
-                        arguments=tool_call["arguments"]
-                    ))
+                    tool_calls.append(
+                        ToolCall(
+                            name=tool_call["name"],
+                            arguments=tool_call["arguments"],
+                        )
+                    )
             except JSONDecodeError:
                 pass
 
@@ -141,10 +140,9 @@ class ToolCallParser:
         )
         if m:
             try:
-                tool_calls.append(ToolCall(
-                    name=m.group(1),
-                    arguments=loads(m.group(2))
-                ))
+                tool_calls.append(
+                    ToolCall(name=m.group(1), arguments=loads(m.group(2)))
+                )
             except JSONDecodeError:
                 pass
 
@@ -155,10 +153,9 @@ class ToolCallParser:
         )
         if m:
             try:
-                tool_calls.append(ToolCall(
-                    name=m.group(1),
-                    arguments=loads(m.group(2))
-                ))
+                tool_calls.append(
+                    ToolCall(name=m.group(1), arguments=loads(m.group(2)))
+                )
             except JSONDecodeError:
                 pass
 
@@ -168,12 +165,10 @@ class ToolCallParser:
         )
         if m:
             try:
-                tool_calls.append(ToolCall(
-                    name=m.group(1),
-                    arguments=loads(m.group(2))
-                ))
+                tool_calls.append(
+                    ToolCall(name=m.group(1), arguments=loads(m.group(2)))
+                )
             except JSONDecodeError:
                 pass
 
         return tool_calls if tool_calls else None
-

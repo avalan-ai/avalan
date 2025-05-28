@@ -18,7 +18,9 @@ class SemanticSegmentationModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_model(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
             patch.object(
                 AutoModelForSemanticSegmentation, "from_pretrained"
             ) as model_mock,
@@ -41,7 +43,7 @@ class SemanticSegmentationModelInstantiationTestCase(TestCase):
                 self.model_id,
                 device_map=Engine.get_default_device(),
             )
-            #model_instance.eval.assert_called_once_with()
+            # model_instance.eval.assert_called_once_with()
 
 
 class SemanticSegmentationModelCallTestCase(IsolatedAsyncioTestCase):
@@ -50,7 +52,9 @@ class SemanticSegmentationModelCallTestCase(IsolatedAsyncioTestCase):
     async def test_call(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
             patch.object(
                 AutoModelForSemanticSegmentation, "from_pretrained"
             ) as model_mock,
@@ -100,10 +104,7 @@ class SemanticSegmentationModelCallTestCase(IsolatedAsyncioTestCase):
             )
             model_instance.assert_called_once()
             self.assertEqual(model_instance.call_count, 1)
-            self.assertEqual(
-                model_instance.call_args,
-                call(**processor_result)
-            )
+            self.assertEqual(model_instance.call_args, call(**processor_result))
 
             unique_mock.assert_called_once_with(mask_tensor)
 

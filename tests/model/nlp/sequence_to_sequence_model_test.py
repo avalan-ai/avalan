@@ -2,7 +2,12 @@ from avalan.model.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.engine import Engine
 from avalan.model.nlp.sequence import SequenceToSequenceModel
 from logging import Logger
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, PreTrainedModel, PreTrainedTokenizerFast
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSeq2SeqLM,
+    PreTrainedModel,
+    PreTrainedTokenizerFast,
+)
 from unittest import TestCase, IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -13,8 +18,12 @@ class SequenceToSequenceModelInstantiationTestCase(TestCase):
     def test_instantiation_no_load(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock,
-            patch.object(AutoModelForSeq2SeqLM, "from_pretrained") as auto_model_mock,
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForSeq2SeqLM, "from_pretrained"
+            ) as auto_model_mock,
         ):
             settings = TransformerEngineSettings(
                 auto_load_model=False,
@@ -32,18 +41,26 @@ class SequenceToSequenceModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_model_and_tokenizer(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoTokenizer, "from_pretrained") as auto_tokenizer_mock,
-            patch.object(AutoModelForSeq2SeqLM, "from_pretrained") as auto_model_mock,
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForSeq2SeqLM, "from_pretrained"
+            ) as auto_model_mock,
         ):
             model_instance = MagicMock(spec=PreTrainedModel)
-            type(model_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(model_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             auto_model_mock.return_value = model_instance
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_instance.__len__.return_value = 1
             tokenizer_instance.model_max_length = 10
             tokenizer_instance.all_special_tokens = []
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             auto_tokenizer_mock.return_value = tokenizer_instance
 
             model = SequenceToSequenceModel(
@@ -83,16 +100,24 @@ class SequenceToSequenceModelCallTestCase(IsolatedAsyncioTestCase):
 
         inputs = MagicMock()
         with (
-            patch.object(SequenceToSequenceModel, "_tokenize_input", return_value=inputs) as tok_mock,
-            patch.object(SequenceToSequenceModel, "_generate_output", return_value=[[42]]) as gen_mock,
+            patch.object(
+                SequenceToSequenceModel, "_tokenize_input", return_value=inputs
+            ) as tok_mock,
+            patch.object(
+                SequenceToSequenceModel, "_generate_output", return_value=[[42]]
+            ) as gen_mock,
         ):
             gen_settings = GenerationSettings(max_length=5)
             result = await model("text", gen_settings, stopping_criterias=None)
 
         self.assertEqual(result, "summary")
-        tok_mock.assert_called_once_with("text", system_prompt=None, context=None)
+        tok_mock.assert_called_once_with(
+            "text", system_prompt=None, context=None
+        )
         gen_mock.assert_called_once_with(inputs, gen_settings, None)
-        model._tokenizer.decode.assert_called_once_with([42], skip_special_tokens=True)
+        model._tokenizer.decode.assert_called_once_with(
+            [42], skip_special_tokens=True
+        )
 
 
 if __name__ == "__main__":

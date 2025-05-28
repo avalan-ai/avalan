@@ -3,7 +3,7 @@ from .....model import TextGenerationResponse, TextGenerationVendor
 from .....model.entities import (
     GenerationSettings,
     Input,
-    TransformerEngineSettings
+    TransformerEngineSettings,
 )
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
@@ -16,14 +16,15 @@ from transformers import PreTrainedModel
 from typing import Literal
 from .....compat import override
 
+
 class TextGenerationVendorModel(TextGenerationModel, ABC):
     _TIKTOKEN_DEFAULT_MODEL = "cl100k_base"
 
     def __init__(
         self,
         model_id: str,
-        settings: TransformerEngineSettings | None=None,
-        logger: Logger | None=None,
+        settings: TransformerEngineSettings | None = None,
+        logger: Logger | None = None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
         assert settings.access_token, "API key needed for vendor"
@@ -49,16 +50,14 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     def _tokenize_input(
         self,
         input: Input,
-        context: str | None=None,
-        tensor_format: Literal["pt"]="pt",
-        **kwargs
-    ) -> dict[str,Tensor] | BatchEncoding | Tensor:
+        context: str | None = None,
+        tensor_format: Literal["pt"] = "pt",
+        **kwargs,
+    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
     def input_token_count(
-        self,
-        input: Input,
-        system_prompt: str | None=None
+        self, input: Input, system_prompt: str | None = None
     ) -> int:
         try:
             encoding = encoding_for_model(self._model_id)
@@ -76,10 +75,10 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     async def __call__(
         self,
         input: Input,
-        system_prompt: str | None=None,
-        settings: GenerationSettings | None=None,
+        system_prompt: str | None = None,
+        settings: GenerationSettings | None = None,
         *,
-        tool: ToolManager | None=None,
+        tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         messages = self._messages(input, system_prompt, tool)
         streamer = await self._model(
@@ -87,11 +86,10 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
             messages,
             settings,
             tool=tool,
-            use_async_generator=settings.use_async_generator
+            use_async_generator=settings.use_async_generator,
         )
         return TextGenerationResponse(
             streamer,
             settings=settings or GenerationSettings(),
-            use_async_generator=settings.use_async_generator
+            use_async_generator=settings.use_async_generator,
         )
-

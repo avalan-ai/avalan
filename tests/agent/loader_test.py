@@ -8,6 +8,7 @@ from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 
+
 class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
     async def test_file_not_found(self):
         stack = AsyncExitStack()
@@ -74,13 +75,33 @@ uri = \"ai://local/model\"
             tool = MagicMock()
             event_manager = MagicMock()
 
-            with patch("avalan.agent.loader.SentenceTransformerModel", return_value=sentence_model), \
-                 patch("avalan.agent.loader.TextPartitioner"), \
-                 patch("avalan.agent.loader.MemoryManager.create_instance", new=AsyncMock(return_value=memory)) as mm_patch, \
-                 patch("avalan.agent.loader.ModelManager", return_value=model_manager) as model_patch, \
-                 patch("avalan.agent.loader.DefaultOrchestrator", return_value="orch") as orch_patch, \
-                 patch("avalan.agent.loader.ToolManager.create_instance", return_value=tool) as tool_patch, \
-                 patch("avalan.agent.loader.EventManager", return_value=event_manager):
+            with (
+                patch(
+                    "avalan.agent.loader.SentenceTransformerModel",
+                    return_value=sentence_model,
+                ),
+                patch("avalan.agent.loader.TextPartitioner"),
+                patch(
+                    "avalan.agent.loader.MemoryManager.create_instance",
+                    new=AsyncMock(return_value=memory),
+                ) as mm_patch,
+                patch(
+                    "avalan.agent.loader.ModelManager",
+                    return_value=model_manager,
+                ) as model_patch,
+                patch(
+                    "avalan.agent.loader.DefaultOrchestrator",
+                    return_value="orch",
+                ) as orch_patch,
+                patch(
+                    "avalan.agent.loader.ToolManager.create_instance",
+                    return_value=tool,
+                ) as tool_patch,
+                patch(
+                    "avalan.agent.loader.EventManager",
+                    return_value=event_manager,
+                ),
+            ):
                 result = await OrchestrationLoader.from_file(
                     path,
                     agent_id=uuid4(),
@@ -133,13 +154,34 @@ value = { type = \"string\", description = \"d\" }
             tool = MagicMock()
             event_manager = MagicMock()
 
-            with patch("avalan.agent.loader.SentenceTransformerModel", return_value=sentence_model), \
-                 patch("avalan.agent.loader.TextPartitioner"), \
-                 patch("avalan.agent.loader.MemoryManager.create_instance", new=AsyncMock(return_value=memory)), \
-                 patch("avalan.agent.loader.ModelManager", return_value=model_manager), \
-                 patch.object(OrchestrationLoader, "_load_json_orchestrator", return_value="json_orch") as json_patch, \
-                 patch("avalan.agent.loader.ToolManager.create_instance", return_value=tool), \
-                 patch("avalan.agent.loader.EventManager", return_value=event_manager):
+            with (
+                patch(
+                    "avalan.agent.loader.SentenceTransformerModel",
+                    return_value=sentence_model,
+                ),
+                patch("avalan.agent.loader.TextPartitioner"),
+                patch(
+                    "avalan.agent.loader.MemoryManager.create_instance",
+                    new=AsyncMock(return_value=memory),
+                ),
+                patch(
+                    "avalan.agent.loader.ModelManager",
+                    return_value=model_manager,
+                ),
+                patch.object(
+                    OrchestrationLoader,
+                    "_load_json_orchestrator",
+                    return_value="json_orch",
+                ) as json_patch,
+                patch(
+                    "avalan.agent.loader.ToolManager.create_instance",
+                    return_value=tool,
+                ),
+                patch(
+                    "avalan.agent.loader.EventManager",
+                    return_value=event_manager,
+                ),
+            ):
                 result = await OrchestrationLoader.from_file(
                     path,
                     agent_id=uuid4(),
@@ -218,13 +260,30 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             json_config=None,
         )
 
-        with patch("avalan.agent.loader.SentenceTransformerModel", return_value=sentence_model), \
-             patch("avalan.agent.loader.TextPartitioner"), \
-             patch("avalan.agent.loader.MemoryManager.create_instance", new=AsyncMock(return_value=memory)) as mm_patch, \
-             patch("avalan.agent.loader.ModelManager", return_value=model_manager) as model_patch, \
-             patch("avalan.agent.loader.DefaultOrchestrator", return_value="orch") as orch_patch, \
-             patch("avalan.agent.loader.ToolManager.create_instance", return_value=tool) as tool_patch, \
-             patch("avalan.agent.loader.EventManager", return_value=event_manager):
+        with (
+            patch(
+                "avalan.agent.loader.SentenceTransformerModel",
+                return_value=sentence_model,
+            ),
+            patch("avalan.agent.loader.TextPartitioner"),
+            patch(
+                "avalan.agent.loader.MemoryManager.create_instance",
+                new=AsyncMock(return_value=memory),
+            ) as mm_patch,
+            patch(
+                "avalan.agent.loader.ModelManager", return_value=model_manager
+            ) as model_patch,
+            patch(
+                "avalan.agent.loader.DefaultOrchestrator", return_value="orch"
+            ) as orch_patch,
+            patch(
+                "avalan.agent.loader.ToolManager.create_instance",
+                return_value=tool,
+            ) as tool_patch,
+            patch(
+                "avalan.agent.loader.EventManager", return_value=event_manager
+            ),
+        ):
             result = await OrchestrationLoader.load_from_settings(
                 settings,
                 hub=hub,
@@ -260,7 +319,11 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         settings = OrchestratorSettings(
             agent_id=uuid4(),
             orchestrator_type="json",
-            agent_config={"role": "assistant", "task": "do", "instructions": "how"},
+            agent_config={
+                "role": "assistant",
+                "task": "do",
+                "instructions": "how",
+            },
             uri="ai://local/model",
             engine_config={},
             enable_tools=None,
@@ -276,13 +339,32 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             json_config={"value": {"type": "string", "description": "d"}},
         )
 
-        with patch("avalan.agent.loader.SentenceTransformerModel", return_value=sentence_model), \
-             patch("avalan.agent.loader.TextPartitioner"), \
-             patch("avalan.agent.loader.MemoryManager.create_instance", new=AsyncMock(return_value=memory)), \
-             patch("avalan.agent.loader.ModelManager", return_value=model_manager), \
-             patch.object(OrchestrationLoader, "_load_json_orchestrator", return_value="json_orch") as json_patch, \
-             patch("avalan.agent.loader.ToolManager.create_instance", return_value=tool), \
-             patch("avalan.agent.loader.EventManager", return_value=event_manager):
+        with (
+            patch(
+                "avalan.agent.loader.SentenceTransformerModel",
+                return_value=sentence_model,
+            ),
+            patch("avalan.agent.loader.TextPartitioner"),
+            patch(
+                "avalan.agent.loader.MemoryManager.create_instance",
+                new=AsyncMock(return_value=memory),
+            ),
+            patch(
+                "avalan.agent.loader.ModelManager", return_value=model_manager
+            ),
+            patch.object(
+                OrchestrationLoader,
+                "_load_json_orchestrator",
+                return_value="json_orch",
+            ) as json_patch,
+            patch(
+                "avalan.agent.loader.ToolManager.create_instance",
+                return_value=tool,
+            ),
+            patch(
+                "avalan.agent.loader.EventManager", return_value=event_manager
+            ),
+        ):
             result = await OrchestrationLoader.load_from_settings(
                 settings,
                 hub=hub,
@@ -294,6 +376,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(result, "json_orch")
             json_patch.assert_called_once()
         await stack.aclose()
+
 
 if __name__ == "__main__":
     main()

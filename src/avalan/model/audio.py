@@ -15,28 +15,26 @@ from transformers import (
 )
 from typing import Literal
 
-class BaseAudioModel(Engine,ABC):
+
+class BaseAudioModel(Engine, ABC):
     @abstractmethod
     async def __call__(
         self,
         image_source: str | Image.Image,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> str:
         raise NotImplementedError()
 
     def _load_tokenizer(
-        self,
-        tokenizer_name_or_path: str | None,
-        use_fast: bool=True
+        self, tokenizer_name_or_path: str | None, use_fast: bool = True
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         raise TokenizerNotSupportedException()
 
     def _load_tokenizer_with_tokens(
-        self,
-        tokenizer_name_or_path: str | None,
-        use_fast: bool=True
+        self, tokenizer_name_or_path: str | None, use_fast: bool = True
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         raise TokenizerNotSupportedException()
+
 
 class SpeechRecognitionModel(BaseAudioModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
@@ -60,13 +58,12 @@ class SpeechRecognitionModel(BaseAudioModel):
         self,
         audio_source: str,
         sampling_rate: int,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> str:
         audio_wave, original_sampling_rate = load(audio_source)
         if original_sampling_rate != sampling_rate:
             resampler = Resample(
-                orig_freq=original_sampling_rate,
-                new_freq=sampling_rate
+                orig_freq=original_sampling_rate, new_freq=sampling_rate
             )
             audio_wave = resampler(audio_wave)
         audio = audio_wave.squeeze().numpy()
@@ -81,4 +78,3 @@ class SpeechRecognitionModel(BaseAudioModel):
         predicted_ids = argmax(logits, dim=-1)
         transcription = self._processor.batch_decode(predicted_ids)[0]
         return transcription
-

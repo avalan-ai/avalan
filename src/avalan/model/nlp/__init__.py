@@ -1,9 +1,6 @@
 from abc import ABC
 from ...model.transformer import TransformerModel
-from ...model.entities import (
-    GenerationSettings,
-    WeightType
-)
+from ...model.entities import GenerationSettings, WeightType
 from contextlib import nullcontext
 from torch import (
     dtype,
@@ -18,26 +15,28 @@ from torch import (
     int64,
     no_grad,
     Tensor,
-    uint8
+    uint8,
 )
 from transformers import AsyncTextIteratorStreamer
 from transformers.generation import StoppingCriteria
 from typing import Literal
 
 
-class BaseNLPModel(TransformerModel,ABC):
+class BaseNLPModel(TransformerModel, ABC):
     def _generate_output(
         self,
-        inputs: dict[str,Tensor] | Tensor,
+        inputs: dict[str, Tensor] | Tensor,
         settings: GenerationSettings,
-        stopping_criterias: list[StoppingCriteria] | None=None,
-        streamer: AsyncTextIteratorStreamer | None=None,
+        stopping_criterias: list[StoppingCriteria] | None = None,
+        streamer: AsyncTextIteratorStreamer | None = None,
     ):
-        eos_token_id = \
-            settings.eos_token_id if settings.eos_token_id \
-            else self._tokenizer.eos_token_id \
-                if not settings.forced_eos_token_id and self._tokenizer \
+        eos_token_id = (
+            settings.eos_token_id
+            if settings.eos_token_id
+            else self._tokenizer.eos_token_id
+            if not settings.forced_eos_token_id and self._tokenizer
             else None
+        )
         generation_kwargs = {
             "bos_token_id": settings.bos_token_id,
             "diversity_penalty": settings.diversity_penalty,
@@ -60,7 +59,7 @@ class BaseNLPModel(TransformerModel,ABC):
             "output_logits": settings.output_logits,
             "output_scores": settings.output_scores,
             "pad_token_id": settings.pad_token_id
-                or self._tokenizer.eos_token_id,
+            or self._tokenizer.eos_token_id,
             "penalty_alpha": settings.penalty_alpha,
             "prompt_lookup_num_tokens": settings.prompt_lookup_num_tokens,
             "repetition_penalty": settings.repetition_penalty,
@@ -79,37 +78,47 @@ class BaseNLPModel(TransformerModel,ABC):
             del generation_kwargs["eos_token_id"]
 
         with (
-            no_grad() if not settings.enable_gradient_calculation
+            no_grad()
+            if not settings.enable_gradient_calculation
             else nullcontext()
         ):
-            outputs = self._model.generate(
-                inputs,
-                tokenizer=self._tokenizer,
-                **generation_kwargs
-            ) if isinstance(inputs, Tensor) \
-            else self._model.generate(
-                **inputs,
-                tokenizer=self._tokenizer,
-                **generation_kwargs
+            outputs = (
+                self._model.generate(
+                    inputs, tokenizer=self._tokenizer, **generation_kwargs
+                )
+                if isinstance(inputs, Tensor)
+                else self._model.generate(
+                    **inputs, tokenizer=self._tokenizer, **generation_kwargs
+                )
             )
         return outputs
 
     @staticmethod
     def _get_weight_type(weight_type: WeightType) -> Literal["auto"] | dtype:
         wtype = (
-            tbool if weight_type == "bool" else
-            bfloat16 if weight_type == "bf16" else
-            float16 if weight_type == "f16" else
-            float32 if weight_type == "f32" else
-            float64 if weight_type == "f64" else
-            int8 if weight_type == "i8" else
-            int16 if weight_type == "i16" else
-            int32 if weight_type == "i32" else
-            int64 if weight_type == "i64" else
-            uint8 if weight_type == "ui8" else
-            weight_type if weight_type == "auto" else
-            "auto"
+            tbool
+            if weight_type == "bool"
+            else bfloat16
+            if weight_type == "bf16"
+            else float16
+            if weight_type == "f16"
+            else float32
+            if weight_type == "f32"
+            else float64
+            if weight_type == "f64"
+            else int8
+            if weight_type == "i8"
+            else int16
+            if weight_type == "i16"
+            else int32
+            if weight_type == "i32"
+            else int64
+            if weight_type == "i64"
+            else uint8
+            if weight_type == "ui8"
+            else weight_type
+            if weight_type == "auto"
+            else "auto"
         )
         assert wtype
         return wtype
-

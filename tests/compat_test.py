@@ -15,14 +15,17 @@ class CompatImportErrorTestCase(TestCase):
             delattr(typing, "override")
         compat = self._reload_module()
         self.assertEqual(compat.override.__module__, "avalan.compat")
+
         def func():
             return 1
+
         self.assertIs(compat.override(func), func)
 
     def test_override_uses_typing_override_when_available(self):
         def sentinel(func):
             func.sentinel = True
             return func
+
         typing.override = sentinel
         try:
             compat = self._reload_module()

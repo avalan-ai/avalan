@@ -87,6 +87,7 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
                 def decorator(f):
                     captured["list_fn"] = f
                     return f
+
                 return decorator
 
             mcp_router.get.side_effect = capture_get
@@ -100,6 +101,7 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
                 def decorator(fn):
                     captured["list_fn"] = fn
                     return fn
+
                 return decorator
 
             mcp_server.list_tools.side_effect = list_tools
@@ -193,8 +195,10 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
         class DummyContext:
             def __init__(self, ret):
                 self.ret = ret
+
             async def __aenter__(self):
                 return self.ret
+
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
@@ -210,6 +214,7 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                 def decorator(fn):
                     captured["sse_fn"] = fn
                     return fn
+
                 return decorator
 
             mcp_router.get.side_effect = capture_get
@@ -255,6 +260,4 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
         self.sse_instance.connect_sse.assert_called_once_with(
             request.scope, request.receive, request._send
         )
-        self.mcp_server.run.assert_awaited_once_with(
-            "in", "out", "opts"
-        )
+        self.mcp_server.run.assert_awaited_once_with("in", "out", "opts")

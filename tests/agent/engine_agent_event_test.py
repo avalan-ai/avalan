@@ -7,16 +7,21 @@ from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+
 class DummyEngine:
     model_id = "m"
+
     async def __call__(self, input, **kwargs):
         return "out"
+
     def input_token_count(self, *args, **kwargs):
         return 5
+
 
 class DummyAgent(EngineAgent):
     def _prepare_call(self, specification, input, **kwargs):
         return {"settings": GenerationSettings()}
+
 
 class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
     async def test_events_triggered(self):
@@ -36,7 +41,9 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
 
         await agent.input_token_count()
 
-        called_types = [c.args[0].type for c in event_manager.trigger.await_args_list]
+        called_types = [
+            c.args[0].type for c in event_manager.trigger.await_args_list
+        ]
         for t in [
             EventType.CALL_PREPARE_BEFORE,
             EventType.CALL_PREPARE_AFTER,
@@ -48,7 +55,10 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
             EventType.INPUT_TOKEN_COUNT_AFTER,
         ]:
             self.assertIn(t, called_types)
-        self.assertTrue(any(
-            c.args[0].type == EventType.INPUT_TOKEN_COUNT_AFTER and c.args[0].payload["count"] == 5
-            for c in event_manager.trigger.await_args_list
-        ))
+        self.assertTrue(
+            any(
+                c.args[0].type == EventType.INPUT_TOKEN_COUNT_AFTER
+                and c.args[0].payload["count"] == 5
+                for c in event_manager.trigger.await_args_list
+            )
+        )

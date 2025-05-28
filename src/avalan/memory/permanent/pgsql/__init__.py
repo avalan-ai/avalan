@@ -3,13 +3,9 @@ from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageScored,
     RecordNotFoundException,
-    RecordNotSavedException
+    RecordNotSavedException,
 )
-from ....model.entities import (
-    EngineMessage,
-    EngineMessageScored,
-    Message
-)
+from ....model.entities import EngineMessage, EngineMessageScored, Message
 from pgvector.psycopg import register_vector_async
 from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection
@@ -19,6 +15,7 @@ from typing import Optional, TypeVar, Type, Union
 
 
 T = TypeVar("T")
+
 
 class BasePgsqlMemory(MemoryStore[T]):
     _database: AsyncConnection
@@ -47,10 +44,7 @@ class BasePgsqlMemory(MemoryStore[T]):
                 )
 
     async def _fetch_one(
-        self,
-        entity: Type[T],
-        query: str,
-        parameters: tuple
+        self, entity: Type[T], query: str, parameters: tuple
     ) -> T:
         result = await self._try_fetch_one(entity, query, parameters)
         if result is None:
@@ -58,10 +52,7 @@ class BasePgsqlMemory(MemoryStore[T]):
         return result
 
     async def _fetch_field(
-        self,
-        field: str,
-        query: str,
-        parameters: Optional[tuple] = None
+        self, field: str, query: str, parameters: Optional[tuple] = None
     ) -> Optional[str]:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
@@ -103,9 +94,7 @@ class BasePgsqlMemory(MemoryStore[T]):
         return row[field]
 
     async def _update_and_fetch_row(
-        self,
-        query: str,
-        parameters: tuple
+        self, query: str, parameters: tuple
     ) -> dict:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
@@ -121,6 +110,7 @@ class BasePgsqlMemory(MemoryStore[T]):
             async with connection.cursor() as cursor:
                 await cursor.execute(query, parameters)
                 await cursor.close()
+
 
 class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
     _composite_types: Optional[list[str]]
@@ -139,16 +129,19 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         self,
         dsn: Optional[str],
         *args,
-        pool: Optional[AsyncConnectionPool]=None,
-        composite_types: Optional[list[str]]=None,
-        pool_minimum: Optional[int]=None,
-        pool_maximum: Optional[int]=None,
-        **kwargs
+        pool: Optional[AsyncConnectionPool] = None,
+        composite_types: Optional[list[str]] = None,
+        pool_minimum: Optional[int] = None,
+        pool_maximum: Optional[int] = None,
+        **kwargs,
     ):
-        assert (pool or (
-            dsn and pool_minimum and pool_minimum and pool_minimum > 0
+        assert pool or (
+            dsn
+            and pool_minimum
+            and pool_minimum
+            and pool_minimum > 0
             and pool_maximum > pool_minimum
-        ))
+        )
 
         if pool:
             super().__init__(database=pool, **kwargs)
@@ -163,7 +156,7 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
                 max_size=pool_maximum,
                 conninfo=dsn,
                 configure=self._configure_connection,
-                open=False
+                open=False,
             )
             super().__init__(database=database, **kwargs)
 
@@ -173,8 +166,7 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         if self._composite_types:
             for composite_type_name in self._composite_types:
                 composite_type = await TypeInfo.fetch(
-                    connection,
-                    composite_type_name
+                    connection, composite_type_name
                 )
                 if composite_type:
                     composite_type.register(connection)
@@ -185,26 +177,21 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         messages: Union[list[PermanentMessage], list[PermanentMessageScored]],
         *args,
         limit: Optional[int],
-        reverse: bool=False,
-        scored: bool=False
+        reverse: bool = False,
+        scored: bool = False,
     ) -> Union[list[EngineMessage], list[EngineMessageScored]]:
         engine_messages = [
             EngineMessageScored(
                 agent_id=m.agent_id,
                 model_id=m.model_id,
-                message=Message(
-                    role=m.author,
-                    content=m.data
-                ),
-                score=m.score
-            ) if scored else
-            EngineMessage(
+                message=Message(role=m.author, content=m.data),
+                score=m.score,
+            )
+            if scored
+            else EngineMessage(
                 agent_id=m.agent_id,
                 model_id=m.model_id,
-                message=Message(
-                    role=m.author,
-                    content=m.data
-                )
+                message=Message(role=m.author, content=m.data),
             )
             for m in messages
         ]
@@ -213,4 +200,3 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         if limit and len(engine_messages) > limit:
             engine_messages = engine_messages[:limit]
         return engine_messages
-

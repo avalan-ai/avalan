@@ -12,6 +12,7 @@ from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from avalan.model.entities import MessageRole
 from pgvector.psycopg import Vector
 
+
 class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_create_instance(self):
         with patch.object(PgsqlRawMemory, "open", AsyncMock()) as open_patch:
@@ -30,7 +31,9 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
 
     async def test_append_with_partitions(self):
         pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()
-        memory_store = await PgsqlRawMemory.create_instance_from_pool(pool=pool_mock)
+        memory_store = await PgsqlRawMemory.create_instance_from_pool(
+            pool=pool_mock
+        )
 
         base_memory = Memory(
             id=uuid4(),
@@ -50,8 +53,12 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
         ]
 
         mem_id = UUID("11111111-1111-1111-1111-111111111111")
-        with patch("avalan.memory.permanent.pgsql.raw.uuid4", return_value=mem_id):
-            await memory_store.append_with_partitions(base_memory, partitions=partitions)
+        with patch(
+            "avalan.memory.permanent.pgsql.raw.uuid4", return_value=mem_id
+        ):
+            await memory_store.append_with_partitions(
+                base_memory, partitions=partitions
+            )
 
         connection_mock.transaction.assert_called_once()
         cursor_mock.execute.assert_awaited_once_with(
@@ -85,13 +92,21 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             ),
         )
         cursor_mock.executemany.assert_awaited_once()
-        self.assertTrue(cursor_mock.executemany.call_args[0][0].strip().startswith("INSERT INTO"))
+        self.assertTrue(
+            cursor_mock.executemany.call_args[0][0]
+            .strip()
+            .startswith("INSERT INTO")
+        )
         cursor_mock.close.assert_awaited_once()
 
     async def test_search_messages(self):
         fixtures = [
             (
-                uuid4(), uuid4(), uuid4(), 2, "model",
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                2,
+                "model",
                 VectorFunction.L2_DISTANCE,
                 [
                     (MessageRole.USER, "A", 1.0),
@@ -99,28 +114,45 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 ],
             ),
         ]
-        for agent_id, participant_id, session_id, limit, model_id, function, messages in fixtures:
+        for (
+            agent_id,
+            participant_id,
+            session_id,
+            limit,
+            model_id,
+            function,
+            messages,
+        ) in fixtures:
             with self.subTest():
-                pool_mock, connection_mock, cursor_mock = PgsqlRawMemoryTestCase.mock_query(
-                    sorted([
-                        {
-                            "id": uuid4(),
-                            "agent_id": agent_id,
-                            "model_id": model_id,
-                            "session_id": session_id,
-                            "author": str(m[0]),
-                            "data": m[1],
-                            "partitions": 1,
-                            "created_at": datetime.now(timezone.utc),
-                            "score": m[2],
-                        }
-                        for m in messages
-                    ], key=lambda r: r["score"]),
-                    fetch_all=True,
+                pool_mock, connection_mock, cursor_mock = (
+                    PgsqlRawMemoryTestCase.mock_query(
+                        sorted(
+                            [
+                                {
+                                    "id": uuid4(),
+                                    "agent_id": agent_id,
+                                    "model_id": model_id,
+                                    "session_id": session_id,
+                                    "author": str(m[0]),
+                                    "data": m[1],
+                                    "partitions": 1,
+                                    "created_at": datetime.now(timezone.utc),
+                                    "score": m[2],
+                                }
+                                for m in messages
+                            ],
+                            key=lambda r: r["score"],
+                        ),
+                        fetch_all=True,
+                    )
                 )
-                memory = await PgsqlRawMemory.create_instance_from_pool(pool=pool_mock)
+                memory = await PgsqlRawMemory.create_instance_from_pool(
+                    pool=pool_mock
+                )
                 search_partitions = [
-                    TextPartition(data="", total_tokens=1, embeddings=np.random.rand(3))
+                    TextPartition(
+                        data="", total_tokens=1, embeddings=np.random.rand(3)
+                    )
                 ]
                 result = await memory.search_messages(
                     search_partitions=search_partitions,
@@ -190,7 +222,6 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
         pool_mock.__aenter__.return_value = pool_mock
         return pool_mock, connection_mock, cursor_mock, transaction_mock
 
-
     @staticmethod
     def mock_query(record_set, fetch_all=False):
         cursor_mock = AsyncMock(spec=AsyncCursor)
@@ -207,24 +238,37 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
         pool_mock.__aenter__.return_value = pool_mock
         return pool_mock, connection_mock, cursor_mock
 
-    def assert_query(self, connection_mock, cursor_mock, expected_query, expected_parameters=None, fetch_all=False):
+    def assert_query(
+        self,
+        connection_mock,
+        cursor_mock,
+        expected_query,
+        expected_parameters=None,
+        fetch_all=False,
+    ):
         def normalize_whitespace(text: str) -> str:
             import re
+
             return re.sub(r"\s+", " ", text.strip())
+
         connection_mock.cursor.assert_called_once()
         self.assertIsNotNone(cursor_mock.execute.call_args)
         call_args = cursor_mock.execute.call_args[0]
-        self.assertEqual(len(call_args), 2 if expected_parameters is not None else 1)
+        self.assertEqual(
+            len(call_args), 2 if expected_parameters is not None else 1
+        )
         actual_query = call_args[0]
         self.assertEqual(
             normalize_whitespace(actual_query),
-            normalize_whitespace(expected_query)
+            normalize_whitespace(expected_query),
         )
         if expected_parameters is not None:
             actual_parameters = call_args[1]
             self.assertEqual(len(actual_parameters), len(expected_parameters))
             self.assertEqual(actual_parameters, expected_parameters)
-            cursor_mock.execute.assert_awaited_once_with(actual_query, actual_parameters)
+            cursor_mock.execute.assert_awaited_once_with(
+                actual_query, actual_parameters
+            )
         else:
             cursor_mock.execute.assert_awaited_once_with(actual_query)
         if fetch_all:

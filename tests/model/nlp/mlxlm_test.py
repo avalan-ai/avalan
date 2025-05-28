@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 importorskip("mlx_lm", reason="mlx-lm not installed")
 
+
 class MlxLmModelTestCase(TestCase):
     model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
 
@@ -20,17 +21,18 @@ class MlxLmModelTestCase(TestCase):
 
         logger_mock = MagicMock(spec=Logger)
         from avalan.model.nlp.text.mlxlm import MlxLmModel
+
         model = MlxLmModel(
             self.model_id,
             TransformerEngineSettings(),
             logger=logger_mock,
         )
         self.assertIsNotNone(model)
-        #self.assertIs(model._model, model_instance)
-        #self.assertIs(model._tokenizer, tokenizer_instance)
+        # self.assertIs(model._model, model_instance)
+        # self.assertIs(model._tokenizer, tokenizer_instance)
 
-        #MLXLm.load.assert_called_once_with(self.model_id)
+        # MLXLm.load.assert_called_once_with(self.model_id)
+
 
 if __name__ == "__main__":
     main()
-

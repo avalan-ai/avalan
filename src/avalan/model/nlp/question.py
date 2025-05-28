@@ -7,6 +7,7 @@ from transformers import AutoModelForQuestionAnswering, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
 
+
 class QuestionAnsweringModel(BaseNLPModel):
     @property
     def supports_sample_generation(self) -> bool:
@@ -37,11 +38,13 @@ class QuestionAnsweringModel(BaseNLPModel):
         input: Input,
         system_prompt: str | None,
         context: str | None,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> BatchEncoding:
-        assert not system_prompt, "Token classification model " + \
-                                 f"{self._model_id} does not support chat " + \
-                                  "templates"
+        assert not system_prompt, (
+            "Token classification model "
+            + f"{self._model_id} does not support chat "
+            + "templates"
+        )
         _l = self._log
         _l(f"Tokenizing input {input}")
         inputs = self._tokenizer(input, context, return_tensors=tensor_format)
@@ -50,19 +53,18 @@ class QuestionAnsweringModel(BaseNLPModel):
 
     @override
     async def __call__(
-        self,
-        input: Input,
-        context: str,
-        skip_special_tokens: bool=True
+        self, input: Input, context: str, skip_special_tokens: bool = True
     ) -> str:
-        assert self._tokenizer, f"Model {self._model} can't be executed " + \
-                                 "without a tokenizer loaded first"
-        assert self._model, f"Model {self._model} can't be executed, it " + \
-                             "needs to be loaded first"
+        assert self._tokenizer, (
+            f"Model {self._model} can't be executed "
+            + "without a tokenizer loaded first"
+        )
+        assert self._model, (
+            f"Model {self._model} can't be executed, it "
+            + "needs to be loaded first"
+        )
         inputs = self._tokenize_input(
-            input,
-            system_prompt=None,
-            context=context
+            input, system_prompt=None, context=context
         )
         outputs = self._model(**inputs)
         start_answer_logits = outputs.start_logits
@@ -71,9 +73,6 @@ class QuestionAnsweringModel(BaseNLPModel):
         end = argmax(end_answer_logits)
         answer_ids = inputs["input_ids"][0, start : end + 1]
         answer = self._tokenizer.decode(
-            answer_ids,
-            skip_special_tokens=skip_special_tokens
+            answer_ids, skip_special_tokens=skip_special_tokens
         )
         return answer
-
-

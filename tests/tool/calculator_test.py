@@ -3,6 +3,7 @@ from pytest import raises
 from sympy.core.sympify import SympifyError
 from unittest import TestCase, main
 
+
 class CalculatorToolTestCase(TestCase):
     def setUp(self):
         self.calc = CalculatorTool()
@@ -17,8 +18,11 @@ class CalculatorToolTestCase(TestCase):
         with raises(SympifyError) as exc:
             self.calc("2**")
 
-        assert "Sympify of expression 'could not parse '2**'' failed, " + \
-               "because of exception being raised" in str(exc.value)
+        assert (
+            "Sympify of expression 'could not parse '2**'' failed, "
+            + "because of exception being raised"
+            in str(exc.value)
+        )
 
 
 if __name__ == "__main__":

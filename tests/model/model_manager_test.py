@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import sys
 import types
 
+
 class ManagerTestCase(TestCase):
     @classmethod
     def setUpClass(cls):
@@ -17,204 +18,198 @@ class ManagerTestCase(TestCase):
                 None,
                 "tiiuae/Falcon-E-3B-Instruct",
                 None,
-                None
+                None,
             ),
             (
                 "ai://local/tiiuae/Falcon-E-3B-Instruct",
                 None,
                 "tiiuae/Falcon-E-3B-Instruct",
                 None,
-                None
+                None,
             ),
             (
                 "meta-llama/Meta-Llama-3-8B-Instruct",
                 None,
                 "meta-llama/Meta-Llama-3-8B-Instruct",
                 None,
-                None
+                None,
             ),
             (
                 "ai://local/meta-llama/Meta-Llama-3-8B-Instruct",
                 None,
                 "meta-llama/Meta-Llama-3-8B-Instruct",
                 None,
-                None
+                None,
             ),
             (
                 "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
                 None,
                 "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
                 None,
-                None
+                None,
             ),
             (
                 "ai://local/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
                 None,
                 "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
                 None,
-                None
+                None,
             ),
             (
                 "Qwen/Qwen2.5-7B-Instruct",
                 None,
                 "Qwen/Qwen2.5-7B-Instruct",
                 None,
-                None
+                None,
             ),
             (
                 "ai://local/Qwen/Qwen2.5-7B-Instruct",
                 None,
                 "Qwen/Qwen2.5-7B-Instruct",
                 None,
-                None
+                None,
             ),
             (
                 "ai://messi_api_key:@openai/gpt-4o",
                 "openai",
                 "gpt-4o",
                 "messi_api_key",
-                None
+                None,
             ),
             (
                 "ai://messi_api_key@openai/gpt-4o",
                 "openai",
                 "gpt-4o",
                 "messi_api_key",
-                None
+                None,
             ),
             (
                 "ai://router_api_key:@openrouter/gpt-3.5-turbo",
                 "openrouter",
                 "gpt-3.5-turbo",
                 "router_api_key",
-                None
+                None,
             ),
             (
                 "ai://router_api_key@openrouter/gpt-3.5-turbo",
                 "openrouter",
                 "gpt-3.5-turbo",
                 "router_api_key",
-                None
+                None,
             ),
             (
                 "ai://scale_key:@anyscale/gpt-3.5-turbo",
                 "anyscale",
                 "gpt-3.5-turbo",
                 "scale_key",
-                None
+                None,
             ),
             (
                 "ai://scale_key@anyscale/gpt-3.5-turbo",
                 "anyscale",
                 "gpt-3.5-turbo",
                 "scale_key",
-                None
+                None,
             ),
             (
                 "ai://tog_key:@together/mistral-7b",
                 "together",
                 "mistral-7b",
                 "tog_key",
-                None
+                None,
             ),
             (
                 "ai://tog_key@together/mistral-7b",
                 "together",
                 "mistral-7b",
                 "tog_key",
-                None
+                None,
             ),
             (
                 "ai://seek_key:@deepseek/deepseek-chat",
                 "deepseek",
                 "deepseek-chat",
                 "seek_key",
-                None
+                None,
             ),
             (
                 "ai://seek_key@deepseek/deepseek-chat",
                 "deepseek",
                 "deepseek-chat",
                 "seek_key",
-                None
+                None,
             ),
             (
                 "ai://di_key:@deepinfra/openchat-3.5",
                 "deepinfra",
                 "openchat-3.5",
                 "di_key",
-                None
+                None,
             ),
             (
                 "ai://di_key@deepinfra/openchat-3.5",
                 "deepinfra",
                 "openchat-3.5",
                 "di_key",
-                None
+                None,
             ),
             (
                 "ai://groq_key:@groq/llama3-8b-8192",
                 "groq",
                 "llama3-8b-8192",
                 "groq_key",
-                None
+                None,
             ),
             (
                 "ai://groq_key@groq/llama3-8b-8192",
                 "groq",
                 "llama3-8b-8192",
                 "groq_key",
-                None
+                None,
             ),
             (
                 "ai://hf_key:@huggingface/meta-llama/Llama-3-8B-Instruct",
                 "huggingface",
                 "meta-llama/Llama-3-8B-Instruct",
                 "hf_key",
-                None
+                None,
             ),
             (
                 "ai://hf_key@huggingface/meta-llama/Llama-3-8B-Instruct",
                 "huggingface",
                 "meta-llama/Llama-3-8B-Instruct",
                 "hf_key",
-                None
+                None,
             ),
             (
                 "ai://hyper_key:@hyperbolic/hyper-model",
                 "hyperbolic",
                 "hyper-model",
                 "hyper_key",
-                None
+                None,
             ),
             (
                 "ai://hyper_key@hyperbolic/hyper-model",
                 "hyperbolic",
                 "hyper-model",
                 "hyper_key",
-                None
+                None,
             ),
             (
                 "ai://secret:openai_key@openai/gpt-4o",
                 "openai",
                 "gpt-4o",
                 "secret",
-                "openai_key"
+                "openai_key",
             ),
-            (
-                "ai://ollama/llama3",
-                "ollama",
-                "llama3",
-                None,
-                None
-            ),
+            ("ai://ollama/llama3", "ollama", "llama3", None, None),
             (
                 "ai://litellm/gpt-3.5-turbo",
                 "litellm",
                 "gpt-3.5-turbo",
                 None,
-                None
-            )
+                None,
+            ),
         ]
 
     def test_parse_uri(self):
@@ -252,7 +247,9 @@ class ManagerEngineSettingsTestCase(TestCase):
         self.secrets_mock = MagicMock(spec=KeyringSecrets)
 
     def test_local_uri_does_not_add_token(self):
-        with ModelManager(self.hub_mock, self.logger_mock, self.secrets_mock) as manager:
+        with ModelManager(
+            self.hub_mock, self.logger_mock, self.secrets_mock
+        ) as manager:
             uri = manager.parse_uri("ai://local/llama3")
             settings = manager.get_engine_settings(uri, {"device": "cpu"})
             self.assertIsInstance(settings, TransformerEngineSettings)
@@ -261,7 +258,9 @@ class ManagerEngineSettingsTestCase(TestCase):
         self.secrets_mock.read.assert_not_called()
 
     def test_user_token_added(self):
-        with ModelManager(self.hub_mock, self.logger_mock, self.secrets_mock) as manager:
+        with ModelManager(
+            self.hub_mock, self.logger_mock, self.secrets_mock
+        ) as manager:
             uri = manager.parse_uri("ai://tok@openai/gpt-4o")
             settings = manager.get_engine_settings(uri)
             self.assertEqual(settings.access_token, "tok")
@@ -269,16 +268,22 @@ class ManagerEngineSettingsTestCase(TestCase):
 
     def test_secret_token_lookup(self):
         self.secrets_mock.read.return_value = "val"
-        with ModelManager(self.hub_mock, self.logger_mock, self.secrets_mock) as manager:
+        with ModelManager(
+            self.hub_mock, self.logger_mock, self.secrets_mock
+        ) as manager:
             uri = manager.parse_uri("ai://secret:pass@openai/gpt-4o")
             settings = manager.get_engine_settings(uri)
             self.assertEqual(settings.access_token, "val")
         self.secrets_mock.read.assert_called_once_with("pass")
 
     def test_sentence_transformer_no_token(self):
-        with ModelManager(self.hub_mock, self.logger_mock, self.secrets_mock) as manager:
+        with ModelManager(
+            self.hub_mock, self.logger_mock, self.secrets_mock
+        ) as manager:
             uri = manager.parse_uri("ai://tok@openai/gpt-4o")
-            settings = manager.get_engine_settings(uri, is_sentence_transformer=True)
+            settings = manager.get_engine_settings(
+                uri, is_sentence_transformer=True
+            )
             self.assertIsNone(settings.access_token)
         self.secrets_mock.read.assert_not_called()
 
@@ -388,14 +393,18 @@ class ManagerLoadEngineTestCase(TestCase):
                                 settings=settings,
                                 logger=self.logger_mock,
                             )
-                            manager._stack.enter_context.assert_called_once_with(Model.return_value)
+                            manager._stack.enter_context.assert_called_once_with(
+                                Model.return_value
+                            )
                             self.assertIs(result, Model.return_value)
                     else:
-                        module_path, class_name = path.rsplit('.', 1)
+                        module_path, class_name = path.rsplit(".", 1)
                         dummy_module = types.SimpleNamespace()
                         Model = MagicMock()
                         setattr(dummy_module, class_name, Model)
-                        with patch.dict(sys.modules, {module_path: dummy_module}):
+                        with patch.dict(
+                            sys.modules, {module_path: dummy_module}
+                        ):
                             result = manager.load_engine(
                                 engine_uri,
                                 settings,
@@ -407,8 +416,11 @@ class ManagerLoadEngineTestCase(TestCase):
                             settings=settings,
                             logger=self.logger_mock,
                         )
-                        manager._stack.enter_context.assert_called_once_with(Model.return_value)
+                        manager._stack.enter_context.assert_called_once_with(
+                            Model.return_value
+                        )
                         self.assertIs(result, Model.return_value)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

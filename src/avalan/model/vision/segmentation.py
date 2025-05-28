@@ -10,12 +10,13 @@ from transformers import (
 )
 from typing import Literal
 
+
 class SemanticSegmentationModel(BaseVisionModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
-            use_fast=True
+            use_fast=True,
         )
         model = AutoModelForSemanticSegmentation.from_pretrained(
             self._model_id,
@@ -28,7 +29,7 @@ class SemanticSegmentationModel(BaseVisionModel):
     async def __call__(
         self,
         image_source: str | Image.Image,
-        tensor_format: Literal["pt"]="pt"
+        tensor_format: Literal["pt"] = "pt",
     ) -> list[str]:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(images=image, return_tensors=tensor_format)
@@ -37,8 +38,6 @@ class SemanticSegmentationModel(BaseVisionModel):
         mask = logits.argmax(dim=1)[0]
         labels_tensor = unique(mask)
         labels = [
-            self._model.config.id2label[idx.item()]
-            for idx in labels_tensor
+            self._model.config.id2label[idx.item()] for idx in labels_tensor
         ]
         return labels
-

@@ -2,6 +2,7 @@ from ..agent.orchestrator import Orchestrator
 from ..utils import logger_replace
 from logging import Logger
 
+
 def agents_server(
     name: str,
     version: str,
@@ -11,7 +12,7 @@ def agents_server(
     reload: bool,
     prefix_mcp: str,
     prefix_openai: str,
-    logger: Logger
+    logger: Logger,
 ):
     from ..server.routers import chat
     from fastapi import FastAPI, APIRouter
@@ -36,9 +37,7 @@ def agents_server(
     @mcp_router.get("/sse/")
     async def mcp_sse_handler(request: Request) -> None:
         async with sse.connect_sse(
-            request.scope,
-            request.receive,
-            request._send
+            request.scope, request.receive, request._send
         ) as streams:
             await mcp_server.run(
                 streams[0],
@@ -56,17 +55,16 @@ def agents_server(
                     "type": "object",
                     "properties": {
                         "a": {"type": "number"},
-                        "b": {"type": "number"}
+                        "b": {"type": "number"},
                     },
-                    "required": ["a", "b"]
-                }
+                    "required": ["a", "b"],
+                },
             )
         ]
 
     @mcp_server.call_tool()
     async def call_tool(
-        name: str,
-        arguments: dict
+        name: str, arguments: dict
     ) -> list[TextContent | ImageContent | EmbeddedResource]:
         if name == "calculate_sum":
             a = arguments["a"]
@@ -81,11 +79,14 @@ def agents_server(
     logger.debug(f"Starting {name} server at {host}:{port}")
     config = Config(app, host=host, port=port, reload=reload)
     server = Server(config)
-    logger_replace(logger, [
-        "uvicorn",
-        "uvicorn.error",
-        "uvicorn.access",
-        "uvicorn.asgi",
-        "uvicorn.lifespan",
-    ])
+    logger_replace(
+        logger,
+        [
+            "uvicorn",
+            "uvicorn.error",
+            "uvicorn.access",
+            "uvicorn.asgi",
+            "uvicorn.lifespan",
+        ],
+    )
     return server

@@ -4,6 +4,7 @@ from avalan.tool.calculator import calculator
 from avalan.tool.manager import ToolManager
 from unittest import TestCase, main
 
+
 class ToolManagerCreationTestCase(TestCase):
     def test_default_instance_empty(self):
         manager = ToolManager.create_instance()
@@ -13,16 +14,17 @@ class ToolManagerCreationTestCase(TestCase):
     def test_instance_with_enabled_tool(self):
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
-            available_toolsets=[ToolSet(tools=[calculator])]
+            available_toolsets=[ToolSet(tools=[calculator])],
         )
         self.assertFalse(manager.is_empty)
         self.assertEqual(manager.tools, [calculator])
+
 
 class ToolManagerCallTestCase(TestCase):
     def setUp(self):
         self.manager = ToolManager.create_instance(
             enable_tools=["calculator"],
-            available_toolsets=[ToolSet(tools=[calculator])]
+            available_toolsets=[ToolSet(tools=[calculator])],
         )
 
     def test_call_no_tool_call(self):
@@ -73,7 +75,7 @@ class ToolManagerCallTestCase(TestCase):
     def test_namespaced_tool(self):
         namespaced_manager = ToolManager.create_instance(
             enable_tools=["math.calculator"],
-            available_toolsets=[ToolSet(namespace="math", tools=[calculator])]
+            available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
         )
         text = (
             '<tool_call>{"name": "math.calculator", '
@@ -92,6 +94,7 @@ class ToolManagerCallTestCase(TestCase):
         )
         self.assertEqual(calls, [expected_call])
         self.assertEqual(results, [expected_result])
+
 
 if __name__ == "__main__":
     main()

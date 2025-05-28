@@ -31,10 +31,13 @@ def get_model_settings(
         if args.special_token and isinstance(args.special_token, list)
         else None,
         tokenizer=args.tokenizer or None,
-        tokens=args.token if args.token and isinstance(args.token, list) else None,
+        tokens=args.token
+        if args.token and isinstance(args.token, list)
+        else None,
         trust_remote_code=(
-            args.trust_remote_code if hasattr(args, "trust_remote_code") else None
+            args.trust_remote_code
+            if hasattr(args, "trust_remote_code")
+            else None
         ),
         weight_type=args.weight_type,
     )
-

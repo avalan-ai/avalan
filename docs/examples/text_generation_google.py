@@ -3,6 +3,7 @@ from avalan.model.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vendor.google import GoogleModel
 from os import environ
 
+
 async def example() -> None:
     print("Loading model... ", end="", flush=True)
 
@@ -21,10 +22,10 @@ async def example() -> None:
         async for token in await lm(
             "Who are you?",
             system_prompt=system_prompt,
-            settings=GenerationSettings(temperature=0.9, max_new_tokens=256)
+            settings=GenerationSettings(temperature=0.9, max_new_tokens=256),
         ):
             print(token, end="", flush=True)
 
+
 if __name__ == "__main__":
     run(example())
-

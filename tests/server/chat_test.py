@@ -7,13 +7,15 @@ from types import ModuleType
 from unittest import IsolatedAsyncioTestCase, skip
 from unittest.mock import AsyncMock
 
+
 class DummyOrchestrator(Orchestrator):
     async def __call__(self, messages, settings=None):
-        return TextGenerationResponse(
-            lambda: "ok", use_async_generator=False
-        )
+        return TextGenerationResponse(lambda: "ok", use_async_generator=False)
 
-@skip("FastAPI imports produce TypeError: Cannot create a consistent method resolution order (MRO) for bases object, WebSocketDisconnect")
+
+@skip(
+    "FastAPI imports produce TypeError: Cannot create a consistent method resolution order (MRO) for bases object, WebSocketDisconnect"
+)
 class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from fastapi import FastAPI
@@ -38,17 +40,14 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         app = self.FastAPI()
         app.state.orchestrator = AsyncMock(spec=DummyOrchestrator)
         app.state.orchestrator.__call__.side_effect = TextGenerationResponse(
-            lambda: "ok",
-            use_async_generator=False
+            lambda: "ok", use_async_generator=False
         )
         app.include_router(self.chat.router)
 
         client = self.TestClient(app)
         payload = {
             "model": "m",
-            "messages": [
-                {"role": "user", "content": "hi"}
-            ]
+            "messages": [{"role": "user", "content": "hi"}],
         }
         resp = client.post("/chat/completions", json=payload)
         self.assertEqual(resp.status_code, 200)
@@ -70,8 +69,7 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         class StreamingOrchestrator(Orchestrator):
             async def __call__(self, messages, settings=None):
                 return TextGenerationResponse(
-                    output_fn,
-                    use_async_generator=True
+                    output_fn, use_async_generator=True
                 )
 
         app = self.FastAPI()
@@ -81,9 +79,7 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         client = self.TestClient(app)
         payload = {
             "model": "m",
-            "messages": [
-                {"role": "user", "content": "hi"}
-            ],
+            "messages": [{"role": "user", "content": "hi"}],
             "stream": True,
         }
         with client.stream("POST", "/chat/completions", json=payload) as resp:

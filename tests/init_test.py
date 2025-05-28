@@ -10,4 +10,3 @@ class AvalanInitTestCase(TestCase):
         self.assertIsInstance(site, ParseResult)
         self.assertEqual(site.scheme, "https")
         self.assertEqual(site.netloc, "avalan.ai")
-

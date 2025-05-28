@@ -7,6 +7,18 @@ This repository contains the **avalan** framework, a Python project that orchest
 - Python files use 4 spaces per indentation as enforced by `.editorconfig`.
 - Adhere to standard PEP8 style.  Type hints and docstrings are encouraged throughout the codebase.
 
+Run [ruff](https://docs.astral.sh/ruff/) to ensure all checks pass:
+
+```bash
+poetry run ruff check --fix
+```
+
+And also run it for source code formatting:
+
+```bash
+poetry run ruff format
+```
+
 ## Running Tests
 
 Run the full test suite before every commit:

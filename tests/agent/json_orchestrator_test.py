@@ -4,7 +4,11 @@ from avalan.agent.orchestrator import TemplateEngineAgent
 from avalan.event.manager import EventManager
 from avalan.event import EventType
 from avalan.model import TextGenerationResponse
-from avalan.model.entities import EngineUri, MessageRole, TransformerEngineSettings
+from avalan.model.entities import (
+    EngineUri,
+    MessageRole,
+    TransformerEngineSettings,
+)
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -14,10 +18,12 @@ from logging import Logger
 from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, AsyncMock, patch
 
+
 @dataclass
 class ExampleOutput:
     value: Annotated[str, "desc"]
     count: Annotated[int, "desc2"]
+
 
 class JsonOrchestratorInitTestCase(TestCase):
     def test_initialization(self):
@@ -70,6 +76,7 @@ class JsonOrchestratorInitTestCase(TestCase):
         self.assertEqual(op.specification.output_type, OutputType.JSON)
         self.assertEqual(op.specification.input_type, InputType.TEXT)
 
+
 class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
@@ -105,7 +112,7 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         model_manager.load_engine.return_value = engine
 
         def output_fn(*args, **kwargs):
-            return "{\"value\": \"ok\"}"
+            return '{"value": "ok"}'
 
         response = TextGenerationResponse(output_fn, use_async_generator=False)
 
@@ -138,7 +145,7 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(msg_arg.role, MessageRole.USER)
         self.assertEqual(spec_arg.role, Role(persona=["assistant"]))
 
-        self.assertEqual(result, "{\"value\": \"ok\"}")
+        self.assertEqual(result, '{"value": "ok"}')
         self.assertTrue(
             any(
                 c.args[0].type == EventType.STREAM_END

@@ -13,6 +13,7 @@ from uuid import UUID
 
 Order = Literal["asc", "desc"]
 
+
 class VectorFunction(StrEnum):
     # cosine distance: 1 – cosine similarity (angle between vectors). smaller
     # means  more similar
@@ -31,11 +32,13 @@ class VectorFunction(StrEnum):
     # Jaccard distance for binary vectors
     VECTOR_NORMS = "vector_norms"
 
+
 class MemoryType(StrEnum):
     CODE = "code"
     FILE = "file"
     URL = "url"
     RAW = "raw"
+
 
 @dataclass(frozen=True, kw_only=True)
 class Session:
@@ -44,6 +47,7 @@ class Session:
     participant_id: UUID
     messages: int
     created_at: datetime
+
 
 @dataclass(frozen=True, kw_only=True)
 class Memory:
@@ -58,6 +62,7 @@ class Memory:
     symbols: dict
     created_at: datetime
 
+
 @dataclass(frozen=True, kw_only=True)
 class PermanentMessage:
     id: UUID
@@ -69,9 +74,11 @@ class PermanentMessage:
     partitions: int
     created_at: datetime
 
+
 @dataclass(frozen=True, kw_only=True)
 class PermanentMessageScored(PermanentMessage):
     score: float
+
 
 @dataclass(frozen=True, kw_only=True)
 class PermanentMessagePartition:
@@ -83,6 +90,7 @@ class PermanentMessagePartition:
     embedding: ndarray
     created_at: datetime
 
+
 @dataclass(frozen=True, kw_only=True)
 class PermanentMemoryPartition:
     participant_id: UUID
@@ -92,8 +100,9 @@ class PermanentMemoryPartition:
     embedding: ndarray
     created_at: datetime
 
+
 class PermanentMessageMemory(MessageMemory):
-    _session_id: Optional[UUID]=None
+    _session_id: Optional[UUID] = None
     _sentence_model: SentenceTransformerModel
 
     def __init__(
@@ -115,14 +124,9 @@ class PermanentMessageMemory(MessageMemory):
     def reset(self) -> None:
         raise NotImplementedError()
 
-    async def reset_session(
-        self,
-        agent_id: UUID,
-        participant_id: UUID
-    ) -> None:
+    async def reset_session(self, agent_id: UUID, participant_id: UUID) -> None:
         self._session_id = await self.create_session(
-            agent_id=agent_id,
-            participant_id=participant_id
+            agent_id=agent_id, participant_id=participant_id
         )
 
     async def continue_session(
@@ -143,9 +147,7 @@ class PermanentMessageMemory(MessageMemory):
 
     @abstractmethod
     async def create_session(
-        self,
-        agent_id: UUID,
-        participant_id: UUID
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         raise NotImplementedError()
 
@@ -157,14 +159,14 @@ class PermanentMessageMemory(MessageMemory):
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
-       raise NotImplementedError()
+        raise NotImplementedError()
 
     @abstractmethod
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
         *args,
-        partitions: list[TextPartition]
+        partitions: list[TextPartition],
     ) -> None:
         raise NotImplementedError()
 
@@ -174,7 +176,7 @@ class PermanentMessageMemory(MessageMemory):
         session_id: UUID,
         participant_id: UUID,
         *args,
-        limit: Optional[int]=None
+        limit: Optional[int] = None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 
@@ -187,14 +189,17 @@ class PermanentMessageMemory(MessageMemory):
         session_id: UUID,
         participant_id: UUID,
         function: VectorFunction,
-        limit: Optional[int]=None
+        limit: Optional[int] = None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
+
 
 class PermanentMemory(MemoryStore[Memory]):
     _sentence_model: SentenceTransformerModel
 
-    def __init__(self, sentence_model: SentenceTransformerModel, **kwargs) -> None:
+    def __init__(
+        self, sentence_model: SentenceTransformerModel, **kwargs
+    ) -> None:
         self._sentence_model = sentence_model
         super().__init__(**kwargs)
 
@@ -232,11 +237,12 @@ class PermanentMemory(MemoryStore[Memory]):
     ) -> list[Memory]:
         raise NotImplementedError()
 
+
 class RecordNotFoundException(Exception):
     def __init__(self):
         super(RecordNotFoundException, self).__init__("record_not_found")
 
+
 class RecordNotSavedException(Exception):
     def __init__(self):
         super(RecordNotSavedException, self).__init__("record_not_saved")
-

@@ -22,8 +22,12 @@ class VisionEncoderDecoderModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_model_and_tokenizer(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(HFVisionEncoderDecoderModel, "from_pretrained") as model_mock,
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
+            patch.object(
+                HFVisionEncoderDecoderModel, "from_pretrained"
+            ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
         ):
             processor_instance = MagicMock()
@@ -33,8 +37,12 @@ class VisionEncoderDecoderModelInstantiationTestCase(TestCase):
             model_mock.return_value = model_instance
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
-            type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             tokenizer_mock.return_value = tokenizer_instance
 
             model = VisionEncoderDecoderModel(
@@ -59,8 +67,12 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
     async def test_call(self):
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(AutoImageProcessor, "from_pretrained") as processor_mock,
-            patch.object(HFVisionEncoderDecoderModel, "from_pretrained") as model_mock,
+            patch.object(
+                AutoImageProcessor, "from_pretrained"
+            ) as processor_mock,
+            patch.object(
+                HFVisionEncoderDecoderModel, "from_pretrained"
+            ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
             patch("avalan.model.vision.image.Image.open") as image_open_mock,
         ):
@@ -76,8 +88,12 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
 
             tokenizer_instance = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_instance.decode.return_value = "caption"
-            type(tokenizer_instance).all_special_tokens = PropertyMock(return_value=[])
-            type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
             tokenizer_mock.return_value = tokenizer_instance
 
             image_instance = MagicMock()
@@ -93,8 +109,12 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(caption, "caption")
             image_open_mock.assert_called_once_with("img.jpg")
-            processor_instance.assert_called_with(images=image_instance, return_tensors="pt")
-            model_instance.generate.assert_called_once_with(**processor_instance.return_value)
+            processor_instance.assert_called_with(
+                images=image_instance, return_tensors="pt"
+            )
+            model_instance.generate.assert_called_once_with(
+                **processor_instance.return_value
+            )
 
 
 if __name__ == "__main__":

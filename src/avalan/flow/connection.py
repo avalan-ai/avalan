@@ -1,6 +1,7 @@
 from ..flow.node import Node
 from typing import Any, Callable, Optional
 
+
 class Connection:
     def __init__(
         self,
@@ -8,7 +9,7 @@ class Connection:
         dest: Node,
         label: Optional[str] = None,
         conditions: Optional[list[Callable[[Any], bool]]] = None,
-        filters: Optional[list[Callable[[Any], Any]]] = None
+        filters: Optional[list[Callable[[Any], Any]]] = None,
     ) -> None:
         self.src: Node = src
         self.dest: Node = dest
@@ -26,4 +27,3 @@ class Connection:
 
     def __repr__(self) -> str:
         return f"<Conn {self.src.name}->{self.dest.name}>"
-

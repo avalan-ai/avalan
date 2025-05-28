@@ -1,3 +1,7 @@
+from avalan.cli.commands import memory as memory_cmds
+from avalan.memory.permanent import MemoryType, VectorFunction
+from avalan.model.entities import DistanceType
+from avalan.memory.partitioner.text import TextPartition
 from argparse import Namespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,12 +31,6 @@ md_stub.DocumentConverterResult = object
 md_stub.__spec__ = importlib.machinery.ModuleSpec("markitdown", loader=None)
 sys.modules.setdefault("markitdown", md_stub)
 
-from avalan.cli.commands import memory as memory_cmds
-from avalan.memory.permanent import MemoryType, VectorFunction
-from avalan.model.entities import DistanceType
-from avalan.memory.partitioner.text import TextPartition
-
-
 class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         self.args = Namespace(
@@ -60,7 +58,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         self.logger = MagicMock()
 
     async def test_index_file(self):
-        partition = TextPartition(data="d", embeddings=np.array([1.0]), total_tokens=1)
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
         manager = MagicMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
@@ -75,18 +75,36 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
 
         tp_inst = AsyncMock(return_value=[partition])
 
-        with patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "ModelManager", return_value=manager) as mm_patch, \
-             patch.object(memory_cmds.Path, "read_text", return_value="content") as read_patch, \
-             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst) as tp_patch, \
-             patch.object(memory_cmds.PgsqlRawMemory, "create_instance", AsyncMock(return_value=memory_store)) as mem_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ) as gms_patch,
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ),
+            patch.object(
+                memory_cmds.Path, "read_text", return_value="content"
+            ),
+            patch.object(
+                memory_cmds, "TextPartitioner", return_value=tp_inst
+            ) as tp_patch,
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ) as mem_patch,
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_document_index(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
 
         gms_patch.assert_called_once_with(
-            self.args, self.hub, self.logger, self.args.model, is_sentence_transformer=True
+            self.args,
+            self.hub,
+            self.logger,
+            self.args.model,
+            is_sentence_transformer=True,
         )
         tp_patch.assert_called_once_with(
             model,
@@ -111,7 +129,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
 
     async def test_index_url(self):
         self.args.source = "https://example.com"
-        partition = TextPartition(data="d", embeddings=np.array([1.0]), total_tokens=1)
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
         manager = MagicMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
@@ -132,14 +152,34 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         client.__aexit__.return_value = False
         client.get = AsyncMock(return_value=response)
 
-        with patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "ModelManager", return_value=manager) as mm_patch, \
-             patch.object(memory_cmds, "AsyncClient", return_value=client) as ac_patch, \
-             patch.object(memory_cmds, "to_thread", AsyncMock(return_value=types.SimpleNamespace(text_content="content"))) as tt_patch, \
-             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst) as tp_patch, \
-             patch.object(memory_cmds.PgsqlRawMemory, "create_instance", AsyncMock(return_value=memory_store)) as mem_patch, \
-             patch.object(memory_cmds.Path, "read_text") as read_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ),
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ),
+            patch.object(
+                memory_cmds, "AsyncClient", return_value=client
+            ) as ac_patch,
+            patch.object(
+                memory_cmds,
+                "to_thread",
+                AsyncMock(
+                    return_value=types.SimpleNamespace(text_content="content")
+                ),
+            ),
+            patch.object(
+                memory_cmds, "TextPartitioner", return_value=tp_inst
+            ) as tp_patch,
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ) as mem_patch,
+            patch.object(memory_cmds.Path, "read_text") as read_patch,
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_document_index(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -186,13 +226,31 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         memory_store.append_with_partitions = AsyncMock()
 
         cp_inst = MagicMock()
-        with patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "ModelManager", return_value=manager) as mm_patch, \
-             patch.object(memory_cmds.Path, "read_text", return_value="code") as read_patch, \
-             patch.object(memory_cmds, "CodePartitioner", return_value=cp_inst) as cp_patch, \
-             patch.object(memory_cmds, "to_thread", AsyncMock(return_value=([partition], None))) as tt_patch, \
-             patch.object(memory_cmds.PgsqlRawMemory, "create_instance", AsyncMock(return_value=memory_store)) as mem_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ),
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ),
+            patch.object(
+                memory_cmds.Path, "read_text", return_value="code"
+            ),
+            patch.object(
+                memory_cmds, "CodePartitioner", return_value=cp_inst
+            ) as cp_patch,
+            patch.object(
+                memory_cmds,
+                "to_thread",
+                AsyncMock(return_value=([partition], None)),
+            ) as tt_patch,
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ) as mem_patch,
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_document_index(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -248,10 +306,18 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
         manager.load.return_value = load_cm
 
-        with patch.object(memory_cmds, "get_input", return_value="text") as gi_patch, \
-             patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "ModelManager", return_value=manager) as mm_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_input", return_value="text"
+            ) as gi_patch,
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ) as gms_patch,
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_embeddings(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -263,7 +329,11 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             is_quiet=self.args.quiet,
         )
         gms_patch.assert_called_once_with(
-            self.args, self.hub, self.logger, self.args.model, is_sentence_transformer=True
+            self.args,
+            self.hub,
+            self.logger,
+            self.args.model,
+            is_sentence_transformer=True,
         )
         model.assert_awaited_once_with(["text", *self.args.compare])
         self.assertEqual(len(self.console.print.call_args_list), 2)
@@ -278,10 +348,16 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
 
     async def test_embeddings_no_input(self):
         self.args.partition = True
-        with patch.object(memory_cmds, "get_input", return_value=None) as gi_patch, \
-             patch.object(memory_cmds, "ModelManager") as mm_patch, \
-             patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_input", return_value=None
+            ) as gi_patch,
+            patch.object(memory_cmds, "ModelManager"),
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_embeddings(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -306,14 +382,26 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
         manager.load.return_value = load_cm
 
         index = MagicMock()
-        index.search = MagicMock(return_value=(np.array([[0.1]]), np.array([[0]])))
+        index.search = MagicMock(
+            return_value=(np.array([[0.1]]), np.array([[0]]))
+        )
         index.add = MagicMock()
 
-        with patch.object(memory_cmds, "get_input", return_value="text") as gi_patch, \
-             patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "ModelManager", return_value=manager) as mm_patch, \
-             patch.object(memory_cmds, "IndexFlatL2", return_value=index) as idx_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_input", return_value="text"
+            ) as gi_patch,
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ),
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ),
+            patch.object(
+                memory_cmds, "IndexFlatL2", return_value=index
+            ) as idx_patch,
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_embeddings(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -352,7 +440,9 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
         self.logger = MagicMock()
 
     async def test_memory_search(self):
-        partition = TextPartition(data="d", embeddings=np.array([1.0]), total_tokens=1)
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
         manager = MagicMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
@@ -367,12 +457,26 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
         memory_store = MagicMock()
         memory_store.search_memories = AsyncMock(return_value=["m"])
 
-        with patch.object(memory_cmds, "get_input", return_value="query") as gi_patch, \
-             patch.object(memory_cmds, "get_model_settings", return_value={}) as gms_patch, \
-             patch.object(memory_cmds, "ModelManager", return_value=manager) as mm_patch, \
-             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst) as tp_patch, \
-             patch.object(memory_cmds.PgsqlRawMemory, "create_instance", AsyncMock(return_value=memory_store)) as mem_patch, \
-             patch.object(memory_cmds, "model_display"):
+        with (
+            patch.object(
+                memory_cmds, "get_input", return_value="query"
+            ) as gi_patch,
+            patch.object(
+                memory_cmds, "get_model_settings", return_value={}
+            ),
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ),
+            patch.object(
+                memory_cmds, "TextPartitioner", return_value=tp_inst
+            ) as tp_patch,
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ) as mem_patch,
+            patch.object(memory_cmds, "model_display"),
+        ):
             await memory_cmds.memory_search(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -401,10 +505,13 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
         )
         self.console.print.assert_called_once_with("search")
 
-
     async def test_memory_search_no_input(self):
-        with patch.object(memory_cmds, "get_input", return_value=None) as gi_patch, \
-             patch.object(memory_cmds, "ModelManager") as mm_patch:
+        with (
+            patch.object(
+                memory_cmds, "get_input", return_value=None
+            ) as gi_patch,
+            patch.object(memory_cmds, "ModelManager") as mm_patch,
+        ):
             await memory_cmds.memory_search(
                 self.args, self.console, self.theme, self.hub, self.logger
             )
@@ -412,4 +519,3 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
         gi_patch.assert_called_once()
         mm_patch.assert_not_called()
         self.console.print.assert_not_called()
-
