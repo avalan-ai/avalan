@@ -15,6 +15,7 @@ from logging import Logger
 from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
 from unittest import TestCase, IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch, PropertyMock
+from PIL import Image
 
 
 class DummyInputs(dict):
@@ -185,7 +186,9 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
 class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
     model_id = "dummy/model"
 
-    async def _run_call(self, batch_decode_return, system_prompt=None):
+    async def _run_call(
+        self, batch_decode_return, system_prompt=None, width=None
+    ):
         logger_mock = MagicMock(spec=Logger)
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
@@ -220,6 +223,11 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
             image.convert.return_value = rgb_image
             get_image_mock.return_value = image
 
+            resized_image = MagicMock()
+            rgb_image.resize.return_value = resized_image
+            rgb_image.width = 10
+            rgb_image.height = 5
+
             model = ImageTextToTextModel(
                 self.model_id,
                 TransformerEngineSettings(),
@@ -231,6 +239,7 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 "prompt",
                 system_prompt=system_prompt,
                 settings=GenerationSettings(max_new_tokens=5),
+                width=width,
             )
 
             self.assertEqual(
@@ -241,6 +250,19 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
             )
             get_image_mock.assert_called_once_with("img.jpg")
             image.convert.assert_called_once_with("RGB")
+            if width:
+                expected_height = int(
+                    width / rgb_image.width * rgb_image.height
+                )
+                rgb_image.resize.assert_called_once_with(
+                    (width, expected_height),
+                    Image.Resampling.LANCZOS,
+                )
+                expected_image = resized_image
+            else:
+                rgb_image.resize.assert_not_called()
+                expected_image = rgb_image
+
             expected_messages = []
             if system_prompt:
                 expected_messages.append(
@@ -253,7 +275,7 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 {
                     "role": str(MessageRole.USER),
                     "content": [
-                        {"type": "image", "image": rgb_image},
+                        {"type": "image", "image": expected_image},
                         {"type": "text", "text": "prompt"},
                     ],
                 }
@@ -265,7 +287,7 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
             )
             processor_instance.assert_called_once_with(
                 text=["chat"],
-                images=rgb_image,
+                images=expected_image,
                 videos=None,
                 padding=True,
                 return_tensors="pt",
@@ -292,6 +314,9 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_with_system_prompt(self):
         await self._run_call("ok", system_prompt="sys")
+
+    async def test_call_with_width(self):
+        await self._run_call("ok", width=20)
 
 
 if __name__ == "__main__":
