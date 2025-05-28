@@ -130,11 +130,21 @@ class ImageTextToTextModel(ImageToTextModel):
         prompt: str,
         system_prompt: str | None = None,
         settings: GenerationSettings | None = None,
+        width: int | None = None,
         *,
         skip_special_tokens: bool = True,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
         image = BaseVisionModel._get_image(image_source).convert("RGB")
+        assert image.width
+
+        if width:
+            ratio = width / image.width
+            height = int(ratio * image.height)
+            image = image.resize(
+                (width, height),
+                Image.Resampling.LANCZOS
+            )
 
         messages = []
         if system_prompt:
