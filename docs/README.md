@@ -35,18 +35,42 @@ AI innovation journey.
 
 # Development
 
-## Building
+## Releasing
 
-Build the package with:
+You'll need the [github CLI](https://github.com/cli/cli)
+for publishing versions. On MacOS, a simple `brew install gh` will do,
+after which login with `gh auth login`.
+
+Ensure you have the poetry-dynamic-versioning plugina:
 
 ```bash
-poetry build
+poetry self add "poetry-dynamic-versioning[plugin]"
+```
+
+Release version X.Y.Z:
+
+```bash
+git tag vX.Y.Z -m "Release X.Y.Z"
+```
+
+Push:
+
+```bash
+git push origin main --follow-tags
 ```
 
 Publish to PyPI with:
 
 ```bash
-poetry publish
+poetry publish --build
+```
+
+Add the release to Github:
+
+```
+gh release create vX.Y.Z \
+  --title "vX.Y.Z" \
+  --notes-file <(git log --format=%B -n1 vX.Y.Z)
 ```
 
 ## Running tests
