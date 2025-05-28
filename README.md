@@ -2,25 +2,19 @@
 <h3 align="center">The multi-backend, multi-modal framework for effortless AI agent development, orchestration, and deployment</h3>
 
 <p align="center">
-  <!-- Build status via GitHub Actions -->
-  <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
-  <!-- Code coverage (Codecov) -->
-  <img src="https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg" alt="Coverage" />
-  <!-- Latest commit -->
-  <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
-  <!-- PyPI version -->
-  <img src="https://img.shields.io/pypi/v/avalan.svg" alt="PyPI version" />
-  <!-- Supported Python versions -->
-  <img src="https://img.shields.io/pypi/pyversions/avalan.svg" alt="Python versions" />
-  <!-- License -->
-  <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
+  ![Tests](https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg)
+  ![Code coverage](https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg)
+  ![Last commit](https://img.shields.io/github/last-commit/avalan-ai/avalan.svg)
+  ![Release](https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release)
+  ![License](https://img.shields.io/pypi/l/avalan.svg)
+  ![Sponsor](https://img.shields.io/github/sponsors/avalan-ai)
 </p>
 
 avalan empowers developers and enterprises to easily build, orchestrate, and deploy intelligent AI agents—locally or in the cloud—across millions of models via a unified SDK and CLI, featuring multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm)), multi-modal integration (NLP, vision, audio), and native adapters for platforms like OpenRouter, Ollama, OpenAI, DeepSeek, and Gemini. Enhanced by sophisticated memory management, advanced reasoning (including ReACT tooling and adaptive planning), and intuitive pipelines with branching, filtering, and recursive workflows, avalan ensures agents continuously learn and adapt. Comprehensive observability through real-time metrics, event tracing, and statistical dashboards provides deep insights and robust governance, making avalan ideal for everything from individual experimentation to enterprise-scale AI deployments.
 
 # Quick Look
 
-Check out [the CLI documentation](docs/CLI.md) to see what 
+Check out [the CLI documentation](docs/CLI.md) to see what
 it can do, but if you want to jump right in, run a model:
 
 ```bash
