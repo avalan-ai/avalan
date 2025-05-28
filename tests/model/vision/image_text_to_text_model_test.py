@@ -1,8 +1,8 @@
 from avalan.model.entities import GenerationSettings, TransformerEngineSettings, MessageRole
 from avalan.model.vision.image import (
+    AutoModelForImageTextToText,
     AutoProcessor,
-    Qwen2VLForConditionalGeneration,
-    ConditionalVisionGenerationModel,
+    ImageTextToTextModel,
 )
 from avalan.model.vision import BaseVisionModel
 from avalan.model.nlp import BaseNLPModel
@@ -29,7 +29,7 @@ class PTMWithGenerate(PreTrainedModel):
         raise NotImplementedError
 
 
-class ConditionalVisionGenerationModelInstantiationTestCase(TestCase):
+class ImageTextToTextModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
 
     def test_instantiation_with_load_model(self):
@@ -37,7 +37,7 @@ class ConditionalVisionGenerationModelInstantiationTestCase(TestCase):
         settings = TransformerEngineSettings()
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
-            patch.object(Qwen2VLForConditionalGeneration, "from_pretrained") as model_mock,
+            patch.object(AutoModelForImageTextToText, "from_pretrained") as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
             patch.object(BaseNLPModel, "_get_weight_type", return_value="dtype") as wt_mock,
         ):
@@ -52,7 +52,7 @@ class ConditionalVisionGenerationModelInstantiationTestCase(TestCase):
             type(tokenizer_instance).name_or_path = PropertyMock(return_value=self.model_id)
             tokenizer_mock.return_value = tokenizer_instance
 
-            model = ConditionalVisionGenerationModel(
+            model = ImageTextToTextModel(
                 self.model_id,
                 settings,
                 logger=logger_mock,
@@ -69,14 +69,14 @@ class ConditionalVisionGenerationModelInstantiationTestCase(TestCase):
             )
 
 
-class ConditionalVisionGenerationModelCallTestCase(IsolatedAsyncioTestCase):
+class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
     model_id = "dummy/model"
 
     async def _run_call(self, batch_decode_return):
         logger_mock = MagicMock(spec=Logger)
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
-            patch.object(Qwen2VLForConditionalGeneration, "from_pretrained") as model_mock,
+            patch.object(AutoModelForImageTextToText, "from_pretrained") as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
             patch.object(BaseVisionModel, "_get_image") as get_image_mock,
         ):
@@ -101,7 +101,7 @@ class ConditionalVisionGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             image.convert.return_value = rgb_image
             get_image_mock.return_value = image
 
-            model = ConditionalVisionGenerationModel(
+            model = ImageTextToTextModel(
                 self.model_id,
                 TransformerEngineSettings(),
                 logger=logger_mock,

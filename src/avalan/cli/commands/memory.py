@@ -4,7 +4,7 @@ from ...cli import get_input
 from ...cli.commands.model import get_model_settings, model_display
 from ...memory.partitioner.text import TextPartitioner, TextPartition
 from ...memory.partitioner.code import CodePartitioner
-from ...memory.permanent import MemoryType, VectorFunction
+from ...memory.permanent import MemoryType
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from uuid import UUID
 from ...model.entities import DistanceType, SearchMatch, Similarity

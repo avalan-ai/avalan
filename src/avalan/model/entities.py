@@ -27,6 +27,11 @@ SimilarityFunction = Literal[
     "manhattan"
 ]
 
+ImageTextGenerationLoaderClass = Literal[
+    "gemma3",
+    "qwen2"
+]
+
 TextGenerationLoaderClass = Literal[
     "auto",
     "gemma3",

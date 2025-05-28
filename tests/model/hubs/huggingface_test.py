@@ -4,7 +4,7 @@ from logging import Logger
 from unittest import TestCase, main
 from unittest.mock import MagicMock, patch, call
 
-from avalan.model.entities import HubCache, HubCacheFile, HubCacheDeletion, Model, User
+from avalan.model.entities import HubCache, HubCacheDeletion, Model, User
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.hubs import HubAccessDeniedException
 from huggingface_hub.errors import GatedRepoError
