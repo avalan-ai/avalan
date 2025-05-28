@@ -2,17 +2,10 @@
 <h3 align="center">The multi-backend, multi-modal framework for effortless AI agent development, orchestration, and deployment</h3>
 
 <p align="center">
-  <!-- Build status via GitHub Actions -->
   <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
-  <!-- Code coverage (Codecov) -->
-  <img src="https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg" alt="Coverage" />
-  <!-- Latest commit -->
+  <img src="https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg" alt="Code coverage" />
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
-  <!-- PyPI version -->
-  <img src="https://img.shields.io/pypi/v/avalan.svg" alt="PyPI version" />
-  <!-- Supported Python versions -->
-  <img src="https://img.shields.io/pypi/pyversions/avalan.svg" alt="Python versions" />
-  <!-- License -->
+  <img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" />
   <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
 </p>
 
@@ -20,7 +13,7 @@ avalan empowers developers and enterprises to easily build, orchestrate, and dep
 
 # Quick Look
 
-Check out [the CLI documentation](docs/CLI.md) to see what 
+Check out [the CLI documentation](docs/CLI.md) to see what
 it can do, but if you want to jump right in, run a model:
 
 ```bash
