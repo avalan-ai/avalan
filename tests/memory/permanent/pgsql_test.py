@@ -1,6 +1,6 @@
 from avalan.model.entities import EngineMessage, Message, MessageRole
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import VectorFunction, MemoryType, Memory
+from avalan.memory.permanent import VectorFunction, MemoryType
 from avalan.memory.permanent.pgsql.message import PgsqlMessageMemory
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone

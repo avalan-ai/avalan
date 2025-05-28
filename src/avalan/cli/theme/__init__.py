@@ -11,11 +11,11 @@ from ...model.entities import (
     SearchMatch,
     SentenceTransformerModelConfig,
     Similarity,
+    Token,
     TokenizerConfig,
     User
 )
 from ...memory.permanent import Memory
-from ...model.nlp import Token
 from dataclasses import fields
 from datetime import datetime
 from enum import StrEnum

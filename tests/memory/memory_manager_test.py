@@ -5,7 +5,6 @@ from avalan.model.entities import EngineMessage, Message, MessageRole
 from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
 import types
 
 

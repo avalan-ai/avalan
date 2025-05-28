@@ -3,6 +3,7 @@ from ...model import TextGenerationVendor
 from ...model.entities import (
     GenerationSettings,
     ImageEntity,
+    ImageTextGenerationLoaderClass,
     Input,
     MessageRole
 )
@@ -14,8 +15,10 @@ from torch import no_grad, Tensor
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
+    AutoModelForImageTextToText,
     AutoModelForVision2Seq,
     AutoProcessor,
+    Gemma3ForConditionalGeneration,
     PreTrainedModel,
     Qwen2VLForConditionalGeneration,
     VisionEncoderDecoderModel as HFVisionEncoderDecoderModel,
@@ -96,13 +99,24 @@ class ImageToTextModel(TransformerModel):
         return caption
 
 
-class ConditionalVisionGenerationModel(ImageToTextModel):
+class ImageTextToTextModel(ImageToTextModel):
+    _loaders: dict[ImageTextGenerationLoaderClass, type[PreTrainedModel]] = {
+        "auto": AutoModelForImageTextToText,
+        "qwen2": Qwen2VLForConditionalGeneration,
+        "gemma3": Gemma3ForConditionalGeneration,
+    }
+
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+        assert self._settings.loader_class in self._loaders, \
+            f"Unrecognized loader {self._settings.loader_class}"
+
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             use_fast=True,
         )
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
+
+        loader = self._loaders[self._settings.loader_class]
+        model = loader.from_pretrained(
             self._model_id,
             torch_dtype=BaseNLPModel._get_weight_type(
                 self._settings.weight_type
@@ -116,6 +130,7 @@ class ConditionalVisionGenerationModel(ImageToTextModel):
         self,
         image_source: str | Image.Image,
         prompt: str,
+        system_prompt: str | None=None,
         settings: GenerationSettings | None=None,
         *,
         skip_special_tokens: bool=True,
@@ -123,21 +138,30 @@ class ConditionalVisionGenerationModel(ImageToTextModel):
     ) -> str:
         image = BaseVisionModel._get_image(image_source).convert("RGB")
 
-        messages = [
-            {
-                "role": str(MessageRole.USER),
+        messages = []
+        if system_prompt:
+            messages.append({
+                "role": str(MessageRole.SYSTEM),
                 "content": [
                     {
-                        "type": "image",
-                        "image": image
-                    },
-                    {
                         "type": "text",
-                        "text": prompt
-                    },
-                ],
-            }
-        ]
+                        "text": system_prompt
+                    }
+                ]
+            })
+        messages.append({
+            "role": str(MessageRole.USER),
+            "content": [
+                {
+                    "type": "image",
+                    "image": image
+                },
+                {
+                    "type": "text",
+                    "text": prompt
+                },
+            ],
+        })
 
         text = self._processor.apply_chat_template(
             messages,

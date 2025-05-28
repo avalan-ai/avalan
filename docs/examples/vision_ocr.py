@@ -1,21 +1,19 @@
 from asyncio import run
 from avalan.model.entities import GenerationSettings
-from avalan.model.vision.image import ConditionalVisionGenerationModel
+from avalan.model.vision.image import ImageTextToTextModel
 from os.path import isfile
 from sys import argv, exit
 
 async def example(path: str) -> None:
     print("Loading model... ", end="", flush=True)
-    with ConditionalVisionGenerationModel(
-        "prithivMLmods/Qwen2-VL-OCR-2B-Instruct"
-    ) as vm:
+    with ImageTextToTextModel("google/gemma-3-12b-it") as vm:
         print(f"DONE. Running image recognition for {path}", flush=True)
 
         text = await vm(
             path,
             "Transcribe the text on this image, word for word, "
             "keeping format when possible.",
-            settings=GenerationSettings(max_new_tokens=512)
+            settings=GenerationSettings(max_new_tokens=1024)
         )
 
         print(text, flush=True)
