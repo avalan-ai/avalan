@@ -1,14 +1,4 @@
-from ..agent.orchestrator import Orchestrator
-from ..agent.orchestrators.default import DefaultOrchestrator
-from ..agent.orchestrators.json import JsonOrchestrator, Property
-from ..memory.manager import MemoryManager
-from ..memory.partitioner.text import TextPartitioner
-from ..model.entities import EngineUri, TransformerEngineSettings
-from ..model.hubs.huggingface import HuggingfaceHub
-from ..model.manager import ModelManager
-from ..model.nlp.sentence import SentenceTransformerModel
-from ..tool.manager import ToolManager
-from ..event.manager import EventManager
+from dataclasses import dataclass
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK
@@ -17,7 +7,40 @@ from tomllib import load
 from typing import Optional
 from uuid import UUID, uuid4
 
-class Loader:
+from ..agent.orchestrator import Orchestrator
+from ..agent.orchestrators.default import DefaultOrchestrator
+from ..agent.orchestrators.json import JsonOrchestrator, Property
+from ..event.manager import EventManager
+from ..memory.manager import MemoryManager
+from ..memory.partitioner.text import TextPartitioner
+from ..model.entities import EngineUri, TransformerEngineSettings
+from ..model.hubs.huggingface import HuggingfaceHub
+from ..model.manager import ModelManager
+from ..model.nlp.sentence import SentenceTransformerModel
+from ..tool.manager import ToolManager
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorSettings:
+    agent_id: UUID
+    orchestrator_type: Optional[str]
+    agent_config: dict
+    uri: str
+    engine_config: dict
+    enable_tools: Optional[object]
+    call_options: Optional[dict]
+    template_vars: Optional[dict]
+    memory_permanent: Optional[str]
+    memory_recent: bool
+    sentence_model_id: str
+    sentence_model_engine_config: Optional[dict]
+    sentence_model_max_tokens: int
+    sentence_model_overlap_size: int
+    sentence_model_window_size: int
+    json_config: Optional[dict]
+
+
+class OrchestrationLoader:
     DEFAULT_SENTENCE_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
 
     @classmethod
@@ -89,12 +112,6 @@ class Loader:
             template_vars = config["template"] \
                             if "template" in config else None
 
-            # Tool configuration
-
-            tool = ToolManager.create_instance(
-                enable_tools=enable_tools
-            )
-
             # Memory configuration
 
             memory_options = (
@@ -122,7 +139,7 @@ class Loader:
                 config["memory.engine"]["model_id"]
                 if "memory.engine" in config and
                    "model_id" in config["memory.engine"]
-                else Loader.DEFAULT_SENTENCE_MODEL_ID
+                else OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID
             )
             sentence_model_engine_config = (
                 config["memory.engine"]
@@ -154,100 +171,143 @@ class Loader:
                 sentence_model_engine_config.pop("overlap_size", None)
                 sentence_model_engine_config.pop("window_size", None)
 
-            sentence_model_engine_settings = (
-                TransformerEngineSettings(**sentence_model_engine_config)
-                if sentence_model_engine_config
-                else TransformerEngineSettings()
-            )
-
-            logger.debug("Loading sentence transformer "
-                         f"model {sentence_model_id} for agent {agent_id}")
-
-            sentence_model = SentenceTransformerModel(
-                model_id=sentence_model_id,
-                settings=sentence_model_engine_settings,
-                logger=logger
-            )
-            sentence_model = stack.enter_context(sentence_model)
-
-            logger.debug("Loading text partitioner for "
-                         f"model {sentence_model_id} for agent {agent_id} "
-                         f"with settings ({sentence_model_max_tokens}, "
-                         f"{sentence_model_overlap_size}, "
-                         f"{sentence_model_window_size})")
-
-            text_partitioner = TextPartitioner(
-                model=sentence_model,
-                logger=logger,
-                max_tokens=sentence_model_max_tokens,
-                overlap_size=sentence_model_overlap_size,
-                window_size=sentence_model_window_size
-            )
-
-            logger.debug(f"Loading memory manager for agent {agent_id}")
-
-            memory = await MemoryManager.create_instance(
+            settings = OrchestratorSettings(
                 agent_id=agent_id,
+                orchestrator_type=orchestrator_type,
+                agent_config=agent_config,
+                uri=uri,
+                engine_config=engine_config,
+                enable_tools=enable_tools,
+                call_options=call_options,
+                template_vars=template_vars,
+                memory_permanent=memory_permanent,
+                memory_recent=memory_recent,
+                sentence_model_id=sentence_model_id,
+                sentence_model_engine_config=sentence_model_engine_config,
+                sentence_model_max_tokens=sentence_model_max_tokens,
+                sentence_model_overlap_size=sentence_model_overlap_size,
+                sentence_model_window_size=sentence_model_window_size,
+                json_config=config.get("json") if isinstance(config, dict) else None,
+            )
+
+            return await cls.load_from_settings(
+                settings,
+                hub=hub,
+                logger=logger,
                 participant_id=participant_id,
-                text_partitioner=text_partitioner,
-                with_permanent_message_memory=memory_permanent,
-                with_recent_message_memory=memory_recent,
+                stack=stack,
             )
 
-            event_manager = EventManager()
-            event_manager.add_listener(
-                lambda e: logger.debug(f"Event {e.type}: {e.payload}")
+    @classmethod
+    async def load_from_settings(
+        cls,
+        settings: OrchestratorSettings,
+        *,
+        hub: HuggingfaceHub,
+        logger: Logger,
+        participant_id: UUID,
+        stack: AsyncExitStack,
+    ) -> Orchestrator:
+        tool = ToolManager.create_instance(enable_tools=settings.enable_tools)
+
+        sentence_model_engine_settings = (
+            TransformerEngineSettings(**settings.sentence_model_engine_config)
+            if settings.sentence_model_engine_config
+            else TransformerEngineSettings()
+        )
+
+        logger.debug(
+            "Loading sentence transformer model %s for agent %s",
+            settings.sentence_model_id,
+            settings.agent_id,
+        )
+
+        sentence_model = SentenceTransformerModel(
+            model_id=settings.sentence_model_id,
+            settings=sentence_model_engine_settings,
+            logger=logger,
+        )
+        sentence_model = stack.enter_context(sentence_model)
+
+        logger.debug(
+            "Loading text partitioner for model %s for agent %s with settings (%s, %s, %s)",
+            settings.sentence_model_id,
+            settings.agent_id,
+            settings.sentence_model_max_tokens,
+            settings.sentence_model_overlap_size,
+            settings.sentence_model_window_size,
+        )
+
+        text_partitioner = TextPartitioner(
+            model=sentence_model,
+            logger=logger,
+            max_tokens=settings.sentence_model_max_tokens,
+            overlap_size=settings.sentence_model_overlap_size,
+            window_size=settings.sentence_model_window_size,
+        )
+
+        logger.debug("Loading memory manager for agent %s", settings.agent_id)
+
+        memory = await MemoryManager.create_instance(
+            agent_id=settings.agent_id,
+            participant_id=participant_id,
+            text_partitioner=text_partitioner,
+            with_permanent_message_memory=settings.memory_permanent,
+            with_recent_message_memory=settings.memory_recent,
+        )
+
+        event_manager = EventManager()
+        event_manager.add_listener(
+            lambda e: logger.debug(f"Event {e.type}: {e.payload}")
+        )
+
+        logger.debug(
+            "Creating orchestrator %s #%s", settings.orchestrator_type, settings.agent_id
+        )
+
+        model_manager = ModelManager(hub, logger)
+        model_manager = stack.enter_context(model_manager)
+
+        engine_uri = model_manager.parse_uri(settings.uri)
+        engine_settings = model_manager.get_engine_settings(
+            engine_uri,
+            settings=settings.engine_config,
+        )
+
+        if settings.orchestrator_type == "json":
+            assert settings.json_config is not None
+            agent = cls._load_json_orchestrator(
+                engine_uri=engine_uri,
+                engine_settings=engine_settings,
+                logger=logger,
+                model_manager=model_manager,
+                memory=memory,
+                tool=tool,
+                event_manager=event_manager,
+                config={"json": settings.json_config},
+                agent_config=settings.agent_config,
+                call_options=settings.call_options,
+                template_vars=settings.template_vars,
             )
-
-            # Agent creation
-
-            logger.debug(f"Creating orchestrator {orchestrator_type} #{agent_id}")
-
-            model_manager = ModelManager(hub, logger)
-            model_manager = stack.enter_context(model_manager)
-
-            engine_uri = model_manager.parse_uri(uri)
-            engine_settings = model_manager.get_engine_settings(
+        else:
+            agent = DefaultOrchestrator(
                 engine_uri,
-                settings=engine_config
+                logger,
+                model_manager,
+                memory,
+                tool,
+                event_manager,
+                name=settings.agent_config.get("name"),
+                role=settings.agent_config["role"],
+                task=settings.agent_config.get("task"),
+                instructions=settings.agent_config.get("instructions"),
+                rules=settings.agent_config.get("rules"),
+                settings=engine_settings,
+                call_options=settings.call_options,
+                template_vars=settings.template_vars,
             )
 
-            agent = \
-                cls._load_json_orchestrator(
-                    engine_uri=engine_uri,
-                    engine_settings=engine_settings,
-                    logger=logger,
-                    model_manager=model_manager,
-                    memory=memory,
-                    tool=tool,
-                    event_manager=event_manager,
-                    config=config,
-                    agent_config=agent_config,
-                    call_options=call_options,
-                    template_vars=template_vars
-                ) if orchestrator_type == "json" else \
-                DefaultOrchestrator(
-                    engine_uri,
-                    logger,
-                    model_manager,
-                    memory,
-                    tool,
-                    event_manager,
-                    name=agent_config["name"] \
-                        if "name" in agent_config else None,
-                    role=agent_config["role"],
-                    task=agent_config["task"]
-                        if "task" in agent_config else None,
-                    instructions=agent_config["instructions"]
-                        if "instructions" in agent_config else None,
-                    rules=agent_config["rules"]
-                        if "rules" in agent_config else None,
-                    settings=engine_settings,
-                    call_options=call_options,
-                    template_vars=template_vars
-                )
-
-            return agent
+        return agent
 
     @staticmethod
     def _load_json_orchestrator(

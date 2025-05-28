@@ -36,7 +36,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_when_no_input(self):
         with patch.object(agent_cmds, "get_input", return_value=None) as gi, \
-             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock()) as lf:
+             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock()) as lf:
             await agent_cmds.agent_message_search(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
@@ -59,7 +59,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(agent_cmds, "get_input", return_value="hi"), \
              patch.object(agent_cmds, "AsyncExitStack", return_value=dummy_stack), \
-             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock(return_value=orch)) as lf:
+             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=orch)) as lf:
             await agent_cmds.agent_message_search(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
@@ -99,7 +99,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         server.serve = AsyncMock()
 
         with patch.object(agent_cmds, "AsyncExitStack", return_value=dummy_stack), \
-             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock(return_value=orch)) as lf, \
+             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=orch)) as lf, \
              patch.object(agent_cmds, "agents_server", return_value=server) as asrv:
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
@@ -198,7 +198,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_returns_when_no_input(self):
         with patch.object(agent_cmds, "get_input", return_value=None), \
              patch.object(agent_cmds, "AsyncExitStack", return_value=self.dummy_stack), \
-             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock(return_value=self.orch)), \
+             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=self.orch)), \
              patch.object(agent_cmds, "token_generation", new_callable=AsyncMock):
             await agent_cmds.agent_run(self.args, self.console, self.theme, self.hub, self.logger, 1)
 
@@ -220,7 +220,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(agent_cmds, "get_input", return_value="hi"), \
              patch.object(agent_cmds, "AsyncExitStack", return_value=self.dummy_stack), \
-             patch.object(agent_cmds.Loader, "from_file", new=AsyncMock(return_value=self.orch)), \
+             patch.object(agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock(return_value=self.orch)), \
              patch.object(agent_cmds, "token_generation", new_callable=AsyncMock) as tg_patch, \
              patch.object(agent_cmds, "TextGenerationResponse", DummyResponse):
             self.orch.return_value = DummyResponse()
