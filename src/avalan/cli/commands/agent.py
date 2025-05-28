@@ -1,5 +1,5 @@
 from argparse import Namespace
-from ...agent.loader import Loader
+from ...agent.loader import OrchestrationLoader
 from ...cli import get_input
 from ...cli.commands.model import token_generation
 from ...event import EventStats
@@ -57,7 +57,7 @@ async def agent_message_search(
             logger.debug(f"Loading agent from {specs_path} for "
                         f"participant {participant_id}")
 
-            orchestrator = await Loader.from_file(
+            orchestrator = await OrchestrationLoader.from_file(
                 specs_path,
                 agent_id=agent_id,
                 hub=hub,
@@ -143,7 +143,7 @@ async def agent_run(
             logger.debug(f"Loading agent from {specs_path} for "
                         f"participant {participant_id}")
 
-            orchestrator = await Loader.from_file(
+            orchestrator = await OrchestrationLoader.from_file(
                 specs_path,
                 agent_id=agent_id,
                 hub=hub,
@@ -282,7 +282,7 @@ async def agent_serve(
     async with AsyncExitStack() as stack:
         logger.debug(f"Loading agent from {specs_path}")
 
-        orchestrator = await Loader.from_file(
+        orchestrator = await OrchestrationLoader.from_file(
             specs_path,
             agent_id=uuid4(),
             hub=hub,
@@ -347,7 +347,7 @@ async def agent_init(
     )
     memory_engine_model_id = (
         args.memory_engine_model_id
-        or Loader.DEFAULT_SENTENCE_MODEL_ID
+        or OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID
     )
     engine_uri = args.engine_uri or Prompt.ask(
         _("Engine URI"),
