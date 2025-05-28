@@ -47,6 +47,12 @@ Ensure you have the poetry-dynamic-versioning plugin:
 poetry self add "poetry-dynamic-versioning[plugin]"
 ```
 
+Create the branch for the release:
+
+```bash
+git checkout -b release/vX.Y.Z
+```
+
 Patch new version (adjust to `minor` or `major` as appropriate):
 
 ```bash
@@ -56,19 +62,29 @@ poetry version patch
 Commit the version patch:
 
 ```bash
+git add pyproject.toml
 git commit -m "Bumping version to vX.Y.Z"
 ```
 
-Release version X.Y.Z:
+Push the release branch:
 
 ```bash
-git tag vX.Y.Z -m "Release vX.Y.Z"
+git push -u origin release/vX.Y.Z
 ```
 
-Push:
+Create the pull request:
 
 ```bash
-git push origin main --follow-tags
+gh pr create --fill --base main --head release/vX.Y.Z
+```
+
+Once the pull request is merged, pull changes and release version X.Y.Z:
+
+```bash
+git checkout main
+git pull --rebase
+git tag vX.Y.Z -m "Release vX.Y.Z"
+git push origin --follow-tags
 ```
 
 Publish to PyPI with:
