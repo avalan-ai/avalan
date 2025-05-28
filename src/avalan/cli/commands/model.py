@@ -17,6 +17,7 @@ from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...secrets import KeyringSecrets
+from . import get_model_settings
 from rich.prompt import Prompt
 from logging import Logger
 from rich.console import Console, Group, RenderableType
@@ -415,39 +416,4 @@ async def token_generation(
                     await sleep(display_pause / 1000)
                 elif frame_minimum_pause_ms > 0:
                     await sleep(frame_minimum_pause_ms / 1000)
-
-def get_model_settings(
-    args: Namespace,
-    hub: HuggingfaceHub,
-    logger: Logger,
-    engine_uri: EngineUri,
-    is_sentence_transformer: bool | None=None
-) -> dict:
-    return dict(
-        engine_uri=engine_uri,
-        attention=args.attention if hasattr(args, "attention") else None,
-        device=args.device,
-        disable_loading_progress_bar=args.disable_loading_progress_bar,
-        is_sentence_transformer=is_sentence_transformer or (
-            hasattr(args, "sentence_transformer")
-            and args.sentence_transformer
-        ),
-        loader_class=args.loader_class,
-        low_cpu_mem_usage=args.low_cpu_mem_usage,
-        quiet=args.quiet,
-        revision=args.revision,
-        special_tokens=args.special_token
-            if args.special_token
-            and isinstance(args.special_token,list)
-            else None,
-        tokenizer=args.tokenizer or None,
-        tokens=args.token
-            if args.token and isinstance(args.token,list) else None,
-        trust_remote_code=(
-            args.trust_remote_code
-            if hasattr(args, "trust_remote_code")
-            else None
-        ),
-        weight_type=args.weight_type
-    )
 

@@ -4,6 +4,7 @@ from argparse import Namespace
 from unittest.mock import MagicMock, AsyncMock, patch, call
 
 from avalan.cli.commands import model as model_cmds
+from avalan.cli.commands import get_model_settings
 
 
 class CliModelTestCase(unittest.TestCase):
@@ -32,7 +33,7 @@ class CliModelTestCase(unittest.TestCase):
             weight_type="fp16",
         )
 
-        result = model_cmds.get_model_settings(args, self.hub, self.logger, engine_uri)
+        result = get_model_settings(args, self.hub, self.logger, engine_uri)
         expected = {
             "engine_uri": engine_uri,
             "attention": "flash",
