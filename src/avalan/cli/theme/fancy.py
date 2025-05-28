@@ -1473,7 +1473,8 @@ class FancyTheme(Theme):
                             total=event_stats.triggers[EventType.TOOL_EXECUTE]
                         ),
                     )
-                    if EventType.TOOL_EXECUTE in event_stats.triggers
+                    if event_stats
+                    and EventType.TOOL_EXECUTE in event_stats.triggers
                     and event_stats.triggers[EventType.TOOL_EXECUTE]
                     else None,
                     _f(
@@ -1482,7 +1483,8 @@ class FancyTheme(Theme):
                             total=event_stats.triggers[EventType.TOOL_RESULT]
                         ),
                     )
-                    if EventType.TOOL_RESULT in event_stats.triggers
+                    if event_stats
+                    and EventType.TOOL_RESULT in event_stats.triggers
                     and event_stats.triggers[EventType.TOOL_RESULT]
                     else None,
                 ]
