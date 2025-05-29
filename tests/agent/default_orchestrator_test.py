@@ -73,7 +73,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         super().setUp()
         self.addCleanup(patch.stopall)
 
-    @patch("avalan.agent.renderer.TemplateEngineAgent")
+    @patch("avalan.agent.orchestrator.TemplateEngineAgent")
     async def test_stream_end_event(self, Agent):
         engine_uri = EngineUri(
             host=None,
