@@ -1,4 +1,4 @@
-from ...agent import (
+from ....agent import (
     EngineEnvironment,
     EngineUri,
     Goal,
@@ -7,13 +7,13 @@ from ...agent import (
     Role,
     Specification,
 )
-from ...agent.orchestrator import Orchestrator
+from ....agent.orchestrator import Orchestrator
+from ....event.manager import EventManager
+from ....memory.manager import MemoryManager
+from ....model.entities import Input, TransformerEngineSettings
+from ....model.manager import ModelManager
+from ....tool.manager import ToolManager
 from logging import Logger
-from ...event.manager import EventManager
-from ...memory.manager import MemoryManager
-from ...model.entities import Input, TransformerEngineSettings
-from ...model.manager import ModelManager
-from ...tool.manager import ToolManager
 from dataclasses import dataclass
 from typing import Annotated, Optional, Union, get_args, get_origin
 

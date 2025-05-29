@@ -1,4 +1,4 @@
-from avalan.agent.orchestrator import ObservableTextGenerationResponse
+from avalan.agent.orchestrator.response import ObservableTextGenerationResponse
 from avalan.event.manager import EventManager
 from avalan.event import EventType
 from avalan.model import TextGenerationResponse

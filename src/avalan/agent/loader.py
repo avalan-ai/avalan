@@ -1,15 +1,6 @@
-from dataclasses import dataclass
-from contextlib import AsyncExitStack
-from logging import Logger
-from os import access, R_OK
-from os.path import exists
-from tomllib import load
-from typing import Optional
-from uuid import UUID, uuid4
-
 from ..agent.orchestrator import Orchestrator
-from ..agent.orchestrators.default import DefaultOrchestrator
-from ..agent.orchestrators.json import JsonOrchestrator, Property
+from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
+from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..memory.partitioner.text import TextPartitioner
@@ -18,7 +9,14 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.manager import ToolManager
-
+from dataclasses import dataclass
+from contextlib import AsyncExitStack
+from logging import Logger
+from os import access, R_OK
+from os.path import exists
+from tomllib import load
+from typing import Optional
+from uuid import UUID, uuid4
 
 @dataclass(frozen=True, kw_only=True)
 class OrchestratorSettings:

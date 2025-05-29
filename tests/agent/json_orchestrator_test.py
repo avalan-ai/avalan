@@ -1,6 +1,9 @@
 from avalan.agent import InputType, OutputType, Role
-from avalan.agent.orchestrators.json import JsonOrchestrator, JsonSpecification
-from avalan.agent.orchestrator import TemplateEngineAgent
+from avalan.agent.orchestrator.orchestrators.json import (
+    JsonOrchestrator,
+    JsonSpecification
+)
+from avalan.agent.renderer import TemplateEngineAgent
 from avalan.event.manager import EventManager
 from avalan.event import EventType
 from avalan.model import TextGenerationResponse
@@ -82,8 +85,18 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         super().setUp()
         self.addCleanup(patch.stopall)
 
-    @patch("avalan.agent.orchestrator.TemplateEngineAgent")
+    @patch("avalan.agent.renderer.TemplateEngineAgent")
     async def test_json_return(self, Agent):
+        class DummyOrchestratorResponse:
+            def __init__(self_inner, item):
+                self_inner._item = item
+
+            def __aiter__(self_inner):
+                async def gen():
+                    yield self_inner._item
+
+                return gen()
+
         engine_uri = EngineUri(
             host=None,
             port=None,
@@ -115,10 +128,12 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             return '{"value": "ok"}'
 
         response = TextGenerationResponse(output_fn, use_async_generator=False)
+        orchestrator_response = DummyOrchestratorResponse(response)
+
 
         agent_mock = AsyncMock(spec=TemplateEngineAgent)
         agent_mock.engine = engine
-        agent_mock.return_value = response
+        agent_mock.return_value = orchestrator_response
 
         Agent.return_value = agent_mock
 
