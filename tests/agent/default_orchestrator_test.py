@@ -1,6 +1,6 @@
 from avalan.agent import Goal, InputType, OutputType, Specification
-from avalan.agent.orchestrators.default import DefaultOrchestrator
-from avalan.agent.orchestrator import TemplateEngineAgent
+from avalan.agent.orchestrator.orchestrators.default import DefaultOrchestrator
+from avalan.agent.renderer import TemplateEngineAgent
 from avalan.event.manager import EventManager
 from avalan.event import EventType
 from avalan.model import TextGenerationResponse
@@ -73,7 +73,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         super().setUp()
         self.addCleanup(patch.stopall)
 
-    @patch("avalan.agent.orchestrator.TemplateEngineAgent")
+    @patch("avalan.agent.renderer.TemplateEngineAgent")
     async def test_stream_end_event(self, Agent):
         engine_uri = EngineUri(
             host=None,
