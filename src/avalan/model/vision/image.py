@@ -141,10 +141,7 @@ class ImageTextToTextModel(ImageToTextModel):
         if width:
             ratio = width / image.width
             height = int(ratio * image.height)
-            image = image.resize(
-                (width, height),
-                Image.Resampling.LANCZOS
-            )
+            image = image.resize((width, height), Image.Resampling.LANCZOS)
 
         messages = []
         if system_prompt:

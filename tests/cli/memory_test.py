@@ -31,6 +31,7 @@ md_stub.DocumentConverterResult = object
 md_stub.__spec__ = importlib.machinery.ModuleSpec("markitdown", loader=None)
 sys.modules.setdefault("markitdown", md_stub)
 
+
 class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         self.args = Namespace(
@@ -79,12 +80,8 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 memory_cmds, "get_model_settings", return_value={}
             ) as gms_patch,
-            patch.object(
-                memory_cmds, "ModelManager", return_value=manager
-            ),
-            patch.object(
-                memory_cmds.Path, "read_text", return_value="content"
-            ),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_text", return_value="content"),
             patch.object(
                 memory_cmds, "TextPartitioner", return_value=tp_inst
             ) as tp_patch,
@@ -153,12 +150,8 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         client.get = AsyncMock(return_value=response)
 
         with (
-            patch.object(
-                memory_cmds, "get_model_settings", return_value={}
-            ),
-            patch.object(
-                memory_cmds, "ModelManager", return_value=manager
-            ),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(
                 memory_cmds, "AsyncClient", return_value=client
             ) as ac_patch,
@@ -227,15 +220,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
 
         cp_inst = MagicMock()
         with (
-            patch.object(
-                memory_cmds, "get_model_settings", return_value={}
-            ),
-            patch.object(
-                memory_cmds, "ModelManager", return_value=manager
-            ),
-            patch.object(
-                memory_cmds.Path, "read_text", return_value="code"
-            ),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_text", return_value="code"),
             patch.object(
                 memory_cmds, "CodePartitioner", return_value=cp_inst
             ) as cp_patch,
@@ -313,9 +300,7 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 memory_cmds, "get_model_settings", return_value={}
             ) as gms_patch,
-            patch.object(
-                memory_cmds, "ModelManager", return_value=manager
-            ),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(memory_cmds, "model_display"),
         ):
             await memory_cmds.memory_embeddings(
@@ -353,9 +338,7 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
                 memory_cmds, "get_input", return_value=None
             ) as gi_patch,
             patch.object(memory_cmds, "ModelManager"),
-            patch.object(
-                memory_cmds, "get_model_settings", return_value={}
-            ),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "model_display"),
         ):
             await memory_cmds.memory_embeddings(
@@ -391,12 +374,8 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 memory_cmds, "get_input", return_value="text"
             ) as gi_patch,
-            patch.object(
-                memory_cmds, "get_model_settings", return_value={}
-            ),
-            patch.object(
-                memory_cmds, "ModelManager", return_value=manager
-            ),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(
                 memory_cmds, "IndexFlatL2", return_value=index
             ) as idx_patch,
@@ -461,12 +440,8 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 memory_cmds, "get_input", return_value="query"
             ) as gi_patch,
-            patch.object(
-                memory_cmds, "get_model_settings", return_value={}
-            ),
-            patch.object(
-                memory_cmds, "ModelManager", return_value=manager
-            ),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(
                 memory_cmds, "TextPartitioner", return_value=tp_inst
             ) as tp_patch,

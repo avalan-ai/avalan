@@ -89,7 +89,7 @@ class ObservableTextGenerationResponse(TextGenerationResponse):
         return await self._response.to(entity_class)
 
 
-class OrchestrationResponse:
+class OrchestratorResponse:
     """Async iterator yielding TextGenerationResponses handling tool calls."""
 
     _responses: list[ObservableTextGenerationResponse]
@@ -174,7 +174,7 @@ class OrchestrationResponse:
 
         self._buffer = StringIO()
 
-    def __aiter__(self) -> "OrchestrationResponse":
+    def __aiter__(self) -> "OrchestratorResponse":
         return self
 
     async def __anext__(self) -> ObservableTextGenerationResponse:
@@ -379,7 +379,7 @@ class Orchestrator:
             await self._event_manager.trigger(Event(type=EventType.END))
             return result
 
-        return OrchestrationResponse(
+        return OrchestratorResponse(
             result,
             engine_agent,
             operation,

@@ -14,6 +14,7 @@ def _config() -> dict:
 
 config = _config()
 
+
 def license() -> str:
     assert (
         "project" in config

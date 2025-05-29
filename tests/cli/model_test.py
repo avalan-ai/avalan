@@ -5,6 +5,7 @@ from argparse import Namespace
 from unittest.mock import MagicMock, AsyncMock, patch, call
 from unittest import IsolatedAsyncioTestCase, main, TestCase
 
+
 class CliModelTestCase(TestCase):
     def setUp(self):
         self.console = MagicMock()
@@ -406,9 +407,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 "get_model_settings",
                 return_value={"engine_uri": engine_uri},
             ) as gms_patch,
-            patch.object(
-                model_cmds, "get_input", return_value=None
-            ),
+            patch.object(model_cmds, "get_input", return_value=None),
             patch.object(
                 model_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
@@ -486,9 +485,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 "get_model_settings",
                 return_value={"engine_uri": engine_uri},
             ) as gms_patch,
-            patch.object(
-                model_cmds, "get_input", return_value="hi"
-            ),
+            patch.object(model_cmds, "get_input", return_value="hi"),
             patch.object(
                 model_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
@@ -558,9 +555,7 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
 
         with (
             patch.object(model_cmds, "Live", return_value=live),
-            patch.object(
-                model_cmds, "Group", side_effect=fake_group
-            ),
+            patch.object(model_cmds, "Group", side_effect=fake_group),
             patch.object(model_cmds, "to_thread", side_effect=to_thread_stub),
         ):
             await model_cmds.model_search(args, console, theme, hub, 5)

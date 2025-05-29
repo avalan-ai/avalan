@@ -1,5 +1,6 @@
 from argparse import Namespace
 from ...agent.loader import OrchestrationLoader
+from ...agent.orchestrator import OrchestratorResponse
 from ...cli import get_input
 from ...cli.commands.model import token_generation
 from ...event import EventStats
@@ -245,7 +246,11 @@ async def agent_run(
             if not args.quiet and not args.stats:
                 console.print(_i["agent_output"] + " ", end="")
 
-            if isinstance(output, TextGenerationResponse):
+            assert isinstance(output, OrchestratorResponse)
+
+            async for response in output:
+                assert isinstance(response, TextGenerationResponse)
+
                 if not use_async_generator:
                     console.print(await output.to_str())
                 else:
@@ -258,13 +263,11 @@ async def agent_run(
                         event_stats=event_stats,
                         lm=orchestrator.engine,
                         input_string=input_string,
-                        response=output,
+                        response=response,
                         dtokens_pick=dtokens_pick,
                         display_tokens=display_tokens,
                         with_stats=with_stats,
                     )
-            else:
-                console.print(output)
 
             if args.conversation:
                 console.print("")
