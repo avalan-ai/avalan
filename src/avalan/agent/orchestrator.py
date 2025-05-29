@@ -4,6 +4,7 @@ from ..agent import (
     InputType,
     NoOperationAvailableException,
     Operation,
+    Specification,
 )
 from ..agent.engine import EngineAgent
 from ..agent.renderer import Renderer, TemplateEngineAgent
@@ -86,6 +87,106 @@ class ObservableTextGenerationResponse(TextGenerationResponse):
 
     async def to(self, entity_class: type) -> Any:
         return await self._response.to(entity_class)
+
+
+class ToolAwareTextGenerationResponse(ObservableTextGenerationResponse):
+    """Parse and execute tool calls while streaming tokens."""
+
+    def __init__(
+        self,
+        response: TextGenerationResponse,
+        *,
+        engine_agent: EngineAgent,
+        specification: "Specification",
+        engine_args: dict[str, Any],
+        tool_manager: ToolManager,
+        event_manager: EventManager,
+    ) -> None:
+        super().__init__(
+            response,
+            event_manager,
+            engine_agent.engine.model_id,
+            engine_agent.engine.tokenizer,
+        )
+        self._engine_agent = engine_agent
+        self._specification = specification
+        self._engine_args = engine_args
+        self._tool = tool_manager
+        self._buffer = ""
+        self._next_response: ToolAwareTextGenerationResponse | None = None
+
+    def __aiter__(self) -> "ToolAwareTextGenerationResponse":
+        super().__aiter__()
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._next_response is not None:
+            return await self._next_response.__anext__()
+
+        token = await super().__anext__()
+        token_str = token.token if hasattr(token, "token") else token
+        self._buffer += token_str
+
+        tool_calls, tool_results = self._tool(self._buffer)
+        if tool_calls or tool_results:
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload={"output": self._buffer},
+                )
+            )
+
+            if tool_calls:
+                for call in tool_calls:
+                    await self._event_manager.trigger(
+                        Event(
+                            type=EventType.TOOL_EXECUTE, payload={"call": call}
+                        )
+                    )
+
+            if tool_results:
+                for res in tool_results:
+                    await self._event_manager.trigger(
+                        Event(
+                            type=EventType.TOOL_RESULT, payload={"result": res}
+                        )
+                    )
+
+            tool_messages = (
+                [
+                    Message(
+                        role=MessageRole.TOOL,
+                        name=r.name,
+                        arguments=r.arguments,
+                        content=r.result,
+                    )
+                    for r in tool_results
+                ]
+                if tool_results
+                else None
+            )
+
+            if tool_messages:
+                result = await self._engine_agent(
+                    self._specification, tool_messages, **self._engine_args
+                )
+                if isinstance(result, TextGenerationResponse):
+                    self._next_response = ToolAwareTextGenerationResponse(
+                        result,
+                        engine_agent=self._engine_agent,
+                        specification=self._specification,
+                        engine_args=self._engine_args,
+                        tool_manager=self._tool,
+                        event_manager=self._event_manager,
+                    )
+                    self._next_response.__aiter__()
+                else:
+                    # Non-streaming result
+                    self._next_response = None
+
+            self._buffer = ""
+
+        return token
 
 
 class Orchestrator:
@@ -246,56 +347,74 @@ class Orchestrator:
 
         self._last_engine_agent = engine_agent
 
+        use_async = engine_args.get("use_async_generator", True)
+
         # Inject tool results and continue ReACT inference if needed
         if not self._tool.is_empty:
-            output = await result.to_str()
-
-            await self._event_manager.trigger(
-                Event(type=EventType.TOOL_PROCESS, payload={"output": output})
-            )
-
-            tool_calls, tool_results = self._tool(output)
-
-            if tool_calls:
-                for call in tool_calls:
-                    await self._event_manager.trigger(
-                        Event(
-                            type=EventType.TOOL_EXECUTE, payload={"call": call}
-                        )
-                    )
-
-            if tool_results:
-                for res in tool_results:
-                    await self._event_manager.trigger(
-                        Event(
-                            type=EventType.TOOL_RESULT, payload={"result": res}
-                        )
-                    )
-
-            tool_messages = (
-                [
-                    Message(
-                        role=MessageRole.TOOL,
-                        name=r.name,
-                        arguments=r.arguments,
-                        content=r.result,
-                    )
-                    for r in tool_results
-                ]
-                if tool_results
-                else None
-            )
-
-            self._logger.debug(f"Tool result messages: {tool_messages}")
-
-            if tool_messages:
-                result = await engine_agent(
-                    operation.specification, tool_messages, **engine_args
+            if use_async and isinstance(result, TextGenerationResponse):
+                result = ToolAwareTextGenerationResponse(
+                    result,
+                    engine_agent=engine_agent,
+                    specification=operation.specification,
+                    engine_args=engine_args,
+                    tool_manager=self._tool,
+                    event_manager=self._event_manager,
                 )
+            else:
+                output = await result.to_str()
+
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.TOOL_PROCESS, payload={"output": output}
+                    )
+                )
+
+                tool_calls, tool_results = self._tool(output)
+
+                if tool_calls:
+                    for call in tool_calls:
+                        await self._event_manager.trigger(
+                            Event(
+                                type=EventType.TOOL_EXECUTE,
+                                payload={"call": call},
+                            )
+                        )
+
+                if tool_results:
+                    for res in tool_results:
+                        await self._event_manager.trigger(
+                            Event(
+                                type=EventType.TOOL_RESULT,
+                                payload={"result": res},
+                            )
+                        )
+
+                tool_messages = (
+                    [
+                        Message(
+                            role=MessageRole.TOOL,
+                            name=r.name,
+                            arguments=r.arguments,
+                            content=r.result,
+                        )
+                        for r in tool_results
+                    ]
+                    if tool_results
+                    else None
+                )
+
+                self._logger.debug(f"Tool result messages: {tool_messages}")
+
+                if tool_messages:
+                    result = await engine_agent(
+                        operation.specification, tool_messages, **engine_args
+                    )
 
         await self._event_manager.trigger(Event(type=EventType.END))
 
-        if isinstance(result, TextGenerationResponse):
+        if isinstance(result, TextGenerationResponse) and not isinstance(
+            result, ToolAwareTextGenerationResponse
+        ):
             result = ObservableTextGenerationResponse(
                 result,
                 self._event_manager,

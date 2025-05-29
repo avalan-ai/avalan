@@ -1,6 +1,6 @@
 from avalan.agent import Goal, InputType, OutputType, Specification
 from avalan.agent.orchestrators.default import DefaultOrchestrator
-from avalan.agent.orchestrator import TemplateEngineAgent
+from avalan.agent.orchestrator import TemplateEngineAgent, Orchestrator
 from avalan.event.manager import EventManager
 from avalan.event import EventType
 from avalan.model import TextGenerationResponse
@@ -72,6 +72,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
         self.addCleanup(patch.stopall)
+        Orchestrator._engine_agents.clear()
 
     @patch("avalan.agent.orchestrator.TemplateEngineAgent")
     async def test_stream_end_event(self, Agent):
@@ -189,4 +190,88 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             {"token_id": 2, "model_id": "m", "token": "b", "step": 1},
         )
 
+        memory.__exit__.assert_called_once()
+
+    @patch("avalan.agent.orchestrator.TemplateEngineAgent")
+    async def test_stream_tool_execution(self, Agent):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        memory.has_permanent_message = False
+        memory.has_recent_message = False
+        memory.__exit__ = MagicMock()
+        tool = ToolManager.create_instance(enable_tools=["calculator"])
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        settings = TransformerEngineSettings()
+
+        engine = MagicMock()
+        engine.__enter__.return_value = engine
+        engine.__exit__.return_value = False
+        engine.model_id = "m"
+        engine.tokenizer = MagicMock()
+        engine.tokenizer.encode.side_effect = lambda *a, **kw: [1]
+        engine.tokenizer.eos_token = "</s>"
+        model_manager.load_engine.return_value = engine
+
+        async def output_gen1():
+            text = '<tool_call>{"name": "calculator", "arguments": {"expression": "1+1"}}</tool_call>'
+            for ch in text:
+                yield ch
+
+        async def output_gen2():
+            for ch in "done":
+                yield ch
+
+        response1 = TextGenerationResponse(
+            lambda: output_gen1(), use_async_generator=True
+        )
+        response2 = TextGenerationResponse(
+            lambda: output_gen2(), use_async_generator=True
+        )
+
+        agent_mock = AsyncMock(spec=TemplateEngineAgent)
+        agent_mock.engine = engine
+        agent_mock.side_effect = [response1, response2]
+
+        Agent.return_value = agent_mock
+
+        async with DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role="assistant",
+            task="do",
+            instructions="something",
+            rules=None,
+            settings=settings,
+        ) as orch:
+            result = await orch("hi", use_async_generator=True)
+
+            tokens = []
+            async for t in result:
+                tokens.append(t if isinstance(t, str) else t.token)
+
+        self.assertEqual(agent_mock.await_count, 2)
+        self.assertEqual(
+            "".join(tokens),
+            '<tool_call>{"name": "calculator", "arguments": {"expression": "1+1"}}</tool_call>done',
+        )
+        calls = [c.args[0] for c in event_manager.trigger.await_args_list]
+        self.assertTrue(any(e.type == EventType.TOOL_EXECUTE for e in calls))
+        self.assertTrue(any(e.type == EventType.TOOL_RESULT for e in calls))
+        self.assertTrue(any(e.type == EventType.STREAM_END for e in calls))
         memory.__exit__.assert_called_once()
