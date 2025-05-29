@@ -110,7 +110,7 @@ class OrchestratorResponse:
             return
         self._buffer.write(token)
         text = self._buffer.getvalue()
-        if "</tool_call>" not in text:
+        if not self._tool.has_tool_call(text):
             return
 
         await self._event_manager.trigger(
@@ -187,4 +187,3 @@ class _ToolAwareResponse(ObservableTextGenerationResponse):
         token_str = token.token if hasattr(token, "token") else token
         await self._on_token(token_str)
         return token
-

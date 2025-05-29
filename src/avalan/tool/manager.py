@@ -4,6 +4,7 @@ from ..tool.calculator import calculator
 from ..tool.parser import ToolCallParser
 from types import FunctionType
 from typing import Sequence, Tuple
+from re import DOTALL, search
 
 
 class ToolManager:
@@ -70,6 +71,17 @@ class ToolManager:
 
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
+
+    @staticmethod
+    def has_tool_call(text: str) -> bool:
+        """Return True if the text contains a complete tool call."""
+        return bool(
+            search(
+                r"<tool_call\b[^>]*/>|<tool_call\b[^>]*>.*?</tool_call>|<tool\b[^>]*>.*?</tool>",
+                text,
+                DOTALL,
+            )
+        )
 
     def __call__(
         self, text: str
