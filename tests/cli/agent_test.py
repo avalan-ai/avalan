@@ -259,6 +259,13 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
                 return gen()
 
+        class DummyOrchestratorResponse:
+            def __aiter__(self_inner):
+                async def gen():
+                    yield DummyResponse()
+
+                return gen()
+
         with (
             patch.object(agent_cmds, "get_input", return_value="hi"),
             patch.object(
@@ -273,8 +280,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
             patch.object(agent_cmds, "TextGenerationResponse", DummyResponse),
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
         ):
-            self.orch.return_value = DummyResponse()
+            self.orch.return_value = DummyOrchestratorResponse()
             await agent_cmds.agent_run(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
