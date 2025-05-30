@@ -1,0 +1,38 @@
+name: Discord Notifications
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK: https://discord.com/api/webhooks/1376666151962021939/ukM801CvbGriI6fmRf70OSjX2W9-YK84Ix7gXYsDoscSIQJ4eLRqXaRcLA3WGpLY1zDM
+    steps:
+      - name: Notify Discord on push
+        if: github.event_name == 'push'
+        run: |
+          message="Push by **${{ github.actor }}** to \`${{ github.ref_name }}\`. <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}>"
+          payload=$(printf '{"content":"%s"}' "$message")
+          curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
+      - name: Notify Discord on pull request
+        if: github.event_name == 'pull_request'
+        run: |
+          action="${{ github.event.action }}"
+          title="${{ github.event.pull_request.title }}"
+          number="${{ github.event.pull_request.number }}"
+          url="${{ github.event.pull_request.html_url }}"
+          message="Pull request #$number $action: *$title* by **${{ github.actor }}**. <$url>"
+          payload=$(printf '{"content":"%s"}' "$message")
+          curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
+      - name: Notify Discord on release
+        if: github.event_name == 'release'
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          url="${{ github.event.release.html_url }}"
+          message="Release $tag published by **${{ github.actor }}**. <$url>"
+          payload=$(printf '{"content":"%s"}' "$message")
+          curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
