@@ -18,6 +18,7 @@ from tomllib import load
 from typing import Optional
 from uuid import UUID, uuid4
 
+
 @dataclass(frozen=True, kw_only=True)
 class OrchestratorSettings:
     agent_id: UUID

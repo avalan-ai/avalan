@@ -272,7 +272,7 @@ async def agent_run(
                             display_tokens=display_tokens,
                             with_stats=with_stats,
                         )
-                elif not args.quiet:
+                elif is_event and not args.quiet:
                     if response.type == EventType.TOOL_EXECUTE:
                         call = (
                             response.payload.get("call")
@@ -285,7 +285,8 @@ async def agent_run(
                             spinner=theme.get_spinner("thinking"),
                             refresh_per_second=refresh_per_second,
                         )
-                        tool_status.__enter__()
+                        console.print("")
+                        console.print(tool_status)
                     elif response.type == EventType.TOOL_RESULT:
                         result = (
                             response.payload.get("result")
@@ -302,6 +303,8 @@ async def agent_run(
                         )
                         if tool_status:
                             tool_status.update(msg)
+                            console.print(tool_status)
+                            console.print("")
                             tool_status.__exit__(None, None, None)
                             tool_status = None
                         else:

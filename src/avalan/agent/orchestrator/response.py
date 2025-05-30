@@ -3,7 +3,7 @@ from ..engine import EngineAgent
 from ...event import Event, EventType
 from ...event.manager import EventManager
 from ...model import TextGenerationResponse
-from ...model.entities import Message, MessageRole
+from ...model.entities import Input, Message, MessageRole
 from ...tool.manager import ToolManager
 from io import StringIO
 from typing import Any, AsyncIterator, Union
@@ -69,13 +69,14 @@ class ObservableTextGenerationResponse(TextGenerationResponse):
         return await self._response.to(entity_class)
 
 
-class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
+class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse, Event]]):
     """Async iterator yielding TextGenerationResponses handling tool calls."""
 
-    _responses_with_events: list[Union[TextGenerationResponse,Event]]
+    _responses_with_events: list[Union[TextGenerationResponse, Event]]
 
     def __init__(
         self,
+        input: Input,
         response: TextGenerationResponse,
         engine_agent: EngineAgent,
         operation: Operation,
@@ -83,6 +84,7 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
         event_manager: EventManager | None = None,
         tool: ToolManager | None = None,
     ) -> None:
+        self._input = input
         self._engine_agent = engine_agent
         self._operation = operation
         self._engine_args = engine_args
@@ -93,10 +95,10 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
         self._buffer = StringIO()
         self._finished = False
 
-    def __aiter__(self) -> AsyncIterator[Union[TextGenerationResponse,Event]]:
+    def __aiter__(self) -> AsyncIterator[Union[TextGenerationResponse, Event]]:
         return self
 
-    async def __anext__(self) -> Union[TextGenerationResponse,Event]:
+    async def __anext__(self) -> Union[TextGenerationResponse, Event]:
         if self._index >= len(self._responses_with_events):
             if not self._finished and self._event_manager:
                 self._finished = True
@@ -134,8 +136,7 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
         if tool_calls:
             for call in tool_calls:
                 event = Event(
-                    type=EventType.TOOL_EXECUTE,
-                    payload={"call": call}
+                    type=EventType.TOOL_EXECUTE, payload={"call": call}
                 )
                 self._responses_with_events.append(event)
                 await self._event_manager.trigger(event)
@@ -143,8 +144,7 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
         if tool_results:
             for res in tool_results:
                 event = Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": res}
+                    type=EventType.TOOL_RESULT, payload={"result": res}
                 )
                 self._responses_with_events.append(event)
                 await self._event_manager.trigger(event)
@@ -164,14 +164,28 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
         )
 
         if tool_messages:
+            assert self._input and (
+                (
+                    isinstance(self._input, list)
+                    and isinstance(self._input[0], Message)
+                )
+                or isinstance(self._input, Message)
+            )
+
+            messages = (
+                self._input if isinstance(self._input, list) else [self._input]
+            )
+            messages.extend(tool_messages)
+
             result = await self._engine_agent(
                 self._operation.specification,
-                tool_messages,
+                messages,
                 **self._engine_args,
             )
             self._responses_with_events.append(self._response(result))
 
         self._buffer = StringIO()
+
 
 class ToolAwareResponse(ObservableTextGenerationResponse):
     """ObservableTextGenerationResponse that notifies on each token."""

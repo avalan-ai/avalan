@@ -12,6 +12,8 @@ from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.entities import (
     EngineUri,
+    Message,
+    MessageRole,
     ToolCall,
     ToolCallResult,
     TransformerEngineSettings,
@@ -55,8 +57,11 @@ class OrchestratorResponseInitTestCase(unittest.TestCase):
         self.operation = _dummy_operation()
 
     def test_init_without_event_and_tool(self):
+        inp = Message(role=MessageRole.USER, content="hello")
         resp = _dummy_response()
-        orch = OrchestratorResponse(resp, self.agent, self.operation, {"a": 1})
+        orch = OrchestratorResponse(
+            inp, resp, self.agent, self.operation, {"a": 1}
+        )
         self.assertIs(orch._engine_agent, self.agent)
         self.assertIs(orch._operation, self.operation)
         self.assertEqual(orch._engine_args, {"a": 1})
@@ -68,10 +73,12 @@ class OrchestratorResponseInitTestCase(unittest.TestCase):
         self.assertFalse(orch._finished)
 
     def test_init_with_event_and_tool(self):
+        inp = Message(role=MessageRole.USER, content="hello")
         resp = _dummy_response()
         event_manager = MagicMock(spec=EventManager)
         tool = MagicMock(spec=ToolManager)
         orch = OrchestratorResponse(
+            inp,
             resp,
             self.agent,
             self.operation,
@@ -90,8 +97,9 @@ class OrchestratorWrapResponseTestCase(unittest.TestCase):
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
         operation = _dummy_operation()
+        inp = Message(role=MessageRole.USER, content="hello")
         resp = _dummy_response()
-        orch = OrchestratorResponse(resp, agent, operation, {})
+        orch = OrchestratorResponse(inp, resp, agent, operation, {})
         new_resp = _dummy_response("x")
         wrapped = orch._response(new_resp)
         self.assertIsInstance(wrapped, ToolAwareResponse)
@@ -114,7 +122,9 @@ class OrchestratorOnTokenTestCase(IsolatedAsyncioTestCase):
         result = ToolCallResult(call=call, name="calc", result="2")
         tool.return_value = ([call], [result])
         agent.return_value = _dummy_response("next")
+        inp = Message(role=MessageRole.USER, content="hello")
         orch = OrchestratorResponse(
+            inp,
             _dummy_response(),
             agent,
             operation,
@@ -133,9 +143,13 @@ class OrchestratorOnTokenTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(orch._responses_with_events), 4)
         self.assertIsInstance(orch._responses_with_events[0], ToolAwareResponse)
         self.assertIsInstance(orch._responses_with_events[1], Event)
-        self.assertEqual(orch._responses_with_events[1].type, EventType.TOOL_EXECUTE)
+        self.assertEqual(
+            orch._responses_with_events[1].type, EventType.TOOL_EXECUTE
+        )
         self.assertIsInstance(orch._responses_with_events[2], Event)
-        self.assertEqual(orch._responses_with_events[2].type, EventType.TOOL_RESULT)
+        self.assertEqual(
+            orch._responses_with_events[2].type, EventType.TOOL_RESULT
+        )
         self.assertIsInstance(orch._responses_with_events[3], ToolAwareResponse)
 
 
@@ -147,8 +161,10 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        inp = Message(role=MessageRole.USER, content="hello")
         resp = _dummy_response()
         orch = OrchestratorResponse(
+            inp,
             resp,
             agent,
             operation,
