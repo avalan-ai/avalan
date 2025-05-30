@@ -97,7 +97,7 @@ class OrchestratorResponse:
         self, response: TextGenerationResponse
     ) -> ObservableTextGenerationResponse:
         assert self._engine_agent.engine
-        return _ToolAwareResponse(
+        return ToolAwareResponse(
             response,
             self._event_manager,
             self._engine_agent.engine.model_id,
@@ -168,7 +168,7 @@ class OrchestratorResponse:
         return resp
 
 
-class _ToolAwareResponse(ObservableTextGenerationResponse):
+class ToolAwareResponse(ObservableTextGenerationResponse):
     """ObservableTextGenerationResponse that notifies on each token."""
 
     def __init__(
