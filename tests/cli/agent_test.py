@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch, call
 from argparse import Namespace
 from rich.syntax import Syntax
 
@@ -294,6 +295,80 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.orch.memory.continue_session.assert_awaited()
         self.console.print.assert_any_call("agent_panel")
         self.console.print.assert_any_call("< ", end="")
+
+    async def test_run_with_tool_events(self):
+        class DummyOrchestratorResponse:
+            def __aiter__(self_inner):
+                async def gen():
+                    yield agent_cmds.Event(
+                        type=agent_cmds.EventType.TOOL_EXECUTE,
+                        payload={"call": SimpleNamespace(name="calc")},
+                    )
+                    yield agent_cmds.Event(
+                        type=agent_cmds.EventType.TOOL_RESULT,
+                        payload={
+                            "result": SimpleNamespace(
+                                name="calc",
+                                result="2",
+                            )
+                        },
+                    )
+
+                return gen()
+
+        status_loading = MagicMock()
+        status_loading.__enter__.return_value = None
+        status_loading.__exit__.return_value = False
+        status_tool = MagicMock()
+        status_tool.__enter__.return_value = None
+        status_tool.__exit__.return_value = False
+
+        self.console.status.side_effect = [status_loading, status_tool]
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestrationLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+        ):
+            self.orch.return_value = DummyOrchestratorResponse()
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.orch.assert_awaited_once_with("hi", use_async_generator=True)
+        tg_patch.assert_not_called()
+
+        self.assertEqual(len(self.console.status.call_args_list), 2)
+        self.console.status.assert_has_calls(
+            [
+                call(
+                    "Loading agent...",
+                    spinner=self.theme.get_spinner.return_value,
+                    refresh_per_second=1,
+                ),
+                call(
+                    "Executing tool calc...",
+                    spinner=self.theme.get_spinner.return_value,
+                    refresh_per_second=1,
+                ),
+            ]
+        )
+        status_tool.update.assert_called_once_with(
+            "Tool calc finished with result 2"
+        )
+        status_tool.__exit__.assert_called_once()
 
 
 if __name__ == "__main__":

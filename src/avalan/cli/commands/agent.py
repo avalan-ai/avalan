@@ -3,7 +3,7 @@ from ...agent.loader import OrchestrationLoader
 from ...agent.orchestrator import OrchestratorResponse
 from ...cli import get_input
 from ...cli.commands.model import token_generation
-from ...event import Event, EventStats
+from ...event import Event, EventStats, EventType
 from ...memory.permanent import VectorFunction
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
@@ -248,6 +248,7 @@ async def agent_run(
 
             assert isinstance(output, OrchestratorResponse)
 
+            tool_status = None
             async for response in output:
                 is_text = isinstance(response, TextGenerationResponse)
                 is_event = isinstance(response, Event)
@@ -271,8 +272,40 @@ async def agent_run(
                             display_tokens=display_tokens,
                             with_stats=with_stats,
                         )
-                else:
-                    console.print(response)
+                elif not args.quiet:
+                    if response.type == EventType.TOOL_EXECUTE:
+                        call = (
+                            response.payload.get("call")
+                            if response.payload
+                            else None
+                        )
+                        name = getattr(call, "name", "?")
+                        tool_status = console.status(
+                            _("Executing tool {tool}...").format(tool=name),
+                            spinner=theme.get_spinner("thinking"),
+                            refresh_per_second=refresh_per_second,
+                        )
+                        tool_status.__enter__()
+                    elif response.type == EventType.TOOL_RESULT:
+                        result = (
+                            response.payload.get("result")
+                            if response.payload
+                            else None
+                        )
+                        name = getattr(result, "name", "?")
+                        value = getattr(result, "result", result)
+                        msg = _(
+                            "Tool {tool} finished with result {result}"
+                        ).format(
+                            tool=name,
+                            result=value,
+                        )
+                        if tool_status:
+                            tool_status.update(msg)
+                            tool_status.__exit__(None, None, None)
+                            tool_status = None
+                        else:
+                            console.print(msg)
 
             if args.conversation:
                 console.print("")
