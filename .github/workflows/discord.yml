@@ -10,7 +10,7 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     env:
-      DISCORD_WEBHOOK: https://discord.com/api/webhooks/1376666151962021939/ukM801CvbGriI6fmRf70OSjX2W9-YK84Ix7gXYsDoscSIQJ4eLRqXaRcLA3WGpLY1zDM
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
     steps:
       - name: Notify Discord on push
         if: github.event_name == 'push'
