@@ -3,7 +3,7 @@ from ...agent.loader import OrchestrationLoader
 from ...agent.orchestrator import OrchestratorResponse
 from ...cli import get_input
 from ...cli.commands.model import token_generation
-from ...event import EventStats
+from ...event import Event, EventStats
 from ...memory.permanent import VectorFunction
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
@@ -249,25 +249,30 @@ async def agent_run(
             assert isinstance(output, OrchestratorResponse)
 
             async for response in output:
-                assert isinstance(response, TextGenerationResponse)
+                is_text = isinstance(response, TextGenerationResponse)
+                is_event = isinstance(response, Event)
+                assert is_event or is_text
 
-                if not use_async_generator:
-                    console.print(await output.to_str())
+                if is_text:
+                    if not use_async_generator:
+                        console.print(await output.to_str())
+                    else:
+                        await token_generation(
+                            args=args,
+                            console=console,
+                            theme=theme,
+                            logger=logger,
+                            orchestrator=orchestrator,
+                            event_stats=event_stats,
+                            lm=orchestrator.engine,
+                            input_string=input_string,
+                            response=response,
+                            dtokens_pick=dtokens_pick,
+                            display_tokens=display_tokens,
+                            with_stats=with_stats,
+                        )
                 else:
-                    await token_generation(
-                        args=args,
-                        console=console,
-                        theme=theme,
-                        logger=logger,
-                        orchestrator=orchestrator,
-                        event_stats=event_stats,
-                        lm=orchestrator.engine,
-                        input_string=input_string,
-                        response=response,
-                        dtokens_pick=dtokens_pick,
-                        display_tokens=display_tokens,
-                        with_stats=with_stats,
-                    )
+                    console.print(response)
 
             if args.conversation:
                 console.print("")

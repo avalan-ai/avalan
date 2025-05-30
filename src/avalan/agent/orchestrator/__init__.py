@@ -135,7 +135,7 @@ class Orchestrator:
 
     async def __call__(
         self, input: Input, **kwargs
-    ) -> Union[TextGenerationResponse, str]:
+    ) -> OrchestratorResponse:
         if self.is_finished:
             self._operation_step = 0
 

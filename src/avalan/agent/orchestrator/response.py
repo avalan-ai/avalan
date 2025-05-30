@@ -6,7 +6,7 @@ from ...model import TextGenerationResponse
 from ...model.entities import Message, MessageRole
 from ...tool.manager import ToolManager
 from io import StringIO
-from typing import Any
+from typing import Any, AsyncIterator, Union
 
 
 class ObservableTextGenerationResponse(TextGenerationResponse):
@@ -69,10 +69,10 @@ class ObservableTextGenerationResponse(TextGenerationResponse):
         return await self._response.to(entity_class)
 
 
-class OrchestratorResponse:
+class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse,Event]]):
     """Async iterator yielding TextGenerationResponses handling tool calls."""
 
-    _responses: list[ObservableTextGenerationResponse]
+    _responses_with_events: list[Union[TextGenerationResponse,Event]]
 
     def __init__(
         self,
@@ -88,12 +88,25 @@ class OrchestratorResponse:
         self._engine_args = engine_args
         self._event_manager = event_manager
         self._tool = tool
-        self._responses = [self._wrap_response(response)]
+        self._responses_with_events = [self._response(response)]
         self._index = 0
         self._buffer = StringIO()
         self._finished = False
 
-    def _wrap_response(
+    def __aiter__(self) -> AsyncIterator[Union[TextGenerationResponse,Event]]:
+        return self
+
+    async def __anext__(self) -> Union[TextGenerationResponse,Event]:
+        if self._index >= len(self._responses_with_events):
+            if not self._finished and self._event_manager:
+                self._finished = True
+                await self._event_manager.trigger(Event(type=EventType.END))
+            raise StopAsyncIteration
+        resp = self._responses_with_events[self._index]
+        self._index += 1
+        return resp
+
+    def _response(
         self, response: TextGenerationResponse
     ) -> ObservableTextGenerationResponse:
         assert self._engine_agent.engine
@@ -120,15 +133,21 @@ class OrchestratorResponse:
 
         if tool_calls:
             for call in tool_calls:
-                await self._event_manager.trigger(
-                    Event(type=EventType.TOOL_EXECUTE, payload={"call": call})
+                event = Event(
+                    type=EventType.TOOL_EXECUTE,
+                    payload={"call": call}
                 )
+                self._responses_with_events.append(event)
+                await self._event_manager.trigger(event)
 
         if tool_results:
             for res in tool_results:
-                await self._event_manager.trigger(
-                    Event(type=EventType.TOOL_RESULT, payload={"result": res})
+                event = Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": res}
                 )
+                self._responses_with_events.append(event)
+                await self._event_manager.trigger(event)
 
         tool_messages = (
             [
@@ -150,23 +169,9 @@ class OrchestratorResponse:
                 tool_messages,
                 **self._engine_args,
             )
-            self._responses.append(self._wrap_response(result))
+            self._responses_with_events.append(self._response(result))
 
         self._buffer = StringIO()
-
-    def __aiter__(self) -> "OrchestratorResponse":
-        return self
-
-    async def __anext__(self) -> ObservableTextGenerationResponse:
-        if self._index >= len(self._responses):
-            if not self._finished and self._event_manager:
-                self._finished = True
-                await self._event_manager.trigger(Event(type=EventType.END))
-            raise StopAsyncIteration
-        resp = self._responses[self._index]
-        self._index += 1
-        return resp
-
 
 class ToolAwareResponse(ObservableTextGenerationResponse):
     """ObservableTextGenerationResponse that notifies on each token."""
