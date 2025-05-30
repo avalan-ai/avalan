@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from avalan.agent import Operation, Specification, EngineEnvironment
 from avalan.agent.orchestrator.response import (
     OrchestratorResponse,
-    _ToolAwareResponse,
+    ToolAwareResponse,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
@@ -63,7 +63,7 @@ class OrchestratorResponseInitTestCase(unittest.TestCase):
         self.assertIsNone(orch._event_manager)
         self.assertIsNone(orch._tool)
         self.assertEqual(len(orch._responses), 1)
-        self.assertIsInstance(orch._responses[0], _ToolAwareResponse)
+        self.assertIsInstance(orch._responses[0], ToolAwareResponse)
         self.assertEqual(orch._index, 0)
         self.assertFalse(orch._finished)
 
@@ -81,7 +81,7 @@ class OrchestratorResponseInitTestCase(unittest.TestCase):
         )
         self.assertIs(orch._event_manager, event_manager)
         self.assertIs(orch._tool, tool)
-        self.assertIsInstance(orch._responses[0], _ToolAwareResponse)
+        self.assertIsInstance(orch._responses[0], ToolAwareResponse)
 
 
 class OrchestratorWrapResponseTestCase(unittest.TestCase):
@@ -94,7 +94,7 @@ class OrchestratorWrapResponseTestCase(unittest.TestCase):
         orch = OrchestratorResponse(resp, agent, operation, {})
         new_resp = _dummy_response("x")
         wrapped = orch._wrap_response(new_resp)
-        self.assertIsInstance(wrapped, _ToolAwareResponse)
+        self.assertIsInstance(wrapped, ToolAwareResponse)
         self.assertIs(wrapped._event_manager, orch._event_manager)
         self.assertEqual(wrapped._model_id, engine.model_id)
         self.assertIs(wrapped._tokenizer, engine.tokenizer)
