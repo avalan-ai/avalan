@@ -3,7 +3,7 @@ from ...agent.loader import OrchestrationLoader
 from ...agent.orchestrator import OrchestratorResponse
 from ...cli import get_input
 from ...cli.commands.model import token_generation
-from ...event import EventStats
+from ...event import Event, EventStats, EventType
 from ...memory.permanent import VectorFunction
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
@@ -248,26 +248,67 @@ async def agent_run(
 
             assert isinstance(output, OrchestratorResponse)
 
+            tool_status = None
             async for response in output:
-                assert isinstance(response, TextGenerationResponse)
+                is_text = isinstance(response, TextGenerationResponse)
+                is_event = isinstance(response, Event)
+                assert is_event or is_text
 
-                if not use_async_generator:
-                    console.print(await output.to_str())
-                else:
-                    await token_generation(
-                        args=args,
-                        console=console,
-                        theme=theme,
-                        logger=logger,
-                        orchestrator=orchestrator,
-                        event_stats=event_stats,
-                        lm=orchestrator.engine,
-                        input_string=input_string,
-                        response=response,
-                        dtokens_pick=dtokens_pick,
-                        display_tokens=display_tokens,
-                        with_stats=with_stats,
-                    )
+                if is_text:
+                    if not use_async_generator:
+                        console.print(await output.to_str())
+                    else:
+                        await token_generation(
+                            args=args,
+                            console=console,
+                            theme=theme,
+                            logger=logger,
+                            orchestrator=orchestrator,
+                            event_stats=event_stats,
+                            lm=orchestrator.engine,
+                            input_string=input_string,
+                            response=response,
+                            dtokens_pick=dtokens_pick,
+                            display_tokens=display_tokens,
+                            with_stats=with_stats,
+                        )
+                elif is_event and not args.quiet:
+                    if response.type == EventType.TOOL_EXECUTE:
+                        call = (
+                            response.payload.get("call")
+                            if response.payload
+                            else None
+                        )
+                        name = getattr(call, "name", "?")
+                        tool_status = console.status(
+                            _("Executing tool {tool}...").format(tool=name),
+                            spinner=theme.get_spinner("thinking"),
+                            refresh_per_second=refresh_per_second,
+                        )
+                        console.print("")
+                        console.print(tool_status)
+                    elif response.type == EventType.TOOL_RESULT:
+                        result = (
+                            response.payload.get("result")
+                            if response.payload
+                            else None
+                        )
+                        name = getattr(result, "name", "?")
+                        value = getattr(result, "result", result)
+                        msg = _(
+                            "Tool {tool} finished with result {result}"
+                        ).format(
+                            tool=name,
+                            result=value,
+                        )
+                        if tool_status:
+                            tool_status.update(msg)
+                            console.print(tool_status)
+                            console.print("")
+                            tool_status.__exit__(None, None, None)
+                            tool_status = None
+                        else:
+                            console.print(msg)
 
             if args.conversation:
                 console.print("")

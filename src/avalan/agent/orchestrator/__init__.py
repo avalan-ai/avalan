@@ -6,10 +6,7 @@ from .. import (
     Operation,
 )
 from ..engine import EngineAgent
-from .response import (
-    ObservableTextGenerationResponse,
-    OrchestratorResponse
-)
+from .response import ObservableTextGenerationResponse, OrchestratorResponse
 from ..renderer import Renderer, TemplateEngineAgent
 from ...event import Event, EventType
 from ...event.manager import EventManager
@@ -30,6 +27,7 @@ from json import dumps
 from logging import Logger
 from typing import Any, Optional, Union, Type
 from uuid import UUID, uuid4
+
 
 class Orchestrator:
     _id: UUID
@@ -133,9 +131,7 @@ class Orchestrator:
     def event_manager(self) -> EventManager:
         return self._event_manager
 
-    async def __call__(
-        self, input: Input, **kwargs
-    ) -> Union[TextGenerationResponse, str]:
+    async def __call__(self, input: Input, **kwargs) -> OrchestratorResponse:
         if self.is_finished:
             self._operation_step = 0
 
@@ -202,6 +198,7 @@ class Orchestrator:
             return result
 
         return OrchestratorResponse(
+            input,
             result,
             engine_agent,
             operation,
