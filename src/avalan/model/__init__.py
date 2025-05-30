@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from ..model.entities import (
+from ..entities import (
     GenerationSettings,
     ImageEntity,
     Message,

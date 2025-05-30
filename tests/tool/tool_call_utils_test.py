@@ -1,17 +1,33 @@
+from avalan.tool import ToolSet
+from avalan.tool.calculator import calculator
 from avalan.tool.manager import ToolManager
 from unittest import TestCase, main
 
 
-class HasToolCallTestCase(TestCase):
+class GetToolCallsTestCase(TestCase):
     def test_no_tool_call(self):
-        self.assertFalse(ToolManager.has_tool_call("hello"))
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])],
+        )
+        self.assertIsNone(manager.get_calls("hello"))
 
     def test_partial_tool_call(self):
-        self.assertFalse(ToolManager.has_tool_call("<tool_call>{"))
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])],
+        )
+        self.assertIsNone(manager.get_calls("<tool_call>{"))
 
     def test_full_tool_call(self):
         text = '<tool_call>{"name": "calculator", "arguments": {}} </tool_call>'
-        self.assertTrue(ToolManager.has_tool_call(text))
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])],
+        )
+        result = manager.get_calls(text)
+        self.assertEqual(len(result), 1)
+
 
 
 if __name__ == "__main__":

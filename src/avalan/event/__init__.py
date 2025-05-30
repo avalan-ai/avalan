@@ -5,6 +5,7 @@ from typing import Any
 
 class EventType(StrEnum):
     START = "start"
+    TOOL_DETECT = "tool_detect"
     TOOL_PROCESS = "tool_process"
     TOOL_EXECUTE = "tool_execute"
     TOOL_RESULT = "tool_result"

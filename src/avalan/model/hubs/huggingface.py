@@ -1,5 +1,5 @@
 from ... import name, version
-from ...model.entities import (
+from ...entities import (
     Model,
     HubCacheDeletion,
     HubCacheFile,

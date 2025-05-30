@@ -8,9 +8,9 @@ from ....agent import (
     Specification,
 )
 from ....agent.orchestrator import Orchestrator
+from ....entities import Input, TransformerEngineSettings
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
-from ....model.entities import Input, TransformerEngineSettings
 from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
 from logging import Logger

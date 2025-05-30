@@ -17,14 +17,14 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         cls._saved_modules = {
             name: sys.modules.get(name)
             for name in [
-                "avalan.model.entities",
+                "avalan.entities",
                 "avalan.model.hubs.huggingface",
                 "avalan.model.nlp.text.generation",
             ]
         }
 
-        # Stub avalan.model.entities
-        entities = ModuleType("avalan.model.entities")
+        # Stub avalan.entities
+        entities = ModuleType("avalan.entities")
 
         @dataclass(frozen=True, kw_only=True)
         class Token:
@@ -46,7 +46,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
 
         entities.Token = Token
         entities.TransformerEngineSettings = TransformerEngineSettings
-        sys.modules["avalan.model.entities"] = entities
+        sys.modules["avalan.entities"] = entities
 
         # Stub avalan.model.hubs.huggingface
         hubs = ModuleType("avalan.model.hubs.huggingface")

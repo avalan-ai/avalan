@@ -1,4 +1,4 @@
-from avalan.model.entities import TransformerEngineSettings
+from avalan.entities import TransformerEngineSettings
 from logging import Logger
 from pytest import importorskip
 from unittest import TestCase, main, skip

@@ -1,4 +1,4 @@
-from avalan.model.entities import TransformerEngineSettings
+from avalan.entities import TransformerEngineSettings
 from avalan.model.vision.image import (
     AutoImageProcessor,
     AutoModelForVision2Seq,

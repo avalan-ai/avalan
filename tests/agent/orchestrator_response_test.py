@@ -1,16 +1,9 @@
-import unittest
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
-
 from avalan.agent import Operation, Specification, EngineEnvironment
 from avalan.agent.orchestrator.response import (
     OrchestratorResponse,
     ToolAwareResponse,
 )
-from avalan.event import Event, EventType
-from avalan.event.manager import EventManager
-from avalan.model import TextGenerationResponse
-from avalan.model.entities import (
+from avalan.entities import (
     EngineUri,
     Message,
     MessageRole,
@@ -18,8 +11,14 @@ from avalan.model.entities import (
     ToolCallResult,
     TransformerEngineSettings,
 )
+from avalan.event import Event, EventType
+from avalan.event.manager import EventManager
+from avalan.model import TextGenerationResponse
 from avalan.agent.engine import EngineAgent
 from avalan.tool.manager import ToolManager
+import unittest
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
 
 
 class _DummyEngine:
@@ -116,11 +115,16 @@ class OrchestratorOnTokenTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
-        tool = MagicMock(spec=ToolManager)
-        tool.has_tool_call.return_value = True
+        tool = AsyncMock(spec=ToolManager)
+        tool.get_calls.return_value = [
+            ToolCall(
+                name="calc",
+                arguments={"expression": "1 + 1"},
+            )
+        ]
         call = ToolCall(name="calc")
         result = ToolCallResult(call=call, name="calc", result="2")
-        tool.return_value = ([call], [result])
+        tool.return_value = [result]
         agent.return_value = _dummy_response("next")
         inp = Message(role=MessageRole.USER, content="hello")
         orch = OrchestratorResponse(

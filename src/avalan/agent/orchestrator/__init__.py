@@ -6,6 +6,12 @@ from .. import (
     Operation,
 )
 from ..engine import EngineAgent
+from ...entities import (
+    EngineMessage,
+    Input,
+    Message,
+    MessageRole,
+)
 from .response import ObservableTextGenerationResponse, OrchestratorResponse
 from ..renderer import Renderer, TemplateEngineAgent
 from ...event import Event, EventType
@@ -13,12 +19,6 @@ from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
 from ...model import TextGenerationResponse
 from ...model.engine import Engine
-from ...model.entities import (
-    EngineMessage,
-    Input,
-    Message,
-    MessageRole,
-)
 from ...model.manager import ModelManager
 from ...tool.manager import ToolManager
 from contextlib import ExitStack

@@ -1,4 +1,4 @@
-from avalan.model.entities import EngineSettings
+from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
 from avalan.model.vision.segmentation import (
     AutoImageProcessor,

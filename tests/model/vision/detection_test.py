@@ -1,4 +1,4 @@
-from avalan.model.entities import EngineSettings, ImageEntity
+from avalan.entities import EngineSettings, ImageEntity
 from avalan.model.engine import Engine
 from avalan.model.vision.detection import (
     ObjectDetectionModel,

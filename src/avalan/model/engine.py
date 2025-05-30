@@ -1,17 +1,17 @@
 from abc import ABC, abstractmethod
+from ..entities import (
+    EngineSettings,
+    Input,
+    ModelConfig,
+    SentenceTransformerModelConfig,
+    TokenizerConfig,
+)
 from ..model import (
     EngineResponse,
     ModelAlreadyLoadedException,
     TextGenerationVendor,
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException,
-)
-from ..model.entities import (
-    EngineSettings,
-    Input,
-    ModelConfig,
-    SentenceTransformerModelConfig,
-    TokenizerConfig,
 )
 from contextlib import ExitStack
 from importlib.util import find_spec

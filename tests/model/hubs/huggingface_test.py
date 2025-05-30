@@ -1,13 +1,12 @@
-from types import SimpleNamespace
-from datetime import datetime
-from logging import Logger
-from unittest import TestCase, main
-from unittest.mock import MagicMock, patch, call
-
-from avalan.model.entities import HubCache, HubCacheDeletion, Model, User
+from avalan.entities import HubCache, HubCacheDeletion, Model, User
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.hubs import HubAccessDeniedException
+from datetime import datetime
 from huggingface_hub.errors import GatedRepoError
+from logging import Logger
+from types import SimpleNamespace
+from unittest import TestCase, main
+from unittest.mock import MagicMock, patch, call
 
 
 class HuggingfaceHubTestCase(TestCase):

@@ -3,9 +3,9 @@ from asyncio import as_completed, create_task, gather, sleep, to_thread
 from ...agent.orchestrator import Orchestrator
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
+from ...entities import GenerationSettings, Model, Token
 from ...event import EventStats
 from ...model import TextGenerationResponse
-from ...model.entities import GenerationSettings, Model, Token
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...model.criteria import KeywordStoppingCriteria

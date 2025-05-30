@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from ..model.entities import EngineMessage
+from ..entities import EngineMessage
 from dataclasses import dataclass
 from threading import Lock
 from typing import Generic, Optional, TypeVar

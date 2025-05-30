@@ -1,9 +1,9 @@
 from .. import Operation
 from ..engine import EngineAgent
+from ...entities import Input, Message, MessageRole
 from ...event import Event, EventType
 from ...event.manager import EventManager
 from ...model import TextGenerationResponse
-from ...model.entities import Input, Message, MessageRole
 from ...tool.manager import ToolManager
 from io import StringIO
 from typing import Any, AsyncIterator, Union
@@ -123,31 +123,37 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse, Event]]):
     async def _on_token(self, token: str) -> None:
         if not self._tool or not self._event_manager:
             return
+
         self._buffer.write(token)
         text = self._buffer.getvalue()
-        if not self._tool.has_tool_call(text):
+
+        await self._event_manager.trigger(
+            Event(type=EventType.TOOL_DETECT, payload={"output": text})
+        )
+
+        tool_calls = self._tool.get_calls(text)
+        if not tool_calls:
             return
 
         await self._event_manager.trigger(
-            Event(type=EventType.TOOL_PROCESS, payload={"output": text})
+            Event(type=EventType.TOOL_PROCESS, payload={"output": tool_calls})
         )
-        tool_calls, tool_results = self._tool(text)
 
-        if tool_calls:
-            for call in tool_calls:
-                event = Event(
-                    type=EventType.TOOL_EXECUTE, payload={"call": call}
-                )
-                self._responses_with_events.append(event)
-                await self._event_manager.trigger(event)
+        for call in tool_calls:
+            event = Event(
+                type=EventType.TOOL_EXECUTE, payload={"call": call}
+            )
+            self._responses_with_events.append(event)
+            await self._event_manager.trigger(event)
 
-        if tool_results:
-            for res in tool_results:
-                event = Event(
-                    type=EventType.TOOL_RESULT, payload={"result": res}
-                )
-                self._responses_with_events.append(event)
-                await self._event_manager.trigger(event)
+        tool_results = await self._tool(tool_calls)
+
+        for res in tool_results:
+            event = Event(
+                type=EventType.TOOL_RESULT, payload={"result": res}
+            )
+            self._responses_with_events.append(event)
+            await self._event_manager.trigger(event)
 
         tool_messages = (
             [

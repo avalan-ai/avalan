@@ -1,5 +1,5 @@
+from avalan.entities import TransformerEngineSettings
 from avalan.model.transformer import AutoTokenizer
-from avalan.model.entities import TransformerEngineSettings
 from avalan.model.engine import Engine
 from avalan.model.nlp.token import (
     TokenClassificationModel,

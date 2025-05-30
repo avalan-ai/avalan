@@ -1,4 +1,4 @@
-from avalan.model.entities import EngineUri, TransformerEngineSettings
+from avalan.entities import EngineUri, TransformerEngineSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from avalan.secrets import KeyringSecrets

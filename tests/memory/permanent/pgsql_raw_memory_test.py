@@ -1,16 +1,15 @@
-import numpy as np
-from datetime import datetime, timezone
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, ANY, patch
-from psycopg_pool import AsyncConnectionPool
-from psycopg import AsyncConnection, AsyncCursor
-from uuid import uuid4, UUID
-
+from avalan.entities import MessageRole
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import Memory, MemoryType, VectorFunction
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
-from avalan.model.entities import MessageRole
+from datetime import datetime, timezone
+import numpy as np
 from pgvector.psycopg import Vector
+from psycopg_pool import AsyncConnectionPool
+from psycopg import AsyncConnection, AsyncCursor
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, ANY, patch
+from uuid import uuid4, UUID
 
 
 class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):

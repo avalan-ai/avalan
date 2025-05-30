@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from .....model import TextGenerationResponse, TextGenerationVendor
-from .....model.entities import (
+from .....entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings,
 )
+from .....model import TextGenerationResponse, TextGenerationVendor
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from dataclasses import replace

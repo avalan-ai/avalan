@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from ...agent.orchestrator import Orchestrator
-from ...memory.partitioner.text import TextPartition
-from ...model.entities import (
+from ...entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
@@ -15,6 +14,7 @@ from ...model.entities import (
     TokenizerConfig,
     User,
 )
+from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from dataclasses import fields
 from datetime import datetime

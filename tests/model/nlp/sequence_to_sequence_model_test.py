@@ -1,4 +1,4 @@
-from avalan.model.entities import GenerationSettings, TransformerEngineSettings
+from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.engine import Engine
 from avalan.model.nlp.sequence import SequenceToSequenceModel
 from logging import Logger
