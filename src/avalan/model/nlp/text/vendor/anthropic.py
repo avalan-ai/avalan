@@ -1,13 +1,13 @@
 from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
 from .....compat import override
-from .....model import TextGenerationVendor, TextGenerationVendorStream
-from .....model.entities import (
+from .....entities import (
     GenerationSettings,
     Message,
     Token,
     TokenDetail,
 )
+from .....model import TextGenerationVendor, TextGenerationVendorStream
 from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from transformers import PreTrainedModel

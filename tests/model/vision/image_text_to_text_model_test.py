@@ -1,4 +1,4 @@
-from avalan.model.entities import (
+from avalan.entities import (
     GenerationSettings,
     TransformerEngineSettings,
     MessageRole,

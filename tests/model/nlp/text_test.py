@@ -1,5 +1,5 @@
+from avalan.entities import TransformerEngineSettings, Token
 from avalan.model.transformer import AutoTokenizer
-from avalan.model.entities import TransformerEngineSettings, Token
 from avalan.model.nlp.text.generation import (
     AutoModelForCausalLM,
     TextGenerationModel,

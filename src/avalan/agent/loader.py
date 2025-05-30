@@ -1,10 +1,10 @@
 from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
+from ..entities import EngineUri, TransformerEngineSettings
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..memory.partitioner.text import TextPartitioner
-from ..model.entities import EngineUri, TransformerEngineSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel

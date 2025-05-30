@@ -1,4 +1,4 @@
-from ..model.entities import (
+from ..entities import (
     AttentionImplementation,
     EngineUri,
     TextGenerationLoaderClass,

@@ -1,7 +1,6 @@
 from ...agent.orchestrator import Orchestrator
-from ...event import EventStats, EventType
-from ...memory.partitioner.text import TextPartition
-from ...model.entities import (
+from ...cli.theme import Data, Spinner, Theme
+from ...entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
@@ -15,7 +14,8 @@ from ...model.entities import (
     TokenizerConfig,
     User,
 )
-from ...cli.theme import Data, Spinner, Theme
+from ...event import EventStats, EventType
+from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
 from humanize import clamp, intcomma, intword, naturalday, naturalsize

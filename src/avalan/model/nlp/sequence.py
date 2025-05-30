@@ -1,6 +1,6 @@
 from ...compat import override
+from ...entities import GenerationSettings, Input
 from ...model import TextGenerationVendor
-from ...model.entities import GenerationSettings, Input
 from ...model.nlp import BaseNLPModel
 from dataclasses import replace
 from torch import argmax, no_grad, softmax, Tensor

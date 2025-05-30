@@ -1,3 +1,4 @@
+from ....entities import EngineMessage, EngineMessageScored, Message
 from ....memory import MemoryStore, MemoryChunk
 from ....memory.permanent import (
     PermanentMessage,
@@ -5,7 +6,6 @@ from ....memory.permanent import (
     RecordNotFoundException,
     RecordNotSavedException,
 )
-from ....model.entities import EngineMessage, EngineMessageScored, Message
 from pgvector.psycopg import register_vector_async
 from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection

@@ -1,7 +1,7 @@
+from ..entities import EngineMessage
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import PermanentMessageMemory, VectorFunction
-from ..model.entities import EngineMessage
 from typing import Any, Optional, Type
 from uuid import UUID
 

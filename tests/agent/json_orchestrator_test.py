@@ -4,14 +4,14 @@ from avalan.agent.orchestrator.orchestrators.json import (
     JsonSpecification,
 )
 from avalan.agent.renderer import TemplateEngineAgent
-from avalan.event.manager import EventManager
-from avalan.event import EventType
-from avalan.model import TextGenerationResponse
-from avalan.model.entities import (
+from avalan.entities import (
     EngineUri,
     MessageRole,
     TransformerEngineSettings,
 )
+from avalan.event.manager import EventManager
+from avalan.event import EventType
+from avalan.model import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager

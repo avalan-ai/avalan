@@ -1,4 +1,4 @@
-from ..model.entities import MessageRole
+from ..entities import MessageRole
 from pydantic import BaseModel, Field
 from typing import Optional, Union
 

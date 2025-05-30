@@ -1,10 +1,9 @@
-from ..model.entities import ToolCall, ToolCallResult, ToolFormat
+from ..entities import ToolCall, ToolCallResult, ToolFormat
 from ..tool import ToolSet
 from ..tool.calculator import calculator
 from ..tool.parser import ToolCallParser
 from types import FunctionType
-from typing import Sequence, Tuple
-from re import DOTALL, search
+from typing import Sequence
 
 
 class ToolManager:
@@ -72,30 +71,20 @@ class ToolManager:
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
 
-    @staticmethod
-    def has_tool_call(text: str) -> bool:
-        """Return True if the text contains a complete tool call."""
-        return bool(
-            search(
-                r"<tool_call\b[^>]*/>|<tool_call\b[^>]*>.*?</tool_call>|<tool\b[^>]*>.*?</tool>",
-                text,
-                DOTALL,
-            )
-        )
+    def get_calls(self, text: str) -> list[ToolCall] | None:
+        return self._parser(text)
 
-    def __call__(
-        self, text: str
-    ) -> Tuple[list[ToolCall] | None, list[ToolCallResult] | None]:
-        tool_calls = self._parser(text)
-        if not tool_calls:
-            return None, None
+    async def __call__(
+        self, tool_calls: list[ToolCall]
+    ) -> list[ToolCallResult] | None:
+        assert tool_calls
 
         tool_results: list[ToolCallResult] = []
         for tool_call in tool_calls:
             tool = self._tools.get(tool_call.name, None)
             if tool:
                 result = (
-                    tool(*tool_call.arguments.values())
+                    await tool(*tool_call.arguments.values())
                     if tool_call.arguments
                     else tool()
                 )
@@ -107,4 +96,4 @@ class ToolManager:
                         result=result,
                     )
                 )
-        return tool_calls, tool_results
+        return tool_results

@@ -1,6 +1,6 @@
 from avalan.cli.commands import memory as memory_cmds
+from avalan.entities import DistanceType
 from avalan.memory.permanent import MemoryType, VectorFunction
-from avalan.model.entities import DistanceType
 from avalan.memory.partitioner.text import TextPartition
 from argparse import Namespace
 from unittest import IsolatedAsyncioTestCase

@@ -1,4 +1,4 @@
-from avalan.model.entities import GenerationSettings, TransformerEngineSettings
+from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.sequence import TranslationModel
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch

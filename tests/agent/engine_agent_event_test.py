@@ -1,7 +1,7 @@
 from avalan.agent.engine import EngineAgent
+from avalan.entities import Message, MessageRole, GenerationSettings
 from avalan.event import EventType
 from avalan.event.manager import EventManager
-from avalan.model.entities import Message, MessageRole, GenerationSettings
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase
