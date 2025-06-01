@@ -12,7 +12,7 @@ from ...entities import (
     Message,
     MessageRole,
 )
-from .response import (
+from .response.orchestrator_response import (
     ObservableTextGenerationResponse,
     OrchestratorResponse,
 )
