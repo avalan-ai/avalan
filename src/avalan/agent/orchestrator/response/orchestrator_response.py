@@ -1,10 +1,10 @@
 from .. import Operation
-from ..engine import EngineAgent
-from ...entities import Input, Message, MessageRole
-from ...event import Event, EventType
-from ...event.manager import EventManager
-from ...model import TextGenerationResponse
-from ...tool.manager import ToolManager
+from ...engine import EngineAgent
+from ....entities import Input, Message, MessageRole
+from ....event import Event, EventType
+from ....event.manager import EventManager
+from ....model import TextGenerationResponse
+from ....tool.manager import ToolManager
 from io import StringIO
 from typing import Any, AsyncIterator, Union
 
