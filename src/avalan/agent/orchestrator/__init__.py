@@ -12,7 +12,10 @@ from ...entities import (
     Message,
     MessageRole,
 )
-from .response import ObservableTextGenerationResponse, OrchestratorResponse
+from .response import (
+    ObservableTextGenerationResponse,
+    OrchestratorResponse,
+)
 from ..renderer import Renderer, TemplateEngineAgent
 from ...event import Event, EventType
 from ...event.manager import EventManager
