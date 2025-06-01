@@ -74,26 +74,23 @@ class ToolManager:
     def get_calls(self, text: str) -> list[ToolCall] | None:
         return self._parser(text)
 
-    async def __call__(
-        self, tool_calls: list[ToolCall]
-    ) -> list[ToolCallResult] | None:
-        assert tool_calls
+    async def __call__(self, tool_call: ToolCall) -> ToolCallResult | None:
+        """Execute a single tool call and return the result."""
+        assert tool_call
 
-        tool_results: list[ToolCallResult] = []
-        for tool_call in tool_calls:
-            tool = self._tools.get(tool_call.name, None)
-            if tool:
-                result = (
-                    await tool(*tool_call.arguments.values())
-                    if tool_call.arguments
-                    else tool()
-                )
-                tool_results.append(
-                    ToolCallResult(
-                        call=tool_call,
-                        name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        result=result,
-                    )
-                )
-        return tool_results
+        tool = self._tools.get(tool_call.name, None) if self._tools else None
+        if not tool:
+            return None
+
+        result = (
+            await tool(*tool_call.arguments.values())
+            if tool_call.arguments
+            else tool()
+        )
+
+        return ToolCallResult(
+            call=tool_call,
+            name=tool_call.name,
+            arguments=tool_call.arguments,
+            result=result,
+        )

@@ -29,6 +29,5 @@ class GetToolCallsTestCase(TestCase):
         self.assertEqual(len(result), 1)
 
 
-
 if __name__ == "__main__":
     main()

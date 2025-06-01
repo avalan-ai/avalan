@@ -44,7 +44,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(calls, [expected_call])
 
-        results = await self.manager(calls)
+        results = await self.manager(calls[0])
 
         expected_result = ToolCallResult(
             call=expected_call,
@@ -52,7 +52,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "1 + 1"},
             result="2",
         )
-        self.assertEqual(results, [expected_result])
+        self.assertEqual(results, expected_result)
 
     async def test_set_eos_token(self):
         self.manager.set_eos_token("<END>")
@@ -68,7 +68,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(calls, [expected_call])
 
-        results = await self.manager(calls)
+        results = await self.manager(calls[0])
 
         expected_result = ToolCallResult(
             call=expected_call,
@@ -76,7 +76,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "2"},
             result="2",
         )
-        self.assertEqual(results, [expected_result])
+        self.assertEqual(results, expected_result)
         self.assertEqual(self.manager._parser._eos_token, "<END>")
 
     async def test_namespaced_tool(self):
@@ -96,7 +96,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(calls, [expected_call])
 
-        results = await namespaced_manager(calls)
+        results = await namespaced_manager(calls[0])
 
         expected_result = ToolCallResult(
             call=expected_call,
@@ -104,7 +104,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "3"},
             result="3",
         )
-        self.assertEqual(results, [expected_result])
+        self.assertEqual(results, expected_result)
 
 
 if __name__ == "__main__":
