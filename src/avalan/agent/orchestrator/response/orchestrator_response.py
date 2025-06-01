@@ -140,18 +140,14 @@ class OrchestratorResponse(AsyncIterator[Union[TextGenerationResponse, Event]]):
         )
 
         for call in tool_calls:
-            event = Event(
-                type=EventType.TOOL_EXECUTE, payload={"call": call}
-            )
+            event = Event(type=EventType.TOOL_EXECUTE, payload={"call": call})
             self._responses_with_events.append(event)
             await self._event_manager.trigger(event)
 
         tool_results = await self._tool(tool_calls)
 
         for res in tool_results:
-            event = Event(
-                type=EventType.TOOL_RESULT, payload={"result": res}
-            )
+            event = Event(type=EventType.TOOL_RESULT, payload={"result": res})
             self._responses_with_events.append(event)
             await self._event_manager.trigger(event)
 
