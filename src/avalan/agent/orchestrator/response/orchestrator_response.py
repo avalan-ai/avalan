@@ -158,10 +158,20 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
                 or isinstance(self._input, Message)
             )
 
-            messages = (
+            messages = list(
                 self._input if isinstance(self._input, list) else [self._input]
             )
             messages.extend(tool_messages)
+
+            event_tool_model_run = Event(
+                type=EventType.TOOL_MODEL_RUN,
+                payload={
+                    "model_id": self._engine_agent.engine.model_id,
+                    "messages": messages,
+                    "engine_args": self._engine_args,
+                },
+            )
+            await self._event_manager.trigger(event_tool_model_run)
 
             inner_response = await self._engine_agent(
                 self._operation.specification,
@@ -175,7 +185,12 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
 
             event_tool_model_response = Event(
                 type=EventType.TOOL_MODEL_RESPONSE,
-                payload={"response": inner_response},
+                payload={
+                    "response": inner_response,
+                    "model_id": self._engine_agent.engine.model_id,
+                    "messages": messages,
+                    "engine_args": self._engine_args,
+                },
             )
             await self._event_manager.trigger(event_tool_model_response)
             return event_tool_model_response
