@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from avalan.tool.manager import ToolManager
 from avalan.entities import ToolCall, ToolCallResult
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 
 class _DummyEngine:
@@ -190,14 +191,14 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.side_effect = (
-            lambda text: [ToolCall(name="calc", arguments=None)]
+            lambda text: [ToolCall(id=uuid4(), name="calc", arguments=None)]
             if text == "call"
             else None
         )
 
         async def tool_exec(call):
             return ToolCallResult(
-                call=call, name=call.name, arguments=call.arguments, result="2"
+                id=uuid4(), call=call, name=call.name, arguments=call.arguments, result="2"
             )
 
         tool.side_effect = tool_exec

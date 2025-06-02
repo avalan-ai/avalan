@@ -132,6 +132,7 @@ class FancyTheme(Theme):
             "cache_accessing": "bouncingBar",
             "connecting": "earth",
             "thinking": "dots",
+            "tool_running": "dots",
             "downloading": "earth",
         }
 
@@ -1354,6 +1355,9 @@ class FancyTheme(Theme):
         input_token_count: int,
         total_tokens: int,
         tool_events: list[Event] | None,
+        tool_event_calls: list[Event] | None,
+        tool_event_results: list[Event] | None,
+        tool_running_spinner: Spinner | None,
         ttft: float,
         ttnt: float,
         ellapsed: float,
@@ -1433,7 +1437,7 @@ class FancyTheme(Theme):
             len(dtokens_selected) if dtokens_selected else 0
         )
 
-        # Build think and answer panels
+        # Build think and, EventStats answer panels
         progress_title = " · ".join(
             _lf(
                 [
@@ -1533,55 +1537,51 @@ class FancyTheme(Theme):
             else None
         )
 
-        tool_event_log: list[str] | None = (
-            [
-                _(
-                    "Executed tool {tool} with {total_arguments} arguments. Got result: {result}"
-                ).format(
-                    tool=event.payload["result"].name,
-                    total_arguments=len(
-                        event.payload["result"].arguments or []
-                    ),
-                    result="[spring_green3]"
-                    + event.payload["result"].result
-                    + "[/spring_green3]",
+        tool_event_log: list[str] | None = _lf([
+            _(
+                "Executed tool {tool} call #{call_id} with {total_arguments} arguments. Got result: {result}"
+            ).format(
+                tool=event.payload["result"].call.name,
+                call_id="[spring_green4]"+str(event.payload["result"].call.id)+"[/spring_green4]",
+                total_arguments=len(
+                    event.payload["result"].call.arguments or []
+                ),
+                result="[spring_green3]"
+                + event.payload["result"].result
+                + "[/spring_green3]",
+            )
+            if event.type == EventType.TOOL_RESULT
+            else _n(
+                "Executing {total_calls} tool: {calls}",
+                "Executing {total_calls} tools: {calls}",
+                len(event.payload),
+            ).format(
+                total_calls=len(event.payload),
+                calls="[spring_green3]"
+                + "[/spring_green3], [spring_green3]".join(
+                    [call.name for call in event.payload]
                 )
-                if event.type == EventType.TOOL_RESULT
-                else _n(
-                    "Executing {total_calls} tool: {calls}",
-                    "Executing {total_calls} tools: {calls}",
-                    len(event.payload),
-                ).format(
-                    total_calls=len(event.payload),
-                    calls="[spring_green3]"
-                    + "[/spring_green3], [spring_green3]".join(
-                        [call.name for call in event.payload]
-                    )
-                    + "[/spring_green3]",
-                )
-                if event.type == EventType.TOOL_PROCESS
-                else None
-                for event in tool_events
-            ]
-            if tool_events and tool_events_limit is None or tool_events_limit
+                + "[/spring_green3]",
+            )
+            if event.type == EventType.TOOL_PROCESS
             else None
-        )
+            for event in tool_events
+        ]
+        if tool_events and tool_events_limit is None or tool_events_limit
+        else None)
+
         if tool_event_log and tool_events_limit:
             tool_event_log = tool_event_log[-tool_events_limit:]
 
-        tools_panel = (
-            Panel(
-                "[dark_green]" + "\n".join(tool_event_log) + "[/dark_green]",
-                title=_("Tool calls"),
-                title_align="left",
-                height=2 + (tool_events_limit or 2),
-                padding=(0, 0, 0, 1),
-                expand=True,
-                box=box.SQUARE,
-            )
-            if tool_event_log
-            else None
-        )
+        tools_panel = Panel(
+            "[dark_green]" + _j("\n", tool_event_log) + "[/dark_green]",
+            title=_("Tool calls"),
+            title_align="left",
+            height=2 + (tool_events_limit or 2),
+            padding=(0, 0, 0, 1),
+            expand=True,
+            box=box.SQUARE,
+        ) if tool_event_log else None
 
         # Quick return of no need for token details
         if display_token_size is None or tokens is None:
@@ -1592,6 +1592,10 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
+                            Padding(
+                                tool_running_spinner,
+                                pad=(1,0,1,0)
+                            ) if len(tool_event_calls) != len(tool_event_results) else None,
                             answer_panel or None,
                         ]
                     )

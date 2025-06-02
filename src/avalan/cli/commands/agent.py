@@ -258,6 +258,7 @@ async def agent_run(
                 event_stats=event_stats,
                 lm=orchestrator.engine,
                 input_string=input_string,
+                refresh_per_second=refresh_per_second,
                 response=output,
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,

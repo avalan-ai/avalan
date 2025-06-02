@@ -3,6 +3,7 @@ from ..entities import ToolCall, ToolFormat
 from json import JSONDecodeError, loads
 from re import DOTALL, search
 from typing import Any, Optional, Tuple
+from uuid import uuid4
 from xml.etree import ElementTree
 
 
@@ -102,6 +103,7 @@ class ToolCallParser:
                 ):
                     tool_calls.append(
                         ToolCall(
+                            id=uuid4(),
                             name=tool_call["name"],
                             arguments=tool_call["arguments"],
                         )
@@ -126,6 +128,7 @@ class ToolCallParser:
                 ):
                     tool_calls.append(
                         ToolCall(
+                            id=uuid4(),
                             name=tool_call["name"],
                             arguments=tool_call["arguments"],
                         )
@@ -141,7 +144,11 @@ class ToolCallParser:
         if m:
             try:
                 tool_calls.append(
-                    ToolCall(name=m.group(1), arguments=loads(m.group(2)))
+                    ToolCall(
+                        id=uuid4(),
+                        name=m.group(1),
+                        arguments=loads(m.group(2))
+                    )
                 )
             except JSONDecodeError:
                 pass
@@ -154,7 +161,11 @@ class ToolCallParser:
         if m:
             try:
                 tool_calls.append(
-                    ToolCall(name=m.group(1), arguments=loads(m.group(2)))
+                    ToolCall(
+                        id=uuid4(),
+                        name=m.group(1),
+                        arguments=loads(m.group(2))
+                    )
                 )
             except JSONDecodeError:
                 pass
@@ -166,7 +177,11 @@ class ToolCallParser:
         if m:
             try:
                 tool_calls.append(
-                    ToolCall(name=m.group(1), arguments=loads(m.group(2)))
+                    ToolCall(
+                        id=uuid4(),
+                        name=m.group(1),
+                        arguments=loads(m.group(2))
+                    )
                 )
             except JSONDecodeError:
                 pass

@@ -3,6 +3,7 @@ from avalan.tool import ToolSet
 from avalan.tool.calculator import calculator
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase, main, TestCase
+from uuid import uuid4
 
 
 class ToolManagerCreationTestCase(TestCase):
@@ -39,6 +40,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         calls = self.manager.get_calls(text)
 
         expected_call = ToolCall(
+            id=uuid4(),
             name="calculator",
             arguments={"expression": "1 + 1"},
         )
@@ -47,6 +49,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         results = await self.manager(calls[0])
 
         expected_result = ToolCallResult(
+            id=uuid4(),
             call=expected_call,
             name="calculator",
             arguments={"expression": "1 + 1"},
@@ -63,6 +66,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
 
         calls = self.manager.get_calls(text)
         expected_call = ToolCall(
+            id=uuid4(),
             name="calculator",
             arguments={"expression": "2"},
         )
@@ -71,6 +75,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         results = await self.manager(calls[0])
 
         expected_result = ToolCallResult(
+            id=uuid4(),
             call=expected_call,
             name="calculator",
             arguments={"expression": "2"},
@@ -91,6 +96,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
 
         calls = namespaced_manager.get_calls(text)
         expected_call = ToolCall(
+            id=uuid4(),
             name="math.calculator",
             arguments={"expression": "3"},
         )
@@ -99,6 +105,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         results = await namespaced_manager(calls[0])
 
         expected_result = ToolCallResult(
+            id=uuid4(),
             call=expected_call,
             name="math.calculator",
             arguments={"expression": "3"},

@@ -1,6 +1,7 @@
 from avalan.entities import ToolCall, ToolFormat
 from avalan.tool.parser import ToolCallParser
 from unittest import TestCase, main
+from uuid import uuid4
 
 
 class ToolCallParserFormatTestCase(TestCase):
@@ -76,7 +77,7 @@ class ToolCallParserTagTestCase(TestCase):
             '"arguments": {"expression": "1 + 1"}}</tool_call>'
         )
         expected = [
-            ToolCall(name="calculator", arguments={"expression": "1 + 1"})
+            ToolCall(id=uuid4(), name="calculator", arguments={"expression": "1 + 1"})
         ]
         self.assertEqual(self.parser(text), expected)
 
@@ -85,7 +86,7 @@ class ToolCallParserTagTestCase(TestCase):
             "<tool_call>{'name': 'calculator', 'arguments': {'expression': '2'}}"
             "</tool_call>"
         )
-        expected = [ToolCall(name="calculator", arguments={"expression": "2"})]
+        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
         self.assertEqual(self.parser(text), expected)
 
     def test_multiple(self):
@@ -94,26 +95,26 @@ class ToolCallParserTagTestCase(TestCase):
             '<tool_call>{"name": "calculator", "arguments": {"expression": "2"}}</tool_call>'
         )
         expected = [
-            ToolCall(name="calculator", arguments={"expression": "1"}),
-            ToolCall(name="calculator", arguments={"expression": "2"}),
+            ToolCall(id=uuid4(), name="calculator", arguments={"expression": "1"}),
+            ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"}),
         ]
         self.assertEqual(self.parser(text), expected)
 
     def test_with_name_attr(self):
         text = '<tool_call name="calculator">{"expression": "2"}</tool_call>'
-        expected = [ToolCall(name="calculator", arguments={"expression": "2"})]
+        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
         self.assertEqual(self.parser(text), expected)
 
     def test_self_closing(self):
         text = (
             '<tool_call name="calculator" arguments=\'{"expression": "2"}\'/>'
         )
-        expected = [ToolCall(name="calculator", arguments={"expression": "2"})]
+        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
         self.assertEqual(self.parser(text), expected)
 
     def test_tool_tag(self):
         text = '<tool name="calculator">{"expression": "2"}</tool>'
-        expected = [ToolCall(name="calculator", arguments={"expression": "2"})]
+        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
         self.assertEqual(self.parser(text), expected)
 
     def test_invalid_json(self):
@@ -123,7 +124,7 @@ class ToolCallParserTagTestCase(TestCase):
     def test_eos_token(self):
         parser = ToolCallParser(eos_token="<END>")
         text = '<tool_call>{"name": "calculator", "arguments": {"expression": "2"}}</tool_call><END>'
-        expected = [ToolCall(name="calculator", arguments={"expression": "2"})]
+        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
         self.assertEqual(parser(text), expected)
 
     def test_no_tool_call(self):

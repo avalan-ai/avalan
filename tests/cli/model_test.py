@@ -164,6 +164,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             dtokens_pick=0,
             with_stats=False,
             tool_events_limit=2,
+            refresh_per_second=2,
         )
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
 
@@ -231,6 +232,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=1,
                 with_stats=True,
                 tool_events_limit=2,
+                refresh_per_second=2,
             )
 
         theme.tokens.assert_called_once()
@@ -304,6 +306,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=0,
                 with_stats=True,
                 tool_events_limit=2,
+                refresh_per_second=2
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 5)
@@ -328,6 +331,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=0,
                 with_stats=True,
                 tool_events_limit=2,
+                refresh_per_second=2
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 7)
@@ -351,6 +355,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=0,
                 with_stats=True,
                 tool_events_limit=2,
+                refresh_per_second=2
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 33)
@@ -418,7 +423,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 model_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
         ):
-            await model_cmds.model_run(args, console, theme, hub, logger)
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -497,7 +502,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 model_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
         ):
-            await model_cmds.model_run(args, console, theme, hub, logger)
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")

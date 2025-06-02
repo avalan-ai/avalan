@@ -89,15 +89,13 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
     async def __anext__(self) -> Union[Token, TokenDetail, Event]:
         assert self._response_iterator
 
-        total_process_events = self._tool_process_events.qsize()
-        if total_process_events:
+        if not self._tool_process_events.empty():
             event = self._tool_process_events.get()
             assert event.type == EventType.TOOL_PROCESS
             self._tool_call_events.put(event)
             return event
 
-        total_call_events = self._tool_call_events.qsize()
-        if total_call_events:
+        if not self._tool_call_events.empty():
             event = self._tool_call_events.get()
             assert event.type == EventType.TOOL_PROCESS
             await self._event_manager.trigger(event)
@@ -108,8 +106,7 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
                     assert isinstance(call, ToolCall)
                     self._calls.put(call)
 
-        total_calls = self._calls.qsize()
-        if total_calls:
+        if not self._calls.empty():
             call = self._calls.get()
 
             execute_event = Event(
@@ -132,9 +129,8 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
 
             return result_event
 
-        # Wait untill all results are collected
-        total_results = self._tool_result_events.qsize()
-        if total_results and not total_call_events and not total_calls:
+        # Wait until all results are collected
+        if self._tool_call_events.empty() and self._calls.empty() and not self._tool_result_events.empty():
             result_events: list[Event] = []
             while not self._tool_result_events.empty():
                 result_event = self._tool_result_events.get()
