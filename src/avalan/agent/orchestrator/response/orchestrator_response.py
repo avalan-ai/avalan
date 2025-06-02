@@ -17,7 +17,7 @@ from io import StringIO
 from typing import Any, AsyncIterator, Union
 
 
-class OrchestratorExecutionResponse(
+class OrchestratorResponse(
     AsyncIterator[Union[Token, TokenDetail, Event]]
 ):
     """Async iterator handling tool execution during streaming."""
@@ -78,7 +78,7 @@ class OrchestratorExecutionResponse(
     async def to(self, entity_class: type) -> Any:
         return await self._response.to(entity_class)
 
-    def __aiter__(self) -> "OrchestratorExecutionResponse":
+    def __aiter__(self) -> "OrchestratorResponse":
         self._response_iterator = self._response.__aiter__()
         self._buffer = StringIO()
         self._calls = Queue()

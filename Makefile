@@ -1,4 +1,7 @@
-.PHONY: lint test release
+.PHONY: install lint test release
+
+install:
+	poetry sync --extras all
 
 lint:
 	poetry run ruff check --fix
@@ -11,8 +14,8 @@ test:
 release:
 	$(eval VERSION := $(filter-out $@,$(MAKECMDGOALS)))
 	@if [ -z "$(VERSION)" ]; then \
-	    echo "Usage: make release X.Y.Z"; \
-	    exit 1; \
+		echo "Usage: make release X.Y.Z"; \
+		exit 1; \
 	fi
 	git checkout main
 	git pull --rebase

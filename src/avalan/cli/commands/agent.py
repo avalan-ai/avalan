@@ -1,7 +1,7 @@
 from argparse import Namespace
 from ...agent.loader import OrchestrationLoader
-from ...agent.orchestrator.response.orchestrator_execution_response import (
-    OrchestratorExecutionResponse,
+from ...agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
 )
 from ...cli import get_input
 from ...cli.commands.model import token_generation
@@ -247,7 +247,7 @@ async def agent_run(
             if not args.quiet and not args.stats:
                 console.print(_i["agent_output"] + " ", end="")
 
-            assert isinstance(output, OrchestratorExecutionResponse)
+            assert isinstance(output, OrchestratorResponse)
 
             await token_generation(
                 args=args,

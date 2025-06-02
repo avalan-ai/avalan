@@ -8,8 +8,8 @@ from avalan.entities import (
     MessageRole,
     TransformerEngineSettings,
 )
-from avalan.agent.orchestrator.response.orchestrator_execution_response import (
-    OrchestratorExecutionResponse,
+from avalan.agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
 )
 from avalan.model import TextGenerationResponse
 from avalan.model.manager import ModelManager
@@ -71,7 +71,7 @@ class DefaultOrchestratorInitTestCase(TestCase):
         self.assertEqual(op.specification.template_vars, {"y": 2})
 
 
-class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
+class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
         self.addCleanup(patch.stopall)
@@ -169,7 +169,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertIsInstance(result, OrchestratorExecutionResponse)
+        self.assertIsInstance(result, OrchestratorResponse)
         self.assertEqual(tokens, ["a", "b"])
 
         calls = event_manager.trigger.await_args_list

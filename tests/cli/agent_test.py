@@ -282,7 +282,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             ) as tg_patch,
             patch.object(
                 agent_cmds,
-                "OrchestratorExecutionResponse",
+                "OrchestratorResponse",
                 DummyOrchestratorResponse,
             ),
         ):
@@ -341,7 +341,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             ) as tg_patch,
             patch.object(
                 agent_cmds,
-                "OrchestratorExecutionResponse",
+                "OrchestratorResponse",
                 DummyOrchestratorResponse,
             ),
         ):

@@ -1,5 +1,5 @@
-from avalan.agent.orchestrator.response.orchestrator_execution_response import (
-    OrchestratorExecutionResponse,
+from avalan.agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
 )
 from avalan.agent import Operation, Specification, EngineEnvironment
 from avalan.entities import (
@@ -55,7 +55,7 @@ def _dummy_response(async_gen=True):
     return TextGenerationResponse(output_fn, use_async_generator=async_gen)
 
 
-class OrchestratorExecutionResponseIterationTestCase(IsolatedAsyncioTestCase):
+class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
     async def test_iteration_emits_events_and_end(self):
         engine = _DummyEngine()
         engine.tokenizer.encode.return_value = [42]
@@ -65,7 +65,7 @@ class OrchestratorExecutionResponseIterationTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        resp = OrchestratorExecutionResponse(
+        resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -123,14 +123,14 @@ def _string_response(text: str, *, async_gen: bool = False, inputs=None):
     )
 
 
-class OrchestratorExecutionResponseMethodsTestCase(IsolatedAsyncioTestCase):
+class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
     async def test_counts_and_conversions(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
         operation = _dummy_operation()
 
-        resp = OrchestratorExecutionResponse(
+        resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
             _string_response('{"value": "ok"}', async_gen=False),
             agent,
@@ -145,7 +145,7 @@ class OrchestratorExecutionResponseMethodsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, Example(value="ok"))
 
 
-class OrchestratorExecutionResponseEventTestCase(IsolatedAsyncioTestCase):
+class OrchestratorResponseEventTestCase(IsolatedAsyncioTestCase):
     async def test_event_manager_callback(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -154,7 +154,7 @@ class OrchestratorExecutionResponseEventTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        resp = OrchestratorExecutionResponse(
+        resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
             _string_response("hi", async_gen=False),
             agent,
@@ -170,7 +170,7 @@ class OrchestratorExecutionResponseEventTestCase(IsolatedAsyncioTestCase):
         )
 
 
-class OrchestratorExecutionResponseToolCallTestCase(IsolatedAsyncioTestCase):
+class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
     async def test_iteration_with_tool_call(self):
         engine = _DummyEngine()
         agent = AsyncMock(spec=EngineAgent)
@@ -210,7 +210,7 @@ class OrchestratorExecutionResponseToolCallTestCase(IsolatedAsyncioTestCase):
         )
         agent.return_value = inner_response
 
-        resp = OrchestratorExecutionResponse(
+        resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
             outer_response,
             agent,
@@ -249,7 +249,7 @@ class OrchestratorExecutionResponseToolCallTestCase(IsolatedAsyncioTestCase):
         self.assertIn(EventType.TOOL_RESULT, triggered)
 
 
-class OrchestratorExecutionResponseNoToolTestCase(IsolatedAsyncioTestCase):
+class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
     async def test_iteration_without_tool(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -264,7 +264,7 @@ class OrchestratorExecutionResponseNoToolTestCase(IsolatedAsyncioTestCase):
             lambda: gen(), use_async_generator=True
         )
 
-        resp = OrchestratorExecutionResponse(
+        resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
             response,
             agent,
