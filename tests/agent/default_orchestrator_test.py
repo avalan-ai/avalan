@@ -8,6 +8,9 @@ from avalan.entities import (
     MessageRole,
     TransformerEngineSettings,
 )
+from avalan.agent.orchestrator.response.orchestrator_execution_response import (
+    OrchestratorExecutionResponse,
+)
 from avalan.model import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
@@ -166,7 +169,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertIsInstance(result, TextGenerationResponse)
+        self.assertIsInstance(result, OrchestratorExecutionResponse)
         self.assertEqual(tokens, ["a", "b"])
 
         calls = event_manager.trigger.await_args_list

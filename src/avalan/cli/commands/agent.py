@@ -1,11 +1,12 @@
 from argparse import Namespace
 from ...agent.loader import OrchestrationLoader
-from ...agent.orchestrator.response.orchestrator_execution_response import OrchestratorExecutionResponse
+from ...agent.orchestrator.response.orchestrator_execution_response import (
+    OrchestratorExecutionResponse,
+)
 from ...cli import get_input
 from ...cli.commands.model import token_generation
-from ...event import Event, EventStats, EventType
+from ...event import EventStats
 from ...memory.permanent import VectorFunction
-from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...server import agents_server

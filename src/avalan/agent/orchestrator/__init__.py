@@ -12,7 +12,9 @@ from ...entities import (
     Message,
     MessageRole,
 )
-from .response.orchestrator_execution_response import OrchestratorExecutionResponse
+from .response.orchestrator_execution_response import (
+    OrchestratorExecutionResponse,
+)
 from ..renderer import Renderer, TemplateEngineAgent
 from ...event import Event, EventType
 from ...event.manager import EventManager
@@ -130,7 +132,9 @@ class Orchestrator:
     def event_manager(self) -> EventManager:
         return self._event_manager
 
-    async def __call__(self, input: Input, **kwargs) -> OrchestratorExecutionResponse:
+    async def __call__(
+        self, input: Input, **kwargs
+    ) -> OrchestratorExecutionResponse:
         if self.is_finished:
             self._operation_step = 0
 

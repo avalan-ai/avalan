@@ -1,6 +1,13 @@
 from ... import Operation
 from ...engine import EngineAgent
-from ....entities import Input, Message, MessageRole, Token, TokenDetail, ToolCall
+from ....entities import (
+    Input,
+    Message,
+    MessageRole,
+    Token,
+    TokenDetail,
+    ToolCall,
+)
 from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model import TextGenerationResponse
@@ -46,12 +53,22 @@ class OrchestratorExecutionResponse(
         self._operation = operation
         self._engine_args = engine_args
         self._event_manager = event_manager
-        self._tool = tool
+        self._tool = None if tool and tool.is_empty else tool
+        self._finished = False
+        self._step = 0
+        if self._event_manager:
+
+            async def _on_consumed() -> None:
+                await self._event_manager.trigger(
+                    Event(type=EventType.STREAM_END)
+                )
+
+            self._response.add_done_callback(_on_consumed)
 
     @property
     def input_token_count(self) -> int:
         return self._response.input_token_count
-        
+
     async def to_str(self) -> str:
         return await self._response.to_str()
 
@@ -68,6 +85,7 @@ class OrchestratorExecutionResponse(
         self._tool_call_events = Queue()
         self._tool_process_events = Queue()
         self._tool_result_events = Queue()
+        self._step = 0
         return self
 
     async def __anext__(self) -> Union[Token, TokenDetail, Event]:
@@ -143,9 +161,7 @@ class OrchestratorExecutionResponse(
             )
 
             messages = (
-                self._input
-                if isinstance(self._input, list)
-                else [self._input]
+                self._input if isinstance(self._input, list) else [self._input]
             )
             messages.extend(tool_messages)
 
@@ -159,16 +175,50 @@ class OrchestratorExecutionResponse(
             self._response = inner_response
             self.__aiter__()
 
-        token = await self._response_iterator.__anext__()
+        try:
+            token = await self._response_iterator.__anext__()
+        except StopAsyncIteration:
+            if self._event_manager and not self._finished:
+                self._finished = True
+                await self._event_manager.trigger(Event(type=EventType.END))
+            raise
+
         return await self._emit(token)
 
     async def _emit(
         self, token: Union[Token, TokenDetail, str]
     ) -> Union[Token, TokenDetail, Event]:
+        token_str = token.token if hasattr(token, "token") else token
+
+        if self._event_manager:
+            token_id = getattr(token, "id", None)
+            tokenizer = (
+                self._engine_agent.engine.tokenizer
+                if self._engine_agent.engine
+                else None
+            )
+            if token_id is None and tokenizer:
+                ids = tokenizer.encode(token_str, add_special_tokens=False)
+                token_id = ids[0] if ids else None
+
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={
+                        "token_id": token_id,
+                        "model_id": self._engine_agent.engine.model_id,
+                        "token": token_str,
+                        "step": self._step,
+                    },
+                )
+            )
+
+        self._step += 1
+
         if not self._tool:
             return token
 
-        self._buffer.write(token.token if hasattr(token, "token") else token)
+        self._buffer.write(token_str)
 
         if self._event_manager:
             await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
