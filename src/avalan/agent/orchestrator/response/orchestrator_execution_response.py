@@ -7,7 +7,7 @@ from ....model import TextGenerationResponse
 from ....tool.manager import ToolManager
 from queue import Queue
 from io import StringIO
-from typing import AsyncIterator, Union
+from typing import Any, AsyncIterator, Union
 
 
 class OrchestratorExecutionResponse(
