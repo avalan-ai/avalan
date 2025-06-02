@@ -51,6 +51,15 @@ class OrchestratorExecutionResponse(
     @property
     def input_token_count(self) -> int:
         return self._response.input_token_count
+        
+    async def to_str(self) -> str:
+        return await self._response.to_str()
+
+    async def to_json(self) -> str:
+        return await self._response.to_json()
+
+    async def to(self, entity_class: type) -> Any:
+        return await self._response.to(entity_class)
 
     def __aiter__(self) -> "OrchestratorExecutionResponse":
         self._response_iterator = self._response.__aiter__()
