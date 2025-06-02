@@ -12,15 +12,11 @@ from ...entities import (
     Message,
     MessageRole,
 )
-from .response.orchestrator_response import (
-    ObservableTextGenerationResponse,
-    OrchestratorResponse,
-)
+from .response.orchestrator_execution_response import OrchestratorExecutionResponse
 from ..renderer import Renderer, TemplateEngineAgent
 from ...event import Event, EventType
 from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
-from ...model import TextGenerationResponse
 from ...model.engine import Engine
 from ...model.manager import ModelManager
 from ...tool.manager import ToolManager
@@ -134,7 +130,7 @@ class Orchestrator:
     def event_manager(self) -> EventManager:
         return self._event_manager
 
-    async def __call__(self, input: Input, **kwargs) -> OrchestratorResponse:
+    async def __call__(self, input: Input, **kwargs) -> OrchestratorExecutionResponse:
         if self.is_finished:
             self._operation_step = 0
 
@@ -188,19 +184,7 @@ class Orchestrator:
 
         self._last_engine_agent = engine_agent
 
-        if isinstance(result, TextGenerationResponse):
-            result = ObservableTextGenerationResponse(
-                result,
-                self._event_manager,
-                engine_agent.engine.model_id,
-                engine_agent.engine.tokenizer,
-            )
-
-        if self._tool.is_empty:
-            await self._event_manager.trigger(Event(type=EventType.END))
-            return result
-
-        return OrchestratorResponse(
+        return OrchestratorExecutionResponse(
             input,
             result,
             engine_agent,
