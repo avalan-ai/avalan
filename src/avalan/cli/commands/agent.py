@@ -1,6 +1,6 @@
 from argparse import Namespace
 from ...agent.loader import OrchestrationLoader
-from ...agent.orchestrator import OrchestratorResponse
+from ...agent.orchestrator.response.orchestrator_execution_response import OrchestratorExecutionResponse
 from ...cli import get_input
 from ...cli.commands.model import token_generation
 from ...event import Event, EventStats, EventType
@@ -246,69 +246,22 @@ async def agent_run(
             if not args.quiet and not args.stats:
                 console.print(_i["agent_output"] + " ", end="")
 
-            assert isinstance(output, OrchestratorResponse)
+            assert isinstance(output, OrchestratorExecutionResponse)
 
-            tool_status = None
-            async for response in output:
-                is_text = isinstance(response, TextGenerationResponse)
-                is_event = isinstance(response, Event)
-                assert is_event or is_text
-
-                if is_text:
-                    if not use_async_generator:
-                        console.print(await output.to_str())
-                    else:
-                        await token_generation(
-                            args=args,
-                            console=console,
-                            theme=theme,
-                            logger=logger,
-                            orchestrator=orchestrator,
-                            event_stats=event_stats,
-                            lm=orchestrator.engine,
-                            input_string=input_string,
-                            response=response,
-                            dtokens_pick=dtokens_pick,
-                            display_tokens=display_tokens,
-                            with_stats=with_stats,
-                        )
-                elif is_event and not args.quiet:
-                    if response.type == EventType.TOOL_EXECUTE:
-                        call = (
-                            response.payload.get("call")
-                            if response.payload
-                            else None
-                        )
-                        name = getattr(call, "name", "?")
-                        tool_status = console.status(
-                            _("Executing tool {tool}...").format(tool=name),
-                            spinner=theme.get_spinner("thinking"),
-                            refresh_per_second=refresh_per_second,
-                        )
-                        console.print("")
-                        console.print(tool_status)
-                    elif response.type == EventType.TOOL_RESULT:
-                        result = (
-                            response.payload.get("result")
-                            if response.payload
-                            else None
-                        )
-                        name = getattr(result, "name", "?")
-                        value = getattr(result, "result", result)
-                        msg = _(
-                            "Tool {tool} finished with result {result}"
-                        ).format(
-                            tool=name,
-                            result=value,
-                        )
-                        if tool_status:
-                            tool_status.update(msg)
-                            console.print(tool_status)
-                            console.print("")
-                            tool_status.__exit__(None, None, None)
-                            tool_status = None
-                        else:
-                            console.print(msg)
+            await token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=orchestrator,
+                event_stats=event_stats,
+                lm=orchestrator.engine,
+                input_string=input_string,
+                response=output,
+                dtokens_pick=dtokens_pick,
+                display_tokens=display_tokens,
+                with_stats=with_stats,
+            )
 
             if args.conversation:
                 console.print("")

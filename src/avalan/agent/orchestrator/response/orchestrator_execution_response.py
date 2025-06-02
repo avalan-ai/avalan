@@ -1,12 +1,13 @@
 from ... import Operation
 from ...engine import EngineAgent
-from ....entities import Input, Message, MessageRole, Token, TokenDetail
+from ....entities import Input, Message, MessageRole, Token, TokenDetail, ToolCall
 from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model import TextGenerationResponse
 from ....tool.manager import ToolManager
+from queue import Queue
 from io import StringIO
-from typing import Any, AsyncIterator, Union
+from typing import AsyncIterator, Union
 
 
 class OrchestratorExecutionResponse(
@@ -15,17 +16,17 @@ class OrchestratorExecutionResponse(
     """Async iterator handling tool execution during streaming."""
 
     _response: TextGenerationResponse
+    _response_iterator: AsyncIterator[Union[Token, TokenDetail, Event]] | None
     _engine_agent: EngineAgent
     _operation: Operation
     _engine_args: dict
     _event_manager: EventManager | None
     _tool: ToolManager | None
     _buffer: StringIO
-    _tool_call_events: list[Event]
-    _current_tool_event: int
-    _current_tool_event_call: int
-    _tool_result_events: list[Event]
-    _current_tool_result: int
+    _calls: Queue[ToolCall]
+    _tool_call_events: Queue[Event]
+    _tool_process_events: Queue[Event]
+    _tool_result_events: Queue[Event]
     _input: Input
 
     def __init__(
@@ -38,6 +39,7 @@ class OrchestratorExecutionResponse(
         event_manager: EventManager | None = None,
         tool: ToolManager | None = None,
     ) -> None:
+        assert input and response and engine_agent and operation
         self._input = input
         self._response = response
         self._engine_agent = engine_agent
@@ -45,28 +47,45 @@ class OrchestratorExecutionResponse(
         self._engine_args = engine_args
         self._event_manager = event_manager
         self._tool = tool
-        self._buffer = StringIO()
-        self._tool_call_events = []
-        self._current_tool_event = -1
-        self._current_tool_event_call = 0
-        self._tool_result_events = []
-        self._current_tool_result = 0
+
+    @property
+    def input_token_count(self) -> int:
+        return self._response.input_token_count
 
     def __aiter__(self) -> "OrchestratorExecutionResponse":
-        self._response.__aiter__()
+        self._response_iterator = self._response.__aiter__()
+        self._buffer = StringIO()
+        self._calls = Queue()
+        self._tool_call_events = Queue()
+        self._tool_process_events = Queue()
+        self._tool_result_events = Queue()
         return self
 
     async def __anext__(self) -> Union[Token, TokenDetail, Event]:
-        if self._tool_call_events:
-            if self._current_tool_event == -1:
-                self._current_tool_event = 0
-                event = self._tool_call_events[self._current_tool_event]
-                assert event.type == EventType.TOOL_PROCESS
-                return event
+        assert self._response_iterator
 
-            event = self._tool_call_events[self._current_tool_event]
-            calls: list[Any] = event.payload or []
-            call = calls[self._current_tool_event_call]
+        total_process_events = self._tool_process_events.qsize()
+        if total_process_events:
+            event = self._tool_process_events.get()
+            assert event.type == EventType.TOOL_PROCESS
+            self._tool_call_events.put(event)
+            return event
+
+        total_call_events = self._tool_call_events.qsize()
+        if total_call_events:
+            event = self._tool_call_events.get()
+            assert event.type == EventType.TOOL_PROCESS
+            await self._event_manager.trigger(event)
+
+            calls: list[ToolCall] = event.payload or []
+            if calls:
+                for call in calls:
+                    assert isinstance(call, ToolCall)
+                    self._calls.put(call)
+
+        total_calls = self._calls.qsize()
+        if total_calls:
+            call = self._calls.get()
 
             execute_event = Event(
                 type=EventType.TOOL_EXECUTE,
@@ -83,62 +102,55 @@ class OrchestratorExecutionResponse(
             )
             if self._event_manager:
                 await self._event_manager.trigger(result_event)
-            self._tool_result_events.append(result_event)
 
-            if self._current_tool_event_call + 1 < len(calls):
-                self._current_tool_event_call += 1
-            else:
-                self._current_tool_event += 1
-                self._current_tool_event_call = 0
-                if self._current_tool_event >= len(self._tool_call_events):
-                    self._current_tool_event = -1
-                    self._tool_call_events = []
+            self._tool_result_events.put(result_event)
 
             return result_event
 
-        if self._tool_result_events and self._current_tool_result < len(
-            self._tool_result_events
-        ):
-            event = self._tool_result_events[self._current_tool_result]
-            self._current_tool_result += 1
+        # Wait untill all results are collected
+        total_results = self._tool_result_events.qsize()
+        if total_results and not total_call_events and not total_calls:
+            result_events: list[Event] = []
+            while not self._tool_result_events.empty():
+                result_event = self._tool_result_events.get()
+                result_events.append(result_event)
 
-            if self._current_tool_result == len(self._tool_result_events):
-                tool_messages = [
-                    Message(
-                        role=MessageRole.TOOL,
-                        name=e.payload["result"].name,
-                        arguments=e.payload["result"].arguments,
-                        content=e.payload["result"].result,
-                    )
-                    for e in self._tool_result_events
-                ]
-
-                assert self._input and (
-                    (
-                        isinstance(self._input, list)
-                        and isinstance(self._input[0], Message)
-                    )
-                    or isinstance(self._input, Message)
+            tool_messages = [
+                Message(
+                    role=MessageRole.TOOL,
+                    name=e.payload["result"].name,
+                    arguments=e.payload["result"].arguments,
+                    content=e.payload["result"].result,
                 )
+                for e in result_events
+            ]
 
-                messages = (
-                    self._input
-                    if isinstance(self._input, list)
-                    else [self._input]
+            assert self._input and (
+                (
+                    isinstance(self._input, list)
+                    and isinstance(self._input[0], Message)
                 )
-                messages.extend(tool_messages)
+                or isinstance(self._input, Message)
+            )
 
-                self._response = await self._engine_agent(
-                    self._operation.specification,
-                    messages,
-                    **self._engine_args,
-                )
-                self._current_tool_result = 0
-                self._tool_result_events = []
+            messages = (
+                self._input
+                if isinstance(self._input, list)
+                else [self._input]
+            )
+            messages.extend(tool_messages)
 
-            return event
+            inner_response = await self._engine_agent(
+                self._operation.specification,
+                messages,
+                **self._engine_args,
+            )
+            assert inner_response
 
-        token = await self._response.__anext__()
+            self._response = inner_response
+            self.__aiter__()
+
+        token = await self._response_iterator.__anext__()
         return await self._emit(token)
 
     async def _emit(
@@ -160,7 +172,7 @@ class OrchestratorExecutionResponse(
         if not calls:
             return token
 
-        self._tool_call_events.append(
+        self._tool_process_events.put(
             Event(type=EventType.TOOL_PROCESS, payload=calls)
         )
 

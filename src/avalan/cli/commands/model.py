@@ -1,6 +1,7 @@
 from argparse import Namespace
 from asyncio import as_completed, create_task, gather, sleep, to_thread
 from ...agent.orchestrator import Orchestrator
+from ...event import Event
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
 from ...entities import GenerationSettings, Model, Token
@@ -348,6 +349,9 @@ async def token_generation(
         last_current_dtoken: Token | None = None
 
         async for token in response:
+            if isinstance(token, Event):
+                continue
+
             text_token = token.token if isinstance(token, Token) else token
 
             total_tokens = total_tokens + 1
