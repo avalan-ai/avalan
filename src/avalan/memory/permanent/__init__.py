@@ -1,7 +1,7 @@
 from abc import abstractmethod
+from ...entities import EngineMessage, MessageRole
 from ...memory import MessageMemory, MemoryStore
 from ...memory.partitioner.text import TextPartition
-from ...model.entities import EngineMessage, MessageRole
 from ...model.nlp.sentence import SentenceTransformerModel
 from dataclasses import dataclass
 from datetime import datetime

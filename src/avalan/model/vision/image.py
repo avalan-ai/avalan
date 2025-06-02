@@ -1,12 +1,12 @@
 from ...compat import override
-from ...model import TextGenerationVendor
-from ...model.entities import (
+from ...entities import (
     GenerationSettings,
     ImageEntity,
     ImageTextGenerationLoaderClass,
     Input,
     MessageRole,
 )
+from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
 from ...model.transformer import TransformerModel

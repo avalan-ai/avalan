@@ -1,3 +1,4 @@
+from ....entities import EngineMessage, EngineMessageScored
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     PermanentMessage,
@@ -8,7 +9,6 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
-from ....model.entities import EngineMessage, EngineMessageScored
 from datetime import datetime, timezone
 from pgvector.psycopg import Vector
 from typing import Optional

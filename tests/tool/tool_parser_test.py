@@ -1,4 +1,4 @@
-from avalan.model.entities import ToolCall, ToolFormat
+from avalan.entities import ToolCall, ToolFormat
 from avalan.tool.parser import ToolCallParser
 from unittest import TestCase, main
 

@@ -1,4 +1,5 @@
 from ...agent.orchestrator import Orchestrator
+from ...entities import GenerationSettings, Message, MessageRole
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -9,7 +10,6 @@ from ...server.entities import (
     ChatMessage,
     ChatCompletionUsage,
 )
-from ...model.entities import GenerationSettings, Message, MessageRole
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from time import time

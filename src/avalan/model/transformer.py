@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from ..model.engine import Engine
-from ..model.entities import (
+from ..entities import (
     Input,
     Token,
     TransformerEngineSettings,
 )
+from ..model.engine import Engine
 from logging import Logger
 from tokenizers import AddedToken
 from torch import Tensor

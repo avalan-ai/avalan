@@ -1,6 +1,6 @@
 from argparse import Namespace
 from ...cli import get_input
-from ...model.entities import Token, TransformerEngineSettings
+from ...entities import Token, TransformerEngineSettings
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.generation import TextGenerationModel
 from logging import Logger

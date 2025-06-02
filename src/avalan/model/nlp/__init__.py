@@ -1,6 +1,6 @@
 from abc import ABC
+from ...entities import GenerationSettings, WeightType
 from ...model.transformer import TransformerModel
-from ...model.entities import GenerationSettings, WeightType
 from contextlib import nullcontext
 from torch import (
     dtype,

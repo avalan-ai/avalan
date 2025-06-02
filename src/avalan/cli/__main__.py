@@ -24,14 +24,14 @@ from ..cli.commands.model import (
 )
 from ..cli.commands.tokenizer import tokenize
 from ..cli.theme.fancy import FancyTheme
-from ..memory.permanent import VectorFunction
-from ..model.entities import (
+from ..entities import (
     AttentionImplementation,
     DistanceType,
     TextGenerationLoaderClass,
     User,
     WeightType,
 )
+from ..memory.permanent import VectorFunction
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.transformer import TransformerModel
 from ..utils import logger_replace
@@ -310,6 +310,12 @@ class CLI:
             const=15,  # 15 is the default if argument present but no value
             default=None,
             help="How many tokens with full information to display at a time",
+        )
+        model_inference_display_parser.add_argument(
+            "--tool-events",
+            type=int,
+            default=2,
+            help="How many tool events to show on tool call panel",
         )
 
         # Agent command

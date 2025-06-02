@@ -3,12 +3,12 @@ from asyncio import to_thread
 from ...cli import get_input
 from ...cli.commands import get_model_settings
 from ...cli.commands.model import model_display
+from ...entities import DistanceType, SearchMatch, Similarity
 from ...memory.partitioner.text import TextPartitioner, TextPartition
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.permanent import MemoryType
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from uuid import UUID
-from ...model.entities import DistanceType, SearchMatch, Similarity
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from faiss import IndexFlatL2

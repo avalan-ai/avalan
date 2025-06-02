@@ -1,6 +1,6 @@
 from ...compat import override
+from ...entities import Input
 from ...model import TextGenerationVendor
-from ...model.entities import Input
 from ...model.nlp import BaseNLPModel
 from contextlib import nullcontext
 from numpy import ndarray

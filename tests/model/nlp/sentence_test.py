@@ -1,4 +1,4 @@
-from avalan.model.entities import TransformerEngineSettings
+from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.sentence import SentenceTransformerModel
 from avalan.model.transformer import AutoTokenizer
 from transformers import PreTrainedTokenizerFast

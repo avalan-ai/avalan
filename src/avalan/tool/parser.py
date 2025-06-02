@@ -1,5 +1,5 @@
 from ast import literal_eval
-from ..model.entities import ToolCall, ToolFormat
+from ..entities import ToolCall, ToolFormat
 from json import JSONDecodeError, loads
 from re import DOTALL, search
 from typing import Any, Optional, Tuple

@@ -3,12 +3,15 @@ from avalan.agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from avalan.agent.renderer import TemplateEngineAgent
 from avalan.event.manager import EventManager
 from avalan.event import EventType
-from avalan.model import TextGenerationResponse
-from avalan.model.entities import (
+from avalan.entities import (
     EngineUri,
     MessageRole,
     TransformerEngineSettings,
 )
+from avalan.agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
+)
+from avalan.model import TextGenerationResponse
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -68,7 +71,7 @@ class DefaultOrchestratorInitTestCase(TestCase):
         self.assertEqual(op.specification.template_vars, {"y": 2})
 
 
-class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
+class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
         self.addCleanup(patch.stopall)
@@ -166,7 +169,7 @@ class DefaultOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertIsInstance(result, TextGenerationResponse)
+        self.assertIsInstance(result, OrchestratorResponse)
         self.assertEqual(tokens, ["a", "b"])
 
         calls = event_manager.trigger.await_args_list

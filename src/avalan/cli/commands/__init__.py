@@ -1,8 +1,7 @@
+from ...entities import EngineUri
+from ...model.hubs.huggingface import HuggingfaceHub
 from argparse import Namespace
 from logging import Logger
-
-from ...model.entities import EngineUri
-from ...model.hubs.huggingface import HuggingfaceHub
 
 
 def get_model_settings(

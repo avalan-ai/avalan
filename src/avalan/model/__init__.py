@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from ..model.entities import (
+from ..entities import (
     GenerationSettings,
     ImageEntity,
     Message,
@@ -50,7 +50,7 @@ class TemplateMessage(TypedDict):
     content: str
 
 
-class TextGenerationResponse:
+class TextGenerationResponse(AsyncIterator[Union[Token | TokenDetail | str]]):
     _json_patterns: list[Pattern] = [
         # Markdown code fence with explicit json tag
         compile(r"```json\s*(\{.*?\})\s*```", DOTALL),

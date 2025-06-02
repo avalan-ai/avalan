@@ -6,19 +6,18 @@ from .. import (
     Operation,
 )
 from ..engine import EngineAgent
-from .response import ObservableTextGenerationResponse, OrchestratorResponse
-from ..renderer import Renderer, TemplateEngineAgent
-from ...event import Event, EventType
-from ...event.manager import EventManager
-from ...memory.manager import MemoryManager
-from ...model import TextGenerationResponse
-from ...model.engine import Engine
-from ...model.entities import (
+from ...entities import (
     EngineMessage,
     Input,
     Message,
     MessageRole,
 )
+from .response.orchestrator_response import OrchestratorResponse
+from ..renderer import Renderer, TemplateEngineAgent
+from ...event import Event, EventType
+from ...event.manager import EventManager
+from ...memory.manager import MemoryManager
+from ...model.engine import Engine
 from ...model.manager import ModelManager
 from ...tool.manager import ToolManager
 from contextlib import ExitStack
@@ -184,18 +183,6 @@ class Orchestrator:
         )
 
         self._last_engine_agent = engine_agent
-
-        if isinstance(result, TextGenerationResponse):
-            result = ObservableTextGenerationResponse(
-                result,
-                self._event_manager,
-                engine_agent.engine.model_id,
-                engine_agent.engine.tokenizer,
-            )
-
-        if self._tool.is_empty:
-            await self._event_manager.trigger(Event(type=EventType.END))
-            return result
 
         return OrchestratorResponse(
             input,

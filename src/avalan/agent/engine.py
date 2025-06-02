@@ -1,15 +1,15 @@
 from abc import ABC, abstractmethod
 from ..agent import Specification
-from ..memory.manager import MemoryManager
-from ..model import TextGenerationResponse
-from ..model.engine import Engine
-from ..model.entities import (
+from ..entities import (
     EngineMessage,
     GenerationSettings,
     Input,
     Message,
     MessageRole,
 )
+from ..memory.manager import MemoryManager
+from ..model import TextGenerationResponse
+from ..model.engine import Engine
 from ..model.nlp.text.vendor import TextGenerationVendorModel
 from ..tool.manager import ToolManager
 from ..event import Event, EventType

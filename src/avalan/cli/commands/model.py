@@ -1,11 +1,12 @@
 from argparse import Namespace
 from asyncio import as_completed, create_task, gather, sleep, to_thread
 from ...agent.orchestrator import Orchestrator
+from ...event import Event, EventType
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
+from ...entities import GenerationSettings, Model, Token, TokenDetail
 from ...event import EventStats
 from ...model import TextGenerationResponse
-from ...model.entities import GenerationSettings, Model, Token
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...model.criteria import KeywordStoppingCriteria
@@ -212,6 +213,7 @@ async def model_run(
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
                 with_stats=not args.quiet,
+                tool_events_limit=args.tool_events,
             )
 
 
@@ -306,6 +308,7 @@ async def token_generation(
     *,
     display_tokens: int,
     dtokens_pick: int,
+    tool_events_limit: int | None,
     with_stats: bool = True,
 ):
     # If no statistics needed, return as early as possible
@@ -327,7 +330,8 @@ async def token_generation(
         args.start_thinking if hasattr(args, "start_thinking") else False
     )
     tokens = []
-    text_tokens = []
+    text_tokens: list[Union[Token, TokenDetail, str]] = []
+    events: list[Event] = []
     total_tokens = 0
     frame_minimum_pause_ms = (
         100 if display_pause > 0 and display_tokens > 0 else 0
@@ -348,7 +352,21 @@ async def token_generation(
         last_current_dtoken: Token | None = None
 
         async for token in response:
-            text_token = token.token if isinstance(token, Token) else token
+            if isinstance(token, Event):
+                event = token
+
+                if event.type == EventType.TOOL_MODEL_RESPONSE:
+                    tokens = []
+                    text_tokens = []
+                    inner_response = event.payload["response"]
+                    assert isinstance(inner_response, TextGenerationResponse)
+                    if inner_response.input_token_count:
+                        input_token_count = inner_response.input_token_count
+                else:
+                    events.append(event)
+            else:
+                text_token = token.token if isinstance(token, Token) else token
+                text_tokens.append(text_token)
 
             total_tokens = total_tokens + 1
             ellapsed = perf_counter() - start
@@ -356,7 +374,6 @@ async def token_generation(
                 ttft = ellapsed
             if ttnt is None and total_tokens >= display_time_to_n_token:
                 ttnt = ellapsed
-            text_tokens.append(text_token)
 
             if display_tokens and isinstance(token, Token):
                 tokens.append(token)
@@ -393,12 +410,14 @@ async def token_generation(
                 tokens or None,
                 input_token_count,
                 total_tokens,
+                events,
                 ttft,
                 ttnt,
                 ellapsed,
                 console.width,
                 logger,
                 event_stats,
+                tool_events_limit=tool_events_limit,
                 height=6,
                 maximum_frames=1,
                 start_thinking=start_thinking,

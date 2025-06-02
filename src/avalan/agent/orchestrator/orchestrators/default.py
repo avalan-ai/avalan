@@ -1,8 +1,8 @@
 from ....agent import EngineEnvironment, Goal, Operation, Specification
 from ....agent.orchestrator import Orchestrator
+from ....entities import EngineUri, TransformerEngineSettings
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
-from ....model.entities import EngineUri, TransformerEngineSettings
 from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
 from logging import Logger

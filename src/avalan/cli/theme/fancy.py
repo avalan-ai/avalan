@@ -1,7 +1,6 @@
 from ...agent.orchestrator import Orchestrator
-from ...event import EventStats, EventType
-from ...memory.partitioner.text import TextPartition
-from ...model.entities import (
+from ...cli.theme import Data, Spinner, Theme
+from ...entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
@@ -15,7 +14,8 @@ from ...model.entities import (
     TokenizerConfig,
     User,
 )
-from ...cli.theme import Data, Spinner, Theme
+from ...event import Event, EventStats, EventType
+from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
 from humanize import clamp, intcomma, intword, naturalday, naturalsize
@@ -1353,6 +1353,7 @@ class FancyTheme(Theme):
         tokens: Optional[list[Token]],
         input_token_count: int,
         total_tokens: int,
+        tool_events: list[Event] | None,
         ttft: float,
         ttnt: float,
         ellapsed: float,
@@ -1361,6 +1362,7 @@ class FancyTheme(Theme):
         event_stats: Optional[EventStats] = None,
         maximum_frames: Optional[int] = None,
         logits_count: Optional[int] = None,
+        tool_events_limit: int | None = None,
         think_height: int = 6,
         think_padding: int = 1,
         height: int = 12,
@@ -1370,7 +1372,7 @@ class FancyTheme(Theme):
         limit_answer_height: bool = False,
         start_thinking: bool = False,
     ) -> Generator[Tuple[Optional[Token], RenderableType], None, None]:
-        _, _f, _l = self._, self._f, logger.debug
+        _, _n, _f, _l = self._, self._n, self._f, logger.debug
 
         # Prepare data for rendering
         output = "".join(text_tokens)
@@ -1531,6 +1533,56 @@ class FancyTheme(Theme):
             else None
         )
 
+        tool_event_log: list[str] | None = (
+            [
+                _(
+                    "Executed tool {tool} with {total_arguments} arguments. Got result: {result}"
+                ).format(
+                    tool=event.payload["result"].name,
+                    total_arguments=len(
+                        event.payload["result"].arguments or []
+                    ),
+                    result="[spring_green3]"
+                    + event.payload["result"].result
+                    + "[/spring_green3]",
+                )
+                if event.type == EventType.TOOL_RESULT
+                else _n(
+                    "Executing {total_calls} tool: {calls}",
+                    "Executing {total_calls} tools: {calls}",
+                    len(event.payload),
+                ).format(
+                    total_calls=len(event.payload),
+                    calls="[spring_green3]"
+                    + "[/spring_green3], [spring_green3]".join(
+                        [call.name for call in event.payload]
+                    )
+                    + "[/spring_green3]",
+                )
+                if event.type == EventType.TOOL_PROCESS
+                else None
+                for event in tool_events
+            ]
+            if tool_events and tool_events_limit is None or tool_events_limit
+            else None
+        )
+        if tool_event_log and tool_events_limit:
+            tool_event_log = tool_event_log[-tool_events_limit:]
+
+        tools_panel = (
+            Panel(
+                "[dark_green]" + "\n".join(tool_event_log) + "[/dark_green]",
+                title=_("Tool calls"),
+                title_align="left",
+                height=2 + (tool_events_limit or 2),
+                padding=(0, 0, 0, 1),
+                expand=True,
+                box=box.SQUARE,
+            )
+            if tool_event_log
+            else None
+        )
+
         # Quick return of no need for token details
         if display_token_size is None or tokens is None:
             yield (
@@ -1539,6 +1591,7 @@ class FancyTheme(Theme):
                     *_lf(
                         [
                             think_pannel or None,
+                            tools_panel or None,
                             answer_panel or None,
                         ]
                     )
@@ -1723,6 +1776,7 @@ class FancyTheme(Theme):
                     *_lf(
                         [
                             think_pannel or None,
+                            tools_panel or None,
                             answer_panel or None,
                             tokens_distribution_panel
                             if tokens and tokens_distribution_panel

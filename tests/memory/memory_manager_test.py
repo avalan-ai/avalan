@@ -1,7 +1,7 @@
+from avalan.entities import EngineMessage, Message, MessageRole
 from avalan.memory.manager import MemoryManager
 from avalan.memory import RecentMessageMemory
 from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
-from avalan.model.entities import EngineMessage, Message, MessageRole
 from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
