@@ -17,6 +17,8 @@ version:
 		echo "Usage: make version X.Y.Z"; \
 		exit 1; \
 	fi
+	git checkout main
+	git pull --rebase
 	git checkout -b "release/v$(VERSION)"
 	poetry version "$(VERSION)"
 	git add pyproject.toml
