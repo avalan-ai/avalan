@@ -1,7 +1,8 @@
 from avalan.entities import ToolCall, ToolFormat
 from avalan.tool.parser import ToolCallParser
 from unittest import TestCase, main
-from uuid import uuid4
+from unittest.mock import patch
+from uuid import uuid4 as _uuid4
 
 
 class ToolCallParserFormatTestCase(TestCase):
@@ -76,46 +77,89 @@ class ToolCallParserTagTestCase(TestCase):
             '<tool_call>{"name": "calculator", '
             '"arguments": {"expression": "1 + 1"}}</tool_call>'
         )
-        expected = [
-            ToolCall(id=uuid4(), name="calculator", arguments={"expression": "1 + 1"})
-        ]
-        self.assertEqual(self.parser(text), expected)
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="calculator",
+                    arguments={"expression": "1 + 1"},
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
 
     def test_single_quotes(self):
         text = (
             "<tool_call>{'name': 'calculator', 'arguments': {'expression': '2'}}"
             "</tool_call>"
         )
-        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
-        self.assertEqual(self.parser(text), expected)
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id, name="calculator", arguments={"expression": "2"}
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
 
     def test_multiple(self):
         text = (
             '<tool_call>{"name": "calculator", "arguments": {"expression": "1"}}</tool_call>'
             '<tool_call>{"name": "calculator", "arguments": {"expression": "2"}}</tool_call>'
         )
-        expected = [
-            ToolCall(id=uuid4(), name="calculator", arguments={"expression": "1"}),
-            ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"}),
-        ]
-        self.assertEqual(self.parser(text), expected)
+        first_id = _uuid4()
+        second_id = _uuid4()
+        with patch(
+            "avalan.tool.parser.uuid4", side_effect=[first_id, second_id]
+        ):
+            expected = [
+                ToolCall(
+                    id=first_id,
+                    name="calculator",
+                    arguments={"expression": "1"},
+                ),
+                ToolCall(
+                    id=second_id,
+                    name="calculator",
+                    arguments={"expression": "2"},
+                ),
+            ]
+            self.assertEqual(self.parser(text), expected)
 
     def test_with_name_attr(self):
         text = '<tool_call name="calculator">{"expression": "2"}</tool_call>'
-        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
-        self.assertEqual(self.parser(text), expected)
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id, name="calculator", arguments={"expression": "2"}
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
 
     def test_self_closing(self):
         text = (
             '<tool_call name="calculator" arguments=\'{"expression": "2"}\'/>'
         )
-        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
-        self.assertEqual(self.parser(text), expected)
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id, name="calculator", arguments={"expression": "2"}
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
 
     def test_tool_tag(self):
         text = '<tool name="calculator">{"expression": "2"}</tool>'
-        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
-        self.assertEqual(self.parser(text), expected)
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id, name="calculator", arguments={"expression": "2"}
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
 
     def test_invalid_json(self):
         text = '<tool_call>{"name": "calculator", "arguments": {"expression": "2"}</tool_call>'
@@ -124,8 +168,14 @@ class ToolCallParserTagTestCase(TestCase):
     def test_eos_token(self):
         parser = ToolCallParser(eos_token="<END>")
         text = '<tool_call>{"name": "calculator", "arguments": {"expression": "2"}}</tool_call><END>'
-        expected = [ToolCall(id=uuid4(), name="calculator", arguments={"expression": "2"})]
-        self.assertEqual(parser(text), expected)
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id, name="calculator", arguments={"expression": "2"}
+                )
+            ]
+            self.assertEqual(parser(text), expected)
 
     def test_no_tool_call(self):
         self.assertIsNone(self.parser("hello"))
