@@ -1,4 +1,4 @@
-.PHONY: install lint test release
+.PHONY: install lint release test version
 
 install:
 	poetry sync --extras all
@@ -10,6 +10,18 @@ lint:
 test:
 	poetry sync --extras test
 	poetry run pytest --verbose -s
+
+version:
+	$(eval VERSION := $(filter-out $@,$(MAKECMDGOALS)))
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make version X.Y.Z"; \
+		exit 1; \
+	fi
+	git checkout -b "release/v$(VERSION)"
+	poetry version "$(VERSION)"
+	git add pyproject.toml
+	git commit -m "Bumping version to v$(VERSION)"
+	git push -u origin "release/v$(VERSION)"
 
 release:
 	$(eval VERSION := $(filter-out $@,$(MAKECMDGOALS)))
