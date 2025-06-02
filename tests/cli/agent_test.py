@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 from argparse import Namespace
 from rich.syntax import Syntax
 
@@ -280,9 +280,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
-            patch.object(agent_cmds, "TextGenerationResponse", DummyResponse),
             patch.object(
-                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+                agent_cmds,
+                "OrchestratorExecutionResponse",
+                DummyOrchestratorResponse,
             ),
         ):
             self.orch.return_value = DummyOrchestratorResponse()
@@ -339,7 +340,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
             patch.object(
-                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+                agent_cmds,
+                "OrchestratorExecutionResponse",
+                DummyOrchestratorResponse,
             ),
         ):
             self.orch.return_value = DummyOrchestratorResponse()
@@ -348,27 +351,14 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         self.orch.assert_awaited_once_with("hi", use_async_generator=True)
-        tg_patch.assert_not_called()
+        tg_patch.assert_awaited_once()
 
-        self.assertEqual(len(self.console.status.call_args_list), 2)
-        self.console.status.assert_has_calls(
-            [
-                call(
-                    "Loading agent...",
-                    spinner=self.theme.get_spinner.return_value,
-                    refresh_per_second=1,
-                ),
-                call(
-                    "Executing tool calc...",
-                    spinner=self.theme.get_spinner.return_value,
-                    refresh_per_second=1,
-                ),
-            ]
+        self.assertEqual(len(self.console.status.call_args_list), 1)
+        self.console.status.assert_called_with(
+            "Loading agent...",
+            spinner=self.theme.get_spinner.return_value,
+            refresh_per_second=1,
         )
-        status_tool.update.assert_called_once_with(
-            "Tool calc finished with result 2"
-        )
-        status_tool.__exit__.assert_called_once()
 
 
 if __name__ == "__main__":
