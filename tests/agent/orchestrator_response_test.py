@@ -247,6 +247,23 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
         self.assertIn(EventType.TOOL_PROCESS, triggered)
         self.assertIn(EventType.TOOL_EXECUTE, triggered)
         self.assertIn(EventType.TOOL_RESULT, triggered)
+        self.assertIn(EventType.TOOL_MODEL_RUN, triggered)
+        self.assertIn(EventType.TOOL_MODEL_RESPONSE, triggered)
+
+        run_event = next(
+            c.args[0]
+            for c in event_manager.trigger.await_args_list
+            if c.args[0].type == EventType.TOOL_MODEL_RUN
+        )
+        response_event = next(
+            c.args[0]
+            for c in event_manager.trigger.await_args_list
+            if c.args[0].type == EventType.TOOL_MODEL_RESPONSE
+        )
+        self.assertEqual(run_event.payload["model_id"], engine.model_id)
+        self.assertEqual(response_event.payload["model_id"], engine.model_id)
+        self.assertEqual(len(run_event.payload["messages"]), 2)
+        self.assertIs(response_event.payload["response"], inner_response)
 
 
 class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
