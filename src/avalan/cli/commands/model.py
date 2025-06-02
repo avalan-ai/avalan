@@ -213,6 +213,7 @@ async def model_run(
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
                 with_stats=not args.quiet,
+                tool_events_limit=args.tool_events
             )
 
 

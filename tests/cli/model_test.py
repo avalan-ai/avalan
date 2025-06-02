@@ -455,6 +455,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             system=None,
             skip_special_tokens=False,
             display_tokens=0,
+            tool_events=2
         )
         console = MagicMock()
         theme = MagicMock()
