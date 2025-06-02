@@ -311,6 +311,12 @@ class CLI:
             default=None,
             help="How many tokens with full information to display at a time",
         )
+        model_inference_display_parser.add_argument(
+            "--tool-events",
+            type=int,
+            default=2,
+            help="How many tool events to show on tool call panel",
+        )
 
         # Agent command
         agent_parser = command_parsers.add_parser(

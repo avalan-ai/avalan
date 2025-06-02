@@ -14,6 +14,7 @@ from ...entities import (
     TokenizerConfig,
     User,
 )
+from ...event import Event
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from dataclasses import fields
@@ -277,6 +278,7 @@ class Theme(ABC):
         tokens: Optional[list[Token]],
         input_token_count: int,
         total_tokens: int,
+        tool_events: list[Event] | None,
         ttft: float,
         ttnt: float,
         ellapsed: float,
@@ -287,6 +289,7 @@ class Theme(ABC):
         tool_call_results: Optional[int] = None,
         maximum_frames: Optional[int] = None,
         logits_count: Optional[int] = None,
+        tool_events_limit: int | None = None,
         think_height: int = 6,
         think_padding: int = 1,
         height: int = 12,

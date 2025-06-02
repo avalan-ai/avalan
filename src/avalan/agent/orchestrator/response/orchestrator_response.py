@@ -175,6 +175,13 @@ class OrchestratorResponse(
             self._response = inner_response
             self.__aiter__()
 
+            event_tool_model_response = Event(
+                type=EventType.TOOL_MODEL_RESPONSE,
+                payload={"response": inner_response}
+            )
+            await self._event_manager.trigger(event_tool_model_response)
+            return event_tool_model_response
+
         try:
             token = await self._response_iterator.__anext__()
         except StopAsyncIteration:
