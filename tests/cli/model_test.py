@@ -30,7 +30,7 @@ class CliModelTestCase(TestCase):
             token=["t"],
             trust_remote_code=True,
             weight_type="fp16",
-            tool_events=2
+            tool_events=2,
         )
 
         result = get_model_settings(args, self.hub, self.logger, engine_uri)
@@ -163,7 +163,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             display_tokens=0,
             dtokens_pick=0,
             with_stats=False,
-            tool_events_limit=2
+            tool_events_limit=2,
         )
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
 
@@ -230,7 +230,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_tokens=1,
                 dtokens_pick=1,
                 with_stats=True,
-                tool_events_limit=2
+                tool_events_limit=2,
             )
 
         theme.tokens.assert_called_once()
@@ -303,7 +303,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_tokens=0,
                 dtokens_pick=0,
                 with_stats=True,
-                tool_events_limit=2
+                tool_events_limit=2,
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 5)
@@ -327,7 +327,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_tokens=0,
                 dtokens_pick=0,
                 with_stats=True,
-                tool_events_limit=2
+                tool_events_limit=2,
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 7)
@@ -350,7 +350,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_tokens=0,
                 dtokens_pick=0,
                 with_stats=True,
-                tool_events_limit=2
+                tool_events_limit=2,
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 33)
@@ -455,7 +455,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             system=None,
             skip_special_tokens=False,
             display_tokens=0,
-            tool_events=2
+            tool_events=2,
         )
         console = MagicMock()
         theme = MagicMock()

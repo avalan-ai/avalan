@@ -130,9 +130,7 @@ class Orchestrator:
     def event_manager(self) -> EventManager:
         return self._event_manager
 
-    async def __call__(
-        self, input: Input, **kwargs
-    ) -> OrchestratorResponse:
+    async def __call__(self, input: Input, **kwargs) -> OrchestratorResponse:
         if self.is_finished:
             self._operation_step = 0
 

@@ -18,7 +18,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             quiet=False,
             skip_hub_access_check=False,
             limit=1,
-            tool_events=2
+            tool_events=2,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -189,7 +189,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             skip_hub_access_check=False,
             conversation=False,
             tty=None,
-            tool_events=2
+            tool_events=2,
         )
         self.console = MagicMock()
         status_cm = MagicMock()

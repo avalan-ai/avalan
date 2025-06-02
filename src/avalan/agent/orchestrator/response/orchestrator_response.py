@@ -17,9 +17,7 @@ from io import StringIO
 from typing import Any, AsyncIterator, Union
 
 
-class OrchestratorResponse(
-    AsyncIterator[Union[Token, TokenDetail, Event]]
-):
+class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
     """Async iterator handling tool execution during streaming."""
 
     _response: TextGenerationResponse
@@ -177,7 +175,7 @@ class OrchestratorResponse(
 
             event_tool_model_response = Event(
                 type=EventType.TOOL_MODEL_RESPONSE,
-                payload={"response": inner_response}
+                payload={"response": inner_response},
             )
             await self._event_manager.trigger(event_tool_model_response)
             return event_tool_model_response

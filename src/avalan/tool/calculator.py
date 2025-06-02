@@ -16,7 +16,7 @@ class CalculatorTool:
 tool = CalculatorTool()
 
 
-async def calculator(expression: str) -> str:
+def calculator(expression: str) -> str:
     """
     Calculate the result of the arithmetic expression.
 

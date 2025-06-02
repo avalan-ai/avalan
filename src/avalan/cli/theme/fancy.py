@@ -1533,38 +1533,49 @@ class FancyTheme(Theme):
             else None
         )
 
-        tool_event_log : list[str] | None = [
-            _("Executed tool {tool} with {total_arguments} arguments. Got result: {result}").format(
-                tool=event.payload["result"].name,
-                total_arguments=len(event.payload["result"].arguments or []),
-                result="[spring_green3]"+event.payload["result"].result+"[/spring_green3]"
-            )
-            if event.type == EventType.TOOL_RESULT else
-            _n(
-                "Executing {total_calls} tool: {calls}",
-                "Executing {total_calls} tools: {calls}",
-                len(event.payload)
-            ).format(
-                total_calls=len(event.payload),
-                calls="[spring_green3]"+"[/spring_green3], [spring_green3]".join([
-                    call.name
-                    for call in event.payload
-                ])+"[/spring_green3]"
-            )
-            if event.type == EventType.TOOL_PROCESS
+        tool_event_log: list[str] | None = (
+            [
+                _(
+                    "Executed tool {tool} with {total_arguments} arguments. Got result: {result}"
+                ).format(
+                    tool=event.payload["result"].name,
+                    total_arguments=len(
+                        event.payload["result"].arguments or []
+                    ),
+                    result="[spring_green3]"
+                    + event.payload["result"].result
+                    + "[/spring_green3]",
+                )
+                if event.type == EventType.TOOL_RESULT
+                else _n(
+                    "Executing {total_calls} tool: {calls}",
+                    "Executing {total_calls} tools: {calls}",
+                    len(event.payload),
+                ).format(
+                    total_calls=len(event.payload),
+                    calls="[spring_green3]"
+                    + "[/spring_green3], [spring_green3]".join(
+                        [call.name for call in event.payload]
+                    )
+                    + "[/spring_green3]",
+                )
+                if event.type == EventType.TOOL_PROCESS
+                else None
+                for event in tool_events
+            ]
+            if tool_events and tool_events_limit is None or tool_events_limit
             else None
-            for event in tool_events
-        ] if tool_events and tool_events_limit is None or tool_events_limit else None
+        )
         if tool_event_log and tool_events_limit:
             tool_event_log = tool_event_log[-tool_events_limit:]
 
         tools_panel = (
             Panel(
-                "[dark_green]"+"\n".join(tool_event_log)+"[/dark_green]",
+                "[dark_green]" + "\n".join(tool_event_log) + "[/dark_green]",
                 title=_("Tool calls"),
                 title_align="left",
                 height=2 + (tool_events_limit or 2),
-                padding=(0,0,0,1),
+                padding=(0, 0, 0, 1),
                 expand=True,
                 box=box.SQUARE,
             )
