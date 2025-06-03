@@ -306,7 +306,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=0,
                 with_stats=True,
                 tool_events_limit=2,
-                refresh_per_second=2
+                refresh_per_second=2,
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 5)
@@ -331,7 +331,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=0,
                 with_stats=True,
                 tool_events_limit=2,
-                refresh_per_second=2
+                refresh_per_second=2,
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 7)
@@ -355,7 +355,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 dtokens_pick=0,
                 with_stats=True,
                 tool_events_limit=2,
-                refresh_per_second=2
+                refresh_per_second=2,
             )
 
         self.assertEqual(theme.tokens.call_args[0][9], 33)

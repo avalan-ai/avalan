@@ -198,7 +198,11 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
 
         async def tool_exec(call):
             return ToolCallResult(
-                id=uuid4(), call=call, name=call.name, arguments=call.arguments, result="2"
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="2",
             )
 
         tool.side_effect = tool_exec
@@ -265,6 +269,27 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(response_event.payload["model_id"], engine.model_id)
         self.assertEqual(len(run_event.payload["messages"]), 2)
         self.assertIs(response_event.payload["response"], inner_response)
+
+        execute_event = next(
+            c.args[0]
+            for c in event_manager.trigger.await_args_list
+            if c.args[0].type == EventType.TOOL_EXECUTE
+        )
+        result_event = next(
+            c.args[0]
+            for c in event_manager.trigger.await_args_list
+            if c.args[0].type == EventType.TOOL_RESULT
+        )
+        self.assertIsNotNone(execute_event.started)
+        self.assertIsNone(execute_event.finished)
+        self.assertIsNone(execute_event.ellapsed)
+        self.assertEqual(result_event.started, execute_event.started)
+        self.assertIsNotNone(result_event.finished)
+        self.assertAlmostEqual(
+            result_event.finished - result_event.started,
+            result_event.ellapsed,
+            places=2,
+        )
 
 
 class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
