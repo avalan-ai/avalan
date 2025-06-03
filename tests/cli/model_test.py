@@ -361,6 +361,143 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(theme.tokens.call_args[0][9], 33)
         lm.input_token_count.assert_called_once_with("text")
 
+    async def test_token_generation_tool_events(self):
+        token_a = model_cmds.Token(id=0, token="a")
+        token_b = model_cmds.Token(id=1, token="b")
+        token_c = model_cmds.Token(id=2, token="c")
+
+        call = SimpleNamespace(id="c1", name="calc")
+
+        async def inner_gen():
+            yield "x"
+
+        inner_response = model_cmds.TextGenerationResponse(
+            lambda: inner_gen(),
+            inputs={"input_ids": [[1, 2, 3]]},
+            use_async_generator=True,
+        )
+
+        events = [
+            model_cmds.Event(
+                type=model_cmds.EventType.TOOL_EXECUTE,
+                payload=[call],
+            ),
+            token_a,
+            model_cmds.Event(
+                type=model_cmds.EventType.TOOL_RESULT,
+                payload={"call": call},
+            ),
+            token_b,
+            model_cmds.Event(
+                type=model_cmds.EventType.TOOL_MODEL_RESPONSE,
+                payload={"response": inner_response},
+            ),
+            token_c,
+        ]
+
+        class Resp:
+            def __init__(self, items, count):
+                self._items = items
+                self.input_token_count = count
+
+            def __aiter__(self):
+                async def gen():
+                    for i in self._items:
+                        yield i
+
+                return gen()
+
+        response = Resp(events, 1)
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+
+        call_args: list[dict] = []
+
+        async def fake_tokens(*p, **kw):
+            call_args.append(
+                {
+                    "text_tokens": list(p[7]),
+                    "tokens": list(p[8]) if p[8] else None,
+                    "tool_events": list(p[11]),
+                    "tool_event_calls": list(p[12]),
+                    "tool_event_results": list(p[13]),
+                    "spinner": p[14],
+                    "input_token_count": p[9],
+                }
+            )
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        theme.get_spinner.return_value = "dots"
+        theme._n = lambda s, p, n: s if n == 1 else p
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        lm = SimpleNamespace(
+            model_id="m",
+            tokenizer_config=None,
+            input_token_count=MagicMock(),
+        )
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="text",
+                response=response,
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+        self.assertEqual(len(call_args), len(events))
+
+        first = call_args[0]
+        self.assertEqual(first["text_tokens"], [])
+        self.assertIsNone(first["tokens"])
+        self.assertEqual(
+            first["tool_events"][0].type, model_cmds.EventType.TOOL_EXECUTE
+        )
+        self.assertEqual(
+            first["tool_event_calls"][0].type, model_cmds.EventType.TOOL_EXECUTE
+        )
+        self.assertIsNotNone(first["spinner"])
+
+        third = call_args[2]
+        self.assertEqual(
+            third["tool_event_results"][0].type,
+            model_cmds.EventType.TOOL_RESULT,
+        )
+        self.assertIsNone(third["spinner"])
+
+        fifth = call_args[4]
+        self.assertEqual(fifth["text_tokens"], [])
+        self.assertIsNone(fifth["tokens"])
+        self.assertEqual(
+            fifth["input_token_count"], inner_response.input_token_count
+        )
+
 
 class CliModelRunTestCase(IsolatedAsyncioTestCase):
     async def test_returns_when_no_input(self):
