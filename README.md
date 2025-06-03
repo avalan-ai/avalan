@@ -52,6 +52,8 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
       --conversation
 ```
 
+Check the GPU hard at work towards the bottom:
+
 ![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
 
 Through the avalan microframework, you can easily integrate real time token
