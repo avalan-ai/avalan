@@ -1,4 +1,5 @@
-from avalan.agent.loader import OrchestrationLoader, OrchestratorSettings
+from avalan.agent.loader import OrchestratorLoader
+from avalan.entities import OrchestratorSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from contextlib import AsyncExitStack
 from logging import Logger
@@ -13,7 +14,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
     async def test_file_not_found(self):
         stack = AsyncExitStack()
         with self.assertRaises(FileNotFoundError):
-            await OrchestrationLoader.from_file(
+            await OrchestratorLoader.from_file(
                 "missing.toml",
                 agent_id=uuid4(),
                 hub=MagicMock(spec=HuggingfaceHub),
@@ -32,7 +33,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         stack = AsyncExitStack()
         try:
             with self.assertRaises(PermissionError):
-                await OrchestrationLoader.from_file(
+                await OrchestratorLoader.from_file(
                     path,
                     agent_id=uuid4(),
                     hub=MagicMock(spec=HuggingfaceHub),
@@ -96,13 +97,13 @@ uri = \"ai://local/model\"
                 patch(
                     "avalan.agent.loader.ToolManager.create_instance",
                     return_value=tool,
-                ) as tool_patch,
+                ),
                 patch(
                     "avalan.agent.loader.EventManager",
                     return_value=event_manager,
                 ),
             ):
-                result = await OrchestrationLoader.from_file(
+                result = await OrchestratorLoader.from_file(
                     path,
                     agent_id=uuid4(),
                     hub=hub,
@@ -115,7 +116,6 @@ uri = \"ai://local/model\"
                 self.assertEqual(result, "orch")
                 orch_patch.assert_called_once()
                 model_patch.assert_called_once_with(hub, logger)
-                tool_patch.assert_called_once_with(enable_tools=None)
                 mm_patch.assert_awaited_once()
             await stack.aclose()
 
@@ -169,7 +169,7 @@ value = { type = \"string\", description = \"d\" }
                     return_value=model_manager,
                 ),
                 patch.object(
-                    OrchestrationLoader,
+                    OrchestratorLoader,
                     "_load_json_orchestrator",
                     return_value="json_orch",
                 ) as json_patch,
@@ -182,7 +182,7 @@ value = { type = \"string\", description = \"d\" }
                     return_value=event_manager,
                 ),
             ):
-                result = await OrchestrationLoader.from_file(
+                result = await OrchestratorLoader.from_file(
                     path,
                     agent_id=uuid4(),
                     hub=hub,
@@ -212,7 +212,7 @@ uri = \"ai://local/model\"
 
             stack = AsyncExitStack()
             with self.assertRaises(AssertionError):
-                await OrchestrationLoader.from_file(
+                await OrchestratorLoader.from_file(
                     path,
                     agent_id=uuid4(),
                     hub=MagicMock(spec=HuggingfaceHub),
@@ -247,12 +247,12 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             agent_config={"role": "assistant"},
             uri="ai://local/model",
             engine_config={},
-            enable_tools=None,
+            tools=None,
             call_options=None,
             template_vars=None,
             memory_permanent=None,
             memory_recent=False,
-            sentence_model_id=OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID,
+            sentence_model_id=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
             sentence_model_engine_config=None,
             sentence_model_max_tokens=500,
             sentence_model_overlap_size=125,
@@ -279,12 +279,12 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             patch(
                 "avalan.agent.loader.ToolManager.create_instance",
                 return_value=tool,
-            ) as tool_patch,
+            ),
             patch(
                 "avalan.agent.loader.EventManager", return_value=event_manager
             ),
         ):
-            result = await OrchestrationLoader.load_from_settings(
+            result = await OrchestratorLoader.load_from_settings(
                 settings,
                 hub=hub,
                 logger=logger,
@@ -295,7 +295,6 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(result, "orch")
             orch_patch.assert_called_once()
             model_patch.assert_called_once_with(hub, logger)
-            tool_patch.assert_called_once_with(enable_tools=None)
             mm_patch.assert_awaited_once()
         await stack.aclose()
 
@@ -326,12 +325,12 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             },
             uri="ai://local/model",
             engine_config={},
-            enable_tools=None,
+            tools=None,
             call_options=None,
             template_vars=None,
             memory_permanent=None,
             memory_recent=False,
-            sentence_model_id=OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID,
+            sentence_model_id=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
             sentence_model_engine_config=None,
             sentence_model_max_tokens=500,
             sentence_model_overlap_size=125,
@@ -353,7 +352,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 "avalan.agent.loader.ModelManager", return_value=model_manager
             ),
             patch.object(
-                OrchestrationLoader,
+                OrchestratorLoader,
                 "_load_json_orchestrator",
                 return_value="json_orch",
             ) as json_patch,
@@ -365,7 +364,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 "avalan.agent.loader.EventManager", return_value=event_manager
             ),
         ):
-            result = await OrchestrationLoader.load_from_settings(
+            result = await OrchestratorLoader.load_from_settings(
                 settings,
                 hub=hub,
                 logger=logger,

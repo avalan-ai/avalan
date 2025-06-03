@@ -1,7 +1,11 @@
 from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
-from ..entities import EngineUri, TransformerEngineSettings
+from ..entities import (
+    EngineUri,
+    OrchestratorSettings,
+    TransformerEngineSettings,
+)
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..memory.partitioner.text import TextPartitioner
@@ -9,7 +13,6 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.manager import ToolManager
-from dataclasses import dataclass
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK
@@ -19,28 +22,11 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 
-@dataclass(frozen=True, kw_only=True)
-class OrchestratorSettings:
-    agent_id: UUID
-    orchestrator_type: Optional[str]
-    agent_config: dict
-    uri: str
-    engine_config: dict
-    enable_tools: Optional[object]
-    call_options: Optional[dict]
-    template_vars: Optional[dict]
-    memory_permanent: Optional[str]
-    memory_recent: bool
-    sentence_model_id: str
-    sentence_model_engine_config: Optional[dict]
-    sentence_model_max_tokens: int
-    sentence_model_overlap_size: int
-    sentence_model_window_size: int
-    json_config: Optional[dict]
-
-
-class OrchestrationLoader:
+class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+    DEFAULT_SENTENCE_MODEL_MAX_TOKENS = 500
+    DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE = 125
+    DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
 
     @classmethod
     async def from_file(
@@ -145,7 +131,7 @@ class OrchestrationLoader:
                 config["memory.engine"]["model_id"]
                 if "memory.engine" in config
                 and "model_id" in config["memory.engine"]
-                else OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID
+                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
             )
             sentence_model_engine_config = (
                 config["memory.engine"] if "memory.engine" in config else None
@@ -154,19 +140,19 @@ class OrchestrationLoader:
                 config["memory.engine"]["max_tokens"]
                 if sentence_model_engine_config
                 and "max_tokens" in sentence_model_engine_config
-                else 500
+                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS
             )
             sentence_model_overlap_size = (
                 config["memory.engine"]["overlap_size"]
                 if sentence_model_engine_config
                 and "overlap_size" in sentence_model_engine_config
-                else 125
+                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE
             )
             sentence_model_window_size = (
                 config["memory.engine"]["window_size"]
                 if sentence_model_engine_config
                 and "window_size" in sentence_model_engine_config
-                else 250
+                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE
             )
 
             if sentence_model_engine_config:
@@ -181,7 +167,7 @@ class OrchestrationLoader:
                 agent_config=agent_config,
                 uri=uri,
                 engine_config=engine_config,
-                enable_tools=enable_tools,
+                tools=enable_tools,
                 call_options=call_options,
                 template_vars=template_vars,
                 memory_permanent=memory_permanent,
@@ -214,7 +200,7 @@ class OrchestrationLoader:
         participant_id: UUID,
         stack: AsyncExitStack,
     ) -> Orchestrator:
-        tool = ToolManager.create_instance(enable_tools=settings.enable_tools)
+        tool = ToolManager.create_instance(enable_tools=settings.tools)
 
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)

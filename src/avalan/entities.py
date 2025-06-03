@@ -332,6 +332,26 @@ class ModelConfig:
 
 
 @dataclass(frozen=True, kw_only=True)
+class OrchestratorSettings:
+    agent_id: UUID
+    orchestrator_type: Optional[str]
+    agent_config: dict
+    uri: str
+    engine_config: dict
+    call_options: Optional[dict]
+    template_vars: Optional[dict]
+    memory_permanent: Optional[str]
+    memory_recent: bool
+    sentence_model_id: str
+    sentence_model_engine_config: Optional[dict]
+    sentence_model_max_tokens: int
+    sentence_model_overlap_size: int
+    sentence_model_window_size: int
+    json_config: Optional[dict]
+    tools: list[str]
+
+
+@dataclass(frozen=True, kw_only=True)
 class SearchMatch:
     query: str
     match: str

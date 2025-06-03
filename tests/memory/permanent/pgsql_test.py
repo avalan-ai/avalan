@@ -286,11 +286,9 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
             self.assertIsInstance(session_id, UUID)
 
             with self.subTest():
-                pool_mock, connection_mock, cursor_mock = self.mock_query(
-                    {
-                        "id": session_id,
-                    }
-                )
+                pool_mock, connection_mock, cursor_mock = self.mock_query({
+                    "id": session_id,
+                })
 
                 memory = await PgsqlMessageMemory.create_instance_from_pool(
                     pool=pool_mock
@@ -334,21 +332,19 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
             with self.subTest():
                 pool_mock, connection_mock, cursor_mock = self.mock_query(
                     # descending order
-                    reversed(
-                        [
-                            {
-                                "id": uuid4(),
-                                "agent_id": agent_id,
-                                "model_id": model_id,
-                                "session_id": session_id,
-                                "author": str(m[0]),
-                                "data": m[1],
-                                "partitions": 1,
-                                "created_at": datetime.now(timezone.utc),
-                            }
-                            for m in messages
-                        ]
-                    ),
+                    reversed([
+                        {
+                            "id": uuid4(),
+                            "agent_id": agent_id,
+                            "model_id": model_id,
+                            "session_id": session_id,
+                            "author": str(m[0]),
+                            "data": m[1],
+                            "partitions": 1,
+                            "created_at": datetime.now(timezone.utc),
+                        }
+                        for m in messages
+                    ]),
                     fetch_all=True,
                 )
 

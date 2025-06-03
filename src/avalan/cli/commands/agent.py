@@ -1,10 +1,11 @@
 from argparse import Namespace
-from ...agent.loader import OrchestrationLoader
+from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
 from ...cli import get_input
 from ...cli.commands.model import token_generation
+from ...entities import OrchestratorSettings
 from ...event import EventStats
 from ...memory.permanent import VectorFunction
 from ...model.hubs.huggingface import HuggingfaceHub
@@ -62,7 +63,7 @@ async def agent_message_search(
                 f"participant {participant_id}"
             )
 
-            orchestrator = await OrchestrationLoader.from_file(
+            orchestrator = await OrchestratorLoader.from_file(
                 specs_path,
                 agent_id=agent_id,
                 hub=hub,
@@ -112,10 +113,15 @@ async def agent_run(
     logger: Logger,
     refresh_per_second: int,
 ) -> None:
-    assert args.specifications_file
     _, _i = theme._, theme.icons
 
     specs_path = args.specifications_file
+    assert not (specs_path and args.engine_uri), (
+        "specifications file and --engine-uri are mutually exclusive"
+    )
+    assert specs_path or args.engine_uri, (
+        "specifications file or --engine-uri must be specified"
+    )
     use_async_generator = not args.use_sync_generator
     display_tokens = args.display_tokens or 0
     dtokens_pick = 10 if display_tokens > 0 else 0
@@ -144,20 +150,66 @@ async def agent_run(
             spinner=theme.get_spinner("agent_loading"),
             refresh_per_second=refresh_per_second,
         ):
-            logger.debug(
-                f"Loading agent from {specs_path} for "
-                f"participant {participant_id}"
-            )
+            if specs_path:
+                logger.debug(
+                    f"Loading agent from {specs_path} for "
+                    f"participant {participant_id}"
+                )
 
-            orchestrator = await OrchestrationLoader.from_file(
-                specs_path,
-                agent_id=agent_id,
-                hub=hub,
-                logger=logger,
-                participant_id=participant_id,
-                stack=stack,
-                disable_memory=args.no_session,
-            )
+                orchestrator = await OrchestratorLoader.from_file(
+                    specs_path,
+                    agent_id=agent_id,
+                    hub=hub,
+                    logger=logger,
+                    participant_id=participant_id,
+                    stack=stack,
+                    disable_memory=args.no_session,
+                )
+            else:
+                assert args.engine_uri and args.role, (
+                    "--engine-uri and --role required when no specifications file"
+                )
+                assert not args.specifications_file or not args.engine_uri
+                memory_recent = (
+                    args.memory_recent
+                    if args.memory_recent is not None
+                    else not args.no_session
+                )
+                settings = OrchestratorSettings(
+                    agent_id=agent_id or uuid4(),
+                    orchestrator_type=None,
+                    agent_config={
+                        k: v
+                        for k, v in {
+                            "name": args.name,
+                            "role": args.role,
+                            "task": args.task,
+                            "instructions": args.instructions,
+                        }.items()
+                        if v is not None
+                    },
+                    uri=args.engine_uri,
+                    engine_config=None,
+                    tools=args.tool,
+                    call_options={"max_new_tokens": args.run_max_new_tokens},
+                    template_vars=None,
+                    memory_permanent=args.memory_permanent,
+                    memory_recent=memory_recent,
+                    sentence_model_id=args.memory_engine_model_id,
+                    sentence_model_engine_config=None,
+                    sentence_model_max_tokens=args.memory_engine_max_tokens,
+                    sentence_model_overlap_size=args.memory_engine_overlap,
+                    sentence_model_window_size=args.memory_engine_window,
+                    json_config=None,
+                )
+                logger.debug("Loading agent from inline settings")
+                orchestrator = await OrchestratorLoader.load_from_settings(
+                    settings,
+                    hub=hub,
+                    logger=logger,
+                    participant_id=participant_id,
+                    stack=stack,
+                )
             orchestrator.event_manager.add_listener(_event_listener)
 
             orchestrator = await stack.enter_async_context(orchestrator)
@@ -291,7 +343,7 @@ async def agent_serve(
     async with AsyncExitStack() as stack:
         logger.debug(f"Loading agent from {specs_path}")
 
-        orchestrator = await OrchestrationLoader.from_file(
+        orchestrator = await OrchestratorLoader.from_file(
             specs_path,
             agent_id=uuid4(),
             hub=hub,
@@ -354,7 +406,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     )
     memory_engine_model_id = (
         args.memory_engine_model_id
-        or OrchestrationLoader.DEFAULT_SENTENCE_MODEL_ID
+        or OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
     )
     engine_uri = args.engine_uri or Prompt.ask(
         _("Engine URI"),
