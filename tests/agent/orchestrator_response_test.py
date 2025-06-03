@@ -18,6 +18,7 @@ from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
 from avalan.tool.manager import ToolManager
 from avalan.entities import ToolCall, ToolCallResult
+from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -320,3 +321,94 @@ class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
             tokens.append(t)
 
         self.assertEqual(tokens, ["h", "i"])
+
+
+class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
+    async def test_to_str_without_tool_call(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def gen():
+            yield "o"
+            yield "k"
+
+        response = TextGenerationResponse(
+            lambda: gen(), use_async_generator=True
+        )
+
+        TextGenerationResponse._buffer = StringIO()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+        )
+
+        result = await resp.to_str()
+        self.assertEqual(result, "ok")
+
+    async def test_to_str_with_tool_call(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def outer_gen():
+            yield "c"
+            yield "a"
+            yield "l"
+            yield "l"
+
+        outer_response = TextGenerationResponse(
+            lambda: outer_gen(), use_async_generator=True
+        )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = (
+            lambda text: [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if text == "call"
+            else None
+        )
+
+        async def tool_exec(call):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="2",
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "r"
+
+        inner_response = TextGenerationResponse(
+            lambda: inner_gen(), use_async_generator=True
+        )
+        agent.return_value = inner_response
+
+        TextGenerationResponse._buffer = StringIO()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        result = await resp.to_str()
+        self.assertEqual(result, "r")
+        agent.assert_awaited_once()
+        tool.assert_awaited_once()
