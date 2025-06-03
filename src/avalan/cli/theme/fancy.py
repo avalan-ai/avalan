@@ -1547,12 +1547,15 @@ class FancyTheme(Theme):
         tool_event_log: list[str] | None = _lf(
             [
                 _(
-                    "Executed tool {tool} call #{call_id} with {total_arguments} arguments. Got result: {result}"
+                    "Executed tool {tool} call #{call_id} with {total_arguments} arguments. Got result \"{result}\" in {ellapsed_with_unit}."
                 ).format(
                     tool=event.payload["result"].call.name,
-                    call_id="[spring_green4]"
-                    + str(event.payload["result"].call.id)
-                    + "[/spring_green4]",
+                    ellapsed_with_unit="[gray78]"
+                    + naturaldelta(event.ellapsed, minimum_unit="microseconds")
+                    + "[/gray78]",
+                    call_id="[gray78]"
+                    + str(event.payload["result"].call.id)[:8]
+                    + "[/gray78]",
                     total_arguments=len(
                         event.payload["result"].call.arguments or []
                     ),
@@ -1567,11 +1570,11 @@ class FancyTheme(Theme):
                     len(event.payload),
                 ).format(
                     total_calls=len(event.payload),
-                    calls="[spring_green3]"
-                    + "[/spring_green3], [spring_green3]".join(
+                    calls="[gray78]"
+                    + "[/gray78], [gray78]".join(
                         [call.name for call in event.payload]
                     )
-                    + "[/spring_green3]",
+                    + "[/gray78]",
                 )
                 if event.type == EventType.TOOL_PROCESS
                 else None
@@ -1586,28 +1589,32 @@ class FancyTheme(Theme):
 
         tools_panel = (
             Panel(
-                "[dark_green]" + _j("\n", tool_event_log) + "[/dark_green]",
+                _j("\n", tool_event_log),
                 title=_("Tool calls"),
                 title_align="left",
                 height=2 + (tool_events_limit or 2),
                 padding=(0, 0, 0, 1),
                 expand=True,
                 box=box.SQUARE,
+                border_style="cyan",
+                style="gray50 on gray15"
             )
             if tool_event_log
             else None
         )
 
+        tool_running_panel : RenderableType | None = None
+
+        if tool_running_spinner and len(tool_event_calls) != len(
+            tool_event_results
+        ):
+            tool_running_panel = Padding(
+                tool_running_spinner,
+                pad=(1, 0, 1, 0)
+            )
+
         # Quick return of no need for token details
         if display_token_size is None or tokens is None:
-            if tool_running_spinner and len(tool_event_calls) != len(
-                tool_event_results
-            ):
-                tool_running_spinner.text = Text(
-                    f"{tool_running_spinner.text.plain} ({naturaldelta(ellapsed)})",
-                    style="cyan",
-                )
-
             yield (
                 None,
                 Group(
@@ -1615,9 +1622,7 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
-                            Padding(tool_running_spinner, pad=(1, 0, 1, 0))
-                            if len(tool_event_calls) != len(tool_event_results)
-                            else None,
+                            tool_running_panel or None,
                             answer_panel or None,
                         ]
                     )
@@ -1796,14 +1801,6 @@ class FancyTheme(Theme):
                     border_style="bright_black",
                 )
 
-            if tool_running_spinner and len(tool_event_calls) != len(
-                tool_event_results
-            ):
-                tool_running_spinner.text = Text(
-                    f"{tool_running_spinner.text.plain} ({naturaldelta(ellapsed)})",
-                    style="cyan",
-                )
-
             yield (
                 current_dtoken,
                 Group(
@@ -1811,10 +1808,7 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
-                            Padding(tool_running_spinner, pad=(1, 0, 1, 0))
-                            if tool_running_spinner
-                            and len(tool_event_calls) != len(tool_event_results)
-                            else None,
+                            tool_running_panel or None,
                             answer_panel or None,
                             tokens_distribution_panel
                             if tokens and tokens_distribution_panel

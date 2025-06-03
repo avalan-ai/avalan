@@ -7,6 +7,7 @@ from ....entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallResult
 )
 from ....event import Event, EventType
 from ....event.manager import EventManager
@@ -55,29 +56,26 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         self._tool = None if tool and tool.is_empty else tool
         self._finished = False
         self._step = 0
-        if self._event_manager:
-
-            async def _on_consumed() -> None:
-                await self._event_manager.trigger(
-                    Event(type=EventType.STREAM_END)
-                )
-
-            self._response.add_done_callback(_on_consumed)
 
     @property
     def input_token_count(self) -> int:
         return self._response.input_token_count
 
     async def to_str(self) -> str:
-        return await self._response.to_str()
+        output = await self._react(self._response)
+        return output
 
     async def to_json(self) -> str:
+        await self._react(self._response)
         return await self._response.to_json()
 
     async def to(self, entity_class: type) -> Any:
+        await self._react(self._response)
         return await self._response.to(entity_class)
 
     def __aiter__(self) -> "OrchestratorResponse":
+        if self._event_manager:
+            self._response.add_done_callback(self._on_consumed)
         self._response_iterator = self._response.__aiter__()
         self._buffer = StringIO()
         self._calls = Queue()
@@ -212,6 +210,102 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
 
         return await self._emit(token)
 
+    async def _react(self, response: TextGenerationResponse, output: str | None = None) -> str:
+        if self._event_manager:
+            response.add_done_callback(self._on_consumed)
+
+        if output is None:
+            output = await response.to_str()
+
+        if not self._tool:
+            return output
+
+        if self._event_manager:
+            await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
+
+        calls = (
+            self._tool.get_calls(output)
+            if self._tool
+            else None
+        )
+        if not calls:
+            return output
+
+        results: list[ToolCallResult] = []
+        for call in calls:
+            if self._event_manager:
+                start = perf_counter()
+                execute_event = Event(
+                    type=EventType.TOOL_EXECUTE,
+                    payload={"call": call},
+                    started=start,
+                )
+                await self._event_manager.trigger(execute_event)
+
+            result = await self._tool(call) if self._tool else None
+            results.append(result)
+
+            if self._event_manager:
+                end = perf_counter()
+                result_event = Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": result},
+                    started=start,
+                    finished=end,
+                    ellapsed=end - start,
+                )
+                await self._event_manager.trigger(result_event)
+
+        response = await self._react_process(output, results)
+        response_output = await response.to_str()
+        response_output = response_output.replace(output, "")
+
+        self._response = response
+        return await self._react(self._response, response_output)
+
+    async def _react_process(self, output: str, results: list[ToolCallResult]) -> TextGenerationResponse:
+        tool_messages = [
+            Message(
+                role=MessageRole.TOOL,
+                name=result.name,
+                arguments=result.arguments,
+                content=result.result,
+            )
+            for result in results
+        ]
+
+        assert self._input and (
+            (
+                isinstance(self._input, list)
+                and isinstance(self._input[0], Message)
+            )
+            or isinstance(self._input, Message)
+        )
+
+        messages = list(
+            self._input if isinstance(self._input, list) else [self._input]
+        )
+        messages.extend(tool_messages)
+
+        event_tool_model_run = Event(
+            type=EventType.TOOL_MODEL_RUN,
+            payload={
+                "model_id": self._engine_agent.engine.model_id,
+                "messages": messages,
+                "engine_args": self._engine_args,
+            },
+        )
+        await self._event_manager.trigger(event_tool_model_run)
+
+        response = await self._engine_agent(
+            self._operation.specification,
+            messages,
+            **self._engine_args,
+        )
+        assert response
+        return response
+
+
     async def _emit(
         self, token: Union[Token, TokenDetail, str]
     ) -> Union[Token, TokenDetail, Event]:
@@ -267,3 +361,10 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         )
 
         return token
+
+    async def _on_consumed(self) -> None:
+        assert self._event_manager
+        await self._event_manager.trigger(
+            Event(type=EventType.STREAM_END)
+        )
+

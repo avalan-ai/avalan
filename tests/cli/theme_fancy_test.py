@@ -44,4 +44,3 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 for r in frame[1].renderables
             )
         )
-        self.assertIn("second", spinner.text)

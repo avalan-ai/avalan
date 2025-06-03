@@ -318,6 +318,8 @@ async def token_generation(
     # If no statistics needed, return as early as possible
     if not with_stats:
         async for token in response:
+            if isinstance(token,Event):
+                continue
             text_token = token.token if isinstance(token, Token) else token
             console.print(text_token, end="")
         return
