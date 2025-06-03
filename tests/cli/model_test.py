@@ -425,17 +425,15 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         call_args: list[dict] = []
 
         async def fake_tokens(*p, **kw):
-            call_args.append(
-                {
-                    "text_tokens": list(p[7]),
-                    "tokens": list(p[8]) if p[8] else None,
-                    "tool_events": list(p[11]),
-                    "tool_event_calls": list(p[12]),
-                    "tool_event_results": list(p[13]),
-                    "spinner": p[14],
-                    "input_token_count": p[9],
-                }
-            )
+            call_args.append({
+                "text_tokens": list(p[7]),
+                "tokens": list(p[8]) if p[8] else None,
+                "tool_events": list(p[11]),
+                "tool_event_calls": list(p[12]),
+                "tool_event_results": list(p[13]),
+                "spinner": p[14],
+                "input_token_count": p[9],
+            })
             yield (None, "frame")
 
         theme = MagicMock()

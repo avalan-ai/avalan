@@ -315,9 +315,9 @@ async def memory_embeddings(
                 index = IndexFlatL2(input_string_embeddings.shape[0])
 
                 if partitioner:
-                    knowledge_stack = vstack(
-                        [kp.embeddings for kp in knowledge_partitions]
-                    ).astype("float32", copy=False)
+                    knowledge_stack = vstack([
+                        kp.embeddings for kp in knowledge_partitions
+                    ]).astype("float32", copy=False)
                     index.add(knowledge_stack)
                 else:
                     index.add(

@@ -13,27 +13,46 @@ avalan empowers developers and enterprises to easily build, orchestrate, and dep
 
 # Quick Look
 
-Check out [the CLI documentation](docs/CLI.md) to see what
-it can do, but if you want to jump right in, run a model:
+Check out [the CLI documentation](docs/CLI.md) to see what it can do, but if you want to jump right in, you can run any locally installed model and tweak sampling settings like `--temperature`, `--top-p`, and `--top-k`. In this example, we prompt the model as "Aurora" and limit the response to 100 new tokens:
 
 ```bash
-avalan model run meta-llama/Meta-Llama-3-8B-Instruct
+echo 'Who are you, and who is Leo Messi?' \
+  | avalan model run "meta-llama/Meta-Llama-3-8B-Instruct" \
+      --system "You are Aurora, a helpful assistant" \
+      --max-new-tokens 100 \
+      --temperature .1 \
+      --top-p .9 \
+      --top-k 20
 ```
 
-![Example use of the CLI showing prompt based inference](https://avalan.ai/images/running_local_inference_example.gif)
+Just as easily as you can run local models, you can use vendors. Simply swap in a vendor-backed [engine URI](docs/ai_uri.md) to run on an external API. For instance, to hit OpenAI's GPT-4o endpoint with the same sampling parameters:
 
-Here's an example where we are getting detailed token generation information
-using a particular model (check the GPU working at the bottom), and specifying
-our prompt directly on the command line:
+```
+echo 'Who are you, and who is Leo Messi?' \
+  | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+      --system "You are Aurora, a helpful assistant" \
+      --max-new-tokens 100 \
+      --temperature .1 \
+      --top-p .9 \
+      --top-k 20
+```
+
+Avalan makes it trivial to spin up a chat-based agent that can invoke external tools (e.g., a calculator). Below is an example using a locally installed 8B-parameter LLM, enabling recent memory, and loading a calculator tool. The agent starts with a math question and then keeps the conversation open for follow-up questions:
 
 ```bash
-echo 'hello, who are you? answer in no less than 100 words' | \
-    avalan model run deepseek-ai/deepseek-llm-7b-chat \
-               --display-tokens \
-               --display-pause 25
+echo "What is (4 + 6) and then that result times 5, divided by 2?" \
+  | avalan agent run \
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --tool "calculator" \
+      --memory-recent \
+      --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --conversation
 ```
 
-![Example use of the CLI showing token distributions](https://avalan.ai/images/running_token_distribution_example.gif)
+![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
 
 Through the avalan microframework, you can easily integrate real time token
 streaming with your own code, as [this example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/text_generation.py):

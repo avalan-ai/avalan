@@ -145,9 +145,7 @@ class ToolCallParser:
             try:
                 tool_calls.append(
                     ToolCall(
-                        id=uuid4(),
-                        name=m.group(1),
-                        arguments=loads(m.group(2))
+                        id=uuid4(), name=m.group(1), arguments=loads(m.group(2))
                     )
                 )
             except JSONDecodeError:
@@ -162,9 +160,7 @@ class ToolCallParser:
             try:
                 tool_calls.append(
                     ToolCall(
-                        id=uuid4(),
-                        name=m.group(1),
-                        arguments=loads(m.group(2))
+                        id=uuid4(), name=m.group(1), arguments=loads(m.group(2))
                     )
                 )
             except JSONDecodeError:
@@ -178,9 +174,7 @@ class ToolCallParser:
             try:
                 tool_calls.append(
                     ToolCall(
-                        id=uuid4(),
-                        name=m.group(1),
-                        arguments=loads(m.group(2))
+                        id=uuid4(), name=m.group(1), arguments=loads(m.group(2))
                     )
                 )
             except JSONDecodeError:

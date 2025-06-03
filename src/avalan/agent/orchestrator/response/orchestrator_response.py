@@ -7,7 +7,7 @@ from ....entities import (
     Token,
     TokenDetail,
     ToolCall,
-    ToolCallResult
+    ToolCallResult,
 )
 from ....event import Event, EventType
 from ....event.manager import EventManager
@@ -210,7 +210,9 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
 
         return await self._emit(token)
 
-    async def _react(self, response: TextGenerationResponse, output: str | None = None) -> str:
+    async def _react(
+        self, response: TextGenerationResponse, output: str | None = None
+    ) -> str:
         if self._event_manager:
             response.add_done_callback(self._on_consumed)
 
@@ -223,11 +225,7 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         if self._event_manager:
             await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
 
-        calls = (
-            self._tool.get_calls(output)
-            if self._tool
-            else None
-        )
+        calls = self._tool.get_calls(output) if self._tool else None
         if not calls:
             return output
 
@@ -263,7 +261,9 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         self._response = response
         return await self._react(self._response, response_output)
 
-    async def _react_process(self, output: str, results: list[ToolCallResult]) -> TextGenerationResponse:
+    async def _react_process(
+        self, output: str, results: list[ToolCallResult]
+    ) -> TextGenerationResponse:
         tool_messages = [
             Message(
                 role=MessageRole.TOOL,
@@ -304,7 +304,6 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         )
         assert response
         return response
-
 
     async def _emit(
         self, token: Union[Token, TokenDetail, str]
@@ -364,7 +363,4 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
 
     async def _on_consumed(self) -> None:
         assert self._event_manager
-        await self._event_manager.trigger(
-            Event(type=EventType.STREAM_END)
-        )
-
+        await self._event_manager.trigger(Event(type=EventType.STREAM_END))

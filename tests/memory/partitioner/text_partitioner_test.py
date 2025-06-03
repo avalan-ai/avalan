@@ -162,9 +162,9 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                 partitions = await partitioner(input_string)
 
                 self.assertEqual(model_mock.tokenizer.encode.call_count, 1)
-                model_mock.tokenizer.encode.assert_has_calls(
-                    [call(input_string, add_special_tokens=False)]
-                )
+                model_mock.tokenizer.encode.assert_has_calls([
+                    call(input_string, add_special_tokens=False)
+                ])
 
                 self.assertEqual(
                     model_mock.tokenizer.decode.call_count, len(expected_chunks)

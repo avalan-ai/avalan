@@ -265,21 +265,17 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
             expected_messages = []
             if system_prompt:
-                expected_messages.append(
-                    {
-                        "role": str(MessageRole.SYSTEM),
-                        "content": [{"type": "text", "text": system_prompt}],
-                    }
-                )
-            expected_messages.append(
-                {
-                    "role": str(MessageRole.USER),
-                    "content": [
-                        {"type": "image", "image": expected_image},
-                        {"type": "text", "text": "prompt"},
-                    ],
-                }
-            )
+                expected_messages.append({
+                    "role": str(MessageRole.SYSTEM),
+                    "content": [{"type": "text", "text": system_prompt}],
+                })
+            expected_messages.append({
+                "role": str(MessageRole.USER),
+                "content": [
+                    {"type": "image", "image": expected_image},
+                    {"type": "text", "text": "prompt"},
+                ],
+            })
             processor_instance.apply_chat_template.assert_called_once_with(
                 expected_messages,
                 tokenize=False,

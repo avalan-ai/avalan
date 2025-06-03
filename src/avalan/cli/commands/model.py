@@ -318,7 +318,7 @@ async def token_generation(
     # If no statistics needed, return as early as possible
     if not with_stats:
         async for token in response:
-            if isinstance(token,Event):
+            if isinstance(token, Event):
                 continue
             text_token = token.token if isinstance(token, Token) else token
             console.print(text_token, end="")
@@ -386,25 +386,31 @@ async def token_generation(
                     c.name
                     for e in tool_event_calls
                     for c in e.payload
-                    if c.id not in {
+                    if c.id
+                    not in {
                         r.payload["call"].id
                         for r in tool_event_results
-                        if r.type == EventType.TOOL_RESULT and "call" in r.payload
+                        if r.type == EventType.TOOL_RESULT
+                        and "call" in r.payload
                     }
                 ]
 
-                tool_running_spinner = Spinner(
-                    theme.get_spinner("tool_running"),
-                    text="[cyan]"+theme._n(
-                        "Running tool {tool_names}...",
-                        "Running tools {tool_names}...",
-                        len(tool_calling_names)
-                    ).format(
-                        tool_names=", ".join(tool_calling_names)
-                    ) + "[/cyan]",
-                    style="cyan",
-                    speed=1.0
-                ) if tool_calling_names else None
+                tool_running_spinner = (
+                    Spinner(
+                        theme.get_spinner("tool_running"),
+                        text="[cyan]"
+                        + theme._n(
+                            "Running tool {tool_names}...",
+                            "Running tools {tool_names}...",
+                            len(tool_calling_names),
+                        ).format(tool_names=", ".join(tool_calling_names))
+                        + "[/cyan]",
+                        style="cyan",
+                        speed=1.0,
+                    )
+                    if tool_calling_names
+                    else None
+                )
 
             total_tokens = total_tokens + 1
             ellapsed = perf_counter() - start
@@ -428,15 +434,13 @@ async def token_generation(
                 # Which tokens to mark as interesting
                 lambda dtoken: (
                     dtoken.probability < args.display_probabilities_maximum
-                    or len(
-                        [
-                            t
-                            for t in dtoken.tokens
-                            if t.id != dtoken.id
-                            and t.probability
-                            >= args.display_probabilities_sample_minimum
-                        ]
-                    )
+                    or len([
+                        t
+                        for t in dtoken.tokens
+                        if t.id != dtoken.id
+                        and t.probability
+                        >= args.display_probabilities_sample_minimum
+                    ])
                     > 0
                 )
                 if display_tokens

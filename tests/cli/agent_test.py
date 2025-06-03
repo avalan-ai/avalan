@@ -19,6 +19,8 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             skip_hub_access_check=False,
             limit=1,
             tool_events=2,
+            tool=None,
+            run_max_new_tokens=100,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -40,7 +42,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(agent_cmds, "get_input", return_value=None) as gi,
             patch.object(
-                agent_cmds.OrchestrationLoader, "from_file", new=AsyncMock()
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
             ) as lf,
         ):
             await agent_cmds.agent_message_search(
@@ -69,7 +71,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "AsyncExitStack", return_value=dummy_stack
             ),
             patch.object(
-                agent_cmds.OrchestrationLoader,
+                agent_cmds.OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=orch),
             ) as lf,
@@ -117,7 +119,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "AsyncExitStack", return_value=dummy_stack
             ),
             patch.object(
-                agent_cmds.OrchestrationLoader,
+                agent_cmds.OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=orch),
             ) as lf,
@@ -190,6 +192,19 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             conversation=False,
             tty=None,
             tool_events=2,
+            tool=None,
+            run_max_new_tokens=100,
+            engine_uri=None,
+            name=None,
+            role=None,
+            task=None,
+            instructions=None,
+            memory_recent=None,
+            memory_permanent=None,
+            memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -233,7 +248,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
             ),
             patch.object(
-                agent_cmds.OrchestrationLoader,
+                agent_cmds.OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=self.orch),
             ),
@@ -275,7 +290,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
             ),
             patch.object(
-                agent_cmds.OrchestrationLoader,
+                agent_cmds.OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=self.orch),
             ),
@@ -334,7 +349,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
             ),
             patch.object(
-                agent_cmds.OrchestrationLoader,
+                agent_cmds.OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=self.orch),
             ),
@@ -361,6 +376,37 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             spinner=self.theme.get_spinner.return_value,
             refresh_per_second=1,
         )
+
+    async def test_run_from_settings(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as ff_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        ff_patch.assert_not_called()
 
 
 if __name__ == "__main__":

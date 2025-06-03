@@ -350,28 +350,26 @@ class Theme(ABC):
         }
         self._all_stylers = {
             **{
-                data: lambda data, value, prefix=None, icon=True: "".join(
-                    [
-                        prefix or "",
-                        f"{all_icons[data]} "
-                        if isinstance(icon, bool)
-                        and icon
-                        and data in self._icons
-                        and all_icons[data]
-                        else icon
-                        if isinstance(icon, str)
-                        else "",
-                        f"[{data}]",
-                        formatters["quantity"](value)
-                        if data in quantity_data
-                        else formatters["datetime"](value)
-                        if isinstance(value, datetime)
-                        else formatters["number"](value)
-                        if isinstance(value, int) or isinstance(value, float)
-                        else value,
-                        f"[/{data}]",
-                    ]
-                )
+                data: lambda data, value, prefix=None, icon=True: "".join([
+                    prefix or "",
+                    f"{all_icons[data]} "
+                    if isinstance(icon, bool)
+                    and icon
+                    and data in self._icons
+                    and all_icons[data]
+                    else icon
+                    if isinstance(icon, str)
+                    else "",
+                    f"[{data}]",
+                    formatters["quantity"](value)
+                    if data in quantity_data
+                    else formatters["datetime"](value)
+                    if isinstance(value, datetime)
+                    else formatters["number"](value)
+                    if isinstance(value, int) or isinstance(value, float)
+                    else value,
+                    f"[/{data}]",
+                ])
                 for data in data_keys
             },
             **self.stylers,

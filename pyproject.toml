@@ -150,6 +150,8 @@ line-length   = 80
 indent-width  = 4
 src           = ["src"]
 fix           = true
+target-version = "py311"
+preview        = true
 
 [tool.ruff.format]
 indent-style               = "space"
