@@ -1145,7 +1145,7 @@ class CLI:
                     case "install":
                         model_install(args, console, theme, hub)
                     case "run":
-                        await model_run(args, console, theme, hub, self._logger)
+                        await model_run(args, console, theme, hub, self._REFRESH_RATE, self._logger)
                     case "search":
                         await model_search(
                             args, console, theme, hub, self._REFRESH_RATE

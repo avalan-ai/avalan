@@ -247,6 +247,10 @@ async def agent_run(
             if not args.quiet and not args.stats:
                 console.print(_i["agent_output"] + " ", end="")
 
+            if args.quiet:
+                console.print(await output.to_str())
+                return
+
             assert isinstance(output, OrchestratorResponse)
 
             await token_generation(
@@ -258,6 +262,7 @@ async def agent_run(
                 event_stats=event_stats,
                 lm=orchestrator.engine,
                 input_string=input_string,
+                refresh_per_second=refresh_per_second,
                 response=output,
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,

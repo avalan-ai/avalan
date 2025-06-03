@@ -14,7 +14,7 @@ from ...entities import (
     TokenizerConfig,
     User,
 )
-from ...event import Event
+from ...event import Event, EventStats
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from dataclasses import fields
@@ -279,14 +279,14 @@ class Theme(ABC):
         input_token_count: int,
         total_tokens: int,
         tool_events: list[Event] | None,
+        tool_event_calls: list[Event] | None,
+        tool_event_results: list[Event] | None,
         ttft: float,
         ttnt: float,
         ellapsed: float,
         console_width: int,
         logger: Logger,
-        events: Optional[int] = None,
-        tool_calls: Optional[int] = None,
-        tool_call_results: Optional[int] = None,
+        event_stats: Optional[EventStats] = None,
         maximum_frames: Optional[int] = None,
         logits_count: Optional[int] = None,
         tool_events_limit: int | None = None,
@@ -295,6 +295,9 @@ class Theme(ABC):
         height: int = 12,
         padding: int = 1,
         wrap_padding: int = 4,
+        limit_think_height: bool = True,
+        limit_answer_height: bool = False,
+        start_thinking: bool = False,
     ) -> Generator[Tuple[Optional[Token], RenderableType], None, None]:
         raise NotImplementedError()
 

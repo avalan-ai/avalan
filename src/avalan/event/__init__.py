@@ -28,6 +28,9 @@ class EventType(StrEnum):
 class Event:
     type: EventType
     payload: dict[str, Any] | None = None
+    started: float | None = None
+    finished: float | None = None
+    ellapsed: float | None = None
 
 
 class EventStats:

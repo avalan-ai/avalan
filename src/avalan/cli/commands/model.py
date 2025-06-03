@@ -19,6 +19,7 @@ from logging import Logger
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
+from rich.spinner import Spinner
 from rich.theme import Theme
 from time import perf_counter
 from typing import Tuple, Union
@@ -120,6 +121,7 @@ async def model_run(
     console: Console,
     theme: Theme,
     hub: HuggingfaceHub,
+    refresh_per_second: int,
     logger: Logger,
 ) -> None:
     assert args.model and args.device and args.max_new_tokens
@@ -209,6 +211,7 @@ async def model_run(
                 event_stats=None,
                 lm=lm,
                 input_string=input_string,
+                refresh_per_second=refresh_per_second,
                 response=await output_generator,
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
@@ -308,12 +311,15 @@ async def token_generation(
     *,
     display_tokens: int,
     dtokens_pick: int,
+    refresh_per_second: int,
     tool_events_limit: int | None,
     with_stats: bool = True,
 ):
     # If no statistics needed, return as early as possible
     if not with_stats:
         async for token in response:
+            if isinstance(token,Event):
+                continue
             text_token = token.token if isinstance(token, Token) else token
             console.print(text_token, end="")
         return
@@ -331,13 +337,15 @@ async def token_generation(
     )
     tokens = []
     text_tokens: list[Union[Token, TokenDetail, str]] = []
-    events: list[Event] = []
+    tool_events: list[Event] = []
+    tool_event_calls: list[Event] = []
+    tool_event_results: list[Event] = []
     total_tokens = 0
     frame_minimum_pause_ms = (
         100 if display_pause > 0 and display_tokens > 0 else 0
     )
 
-    with Live() as live:
+    with Live(refresh_per_second=refresh_per_second) as live:
         start = perf_counter()
         input_token_count = (
             response.input_token_count
@@ -350,11 +358,12 @@ async def token_generation(
         ttnt: float | None = None
         token_frame_list: list[Tuple[Token | None, RenderableType]] = None
         last_current_dtoken: Token | None = None
+        tool_running_spinner: Spinner | None = None
 
         async for token in response:
             if isinstance(token, Event):
                 event = token
-
+                tool_events.append(event)
                 if event.type == EventType.TOOL_MODEL_RESPONSE:
                     tokens = []
                     text_tokens = []
@@ -362,11 +371,40 @@ async def token_generation(
                     assert isinstance(inner_response, TextGenerationResponse)
                     if inner_response.input_token_count:
                         input_token_count = inner_response.input_token_count
+                elif event.type == EventType.TOOL_RESULT:
+                    tool_event_results.append(event)
                 else:
-                    events.append(event)
+                    tool_event_calls.append(event)
+
             else:
                 text_token = token.token if isinstance(token, Token) else token
                 text_tokens.append(text_token)
+
+            tool_running_spinner = None
+            if tool_event_calls or tool_event_results:
+                tool_calling_names = [
+                    c.name
+                    for e in tool_event_calls
+                    for c in e.payload
+                    if c.id not in {
+                        r.payload["call"].id
+                        for r in tool_event_results
+                        if r.type == EventType.TOOL_RESULT and "call" in r.payload
+                    }
+                ]
+
+                tool_running_spinner = Spinner(
+                    theme.get_spinner("tool_running"),
+                    text="[cyan]"+theme._n(
+                        "Running tool {tool_names}...",
+                        "Running tools {tool_names}...",
+                        len(tool_calling_names)
+                    ).format(
+                        tool_names=", ".join(tool_calling_names)
+                    ) + "[/cyan]",
+                    style="cyan",
+                    speed=1.0
+                ) if tool_calling_names else None
 
             total_tokens = total_tokens + 1
             ellapsed = perf_counter() - start
@@ -410,7 +448,10 @@ async def token_generation(
                 tokens or None,
                 input_token_count,
                 total_tokens,
-                events,
+                tool_events,
+                tool_event_calls,
+                tool_event_results,
+                tool_running_spinner,
                 ttft,
                 ttnt,
                 ellapsed,

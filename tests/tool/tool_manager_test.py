@@ -3,6 +3,8 @@ from avalan.tool import ToolSet
 from avalan.tool.calculator import calculator
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase, main, TestCase
+from unittest.mock import patch
+from uuid import uuid4 as _uuid4
 
 
 class ToolManagerCreationTestCase(TestCase):
@@ -36,23 +38,30 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             '<tool_call>{"name": "calculator", '
             '"arguments": {"expression": "1 + 1"}}</tool_call>'
         )
-        calls = self.manager.get_calls(text)
+        call_id = _uuid4()
+        result_id = _uuid4()
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = self.manager.get_calls(text)
+            expected_call = ToolCall(
+                id=call_id,
+                name="calculator",
+                arguments={"expression": "1 + 1"},
+            )
+            self.assertEqual(calls, [expected_call])
 
-        expected_call = ToolCall(
-            name="calculator",
-            arguments={"expression": "1 + 1"},
-        )
-        self.assertEqual(calls, [expected_call])
+            results = await self.manager(calls[0])
 
-        results = await self.manager(calls[0])
-
-        expected_result = ToolCallResult(
-            call=expected_call,
-            name="calculator",
-            arguments={"expression": "1 + 1"},
-            result="2",
-        )
-        self.assertEqual(results, expected_result)
+            expected_result = ToolCallResult(
+                id=result_id,
+                call=expected_call,
+                name="calculator",
+                arguments={"expression": "1 + 1"},
+                result="2",
+            )
+            self.assertEqual(results, expected_result)
 
     async def test_set_eos_token(self):
         self.manager.set_eos_token("<END>")
@@ -61,23 +70,31 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             '"arguments": {"expression": "2"}}</tool_call><END>'
         )
 
-        calls = self.manager.get_calls(text)
-        expected_call = ToolCall(
-            name="calculator",
-            arguments={"expression": "2"},
-        )
-        self.assertEqual(calls, [expected_call])
+        call_id = _uuid4()
+        result_id = _uuid4()
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = self.manager.get_calls(text)
+            expected_call = ToolCall(
+                id=call_id,
+                name="calculator",
+                arguments={"expression": "2"},
+            )
+            self.assertEqual(calls, [expected_call])
 
-        results = await self.manager(calls[0])
+            results = await self.manager(calls[0])
 
-        expected_result = ToolCallResult(
-            call=expected_call,
-            name="calculator",
-            arguments={"expression": "2"},
-            result="2",
-        )
-        self.assertEqual(results, expected_result)
-        self.assertEqual(self.manager._parser._eos_token, "<END>")
+            expected_result = ToolCallResult(
+                id=result_id,
+                call=expected_call,
+                name="calculator",
+                arguments={"expression": "2"},
+                result="2",
+            )
+            self.assertEqual(results, expected_result)
+            self.assertEqual(self.manager._parser._eos_token, "<END>")
 
     async def test_namespaced_tool(self):
         namespaced_manager = ToolManager.create_instance(
@@ -89,22 +106,30 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             '"arguments": {"expression": "3"}}</tool_call>'
         )
 
-        calls = namespaced_manager.get_calls(text)
-        expected_call = ToolCall(
-            name="math.calculator",
-            arguments={"expression": "3"},
-        )
-        self.assertEqual(calls, [expected_call])
+        call_id = _uuid4()
+        result_id = _uuid4()
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = namespaced_manager.get_calls(text)
+            expected_call = ToolCall(
+                id=call_id,
+                name="math.calculator",
+                arguments={"expression": "3"},
+            )
+            self.assertEqual(calls, [expected_call])
 
-        results = await namespaced_manager(calls[0])
+            results = await namespaced_manager(calls[0])
 
-        expected_result = ToolCallResult(
-            call=expected_call,
-            name="math.calculator",
-            arguments={"expression": "3"},
-            result="3",
-        )
-        self.assertEqual(results, expected_result)
+            expected_result = ToolCallResult(
+                id=result_id,
+                call=expected_call,
+                name="math.calculator",
+                arguments={"expression": "3"},
+                result="3",
+            )
+            self.assertEqual(results, expected_result)
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ release:
 	poetry publish --build
 	gh release create v$(VERSION) \
 	  --title "v$(VERSION)" \
-	  --notes-file <(git log --format=%B -n1 v$(VERSION))
+	  --notes-file <(git log --format=%B -n1 "v$(VERSION)")
 
 %:
 	@:

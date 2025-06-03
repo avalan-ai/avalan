@@ -4,6 +4,7 @@ from ..tool.calculator import calculator
 from ..tool.parser import ToolCallParser
 from types import FunctionType
 from typing import Sequence
+from uuid import uuid4
 
 
 class ToolManager:
@@ -89,6 +90,7 @@ class ToolManager:
         )
 
         return ToolCallResult(
+            id=uuid4(),
             call=tool_call,
             name=tool_call.name,
             arguments=tool_call.arguments,

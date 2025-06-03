@@ -18,7 +18,14 @@ from ...event import Event, EventStats, EventType
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
-from humanize import clamp, intcomma, intword, naturalday, naturalsize
+from humanize import (
+    clamp,
+    intcomma,
+    intword,
+    naturalday,
+    naturalsize,
+    naturaldelta,
+)
 from locale import format_string
 from logging import Logger
 from math import ceil
@@ -132,6 +139,7 @@ class FancyTheme(Theme):
             "cache_accessing": "bouncingBar",
             "connecting": "earth",
             "thinking": "dots",
+            "tool_running": "point",
             "downloading": "earth",
         }
 
@@ -1354,6 +1362,9 @@ class FancyTheme(Theme):
         input_token_count: int,
         total_tokens: int,
         tool_events: list[Event] | None,
+        tool_event_calls: list[Event] | None,
+        tool_event_results: list[Event] | None,
+        tool_running_spinner: Spinner | None,
         ttft: float,
         ttnt: float,
         ellapsed: float,
@@ -1433,7 +1444,7 @@ class FancyTheme(Theme):
             len(dtokens_selected) if dtokens_selected else 0
         )
 
-        # Build think and answer panels
+        # Build think and, EventStats answer panels
         progress_title = " · ".join(
             _lf(
                 [
@@ -1533,14 +1544,20 @@ class FancyTheme(Theme):
             else None
         )
 
-        tool_event_log: list[str] | None = (
+        tool_event_log: list[str] | None = _lf(
             [
                 _(
-                    "Executed tool {tool} with {total_arguments} arguments. Got result: {result}"
+                    "Executed tool {tool} call #{call_id} with {total_arguments} arguments. Got result \"{result}\" in {ellapsed_with_unit}."
                 ).format(
-                    tool=event.payload["result"].name,
+                    tool=event.payload["result"].call.name,
+                    ellapsed_with_unit="[gray78]"
+                    + naturaldelta(event.ellapsed, minimum_unit="microseconds")
+                    + "[/gray78]",
+                    call_id="[gray78]"
+                    + str(event.payload["result"].call.id)[:8]
+                    + "[/gray78]",
                     total_arguments=len(
-                        event.payload["result"].arguments or []
+                        event.payload["result"].call.arguments or []
                     ),
                     result="[spring_green3]"
                     + event.payload["result"].result
@@ -1553,11 +1570,11 @@ class FancyTheme(Theme):
                     len(event.payload),
                 ).format(
                     total_calls=len(event.payload),
-                    calls="[spring_green3]"
-                    + "[/spring_green3], [spring_green3]".join(
+                    calls="[gray78]"
+                    + "[/gray78], [gray78]".join(
                         [call.name for call in event.payload]
                     )
-                    + "[/spring_green3]",
+                    + "[/gray78]",
                 )
                 if event.type == EventType.TOOL_PROCESS
                 else None
@@ -1566,22 +1583,35 @@ class FancyTheme(Theme):
             if tool_events and tool_events_limit is None or tool_events_limit
             else None
         )
+
         if tool_event_log and tool_events_limit:
             tool_event_log = tool_event_log[-tool_events_limit:]
 
         tools_panel = (
             Panel(
-                "[dark_green]" + "\n".join(tool_event_log) + "[/dark_green]",
+                _j("\n", tool_event_log),
                 title=_("Tool calls"),
                 title_align="left",
                 height=2 + (tool_events_limit or 2),
                 padding=(0, 0, 0, 1),
                 expand=True,
                 box=box.SQUARE,
+                border_style="cyan",
+                style="gray50 on gray15"
             )
             if tool_event_log
             else None
         )
+
+        tool_running_panel : RenderableType | None = None
+
+        if tool_running_spinner and len(tool_event_calls) != len(
+            tool_event_results
+        ):
+            tool_running_panel = Padding(
+                tool_running_spinner,
+                pad=(1, 0, 1, 0)
+            )
 
         # Quick return of no need for token details
         if display_token_size is None or tokens is None:
@@ -1592,6 +1622,7 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
+                            tool_running_panel or None,
                             answer_panel or None,
                         ]
                     )
@@ -1777,6 +1808,7 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
+                            tool_running_panel or None,
                             answer_panel or None,
                             tokens_distribution_panel
                             if tokens and tokens_distribution_panel

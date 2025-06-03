@@ -382,12 +382,14 @@ class TokenDetail(Token):
 
 @dataclass(frozen=True, kw_only=True)
 class ToolCall:
+    id: UUID
     name: str
     arguments: Optional[dict[str, ToolValue]] = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class ToolCallResult(ToolCall):
+    id: UUID
     call: ToolCall
     result: Optional[ToolValue] = None
 
