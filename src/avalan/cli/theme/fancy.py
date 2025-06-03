@@ -18,7 +18,14 @@ from ...event import Event, EventStats, EventType
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
-from humanize import clamp, intcomma, intword, naturalday, naturalsize
+from humanize import (
+    clamp,
+    intcomma,
+    intword,
+    naturalday,
+    naturalsize,
+    naturaldelta,
+)
 from locale import format_string
 from logging import Logger
 from math import ceil
@@ -1537,54 +1544,70 @@ class FancyTheme(Theme):
             else None
         )
 
-        tool_event_log: list[str] | None = _lf([
-            _(
-                "Executed tool {tool} call #{call_id} with {total_arguments} arguments. Got result: {result}"
-            ).format(
-                tool=event.payload["result"].call.name,
-                call_id="[spring_green4]"+str(event.payload["result"].call.id)+"[/spring_green4]",
-                total_arguments=len(
-                    event.payload["result"].call.arguments or []
-                ),
-                result="[spring_green3]"
-                + event.payload["result"].result
-                + "[/spring_green3]",
-            )
-            if event.type == EventType.TOOL_RESULT
-            else _n(
-                "Executing {total_calls} tool: {calls}",
-                "Executing {total_calls} tools: {calls}",
-                len(event.payload),
-            ).format(
-                total_calls=len(event.payload),
-                calls="[spring_green3]"
-                + "[/spring_green3], [spring_green3]".join(
-                    [call.name for call in event.payload]
+        tool_event_log: list[str] | None = _lf(
+            [
+                _(
+                    "Executed tool {tool} call #{call_id} with {total_arguments} arguments. Got result: {result}"
+                ).format(
+                    tool=event.payload["result"].call.name,
+                    call_id="[spring_green4]"
+                    + str(event.payload["result"].call.id)
+                    + "[/spring_green4]",
+                    total_arguments=len(
+                        event.payload["result"].call.arguments or []
+                    ),
+                    result="[spring_green3]"
+                    + event.payload["result"].result
+                    + "[/spring_green3]",
                 )
-                + "[/spring_green3]",
-            )
-            if event.type == EventType.TOOL_PROCESS
+                if event.type == EventType.TOOL_RESULT
+                else _n(
+                    "Executing {total_calls} tool: {calls}",
+                    "Executing {total_calls} tools: {calls}",
+                    len(event.payload),
+                ).format(
+                    total_calls=len(event.payload),
+                    calls="[spring_green3]"
+                    + "[/spring_green3], [spring_green3]".join(
+                        [call.name for call in event.payload]
+                    )
+                    + "[/spring_green3]",
+                )
+                if event.type == EventType.TOOL_PROCESS
+                else None
+                for event in tool_events
+            ]
+            if tool_events and tool_events_limit is None or tool_events_limit
             else None
-            for event in tool_events
-        ]
-        if tool_events and tool_events_limit is None or tool_events_limit
-        else None)
+        )
 
         if tool_event_log and tool_events_limit:
             tool_event_log = tool_event_log[-tool_events_limit:]
 
-        tools_panel = Panel(
-            "[dark_green]" + _j("\n", tool_event_log) + "[/dark_green]",
-            title=_("Tool calls"),
-            title_align="left",
-            height=2 + (tool_events_limit or 2),
-            padding=(0, 0, 0, 1),
-            expand=True,
-            box=box.SQUARE,
-        ) if tool_event_log else None
+        tools_panel = (
+            Panel(
+                "[dark_green]" + _j("\n", tool_event_log) + "[/dark_green]",
+                title=_("Tool calls"),
+                title_align="left",
+                height=2 + (tool_events_limit or 2),
+                padding=(0, 0, 0, 1),
+                expand=True,
+                box=box.SQUARE,
+            )
+            if tool_event_log
+            else None
+        )
 
         # Quick return of no need for token details
         if display_token_size is None or tokens is None:
+            if tool_running_spinner and len(tool_event_calls) != len(
+                tool_event_results
+            ):
+                tool_running_spinner.text = Text(
+                    f"{tool_running_spinner.text.plain} ({naturaldelta(ellapsed)})",
+                    style="cyan",
+                )
+
             yield (
                 None,
                 Group(
@@ -1592,10 +1615,9 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
-                            Padding(
-                                tool_running_spinner,
-                                pad=(1,0,1,0)
-                            ) if len(tool_event_calls) != len(tool_event_results) else None,
+                            Padding(tool_running_spinner, pad=(1, 0, 1, 0))
+                            if len(tool_event_calls) != len(tool_event_results)
+                            else None,
                             answer_panel or None,
                         ]
                     )
@@ -1774,6 +1796,14 @@ class FancyTheme(Theme):
                     border_style="bright_black",
                 )
 
+            if tool_running_spinner and len(tool_event_calls) != len(
+                tool_event_results
+            ):
+                tool_running_spinner.text = Text(
+                    f"{tool_running_spinner.text.plain} ({naturaldelta(ellapsed)})",
+                    style="cyan",
+                )
+
             yield (
                 current_dtoken,
                 Group(
@@ -1781,6 +1811,10 @@ class FancyTheme(Theme):
                         [
                             think_pannel or None,
                             tools_panel or None,
+                            Padding(tool_running_spinner, pad=(1, 0, 1, 0))
+                            if tool_running_spinner
+                            and len(tool_event_calls) != len(tool_event_results)
+                            else None,
                             answer_panel or None,
                             tokens_distribution_panel
                             if tokens and tokens_distribution_panel

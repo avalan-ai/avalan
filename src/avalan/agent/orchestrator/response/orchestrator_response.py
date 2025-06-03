@@ -14,6 +14,7 @@ from ....model import TextGenerationResponse
 from ....tool.manager import ToolManager
 from queue import Queue
 from io import StringIO
+from time import perf_counter
 from typing import Any, AsyncIterator, Union
 
 
@@ -109,18 +110,24 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         if not self._calls.empty():
             call = self._calls.get()
 
+            start = perf_counter()
             execute_event = Event(
                 type=EventType.TOOL_EXECUTE,
                 payload={"call": call},
+                started=start,
             )
             if self._event_manager:
                 await self._event_manager.trigger(execute_event)
 
             result = await self._tool(call) if self._tool else None
 
+            end = perf_counter()
             result_event = Event(
                 type=EventType.TOOL_RESULT,
                 payload={"result": result},
+                started=start,
+                finished=end,
+                ellapsed=end - start,
             )
             if self._event_manager:
                 await self._event_manager.trigger(result_event)
@@ -130,7 +137,11 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
             return result_event
 
         # Wait until all results are collected
-        if self._tool_call_events.empty() and self._calls.empty() and not self._tool_result_events.empty():
+        if (
+            self._tool_call_events.empty()
+            and self._calls.empty()
+            and not self._tool_result_events.empty()
+        ):
             result_events: list[Event] = []
             while not self._tool_result_events.empty():
                 result_event = self._tool_result_events.get()
@@ -248,7 +259,11 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
             return token
 
         self._tool_process_events.put(
-            Event(type=EventType.TOOL_PROCESS, payload=calls)
+            Event(
+                type=EventType.TOOL_PROCESS,
+                payload=calls,
+                started=perf_counter(),
+            )
         )
 
         return token
