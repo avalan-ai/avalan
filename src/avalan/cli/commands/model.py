@@ -394,7 +394,7 @@ async def token_generation(
                 ]
 
                 tool_running_spinner = Spinner(
-                    theme.get_spinner("agent_loading"),
+                    theme.get_spinner("tool_running"),
                     text="[cyan]"+theme._n(
                         "Running tool {tool_names}...",
                         "Running tools {tool_names}...",

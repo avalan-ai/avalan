@@ -139,7 +139,7 @@ class FancyTheme(Theme):
             "cache_accessing": "bouncingBar",
             "connecting": "earth",
             "thinking": "dots",
-            "tool_running": "dots",
+            "tool_running": "point",
             "downloading": "earth",
         }
 
