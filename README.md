@@ -85,10 +85,6 @@ if __name__ == "__main__":
     run(example())
 ```
 
-Check the GPU hard at work towards the bottom:
-
-![Running the local inference example](https://avalan.ai/images/running_local_inference_example_messi.gif)
-
 Besides natural language processing, you can also work with other types of
 models, such as those that handle vision, like the following
 [image classification example](https://github.com/avalan-ai/avalan/blob/main/docs/examples/vision_image_classification.py):
