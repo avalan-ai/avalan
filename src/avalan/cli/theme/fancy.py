@@ -1563,7 +1563,7 @@ class FancyTheme(Theme):
                     + event.payload["result"].result
                     + "[/spring_green3]",
                 )
-                if event.type == EventType.TOOL_RESULT
+                if event.type == EventType.TOOL_RESULT and event.payload["result"]
                 else _n(
                     "Executing {total_calls} tool: {calls}",
                     "Executing {total_calls} tools: {calls}",

@@ -5,13 +5,13 @@
 #
 # Example use for ephemereal agent:
 #
-# echo "What is (4 + 6) and then that result times 5, divided by 2?" | avalan agent run --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" --tool "calculator" --memory-recent --run-max-new-tokens 1024 --name "Tool" --role "You are a helpful assistant named Tool, that can resolve user requests using tools."
+# echo "What is (4 + 6) and then that result times 5, divided by 2?" | avalan agent run --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" --tool "math.calculator" --memory-recent --run-max-new-tokens 1024 --name "Tool" --role "You are a helpful assistant named Tool, that can resolve user requests using tools."
 #
 
 [engine]
 uri = "NousResearch/Hermes-3-Llama-3.1-8B"
 tools = [
-    "calculator"
+    "math.calculator"
 ]
 
 [memory]
