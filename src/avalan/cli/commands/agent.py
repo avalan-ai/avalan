@@ -18,9 +18,82 @@ from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
 from typing import Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 from jinja2 import Environment, FileSystemLoader
 from os.path import dirname, join
+
+
+def get_orchestrator_settings(
+    args: Namespace,
+    *,
+    agent_id: UUID,
+    name: str | None = None,
+    role: str | None = None,
+    task: str | None = None,
+    instructions: str | None = None,
+    engine_uri: str | None = None,
+    memory_recent: bool | None = None,
+    memory_permanent: str | None = None,
+    max_new_tokens: int | None = None,
+    tools: list[str] | None = None,
+) -> OrchestratorSettings:
+    """Create ``OrchestratorSettings`` from CLI arguments."""
+
+    memory_recent = (
+        memory_recent
+        if memory_recent is not None
+        else (
+            args.memory_recent
+            if args.memory_recent is not None
+            else not getattr(args, "no_session", False)
+        )
+    )
+    engine_uri = engine_uri or args.engine_uri
+    call_tokens = (
+        max_new_tokens
+        if max_new_tokens is not None
+        else args.run_max_new_tokens
+    )
+
+    return OrchestratorSettings(
+        agent_id=agent_id,
+        orchestrator_type=None,
+        agent_config={
+            k: v
+            for k, v in {
+                "name": name if name is not None else args.name,
+                "role": role if role is not None else args.role,
+                "task": task if task is not None else args.task,
+                "instructions": instructions
+                if instructions is not None
+                else args.instructions,
+            }.items()
+            if v is not None
+        },
+        uri=engine_uri,
+        engine_config=None,
+        call_options={
+            "max_new_tokens": call_tokens,
+            "skip_special_tokens": args.run_skip_special_tokens,
+        },
+        template_vars=None,
+        memory_permanent=(
+            memory_permanent
+            if memory_permanent is not None
+            else args.memory_permanent
+        ),
+        memory_recent=memory_recent,
+        sentence_model_id=(
+            args.memory_engine_model_id
+            or OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
+        ),
+        sentence_model_engine_config=None,
+        sentence_model_max_tokens=args.memory_engine_max_tokens,
+        sentence_model_overlap_size=args.memory_engine_overlap,
+        sentence_model_window_size=args.memory_engine_window,
+        json_config=None,
+        tools=tools if tools is not None else args.tool or [],
+    )
 
 
 async def agent_message_search(
@@ -175,35 +248,11 @@ async def agent_run(
                     if args.memory_recent is not None
                     else not args.no_session
                 )
-                settings = OrchestratorSettings(
+                settings = get_orchestrator_settings(
+                    args,
                     agent_id=agent_id or uuid4(),
-                    orchestrator_type=None,
-                    agent_config={
-                        k: v
-                        for k, v in {
-                            "name": args.name,
-                            "role": args.role,
-                            "task": args.task,
-                            "instructions": args.instructions,
-                        }.items()
-                        if v is not None
-                    },
-                    uri=args.engine_uri,
-                    engine_config=None,
-                    tools=args.tool,
-                    call_options={
-                        "max_new_tokens": args.run_max_new_tokens,
-                        "skip_special_tokens": args.run_skip_special_tokens,
-                    },
-                    template_vars=None,
-                    memory_permanent=args.memory_permanent,
                     memory_recent=memory_recent,
-                    sentence_model_id=args.memory_engine_model_id,
-                    sentence_model_engine_config=None,
-                    sentence_model_max_tokens=args.memory_engine_max_tokens,
-                    sentence_model_overlap_size=args.memory_engine_overlap,
-                    sentence_model_window_size=args.memory_engine_window,
-                    json_config=None,
+                    tools=args.tool,
                 )
                 logger.debug("Loading agent from inline settings")
                 orchestrator = await OrchestratorLoader.load_from_settings(
@@ -407,43 +456,22 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         if args.memory_permanent is not None
         else Prompt.ask(_("Permanent memory DSN"), default="")
     )
-    memory_engine_model_id = (
-        args.memory_engine_model_id
-        or OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
-    )
     engine_uri = args.engine_uri or Prompt.ask(
         _("Engine URI"),
         default="microsoft/Phi-4-mini-instruct",
     )
 
-    settings = OrchestratorSettings(
+    settings = get_orchestrator_settings(
+        args,
         agent_id=uuid4(),
-        orchestrator_type=None,
-        agent_config={
-            k: v
-            for k, v in {
-                "name": name,
-                "role": role,
-                "task": task,
-                "instructions": instructions,
-            }.items()
-            if v
-        },
-        uri=engine_uri,
-        engine_config=None,
-        call_options={
-            "max_new_tokens": args.run_max_new_tokens or 1024,
-            "skip_special_tokens": args.run_skip_special_tokens,
-        },
-        template_vars=None,
-        memory_permanent=memory_permanent,
+        name=name,
+        role=role,
+        task=task,
+        instructions=instructions,
+        engine_uri=engine_uri,
         memory_recent=memory_recent,
-        sentence_model_id=memory_engine_model_id,
-        sentence_model_engine_config=None,
-        sentence_model_max_tokens=args.memory_engine_max_tokens,
-        sentence_model_overlap_size=args.memory_engine_overlap,
-        sentence_model_window_size=args.memory_engine_window,
-        json_config=None,
+        memory_permanent=memory_permanent,
+        max_new_tokens=args.run_max_new_tokens or 1024,
         tools=args.tool or [],
     )
 
