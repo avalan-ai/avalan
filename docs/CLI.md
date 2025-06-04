@@ -1212,7 +1212,8 @@ options:
 ### model display
 
 You can show detailed model information (such as architectures, vocabulary
-size, hidden and attention layers, special tokens, etc) if you load the model:
+size, hidden and attention layers, special tokens, etc) if you load the model.
+The command also tells you whether the model fits in your current device:
 
 ```bash
 avalan model display --load deepseek-ai/DeepSeek-R1-Distill-Qwen-14B

@@ -9,6 +9,7 @@ from ...event import EventStats
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
+from ...model.engine import Engine
 from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
@@ -55,6 +56,7 @@ def model_display(
             )
         )
 
+        is_runnable = not engine_uri.is_local
         if not model and (
             (load is not None and load) or (load is None and args.load)
         ):
@@ -67,11 +69,13 @@ def model_display(
             )
             with manager.load(**model_settings) as lm:
                 logger.debug(f"Loaded model {lm.config.__repr__()}")
+                is_runnable = lm.is_runnable(getattr(args, "device", None))
                 console.print(
                     Padding(
                         theme.model_display(
                             lm.config,
                             lm.tokenizer_config,
+                            is_runnable=is_runnable,
                             summary=summary or False,
                         ),
                         pad=(0, 0, 0, 0),
@@ -83,6 +87,7 @@ def model_display(
                     theme.model_display(
                         model.config,
                         model.tokenizer_config,
+                        is_runnable=is_runnable,
                         summary=summary or False,
                     ),
                     pad=(0, 0, 0, 0),

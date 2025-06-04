@@ -91,6 +91,7 @@ tool = [
   "sympy==1.14.0",
 ]
 secrets = [
+  "boto3==1.38.29",
   "keyring==25.6.0",
 ]
 translation = [
@@ -118,6 +119,7 @@ mlx = [
 all = [
   "accelerate==1.7.0",
   "anthropic==0.52.0",
+  "boto3==1.38.29",
   "bitsandbytes==0.45.5",
   "faiss-cpu==1.11.0",
   "fastapi==0.115.12",

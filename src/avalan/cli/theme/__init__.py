@@ -216,6 +216,9 @@ class Theme(ABC):
             Union[ModelConfig, SentenceTransformerModelConfig]
         ],
         tokenizer_config: TokenizerConfig,
+        *args,
+        is_runnable: bool | None = None,
+        summary: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
 
