@@ -43,7 +43,22 @@ class Engine(ABC):
     _model: Union[PreTrainedModel, TextGenerationVendor] | None = None
     _config: Union[ModelConfig, SentenceTransformerModelConfig] | None = None
     _tokenizer_config: TokenizerConfig | None = None
+    _parameter_types: set[str] | None = None
+    _parameter_count: int | None = None
     _exit_stack: ExitStack = ExitStack()
+
+    DTYPE_SIZES: dict[str, int] = {
+        "bool": 1,
+        "bfloat16": 2,
+        "float16": 2,
+        "float32": 4,
+        "float64": 8,
+        "int8": 1,
+        "int16": 2,
+        "i32": 4,
+        "i64": 8,
+        "ui8": 1,
+    }
 
     def __init__(
         self,
@@ -101,6 +116,14 @@ class Engine(ABC):
         return self._model_id
 
     @property
+    def parameter_count(self) -> int | None:
+        return self._parameter_count
+
+    @property
+    def parameter_types(self) -> set[str] | None:
+        return self._parameter_types
+
+    @property
     def tokenizer_config(self) -> TokenizerConfig | None:
         return self._tokenizer_config
 
@@ -117,6 +140,27 @@ class Engine(ABC):
     @abstractmethod
     def _load_model(self) -> Union[PreTrainedModel, TextGenerationVendor]:
         raise NotImplementedError()
+
+    def is_runnable(self, device: str | None = None) -> bool | None:
+        if (
+            self._parameter_types is None
+            or not self._parameter_types
+            or self._parameter_count is None
+            or self._parameter_count <= 0
+        ):
+            return None
+
+        if not device:
+            device = Engine.get_default_device()
+
+        available = Engine._get_device_memory(device)
+        if not available:
+            return False
+
+        dtype = next(iter(self._parameter_types))
+        bytes_per_param = self.DTYPE_SIZES.get(dtype, 4)
+        required = self._parameter_count * bytes_per_param
+        return required <= available
 
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True
@@ -256,6 +300,20 @@ class Engine(ABC):
 
             self._loaded_model = True
 
+        self._parameter_types = (
+            {
+                str(param.dtype).replace("torch.", "")
+                for param in self._model.parameters()
+            }
+            if self._model and hasattr(self._model, "parameters")
+            else None
+        )
+        self._parameter_count = (
+            sum(p.numel() for p in self._model.parameters())
+            if self._model and hasattr(self._model, "parameters")
+            else None
+        )
+
         if self._model and not self._config:
             config: (
                 Union[ModelConfig, SentenceTransformerModelConfig] | None
@@ -358,6 +416,25 @@ class Engine(ABC):
             if mps.is_available()
             else "cpu"
         )
+
+    @staticmethod
+    def _get_device_memory(device: str) -> int:
+        """Return available memory for device in bytes."""
+        if device.startswith("cuda") or device == "cuda":
+            if not cuda.is_available():
+                return 0
+            index = (
+                int(device.split(":", 1)[1])
+                if ":" in device
+                else cuda.current_device()
+            )
+            return cuda.get_device_properties(index).total_memory
+
+        from psutil import virtual_memory
+
+        if device == "mps" and mps.is_available():
+            return virtual_memory().total
+        return virtual_memory().total
 
     def _log(self, message: str) -> None:
         self._logger.debug(f"<{self._model_id}> {message}")

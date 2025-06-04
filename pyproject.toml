@@ -70,8 +70,10 @@ server = [
   "uvicorn==0.34.2",
 ]
 test = [
+  "boto3==1.38.29",
   "faiss-cpu==1.11.0",
   "fastapi==0.115.12",
+  "keyring==25.6.0",
   "markitdown[pdf]==0.1.1",
   "mlx-lm==0.24.1",
   "mcp==1.9.1",
@@ -91,6 +93,7 @@ tool = [
   "sympy==1.14.0",
 ]
 secrets = [
+  "boto3==1.38.29",
   "keyring==25.6.0",
 ]
 translation = [
@@ -118,6 +121,7 @@ mlx = [
 all = [
   "accelerate==1.7.0",
   "anthropic==0.52.0",
+  "boto3==1.38.29",
   "bitsandbytes==0.45.5",
   "faiss-cpu==1.11.0",
   "fastapi==0.115.12",

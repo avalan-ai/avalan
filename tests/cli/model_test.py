@@ -111,7 +111,8 @@ class CliModelTestCase(TestCase):
         manager = MagicMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = "uri"
+        engine_uri = SimpleNamespace(is_local=False)
+        manager.parse_uri.return_value = engine_uri
         model = SimpleNamespace(config="cfg", tokenizer_config="tok_cfg")
         self.hub.can_access.return_value = True
         self.hub.model.return_value = "hub_model"
@@ -138,8 +139,10 @@ class CliModelTestCase(TestCase):
         self.theme.model_display.assert_called_once_with(
             model.config,
             model.tokenizer_config,
+            is_runnable=True,
             summary=False,
         )
+        self.console.print.assert_called()
 
 
 class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
