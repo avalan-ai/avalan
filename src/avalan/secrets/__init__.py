@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+
 class Secrets(ABC):
     @abstractmethod
     def read(self, key: str) -> str | None:
@@ -12,6 +13,7 @@ class Secrets(ABC):
     @abstractmethod
     def delete(self, key: str) -> None:
         raise NotImplementedError()
+
 
 try:
     from keyring import get_keyring

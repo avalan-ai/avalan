@@ -964,7 +964,9 @@ class FancyTheme(Theme):
                         model_config, is_runnable=is_runnable, summary=summary
                     )
                     if isinstance(model_config, SentenceTransformerModelConfig)
-                    else self._model_config(model_config, is_runnable=is_runnable, summary=summary),
+                    else self._model_config(
+                        model_config, is_runnable=is_runnable, summary=summary
+                    ),
                     pad=(0, 0, 0, 0),
                 )
                 if model_config
@@ -983,7 +985,11 @@ class FancyTheme(Theme):
         )
 
     def _sentence_transformer_model_config(
-        self, config: SentenceTransformerModelConfig, *args, is_runnable: bool | None, summary: bool
+        self,
+        config: SentenceTransformerModelConfig,
+        *args,
+        is_runnable: bool | None,
+        summary: bool,
     ) -> RenderableType:
         _ = self._
         config_table = Table(
@@ -996,7 +1002,10 @@ class FancyTheme(Theme):
             border_style="gray58",
         )
         config_table = self._fill_model_config_table(
-            config.transformer_model_config, config_table, is_runnable=is_runnable, summary=summary
+            config.transformer_model_config,
+            config_table,
+            is_runnable=is_runnable,
+            summary=summary,
         )
         config_table.add_row(_("Backend"), config.backend)
         config_table.add_row(
@@ -1014,7 +1023,11 @@ class FancyTheme(Theme):
         return Align(config_table, align="center")
 
     def _model_config(
-        self, config: ModelConfig, *args, is_runnable: bool | None, summary: bool
+        self,
+        config: ModelConfig,
+        *args,
+        is_runnable: bool | None,
+        summary: bool,
     ) -> RenderableType:
         config_table = Table(
             Column(header="", justify="right"),
@@ -1031,7 +1044,12 @@ class FancyTheme(Theme):
         return Align(config_table, align="center")
 
     def _fill_model_config_table(
-        self, config: ModelConfig, config_table: Table, *args, is_runnable: bool | None, summary: bool
+        self,
+        config: ModelConfig,
+        config_table: Table,
+        *args,
+        is_runnable: bool | None,
+        summary: bool,
     ) -> Table:
         _ = self._
         config_table.add_row(
@@ -1040,7 +1058,8 @@ class FancyTheme(Theme):
 
         if is_runnable is not None:
             config_table.add_row(
-                _("Runs on this instance"), "[bold]" + (_("Yes") if is_runnable else _("No")) + "[/bold]"
+                _("Runs on this instance"),
+                "[bold]" + (_("Yes") if is_runnable else _("No")) + "[/bold]",
             )
 
         if not summary and config.architectures:

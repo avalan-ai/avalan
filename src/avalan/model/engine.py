@@ -142,7 +142,12 @@ class Engine(ABC):
         raise NotImplementedError()
 
     def is_runnable(self, device: str | None = None) -> bool | None:
-        if self._parameter_types is None or not self._parameter_types or self._parameter_count is None or self._parameter_count <= 0:
+        if (
+            self._parameter_types is None
+            or not self._parameter_types
+            or self._parameter_count is None
+            or self._parameter_count <= 0
+        ):
             return None
 
         if not device:
@@ -156,7 +161,6 @@ class Engine(ABC):
         bytes_per_param = self.DTYPE_SIZES.get(dtype, 4)
         required = self._parameter_count * bytes_per_param
         return required <= available
-
 
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True
@@ -296,10 +300,19 @@ class Engine(ABC):
 
             self._loaded_model = True
 
-        self._parameter_types = {
-            str(param.dtype).replace("torch.", "") for param in self._model.parameters()
-        } if self._model and hasattr(self._model, "parameters") else None
-        self._parameter_count = sum(p.numel() for p in self._model.parameters()) if self._model and hasattr(self._model, "parameters") else None
+        self._parameter_types = (
+            {
+                str(param.dtype).replace("torch.", "")
+                for param in self._model.parameters()
+            }
+            if self._model and hasattr(self._model, "parameters")
+            else None
+        )
+        self._parameter_count = (
+            sum(p.numel() for p in self._model.parameters())
+            if self._model and hasattr(self._model, "parameters")
+            else None
+        )
 
         if self._model and not self._config:
             config: (

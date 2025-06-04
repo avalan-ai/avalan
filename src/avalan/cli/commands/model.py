@@ -9,7 +9,6 @@ from ...event import EventStats
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
-from ...model.engine import Engine
 from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
