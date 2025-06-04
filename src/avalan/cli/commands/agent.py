@@ -191,7 +191,10 @@ async def agent_run(
                     uri=args.engine_uri,
                     engine_config=None,
                     tools=args.tool,
-                    call_options={"max_new_tokens": args.run_max_new_tokens},
+                    call_options={
+                        "max_new_tokens": args.run_max_new_tokens,
+                        "skip_special_tokens": args.run_skip_special_tokens,
+                    },
                     template_vars=None,
                     memory_permanent=args.memory_permanent,
                     memory_recent=memory_recent,
@@ -412,26 +415,36 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         _("Engine URI"),
         default="microsoft/Phi-4-mini-instruct",
     )
-    run_use_cache = (
-        args.use_cache
-        if args.use_cache is not None
-        else Confirm.ask(_("Cache model locally?"))
-    )
-    run_skip_special_tokens = args.skip_special_tokens
-    max_new_tokens = args.max_new_tokens or 1024
 
-    data = dict(
-        name=name,
-        role=role,
-        task=task,
-        instructions=instructions,
-        memory_recent=memory_recent,
+    settings = OrchestratorSettings(
+        agent_id=uuid4(),
+        orchestrator_type=None,
+        agent_config={
+            k: v
+            for k, v in {
+                "name": name,
+                "role": role,
+                "task": task,
+                "instructions": instructions,
+            }.items()
+            if v
+        },
+        uri=engine_uri,
+        engine_config=None,
+        call_options={
+            "max_new_tokens": args.run_max_new_tokens or 1024,
+            "skip_special_tokens": args.run_skip_special_tokens,
+        },
+        template_vars=None,
         memory_permanent=memory_permanent,
-        memory_engine_model_id=memory_engine_model_id,
-        engine_uri=engine_uri,
-        run_use_cache=run_use_cache,
-        run_skip_special_tokens=run_skip_special_tokens,
-        max_new_tokens=max_new_tokens,
+        memory_recent=memory_recent,
+        sentence_model_id=memory_engine_model_id,
+        sentence_model_engine_config=None,
+        sentence_model_max_tokens=args.memory_engine_max_tokens,
+        sentence_model_overlap_size=args.memory_engine_overlap,
+        sentence_model_window_size=args.memory_engine_window,
+        json_config=None,
+        tools=args.tool or [],
     )
 
     env = Environment(
@@ -440,5 +453,5 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         lstrip_blocks=True,
     )
     template = env.get_template("blueprint.toml")
-    rendered = template.render(**data)
+    rendered = template.render(orchestrator=settings)
     console.print(Syntax(rendered, "toml"))
