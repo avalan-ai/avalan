@@ -1,30 +1,36 @@
 [agent]
-{% if name %}name = "{{ name }}"{% endif %}
+{% if orchestrator.agent_config.get('name') %}
+name = "{{ orchestrator.agent_config['name'] }}"
+{% endif %}
 role = """
-{{ role | indent(4) }}
+{{ orchestrator.agent_config.get('role', '') | indent(4) }}
 """
-{% if task %}
+{% if orchestrator.agent_config.get('task') %}
 task = """
-{{ task | indent(4) }}
+{{ orchestrator.agent_config['task'] | indent(4) }}
 """
 {% endif %}
-{% if instructions %}
+{% if orchestrator.agent_config.get('instructions') %}
 instructions = """
-{{ instructions | indent(4) }}
+{{ orchestrator.agent_config['instructions'] | indent(4) }}
 """
 {% endif %}
 
 [memory]
-recent = {{ memory_recent | lower }}
-{% if memory_permanent %}permanent = "{{ memory_permanent }}"{% endif %}
+recent = {{ orchestrator.memory_recent | lower }}
+{% if orchestrator.memory_permanent %}
+permanent = "{{ orchestrator.memory_permanent }}"
+{% endif %}
 
 [memory.engine]
-model_id = "{{ memory_engine_model_id }}"
+model_id = "{{ orchestrator.sentence_model_id }}"
+max_tokens = {{ orchestrator.sentence_model_max_tokens }}
+overlap_size = {{ orchestrator.sentence_model_overlap_size }}
+window_size = {{ orchestrator.sentence_model_window_size }}
 
 [engine]
-uri = "{{ engine_uri }}"
+uri = "{{ orchestrator.uri }}"
 
 [run]
-use_cache = {{ run_use_cache | lower }}
-max_new_tokens = {{ max_new_tokens }}
-skip_special_tokens = {{ run_skip_special_tokens | lower }}
+max_new_tokens = {{ orchestrator.call_options['max_new_tokens'] }}
+skip_special_tokens = {{ orchestrator.call_options['skip_special_tokens'] | lower }}

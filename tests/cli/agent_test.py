@@ -144,10 +144,13 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             memory_recent=None,
             memory_permanent=None,
             memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
             engine_uri=None,
-            use_cache=None,
-            skip_special_tokens=False,
-            max_new_tokens=None,
+            run_max_new_tokens=None,
+            run_skip_special_tokens=True,
+            tool=None,
             no_repl=False,
             quiet=False,
         )
@@ -164,12 +167,16 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds.Prompt, "ask", side_effect=["A", "", "uri"]
             ),
             patch.object(agent_cmds, "get_input", side_effect=["r", "t", "i"]),
-            patch.object(agent_cmds.Confirm, "ask", side_effect=[True, False]),
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "Environment", return_value=env),
         ):
             await agent_cmds.agent_init(args, console, theme)
 
         template.render.assert_called_once()
+        settings = template.render.call_args.kwargs["orchestrator"]
+        self.assertTrue(settings.call_options["skip_special_tokens"])
+        self.assertEqual(settings.call_options["max_new_tokens"], 1024)
+        self.assertIsInstance(console.print.call_args.args[0], Syntax)
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
 
 
@@ -194,6 +201,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             tool_events=2,
             tool=None,
             run_max_new_tokens=100,
+            run_skip_special_tokens=False,
             engine_uri=None,
             name=None,
             role=None,
@@ -381,6 +389,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.args.specifications_file = None
         self.args.engine_uri = "engine"
         self.args.role = "assistant"
+        self.args.run_skip_special_tokens = True
 
         with (
             patch.object(agent_cmds, "get_input", return_value=None),
@@ -406,6 +415,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         fs_patch.assert_awaited_once()
+        settings = fs_patch.call_args.args[0]
+        self.assertTrue(settings.call_options["skip_special_tokens"])
         ff_patch.assert_not_called()
 
 

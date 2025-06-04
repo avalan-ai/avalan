@@ -53,6 +53,78 @@ from uuid import uuid4
 from warnings import filterwarnings
 
 
+def add_agent_settings_arguments(parser: ArgumentParser) -> ArgumentParser:
+    """Add agent inline settings arguments to ``parser``.
+
+    Parameters
+    ----------
+    parser: ArgumentParser
+        Argument parser to which the options will be added.
+
+    Returns
+    -------
+    ArgumentParser
+        The created argument group with all settings options.
+    """
+
+    group = parser.add_argument_group("inline agent settings")
+    group.add_argument("--engine-uri", type=str, help="Agent engine URI")
+    group.add_argument("--name", type=str, help="Agent name")
+    group.add_argument("--role", type=str, help="Agent role")
+    group.add_argument("--task", type=str, help="Agent task")
+    group.add_argument("--instructions", type=str, help="Agent instructions")
+    group.add_argument(
+        "--memory-recent",
+        dest="memory_recent",
+        action="store_true",
+        default=None,
+    )
+    group.add_argument(
+        "--no-memory-recent", dest="memory_recent", action="store_false"
+    )
+    group.add_argument(
+        "--memory-permanent", type=str, help="Permanent memory DSN"
+    )
+    group.add_argument(
+        "--memory-engine-model-id",
+        type=str,
+        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+        help="Sentence transformer model for memory",
+    )
+    group.add_argument(
+        "--memory-engine-max-tokens",
+        type=int,
+        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS,
+        help="Maximum tokens for memory sentence transformer",
+    )
+    group.add_argument(
+        "--memory-engine-overlap",
+        type=int,
+        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE,
+        help="Overlap size for memory sentence transformer",
+    )
+    group.add_argument(
+        "--memory-engine-window",
+        type=int,
+        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE,
+        help="Window size for memory sentence transformer",
+    )
+    group.add_argument(
+        "--run-max-new-tokens",
+        type=int,
+        help="Maximum count of tokens on output",
+        default=None,
+    )
+    group.add_argument(
+        "--run-skip-special-tokens",
+        action="store_true",
+        default=False,
+        help="Skip special tokens on output",
+    )
+    group.add_argument("--tool", type=str, action="append", help="Enable tool")
+    return group
+
+
 class CLI:
     _REFRESH_RATE = 4
 
@@ -446,66 +518,7 @@ class CLI:
             "with input piping)",
         )
 
-        agent_run_settings = agent_run_parser.add_argument_group(
-            "inline agent settings"
-        )
-        agent_run_settings.add_argument(
-            "--engine-uri", type=str, help="Agent engine URI"
-        )
-        agent_run_settings.add_argument("--name", type=str, help="Agent name")
-        agent_run_settings.add_argument("--role", type=str, help="Agent role")
-        agent_run_settings.add_argument("--task", type=str, help="Agent task")
-        agent_run_settings.add_argument(
-            "--instructions", type=str, help="Agent instructions"
-        )
-        agent_run_settings.add_argument(
-            "--memory-recent",
-            dest="memory_recent",
-            action="store_true",
-            default=None,
-        )
-        agent_run_settings.add_argument(
-            "--no-memory-recent", dest="memory_recent", action="store_false"
-        )
-        agent_run_settings.add_argument(
-            "--memory-permanent", type=str, help="Permanent memory DSN"
-        )
-        agent_run_settings.add_argument(
-            "--memory-engine-model-id",
-            type=str,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
-            help="Sentence transformer model for memory",
-        )
-        agent_run_settings.add_argument(
-            "--memory-engine-max-tokens",
-            type=int,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS,
-            help="Maximum tokens for memory sentence transformer",
-        )
-        agent_run_settings.add_argument(
-            "--memory-engine-overlap",
-            type=int,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE,
-            help="Overlap size for memory sentence transformer",
-        )
-        agent_run_settings.add_argument(
-            "--memory-engine-window",
-            type=int,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE,
-            help="Window size for memory sentence transformer",
-        )
-        agent_run_settings.add_argument(
-            "--run-max-new-tokens",
-            type=int,
-            help="Maximum count of tokens on output",
-            default=None,
-        )
-        agent_run_settings.add_argument(
-            "--tool",
-            type=str,
-            action="append",
-            help="Enable tool",
-        )
+        add_agent_settings_arguments(agent_run_parser)
 
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
@@ -553,51 +566,7 @@ class CLI:
             description="Create an agent definition",
             parents=[global_parser],
         )
-        agent_init_parser.add_argument("--name", type=str, help="Agent name")
-        agent_init_parser.add_argument("--role", type=str, help="Agent role")
-        agent_init_parser.add_argument("--task", type=str, help="Agent task")
-        agent_init_parser.add_argument(
-            "--instructions", type=str, help="Agent instructions"
-        )
-        agent_init_parser.add_argument(
-            "--memory-recent",
-            dest="memory_recent",
-            action="store_true",
-            default=None,
-            help="Enable recent message memory",
-        )
-        agent_init_parser.add_argument(
-            "--no-memory-recent", dest="memory_recent", action="store_false"
-        )
-        agent_init_parser.add_argument(
-            "--memory-permanent", type=str, help="Permanent memory DSN"
-        )
-        agent_init_parser.add_argument(
-            "--memory-engine-model-id",
-            type=str,
-            help="Sentence transformer model for memory",
-        )
-        agent_init_parser.add_argument(
-            "--engine-uri", type=str, help="Agent engine URI"
-        )
-        agent_init_parser.add_argument(
-            "--use-cache",
-            dest="use_cache",
-            action="store_true",
-            default=None,
-            help="Cache model locally",
-        )
-        agent_init_parser.add_argument(
-            "--no-cache", dest="use_cache", action="store_false"
-        )
-        agent_init_parser.add_argument(
-            "--max-new-tokens", type=int, help="Max new tokens", default=None
-        )
-        agent_init_parser.add_argument(
-            "--skip-special-tokens",
-            action="store_true",
-            help="Skip special tokens",
-        )
+        add_agent_settings_arguments(agent_init_parser)
 
         # Cache command
         cache_parser = command_parsers.add_parser(
