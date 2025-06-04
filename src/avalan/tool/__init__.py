@@ -1,13 +1,26 @@
 from abc import ABC
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
 from inspect import isfunction, signature, Signature
+from transformers.utils import get_json_schema
 from types import FunctionType
-from typing import get_type_hints
+from typing import get_type_hints, Union
 
 
 class Tool(ABC):
+    def json_schema(self, prefix: str | None = None) -> dict:
+        schema = get_json_schema(self)
+        if (
+            prefix and
+            "type" in schema and
+            schema["type"] == "function" and
+            "function" in schema and
+            "name" in schema["function"]
+        ):
+            schema["function"]["name"] = prefix + schema["function"]["name"]
+
+        return schema
+
     @staticmethod
     def _get_signature(function: FunctionType) -> Signature:
         return Signature(
@@ -18,23 +31,38 @@ class Tool(ABC):
         )
 
 
-@dataclass(frozen=True, kw_only=True)
 class ToolSet:
     """Collection of tools sharing an optional namespace."""
 
-    tools: Sequence[Callable]
-    namespace: str | None = None
-    _stack: AsyncExitStack = field(
-        default_factory=AsyncExitStack, init=False, repr=False
-    )
+    _namespace: str | None
+    _stack: AsyncExitStack
+    _tools: Sequence[Callable]
 
-    def __post_init__(self) -> None:
-        for tool in self.tools:
-            if callable(tool) and not isfunction(tool):
+    @property
+    def namespace(self) -> str | None:
+        return self._namespace
+
+    @property
+    def tools(self) -> Sequence[Callable]:
+        return self._tools
+
+    def __init__(
+        self,
+        *,
+        namespace: str | None = None,
+        tools: Sequence[Union[Callable,"ToolSet"]]
+    ):
+        self._namespace = namespace
+        self._stack = AsyncExitStack()
+        self._tools = tools
+
+        for i, tool in enumerate(self.tools):
+            if not isfunction(tool) and callable(tool) and isinstance(tool,Tool):
                 tool.__annotations__ = get_type_hints(tool.__call__)
                 tool.__signature__ = Tool._get_signature(tool.__call__)
                 if not tool.__doc__ and tool.__call__.__doc__:
                     tool.__doc__ = tool.__call__.__doc__
+                self.tools[i] = tool
 
     async def __aenter__(self) -> "ToolSet":
         for tool in self.tools:
@@ -51,3 +79,33 @@ class ToolSet:
         traceback: BaseException | None,
     ) -> bool:
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
+
+    def json_schemas(self, prefix: str | None = None) -> list[dict] | None:
+        schemas = []
+        prefix = (
+            f"{prefix}." if prefix else
+            f"{self.namespace}." if self.namespace
+            else ""
+        )
+        for tool in self.tools:
+            if isinstance(tool, ToolSet):
+                tool_schemas = tool.json_schemas(prefix)
+                if tool_schemas:
+                    schemas.extend(tool_schemas)
+                continue
+
+            schema = (
+                tool.json_schema(prefix) if isinstance(tool, Tool) else
+                get_json_schema(tool)
+            )
+            if (
+                not isinstance(tool, Tool) and
+                "type" in schema and
+                schema["type"] == "function" and
+                "function" in schema and
+                "name" in schema["function"]
+            ):
+                schema["function"]["name"] = prefix + schema["function"]["name"]
+            schemas.append(schema)
+        return schemas
+

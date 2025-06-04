@@ -1,7 +1,7 @@
+from . import ToolSet
+from .calculator import CalculatorTool
+from .parser import ToolCallParser
 from ..entities import ToolCall, ToolCallResult, ToolFormat
-from ..tool import ToolSet
-from ..tool.calculator import CalculatorTool
-from ..tool.parser import ToolCallParser
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
 from uuid import uuid4
@@ -25,7 +25,9 @@ class ToolManager(ContextDecorator):
         enabled_toolsets: list[ToolSet] | None = None
 
         if not available_toolsets:
-            available_toolsets = [ToolSet(tools=[CalculatorTool()])]
+            available_toolsets = [
+                ToolSet(namespace="math", tools=[CalculatorTool()])
+            ]
 
         if enable_tools:
             enabled_toolsets = []
@@ -56,6 +58,12 @@ class ToolManager(ContextDecorator):
     def tools(self) -> list[Callable] | None:
         return list(self._tools.values()) if self._tools else None
 
+    def json_schemas(self) -> list[dict] | None:
+        schemas = []
+        for toolset in self._toolsets:
+            schemas.extend(toolset.json_schemas())
+        return schemas
+
     def __init__(
         self,
         *args,
@@ -74,6 +82,7 @@ class ToolManager(ContextDecorator):
                 for tool in toolset.tools:
                     name = getattr(tool, "__name__", tool.__class__.__name__)
                     self._tools[f"{prefix}{name}"] = tool
+
 
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
@@ -100,6 +109,7 @@ class ToolManager(ContextDecorator):
         assert tool_call
 
         tool = self._tools.get(tool_call.name, None) if self._tools else None
+
         if not tool:
             return None
 
