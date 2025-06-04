@@ -29,6 +29,7 @@ from transformers import (
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
+from transformers.utils import get_json_schema
 from typing import AsyncGenerator, Literal
 
 
@@ -375,7 +376,9 @@ class TextGenerationModel(BaseNLPModel):
             inputs = self._tokenizer.apply_chat_template(
                 template_messages,
                 chat_template=chat_template,
-                tools=tool.tools if tool else None,
+                tools=[get_json_schema(tool) for tool in tool.tools]
+                if tool
+                else None,
                 add_generation_prompt=True,
                 tokenize=True,
                 add_special_tokens=True,
