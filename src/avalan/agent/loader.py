@@ -201,6 +201,7 @@ class OrchestratorLoader:
         stack: AsyncExitStack,
     ) -> Orchestrator:
         tool = ToolManager.create_instance(enable_tools=settings.tools)
+        tool = await stack.enter_async_context(tool)
 
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)

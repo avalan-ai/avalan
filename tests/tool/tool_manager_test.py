@@ -1,9 +1,9 @@
 from avalan.entities import ToolCall, ToolCallResult
 from avalan.tool import ToolSet
-from avalan.tool.calculator import calculator
+from avalan.tool.calculator import CalculatorTool
 from avalan.tool.manager import ToolManager
-from unittest import IsolatedAsyncioTestCase, main, TestCase
-from unittest.mock import patch
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4 as _uuid4
 
 
@@ -14,6 +14,7 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertIsNone(manager.tools)
 
     def test_instance_with_enabled_tool(self):
+        calculator = CalculatorTool()
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[ToolSet(tools=[calculator])],
@@ -22,12 +23,32 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(manager.tools, [calculator])
 
 
+class DummyAdder:
+    def __init__(self) -> None:
+        self.__name__ = "adder"
+
+    async def __call__(self, a: int, b: int) -> int:
+        """Return the sum of ``a`` and ``b``."""
+        return a + b
+
+
 class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
+        calculator = CalculatorTool()
         self.manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[ToolSet(tools=[calculator])],
         )
+
+    async def test_callable_class_tool(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+        )
+        call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
+        result = await manager(call)
+        self.assertEqual(result.result, 3)
 
     async def test_call_no_tool_call(self):
         calls = self.manager.get_calls("no tools here")
@@ -63,6 +84,21 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(results, expected_result)
 
+    async def test_async_context(self):
+        calculator = CalculatorTool()
+        toolset = ToolSet(tools=[calculator])
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[toolset],
+        )
+        manager._stack.enter_async_context = AsyncMock()
+        manager._stack.__aexit__ = AsyncMock(return_value=False)
+
+        async with manager:
+            manager._stack.enter_async_context.assert_awaited_once()
+
+        manager._stack.__aexit__.assert_awaited_once()
+
     async def test_set_eos_token(self):
         self.manager.set_eos_token("<END>")
         text = (
@@ -97,6 +133,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(self.manager._parser._eos_token, "<END>")
 
     async def test_namespaced_tool(self):
+        calculator = CalculatorTool()
         namespaced_manager = ToolManager.create_instance(
             enable_tools=["math.calculator"],
             available_toolsets=[ToolSet(namespace="math", tools=[calculator])],

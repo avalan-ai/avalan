@@ -1,11 +1,12 @@
 from avalan.tool import ToolSet
-from avalan.tool.calculator import calculator
+from avalan.tool.calculator import CalculatorTool
 from avalan.tool.manager import ToolManager
 from unittest import TestCase, main
 
 
 class GetToolCallsTestCase(TestCase):
     def test_no_tool_call(self):
+        calculator = CalculatorTool()
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[ToolSet(tools=[calculator])],
@@ -13,6 +14,7 @@ class GetToolCallsTestCase(TestCase):
         self.assertIsNone(manager.get_calls("hello"))
 
     def test_partial_tool_call(self):
+        calculator = CalculatorTool()
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[ToolSet(tools=[calculator])],
@@ -20,6 +22,7 @@ class GetToolCallsTestCase(TestCase):
         self.assertIsNone(manager.get_calls("<tool_call>{"))
 
     def test_full_tool_call(self):
+        calculator = CalculatorTool()
         text = '<tool_call>{"name": "calculator", "arguments": {}} </tool_call>'
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
