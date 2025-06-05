@@ -90,6 +90,7 @@ test = [
   "tree-sitter-python==0.23.6",
 ]
 tool = [
+  "playwright==1.52.0",
   "sympy==1.14.0",
 ]
 secrets = [
@@ -135,6 +136,7 @@ all = [
   "protobuf==6.31.0",
   "psycopg[binary,pool]==3.2.9",
   "pgvector==0.4.1",
+  "playwright==1.52.0",
   "pydantic==2.11.5",
   "pytest==8.3.5",
   "sentence-transformers==4.1.0",

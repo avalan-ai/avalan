@@ -43,7 +43,7 @@ Avalan makes it trivial to spin up a chat-based agent that can invoke external t
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-      --tool "calculator" \
+      --tool "math.calculator" \
       --memory-recent \
       --run-max-new-tokens 1024 \
       --name "Tool" \
@@ -55,6 +55,20 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
 Check the GPU hard at work towards the bottom:
 
 ![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
+
+Try an agent that extracts real-time knowledge from a website:
+
+```bash
+echo "What's the title of the page https://github.com/avalan-ai/avalan" | \
+    avalan agent run \
+        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+        --tool "browser.open" \
+        --memory-recent \
+        --run-max-new-tokens 1024 \
+        --name "Tool" \
+        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+        --stats
+```
 
 Through the avalan microframework, you can easily integrate real time token
 streaming with your own code, as [this example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/text_generation.py):

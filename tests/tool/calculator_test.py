@@ -1,4 +1,4 @@
-from avalan.tool.calculator import CalculatorTool
+from avalan.tool.math import CalculatorTool
 from pytest import raises
 from sympy.core.sympify import SympifyError
 from unittest import IsolatedAsyncioTestCase, main
