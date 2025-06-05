@@ -59,7 +59,7 @@ Check the GPU hard at work towards the bottom:
 Try an agent that extracts real-time knowledge from a website:
 
 ```bash
-echo "What's the title of the page https://github.com/avalan-ai/avalan" | \
+echo "Tell me what avalan does based on the web page https://raw.githubusercontent.com/avalan-ai/avalan/refs/heads/main/README.md" | \
     avalan agent run \
         --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
         --tool "browser.open" \

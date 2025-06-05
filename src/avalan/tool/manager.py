@@ -23,7 +23,7 @@ class ToolManager(ContextDecorator):
         eos_token: str | None = None,
         tool_format: ToolFormat | None = None,
     ):
-        if not available_toolsets:
+        if available_toolsets is None:
             available_toolsets = [
                 BrowserToolSet(namespace="browser"),
                 MathToolSet(namespace="math")
@@ -62,10 +62,19 @@ class ToolManager(ContextDecorator):
 
         enabled_toolsets = []
         for toolset in available_toolsets:
-            if enable_tools:
+            if enable_tools is not None:
                 toolset = toolset.with_enabled_tools(enable_tools)
             if toolset.tools:
                 enabled_toolsets.append(toolset)
+
+        self._tools = {}
+        if enabled_toolsets:
+            for i, toolset in enumerate(enabled_toolsets):
+                prefix = f"{toolset.namespace}." if toolset.namespace else ""
+                for tool in toolset.tools:
+                    name = getattr(tool, "__name__", tool.__class__.__name__)
+                    self._tools[f"{prefix}{name}"] = tool
+
         self._toolsets = enabled_toolsets
 
     def set_eos_token(self, eos_token: str) -> None:
@@ -75,15 +84,10 @@ class ToolManager(ContextDecorator):
         return self._parser(text)
 
     async def __aenter__(self) -> "ToolManager":
-        self._tools = {}
         if self._toolsets:
             for i, toolset in enumerate(self._toolsets):
-                await self._stack.enter_async_context(toolset)
-
-                prefix = f"{toolset.namespace}." if toolset.namespace else ""
-                for tool in toolset.tools:
-                    name = getattr(tool, "__name__", tool.__class__.__name__)
-                    self._tools[f"{prefix}{name}"] = tool
+                toolset = await self._stack.enter_async_context(toolset)
+                self._toolsets[i] = toolset
         return self
 
     async def __aexit__(
