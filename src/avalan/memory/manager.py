@@ -25,7 +25,7 @@ class MemoryManager:
     ):
         permanent_memory: Optional[PermanentMessageMemory] = None
         if with_permanent_message_memory:
-            from .permanent.pgsql import PgsqlMessageMemory
+            from .permanent.pgsql.message import PgsqlMessageMemory
 
             permanent_memory = await PgsqlMessageMemory.create_instance(
                 dsn=with_permanent_message_memory
