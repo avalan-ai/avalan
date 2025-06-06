@@ -103,13 +103,13 @@ def get_tool_settings(args: Namespace, *, prefix: str, settings_cls: type):
 
     values: dict[str, object] = {}
     for field in fields(settings_cls):
-        if field.name == "debug_urls":
-            continue
-
         attr = f"tool_{prefix}_{field.name}"
         if hasattr(args, attr):
             value = getattr(args, attr)
             if value is not None:
+                if field.name == "debug_source":
+                    value = open(value)
+
                 values[field.name] = value
 
     return settings_cls(**values)

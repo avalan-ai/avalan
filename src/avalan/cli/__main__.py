@@ -150,9 +150,6 @@ def add_tool_settings_arguments(
     group = parser.add_argument_group(f"{prefix} tool settings")
 
     for field in fields(settings_cls):
-        if field.name == "debug_urls":
-            continue
-
         option = f"--tool-{prefix}-{field.name.replace('_', '-')}"
         dest = f"tool_{prefix}_{field.name}"
 

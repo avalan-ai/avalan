@@ -19,7 +19,8 @@ class BrowserToolSettings(dict):
     search_context: int | None = 10
     search_k: int = 1
     debug: bool = False
-    debug_urls: dict[str,TextIOBase] | None = None
+    debug_url: str | None = None
+    debug_source: TextIOBase | None = None
     slowdown: int | None = None
     devtools: bool = False
     chromium_sandbox : bool = True
@@ -32,7 +33,8 @@ class BrowserToolSettings(dict):
 
     def __post_init__(self):
         self["debug"] = self.debug
-        self["debug_urls"] = self.debug_urls
+        self["debug_url"] = self.debug_url
+        self["debug_source"] = self.debug_source
         self["engine"] = self.engine
         self["search"] = self.search
         self["search_context"] = self.search_context
@@ -140,10 +142,9 @@ class BrowserTool(Tool):
         return content
 
     async def _read(self, url: str) -> str:
-        if self._settings.debug and self._settings.debug_urls and url in self._settings.debug_urls:
-            stream = self._settings.debug_urls[url]
-            assert isinstance(stream, TextIOBase)
-            content = stream.read()
+        if self._settings.debug and self._settings.debug_url and url == self._settings.debug_url and self._settings.debug_source:
+            assert isinstance(self._settings.debug_source, TextIOBase)
+            content = self._settings.debug_source.read()
             return content
 
         if not self._browser:
