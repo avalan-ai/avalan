@@ -1,9 +1,11 @@
 from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID
+import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 from rich.spinner import Spinner
+from rich import box
 import numpy as np
 from numpy.linalg import norm
 
@@ -15,9 +17,11 @@ from avalan.entities import (
     Message,
     ModelConfig,
     SearchMatch,
+    SentenceTransformerModelConfig,
     Similarity,
     Token,
     TokenizerConfig,
+    User,
 )
 from avalan.memory.permanent import Memory, MemoryType
 from avalan.memory.partitioner.text import TextPartition
@@ -363,3 +367,154 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             )
             frame = await gen.__anext__()
         self.assertTrue(frame[1].renderables)
+
+
+class FancyThemeAdditionalTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+
+    def test_bye(self):
+        self.assertEqual(self.theme.bye(), ":vulcan_salute: bye :)")
+
+    def test_action(self):
+        panel = self.theme.action(
+            "task",
+            "desc",
+            "author",
+            "m",
+            "lib",
+            highlight=True,
+            finished=True,
+        )
+        self.assertEqual(panel.box, box.DOUBLE)
+        self.assertIn(
+            "[green]desc[/green]", panel.renderable.renderable.renderables[0]
+        )
+
+    def test_cache_delete_deleted_true(self):
+        deletion = HubCacheDeletion(
+            model_id="m",
+            revisions=["r"],
+            deletable_size_on_disk=1,
+            deletable_blobs=["b"],
+            deletable_refs=[],
+            deletable_repos=[],
+            deletable_snapshots=[],
+        )
+        result = self.theme.cache_delete(deletion, deleted=True)
+        self.assertTrue(result.renderables)
+
+    def test_cache_list_display_models(self):
+        cache = HubCache(
+            model_id="m",
+            path="/p",
+            size_on_disk=1,
+            revisions=["r"],
+            files={"r": []},
+            total_files=0,
+            total_revisions=1,
+        )
+        group = self.theme.cache_list(
+            "/c",
+            [cache],
+            display_models=["m"],
+            show_summary=False,
+        )
+        self.assertEqual(len(group.renderables), 1)
+        self.assertEqual(group.renderables[0].renderable.title, cache.model_id)
+
+    def test_logging_in(self):
+        self.assertEqual(
+            self.theme.logging_in("hf"),
+            "Logging in to hf...",
+        )
+
+    def test_memory_embeddings_orientation(self):
+        data = np.arange(6, dtype=float)
+        group = self.theme.memory_embeddings(
+            "text",
+            data,
+            total_tokens=1,
+            minv=float(data.min()),
+            maxv=float(data.max()),
+            meanv=float(data.mean()),
+            stdv=float(data.std()),
+            normv=float(norm(data)),
+            embedding_peek=2,
+            horizontal=False,
+            show_stats=False,
+        )
+        table = group.renderables[0].renderable
+        self.assertEqual(len(table.columns), 2)
+
+        group = self.theme.memory_embeddings(
+            "text",
+            data,
+            total_tokens=1,
+            minv=float(data.min()),
+            maxv=float(data.max()),
+            meanv=float(data.mean()),
+            stdv=float(data.std()),
+            normv=float(norm(data)),
+            embedding_peek=2,
+            horizontal=True,
+            show_stats=False,
+        )
+        table = group.renderables[0].renderable
+        self.assertEqual(len(table.columns), 5)
+
+    def test_model_display_sentence_transformer(self):
+        cfg = ModelConfig(
+            architectures=["a"],
+            attribute_map={},
+            bos_token_id=None,
+            bos_token=None,
+            decoder_start_token_id=None,
+            eos_token_id=None,
+            eos_token=None,
+            finetuning_task=None,
+            hidden_size=1,
+            hidden_sizes=None,
+            keys_to_ignore_at_inference=[],
+            loss_type=None,
+            max_position_embeddings=10,
+            model_type="t",
+            num_attention_heads=1,
+            num_hidden_layers=1,
+            num_labels=1,
+            output_attentions=False,
+            output_hidden_states=False,
+            pad_token_id=None,
+            pad_token=None,
+            prefix=None,
+            sep_token_id=None,
+            sep_token=None,
+            state_size=1,
+            task_specific_params=None,
+            torch_dtype=float,
+            vocab_size=10,
+            tokenizer_class=None,
+        )
+        st_cfg = SentenceTransformerModelConfig(
+            backend="torch",
+            similarity_function="cosine",
+            truncate_dimension=None,
+            transformer_model_config=cfg,
+        )
+        tok_cfg = TokenizerConfig(
+            name_or_path="t",
+            tokens=["a"],
+            special_tokens=["b"],
+            tokenizer_model_max_length=10,
+            fast=True,
+        )
+        group = self.theme.model_display(st_cfg, tok_cfg)
+        self.assertEqual(len(group.renderables), 2)
+
+    def test_welcome(self):
+        user = User(name="u", access_token_name="tok")
+        pad = self.theme.welcome("http://u", "avalan", "1.0", "MIT", user)
+        text = str(pad.renderable.renderable)
+        self.assertIn("avalan", text)
+        self.assertIn("1.0", text)
+        self.assertIn("tok", text)
