@@ -1,5 +1,6 @@
 from . import ToolSet
-from .calculator import CalculatorTool
+from .browser import BrowserToolSet
+from .math import MathToolSet
 from .parser import ToolCallParser
 from ..entities import ToolCall, ToolCallResult, ToolFormat
 from collections.abc import Callable, Sequence
@@ -9,45 +10,30 @@ from uuid import uuid4
 
 class ToolManager(ContextDecorator):
     _parser: ToolCallParser
-    _tools: dict[str, Callable] | None
-    _toolsets: Sequence[ToolSet] | None
     _stack: AsyncExitStack
+    _tools: dict[str, Callable] | None = None
+    _toolsets: Sequence[ToolSet] | None = None
 
     @classmethod
     def create_instance(
         cls,
-        *args,
-        eos_token: str | None = None,
-        enable_tools: list[str] | None = None,
-        tool_format: ToolFormat | None = None,
+        *,
         available_toolsets: Sequence[ToolSet] | None = None,
+        enable_tools: list[str] | None = None,
+        eos_token: str | None = None,
+        tool_format: ToolFormat | None = None,
     ):
-        enabled_toolsets: list[ToolSet] | None = None
-
-        if not available_toolsets:
+        if available_toolsets is None:
             available_toolsets = [
-                ToolSet(namespace="math", tools=[CalculatorTool()])
+                BrowserToolSet(namespace="browser"),
+                MathToolSet(namespace="math")
             ]
-
-        if enable_tools:
-            enabled_toolsets = []
-            for toolset in available_toolsets:
-                prefix = f"{toolset.namespace}." if toolset.namespace else ""
-                tools = [
-                    tool
-                    for tool in toolset.tools
-                    if f"{prefix}{getattr(tool, '__name__', tool.__class__.__name__)}"
-                    in enable_tools
-                ]
-                if tools:
-                    enabled_toolsets.append(
-                        ToolSet(tools=tools, namespace=toolset.namespace)
-                    )
 
         parser = ToolCallParser(eos_token=eos_token, tool_format=tool_format)
         return cls(
+            available_toolsets=available_toolsets,
+            enable_tools=enable_tools,
             parser=parser,
-            toolsets=enabled_toolsets,
         )
 
     @property
@@ -66,23 +52,30 @@ class ToolManager(ContextDecorator):
 
     def __init__(
         self,
-        *args,
+        *,
+        available_toolsets: Sequence[ToolSet] | None = None,
+        enable_tools: list[str] | None = None,
         parser: ToolCallParser,
-        toolsets: Sequence[ToolSet] | None = None,
     ):
         self._parser = parser
-        self._tools = None
-        self._toolsets = toolsets
         self._stack = AsyncExitStack()
 
-        if toolsets:
-            self._tools = {}
-            for toolset in toolsets:
+        enabled_toolsets = []
+        for toolset in available_toolsets:
+            if enable_tools is not None:
+                toolset = toolset.with_enabled_tools(enable_tools)
+            if toolset.tools:
+                enabled_toolsets.append(toolset)
+
+        self._tools = {}
+        if enabled_toolsets:
+            for i, toolset in enumerate(enabled_toolsets):
                 prefix = f"{toolset.namespace}." if toolset.namespace else ""
                 for tool in toolset.tools:
                     name = getattr(tool, "__name__", tool.__class__.__name__)
                     self._tools[f"{prefix}{name}"] = tool
 
+        self._toolsets = enabled_toolsets
 
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
@@ -92,8 +85,9 @@ class ToolManager(ContextDecorator):
 
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
-            for toolset in self._toolsets:
-                await self._stack.enter_async_context(toolset)
+            for i, toolset in enumerate(self._toolsets):
+                toolset = await self._stack.enter_async_context(toolset)
+                self._toolsets[i] = toolset
         return self
 
     async def __aexit__(

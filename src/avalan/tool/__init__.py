@@ -1,13 +1,18 @@
 from abc import ABC
 from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, ContextDecorator
 from inspect import isfunction, signature, Signature
 from transformers.utils import get_json_schema
 from types import FunctionType
 from typing import get_type_hints, Union
 
 
-class Tool(ABC):
+class Tool(ABC, ContextDecorator):
+    _exit_stack: AsyncExitStack
+
+    def __init__(self) -> None:
+        self._exit_stack = AsyncExitStack()
+
     def json_schema(self, prefix: str | None = None) -> dict:
         schema = get_json_schema(self)
         if (
@@ -23,19 +28,33 @@ class Tool(ABC):
 
     @staticmethod
     def _get_signature(function: FunctionType) -> Signature:
+        function_signature = signature(function)
         return Signature(
-            parameters=list(signature(function).parameters.values())[
+            parameters=list(function_signature.parameters.values())[
                 1:
             ],  # drop "self"
-            return_annotation=signature(function).return_annotation,
+            return_annotation=function_signature.return_annotation,
         )
 
+    async def __aenter__(self) -> "ToolSet":
+        return self
 
-class ToolSet:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: BaseException | None,
+    ) -> bool:
+        if self._exit_stack:
+            return await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
+        return True
+
+
+class ToolSet(ContextDecorator):
     """Collection of tools sharing an optional namespace."""
 
     _namespace: str | None
-    _stack: AsyncExitStack
+    _exit_stack: AsyncExitStack
     _tools: Sequence[Callable]
 
     @property
@@ -49,11 +68,12 @@ class ToolSet:
     def __init__(
         self,
         *,
+        exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
         tools: Sequence[Union[Callable,"ToolSet"]]
     ):
         self._namespace = namespace
-        self._stack = AsyncExitStack()
+        self._exit_stack = exit_stack or AsyncExitStack()
         self._tools = tools
 
         for i, tool in enumerate(self.tools):
@@ -64,12 +84,23 @@ class ToolSet:
                     tool.__doc__ = tool.__call__.__doc__
                 self.tools[i] = tool
 
+    def with_enabled_tools(self, enable_tools: list[str]) -> "ToolSet":
+        prefix = f"{self.namespace}." if self.namespace else ""
+        tools = [
+            tool
+            for tool in self._tools
+            if f"{prefix}{getattr(tool, '__name__', tool.__class__.__name__)}"
+            in enable_tools
+        ]
+        self._tools = tools
+        return self
+
     async def __aenter__(self) -> "ToolSet":
         for tool in self.tools:
             if hasattr(tool, "__aenter__"):
-                await self._stack.enter_async_context(tool)
+                await self._exit_stack.enter_async_context(tool)
             elif hasattr(tool, "__enter__"):
-                self._stack.enter_context(tool)
+                self._exit_stack.enter_context(tool)
         return self
 
     async def __aexit__(
@@ -78,7 +109,7 @@ class ToolSet:
         exc_value: BaseException | None,
         traceback: BaseException | None,
     ) -> bool:
-        return await self._stack.__aexit__(exc_type, exc_value, traceback)
+        return await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
 
     def json_schemas(self, prefix: str | None = None) -> list[dict] | None:
         schemas = []

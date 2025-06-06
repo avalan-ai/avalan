@@ -1,5 +1,5 @@
 from avalan.tool import ToolSet
-from avalan.tool.calculator import CalculatorTool
+from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
 from unittest import TestCase, main
 

@@ -1,6 +1,6 @@
 from avalan.entities import ToolCall, ToolCallResult
 from avalan.tool import ToolSet
-from avalan.tool.calculator import CalculatorTool
+from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, patch
@@ -9,14 +9,14 @@ from uuid import uuid4 as _uuid4
 
 class ToolManagerCreationTestCase(TestCase):
     def test_default_instance_empty(self):
-        manager = ToolManager.create_instance()
+        manager = ToolManager.create_instance(enable_tools=[])
         self.assertTrue(manager.is_empty)
         self.assertIsNone(manager.tools)
 
     def test_instance_with_enabled_tool(self):
         calculator = CalculatorTool()
         manager = ToolManager.create_instance(
-            enable_tools=["calculator"],
+            enable_tools=[calculator.__name__],
             available_toolsets=[ToolSet(tools=[calculator])],
         )
         self.assertFalse(manager.is_empty)
