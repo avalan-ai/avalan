@@ -40,7 +40,7 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
             PgsqlDummy.create_instance = AsyncMock(return_value=pmemory)
             dummy.PgsqlMessageMemory = PgsqlDummy
             with patch.dict(
-                "sys.modules", {"avalan.memory.permanent.pgsql": dummy}
+                "sys.modules", {"avalan.memory.permanent.pgsql.message": dummy}
             ):
                 manager = await MemoryManager.create_instance(
                     agent_id=agent_id,
