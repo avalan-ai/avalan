@@ -23,7 +23,7 @@ overlap_size = 125
 window_size = 250
 
 [engine]
-model_id = "nvidia/OpenMath-CodeLlama-13b-Python-hf"
+uri = "nvidia/OpenMath-CodeLlama-13b-Python-hf"
 weight_type = "bf16"
 
 [run]

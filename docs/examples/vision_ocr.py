@@ -1,5 +1,5 @@
 from asyncio import run
-from avalan.model.entities import GenerationSettings
+from avalan.entities import GenerationSettings
 from avalan.model.vision.image import ImageTextToTextModel
 from os.path import isfile
 from sys import argv, exit

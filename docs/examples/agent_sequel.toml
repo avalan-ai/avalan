@@ -25,7 +25,7 @@ overlap_size = 125
 window_size = 250
 
 [engine]
-model_id = "defog/llama-3-sqlcoder-8b"
+uri = "defog/llama-3-sqlcoder-8b"
 weight_type = "bf16"
 
 [run]
