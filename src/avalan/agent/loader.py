@@ -12,7 +12,9 @@ from ..memory.partitioner.text import TextPartitioner
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
+from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.manager import ToolManager
+from ..tool.math import MathToolSet
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK
@@ -245,9 +247,21 @@ class OrchestratorLoader:
             settings.sentence_model_window_size,
         )
 
+        browser_settings = BrowserToolSettings(
+            debug=True,
+            debug_urls={
+                "https://pypi.org/project/avalan/": open("docs/examples/pypi_avalan_source.md")
+            },
+            search=True
+        )
+        available_toolsets = [
+            BrowserToolSet(settings=browser_settings, partitioner=text_partitioner, namespace="browser"),
+            MathToolSet(namespace="math")
+        ]
+
         tool = ToolManager.create_instance(
+            available_toolsets=available_toolsets,
             enable_tools=settings.tools,
-            partitioner=text_partitioner
         )
         tool = await stack.enter_async_context(tool)
 

@@ -1,7 +1,4 @@
 from . import Tool, ToolSet
-from .browser import BrowserToolSet, BrowserToolSettings
-from ..filters import Partitioner
-from .math import MathToolSet
 from .parser import ToolCallParser
 from ..entities import ToolCall, ToolCallContext, ToolCallResult, ToolFormat
 from collections.abc import Callable, Sequence
@@ -22,22 +19,8 @@ class ToolManager(ContextDecorator):
         available_toolsets: Sequence[ToolSet] | None = None,
         enable_tools: list[str] | None = None,
         eos_token: str | None = None,
-        partitioner: Partitioner | None = None,
         tool_format: ToolFormat | None = None,
     ):
-        browser_settings = BrowserToolSettings(
-            debug=True,
-            debug_urls={
-                "https://pypi.org/project/avalan/": open("docs/examples/pypi_avalan_source.md")
-            },
-            search=True
-        )
-        if available_toolsets is None:
-            available_toolsets = [
-                BrowserToolSet(settings=browser_settings, partitioner=partitioner, namespace="browser"),
-                MathToolSet(namespace="math")
-            ]
-
         parser = ToolCallParser(eos_token=eos_token, tool_format=tool_format)
         return cls(
             available_toolsets=available_toolsets,
@@ -70,11 +53,12 @@ class ToolManager(ContextDecorator):
         self._stack = AsyncExitStack()
 
         enabled_toolsets = []
-        for toolset in available_toolsets:
-            if enable_tools is not None:
-                toolset = toolset.with_enabled_tools(enable_tools)
-            if toolset.tools:
-                enabled_toolsets.append(toolset)
+        if available_toolsets:
+            for toolset in available_toolsets:
+                if enable_tools is not None:
+                    toolset = toolset.with_enabled_tools(enable_tools)
+                if toolset.tools:
+                    enabled_toolsets.append(toolset)
 
         self._tools = {}
         if enabled_toolsets:
