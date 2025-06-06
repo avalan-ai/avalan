@@ -48,7 +48,9 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
-from typing import get_args, Optional
+from typing import get_args, Optional, get_origin, get_args as get_type_args
+from dataclasses import fields
+from ..tool.browser import BrowserToolSettings
 from uuid import uuid4
 from warnings import filterwarnings
 
@@ -122,6 +124,57 @@ def add_agent_settings_arguments(parser: ArgumentParser) -> ArgumentParser:
         help="Skip special tokens on output",
     )
     group.add_argument("--tool", type=str, action="append", help="Enable tool")
+    return group
+
+
+def add_tool_settings_arguments(
+    parser: ArgumentParser, *, prefix: str, settings_cls: type
+) -> ArgumentParser:
+    """Add tool settings arguments using dataclass ``settings_cls``.
+
+    Parameters
+    ----------
+    parser: ArgumentParser
+        Parser to which the options will be added.
+    prefix: str
+        Prefix for the CLI options (e.g. ``browser``).
+    settings_cls: type
+        Dataclass defining the settings.
+
+    Returns
+    -------
+    ArgumentParser
+        The argument group created.
+    """
+
+    group = parser.add_argument_group(f"{prefix} tool settings")
+
+    for field in fields(settings_cls):
+        option = f"--tool-{prefix}-{field.name.replace('_', '-')}"
+        dest = f"tool_{prefix}_{field.name}"
+
+        ftype = field.type
+        origin = get_origin(ftype)
+        args = get_type_args(ftype)
+        if origin is not None:
+            if origin is list or origin is tuple:
+                ftype = args[0]
+            elif origin is Optional or type(None) in args:
+                ftype = next((a for a in args if a is not type(None)), str)
+            elif origin.__name__ == "Literal":
+                ftype = type(args[0])
+
+        if ftype is bool or isinstance(field.default, bool):
+            group.add_argument(
+                option, dest=dest, action="store_true", default=None
+            )
+        elif ftype is int or isinstance(field.default, int):
+            group.add_argument(option, dest=dest, type=int, default=None)
+        elif ftype is float or isinstance(field.default, float):
+            group.add_argument(option, dest=dest, type=float, default=None)
+        else:
+            group.add_argument(option, dest=dest, type=str, default=None)
+
     return group
 
 
@@ -519,6 +572,9 @@ class CLI:
         )
 
         add_agent_settings_arguments(agent_run_parser)
+        add_tool_settings_arguments(
+            agent_run_parser, prefix="browser", settings_cls=BrowserToolSettings
+        )
 
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",

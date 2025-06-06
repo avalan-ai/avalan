@@ -1,8 +1,6 @@
-from . import ToolSet
-from .browser import BrowserToolSet
-from .math import MathToolSet
+from . import Tool, ToolSet
 from .parser import ToolCallParser
-from ..entities import ToolCall, ToolCallResult, ToolFormat
+from ..entities import ToolCall, ToolCallContext, ToolCallResult, ToolFormat
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
 from uuid import uuid4
@@ -23,12 +21,6 @@ class ToolManager(ContextDecorator):
         eos_token: str | None = None,
         tool_format: ToolFormat | None = None,
     ):
-        if available_toolsets is None:
-            available_toolsets = [
-                BrowserToolSet(namespace="browser"),
-                MathToolSet(namespace="math")
-            ]
-
         parser = ToolCallParser(eos_token=eos_token, tool_format=tool_format)
         return cls(
             available_toolsets=available_toolsets,
@@ -61,11 +53,12 @@ class ToolManager(ContextDecorator):
         self._stack = AsyncExitStack()
 
         enabled_toolsets = []
-        for toolset in available_toolsets:
-            if enable_tools is not None:
-                toolset = toolset.with_enabled_tools(enable_tools)
-            if toolset.tools:
-                enabled_toolsets.append(toolset)
+        if available_toolsets:
+            for toolset in available_toolsets:
+                if enable_tools is not None:
+                    toolset = toolset.with_enabled_tools(enable_tools)
+                if toolset.tools:
+                    enabled_toolsets.append(toolset)
 
         self._tools = {}
         if enabled_toolsets:
@@ -98,25 +91,31 @@ class ToolManager(ContextDecorator):
     ) -> bool:
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
-    async def __call__(self, tool_call: ToolCall) -> ToolCallResult | None:
+    async def __call__(
+        self,
+        call: ToolCall,
+        context: ToolCallContext
+    ) -> ToolCallResult | None:
         """Execute a single tool call and return the result."""
-        assert tool_call
+        assert call
 
-        tool = self._tools.get(tool_call.name, None) if self._tools else None
+        tool = self._tools.get(call.name, None) if self._tools else None
 
         if not tool:
             return None
 
+        is_native_tool = isinstance(tool, Tool)
         result = (
-            await tool(*tool_call.arguments.values())
-            if tool_call.arguments
+            await tool(*call.arguments.values(), context=context) if is_native_tool and call.arguments
+            else tool(context=context) if is_native_tool
+            else await tool(*call.arguments.values()) if call.arguments
             else tool()
         )
 
         return ToolCallResult(
             id=uuid4(),
-            call=tool_call,
-            name=tool_call.name,
-            arguments=tool_call.arguments,
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
             result=result,
         )

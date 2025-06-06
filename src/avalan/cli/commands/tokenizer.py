@@ -24,8 +24,8 @@ async def tokenize(
     with TextGenerationModel(
         tokenizer_name_or_path,
         settings=TransformerEngineSettings(
-            args.device,
-            hub.cache_dir,
+            device=args.device,
+            cache_dir=hub.cache_dir,
             tokenizer_name_or_path=tokenizer_name_or_path,
             tokens=args.token
             if args.token and isinstance(args.token, list)

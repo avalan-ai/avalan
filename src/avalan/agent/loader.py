@@ -12,7 +12,9 @@ from ..memory.partitioner.text import TextPartitioner
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
+from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.manager import ToolManager
+from ..tool.math import MathToolSet
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK
@@ -199,10 +201,8 @@ class OrchestratorLoader:
         logger: Logger,
         participant_id: UUID,
         stack: AsyncExitStack,
+        browser_settings: BrowserToolSettings | None = None,
     ) -> Orchestrator:
-        tool = ToolManager.create_instance(enable_tools=settings.tools)
-        tool = await stack.enter_async_context(tool)
-
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)
             if settings.sentence_model_engine_config
@@ -238,6 +238,30 @@ class OrchestratorLoader:
             overlap_size=settings.sentence_model_overlap_size,
             window_size=settings.sentence_model_window_size,
         )
+
+        logger.debug(
+            "Loading tool manager for agent %s with partitioner and a sentence model %s with settings (%s, %s, %s)",
+            settings.agent_id,
+            settings.sentence_model_id,
+            settings.sentence_model_max_tokens,
+            settings.sentence_model_overlap_size,
+            settings.sentence_model_window_size,
+        )
+
+        available_toolsets = [
+            BrowserToolSet(
+                settings=browser_settings or BrowserToolSettings(),
+                partitioner=text_partitioner,
+                namespace="browser",
+            ),
+            MathToolSet(namespace="math"),
+        ]
+
+        tool = ToolManager.create_instance(
+            available_toolsets=available_toolsets,
+            enable_tools=settings.tools,
+        )
+        tool = await stack.enter_async_context(tool)
 
         logger.debug("Loading memory manager for agent %s", settings.agent_id)
 

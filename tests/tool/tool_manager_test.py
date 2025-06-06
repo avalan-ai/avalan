@@ -1,4 +1,4 @@
-from avalan.entities import ToolCall, ToolCallResult
+from avalan.entities import ToolCall, ToolCallContext, ToolCallResult
 from avalan.tool import ToolSet
 from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
@@ -47,7 +47,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             available_toolsets=[ToolSet(tools=[adder])],
         )
         call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
-        result = await manager(call)
+        result = await manager(call, context=ToolCallContext())
         self.assertEqual(result.result, 3)
 
     async def test_call_no_tool_call(self):
@@ -73,7 +73,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(calls, [expected_call])
 
-            results = await self.manager(calls[0])
+            results = await self.manager(calls[0], context=ToolCallContext())
 
             expected_result = ToolCallResult(
                 id=result_id,
@@ -110,7 +110,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         result_id = _uuid4()
         with (
             patch("avalan.tool.parser.uuid4", return_value=call_id),
-            patch("avalan.tool.manager.uuid4", return_value=result_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id)
         ):
             calls = self.manager.get_calls(text)
             expected_call = ToolCall(
@@ -120,7 +120,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(calls, [expected_call])
 
-            results = await self.manager(calls[0])
+            results = await self.manager(calls[0], context=ToolCallContext())
 
             expected_result = ToolCallResult(
                 id=result_id,
@@ -157,7 +157,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(calls, [expected_call])
 
-            results = await namespaced_manager(calls[0])
+            results = await namespaced_manager(calls[0], context=ToolCallContext())
 
             expected_result = ToolCallResult(
                 id=result_id,
