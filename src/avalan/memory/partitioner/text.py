@@ -1,20 +1,13 @@
+from ...compat import override
+from ...filters import Partitioner
+from ...entities import TextPartition
 from ...model.nlp.sentence import SentenceTransformerModel
-from dataclasses import dataclass
 from logging import Logger
-from numpy import ndarray
 from re import split
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
-from typing import Union
+from typing import Callable, Union
 
-
-@dataclass(frozen=True, kw_only=True)
-class TextPartition:
-    data: str
-    total_tokens: int
-    embeddings: ndarray
-
-
-class TextPartitioner:
+class TextPartitioner(Partitioner):
     _PARAGRAPH_PATTERN = r"(?:\r\n|\r|\n){2,}"
     _model: SentenceTransformerModel
     _tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
@@ -64,6 +57,12 @@ class TextPartitioner:
         self._window_size = window_size
         self._overlap_size = overlap_size
 
+    @override
+    @property
+    def sentence_model(self) -> Callable:
+        return self._model
+
+    @override
     async def __call__(
         self,
         text: str,

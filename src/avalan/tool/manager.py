@@ -1,8 +1,9 @@
-from . import ToolSet
-from .browser import BrowserToolSet
+from . import Tool, ToolSet
+from .browser import BrowserToolSet, BrowserToolSettings
+from ..filters import Partitioner
 from .math import MathToolSet
 from .parser import ToolCallParser
-from ..entities import ToolCall, ToolCallResult, ToolFormat
+from ..entities import ToolCall, ToolCallContext, ToolCallResult, ToolFormat
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
 from uuid import uuid4
@@ -21,11 +22,19 @@ class ToolManager(ContextDecorator):
         available_toolsets: Sequence[ToolSet] | None = None,
         enable_tools: list[str] | None = None,
         eos_token: str | None = None,
+        partitioner: Partitioner | None = None,
         tool_format: ToolFormat | None = None,
     ):
+        browser_settings = BrowserToolSettings(
+            debug=True,
+            debug_urls={
+                "https://pypi.org/project/avalan/": open("docs/examples/pypi_avalan_source.md")
+            },
+            search=True
+        )
         if available_toolsets is None:
             available_toolsets = [
-                BrowserToolSet(namespace="browser"),
+                BrowserToolSet(settings=browser_settings, partitioner=partitioner, namespace="browser"),
                 MathToolSet(namespace="math")
             ]
 
@@ -98,25 +107,31 @@ class ToolManager(ContextDecorator):
     ) -> bool:
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
-    async def __call__(self, tool_call: ToolCall) -> ToolCallResult | None:
+    async def __call__(
+        self,
+        call: ToolCall,
+        context: ToolCallContext
+    ) -> ToolCallResult | None:
         """Execute a single tool call and return the result."""
-        assert tool_call
+        assert call
 
-        tool = self._tools.get(tool_call.name, None) if self._tools else None
+        tool = self._tools.get(call.name, None) if self._tools else None
 
         if not tool:
             return None
 
+        is_native_tool = isinstance(tool, Tool)
         result = (
-            await tool(*tool_call.arguments.values())
-            if tool_call.arguments
+            await tool(*call.arguments.values(), context=context) if is_native_tool and call.arguments
+            else tool(context=context) if is_native_tool
+            else await tool(*call.arguments.values()) if call.arguments
             else tool()
         )
 
         return ToolCallResult(
             id=uuid4(),
-            call=tool_call,
-            name=tool_call.name,
-            arguments=tool_call.arguments,
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
             result=result,
         )

@@ -7,6 +7,7 @@ from ....entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallContext,
     ToolCallResult,
 )
 from ....event import Event, EventType
@@ -28,13 +29,14 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
     _operation: Operation
     _engine_args: dict
     _event_manager: EventManager | None
-    _tool: ToolManager | None
+    _tool_manager: ToolManager | None
     _buffer: StringIO
     _calls: Queue[ToolCall]
     _tool_call_events: Queue[Event]
     _tool_process_events: Queue[Event]
     _tool_result_events: Queue[Event]
     _input: Input
+    _tool_context: ToolCallContext | None
 
     def __init__(
         self,
@@ -53,9 +55,10 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         self._operation = operation
         self._engine_args = engine_args
         self._event_manager = event_manager
-        self._tool = None if tool and tool.is_empty else tool
+        self._tool_manager = None if tool and tool.is_empty else tool
         self._finished = False
         self._step = 0
+        self._tool_context = None
 
     @property
     def input_token_count(self) -> int:
@@ -79,6 +82,9 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         self._response_iterator = self._response.__aiter__()
         self._buffer = StringIO()
         self._calls = Queue()
+        self._tool_context = ToolCallContext(
+            input=self._input
+        )
         self._tool_call_events = Queue()
         self._tool_process_events = Queue()
         self._tool_result_events = Queue()
@@ -117,7 +123,7 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
             if self._event_manager:
                 await self._event_manager.trigger(execute_event)
 
-            result = await self._tool(call) if self._tool else None
+            result = await self._tool_manager(call, self._tool_context) if self._tool_manager else None
 
             end = perf_counter()
             result_event = Event(
@@ -219,13 +225,13 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         if output is None:
             output = await response.to_str()
 
-        if not self._tool:
+        if not self._tool_manager:
             return output
 
         if self._event_manager:
             await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
 
-        calls = self._tool.get_calls(output) if self._tool else None
+        calls = self._tool_manager.get_calls(output) if self._tool_manager else None
         if not calls:
             return output
 
@@ -240,7 +246,7 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
                 )
                 await self._event_manager.trigger(execute_event)
 
-            result = await self._tool(call) if self._tool else None
+            result = await self._tool_manager(call, self._tool_context) if self._tool_manager else None
             results.append(result)
 
             if self._event_manager:
@@ -335,7 +341,7 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
 
         self._step += 1
 
-        if not self._tool:
+        if not self._tool_manager:
             return token
 
         self._buffer.write(token_str)
@@ -344,8 +350,8 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
             await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
 
         calls = (
-            self._tool.get_calls(self._buffer.getvalue())
-            if self._tool
+            self._tool_manager.get_calls(self._buffer.getvalue())
+            if self._tool_manager
             else None
         )
         if not calls:

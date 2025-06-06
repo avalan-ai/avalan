@@ -27,12 +27,15 @@ class Tool(ABC, ContextDecorator):
         return schema
 
     @staticmethod
-    def _get_signature(function: FunctionType) -> Signature:
+    def _get_signature(function: FunctionType, exclude_type_names: list[str]) -> Signature:
         function_signature = signature(function)
+        parameters = [
+            param
+            for param in list(function_signature.parameters.values())
+            if param.name not in exclude_type_names
+        ]
         return Signature(
-            parameters=list(function_signature.parameters.values())[
-                1:
-            ],  # drop "self"
+            parameters=parameters,
             return_annotation=function_signature.return_annotation,
         )
 
@@ -76,10 +79,17 @@ class ToolSet(ContextDecorator):
         self._exit_stack = exit_stack or AsyncExitStack()
         self._tools = tools
 
+        exclude_type_names = ["self", "context"]
+
         for i, tool in enumerate(self.tools):
             if not isfunction(tool) and callable(tool) and isinstance(tool,Tool):
-                tool.__annotations__ = get_type_hints(tool.__call__)
-                tool.__signature__ = Tool._get_signature(tool.__call__)
+                type_hints = {
+                    type_name: type_type
+                    for type_name, type_type in get_type_hints(tool.__call__).items()
+                    if type_name not in exclude_type_names
+                }
+                tool.__annotations__ = type_hints
+                tool.__signature__ = Tool._get_signature(tool.__call__, exclude_type_names)
                 if not tool.__doc__ and tool.__call__.__doc__:
                     tool.__doc__ = tool.__call__.__doc__
                 self.tools[i] = tool

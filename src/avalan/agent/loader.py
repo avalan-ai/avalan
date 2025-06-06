@@ -200,9 +200,6 @@ class OrchestratorLoader:
         participant_id: UUID,
         stack: AsyncExitStack,
     ) -> Orchestrator:
-        tool = ToolManager.create_instance(enable_tools=settings.tools)
-        tool = await stack.enter_async_context(tool)
-
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)
             if settings.sentence_model_engine_config
@@ -238,6 +235,21 @@ class OrchestratorLoader:
             overlap_size=settings.sentence_model_overlap_size,
             window_size=settings.sentence_model_window_size,
         )
+
+        logger.debug(
+            "Loading tool manager for agent %s with partitioner and a sentence model %s with settings (%s, %s, %s)",
+            settings.agent_id,
+            settings.sentence_model_id,
+            settings.sentence_model_max_tokens,
+            settings.sentence_model_overlap_size,
+            settings.sentence_model_window_size,
+        )
+
+        tool = ToolManager.create_instance(
+            enable_tools=settings.tools,
+            partitioner=text_partitioner
+        )
+        tool = await stack.enter_async_context(tool)
 
         logger.debug("Loading memory manager for agent %s", settings.agent_id)
 

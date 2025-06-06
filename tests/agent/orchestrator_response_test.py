@@ -6,8 +6,9 @@ from avalan.entities import (
     EngineUri,
     Message,
     MessageRole,
-    TransformerEngineSettings,
+    ToolCallContext,
     Token,
+    TransformerEngineSettings,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
@@ -197,7 +198,7 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
             else None
         )
 
-        async def tool_exec(call):
+        async def tool_exec(call, context: ToolCallContext):
             return ToolCallResult(
                 id=uuid4(),
                 call=call,
@@ -377,7 +378,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             else None
         )
 
-        async def tool_exec(call):
+        async def tool_exec(call, context: ToolCallContext):
             return ToolCallResult(
                 id=uuid4(),
                 call=call,

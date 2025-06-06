@@ -37,7 +37,7 @@ echo 'Who are you, and who is Leo Messi?' \
       --top-k 20
 ```
 
-Avalan makes it trivial to spin up a chat-based agent that can invoke external tools (e.g., a calculator). Below is an example using a locally installed 8B-parameter LLM, enabling recent memory, and loading a calculator tool. The agent starts with a math question and then keeps the conversation open for follow-up questions:
+Avalan makes it trivial to spin up a chat-based agent that can invoke external tools, even while streaming. Below is an example using a locally installed 8B-parameter LLM, enabling recent memory, and loading a calculator tool. The agent starts with a math question and then keeps the conversation open for follow-up questions:
 
 ```bash
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
@@ -56,7 +56,21 @@ Check the GPU hard at work towards the bottom:
 
 ![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
 
-Try an agent that extracts real-time knowledge from a website:
+With tooling, agents get real-time knowledge. Here's an 8B model looking for avalan's latest release, using a browser to do so:
+
+```bash
+echo "What's avalan's latest release in pypi?" | \
+    avalan agent run \
+        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+        --tool "browser.open" \
+        --memory-recent \
+        --run-max-new-tokens 1024 \
+        --name "Tool" \
+        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+        --stats
+```
+
+You can point an agent to specific locations for gaining knowledge:
 
 ```bash
 echo "Tell me what avalan does based on the web page https://raw.githubusercontent.com/avalan-ai/avalan/refs/heads/main/README.md" | \

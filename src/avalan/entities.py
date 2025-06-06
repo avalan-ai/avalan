@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from numpy import ndarray
 from torch import dtype, Tensor
 from typing import Literal, Optional, Union
 from uuid import UUID
@@ -231,6 +232,7 @@ class Message:
     name: Optional[str] = None
     arguments: Optional[dict] = None
 
+Input = Union[str, list[str], Message, list[Message]]
 
 @dataclass(frozen=True, kw_only=True)
 class EngineMessage:
@@ -408,6 +410,11 @@ class ToolCall:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolCallContext:
+    input: Input | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class ToolCallResult(ToolCall):
     id: UUID
     call: ToolCall
@@ -420,6 +427,13 @@ class QuantizationSettings:
     bnb_4bit_quant_type: Literal["nf4"]
     bnb_4bit_use_double_quant: bool
     bnb_4bit_compute_dtype: type
+
+
+@dataclass(frozen=True, kw_only=True)
+class TextPartition:
+    data: str
+    total_tokens: int
+    embeddings: ndarray
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -445,4 +459,3 @@ class User:
     access_token_name: Optional[str] = None
 
 
-Input = Union[str, list[str], Message, list[Message]]

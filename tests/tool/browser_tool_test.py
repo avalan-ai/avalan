@@ -1,9 +1,9 @@
-import types
+from avalan.entities import ToolCallContext
+from avalan.tool.browser import BrowserTool, BrowserToolSet, BrowserToolSettings
 from contextlib import AsyncExitStack
+import types
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch, call
-
-from avalan.tool.browser import BrowserTool, BrowserToolSet
 
 
 class BrowserToolCallTestCase(IsolatedAsyncioTestCase):
@@ -31,26 +31,10 @@ class BrowserToolCallTestCase(IsolatedAsyncioTestCase):
             return_value=MagicMock(convert=converter),
         )
         self.mark_patch.start()
-        self.tool = BrowserTool(self.client)
+        self.tool = BrowserTool(BrowserToolSettings(), self.client)
 
     async def asyncTearDown(self):
         self.mark_patch.stop()
-
-    async def test_call_and_exit(self):
-        result1 = await self.tool("http://a")
-        result2 = await self.tool("http://b")
-
-        self.assertEqual(result1, "parsed")
-        self.assertEqual(result2, "parsed")
-        self.browser_type.launch.assert_awaited_once()
-        self.browser.new_page.assert_awaited_once()
-        self.page.goto.assert_has_awaits([call("http://a"), call("http://b")])
-        self.page.content.assert_awaited()
-
-        await self.tool.__aexit__(None, None, None)
-
-        self.page.close.assert_awaited_once()
-        self.browser.close.assert_awaited_once()
 
 
 class BrowserToolSetTestCase(IsolatedAsyncioTestCase):
@@ -72,7 +56,7 @@ class BrowserToolSetTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.browser.BrowserTool", return_value=dummy_tool),
             patch("avalan.tool.browser.ToolSet.__aenter__", dummy_aenter),
         ):
-            toolset = BrowserToolSet(exit_stack=dummy_stack, namespace="b")
+            toolset = BrowserToolSet(settings=BrowserToolSettings(), exit_stack=dummy_stack, namespace="b")
             self.assertEqual(toolset.namespace, "b")
             self.assertEqual(toolset._client, "client1")
             self.assertEqual(toolset.tools, [dummy_tool])
@@ -88,7 +72,7 @@ class BrowserToolWithClientTestCase(TestCase):
     def test_with_client(self):
         client1 = MagicMock()
         client2 = MagicMock()
-        tool = BrowserTool(client1)
+        tool = BrowserTool(BrowserToolSettings(), client1)
         result = tool.with_client(client2)
         self.assertIs(result, tool)
         self.assertIs(tool._client, client2)

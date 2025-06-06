@@ -1,5 +1,6 @@
 from . import Tool, ToolSet
 from ..compat import override
+from ..entities import ToolCallContext
 from contextlib import AsyncExitStack
 from sympy import sympify
 
@@ -19,7 +20,7 @@ class CalculatorTool(Tool):
         super().__init__()
         self.__name__ = "calculator"
 
-    async def __call__(self, expression: str) -> str:
+    async def __call__(self, expression: str, context: ToolCallContext) -> str:
         result = sympify(expression, evaluate=True)
         return str(result)
 
