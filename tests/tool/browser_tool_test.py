@@ -1,9 +1,16 @@
-from avalan.entities import ToolCallContext
+from avalan.entities import (
+    Message,
+    MessageRole,
+    TextPartition,
+    ToolCallContext,
+)
 from avalan.tool.browser import BrowserTool, BrowserToolSet, BrowserToolSettings
 from contextlib import AsyncExitStack
 import types
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch, call
+from io import StringIO
+import numpy as np
 
 
 class BrowserToolCallTestCase(IsolatedAsyncioTestCase):
@@ -76,3 +83,57 @@ class BrowserToolWithClientTestCase(TestCase):
         result = tool.with_client(client2)
         self.assertIs(result, tool)
         self.assertIs(tool._client, client2)
+
+
+class BrowserToolCallSearchTestCase(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.client = MagicMock()
+        self.mark_patch = patch("avalan.tool.browser.MarkItDown")
+        self.mark_patch.start()
+
+    async def asyncTearDown(self):
+        self.mark_patch.stop()
+
+    async def test_call_search_with_partitioner(self):
+        partitions = [
+            TextPartition(data="a", embeddings=np.array([0.1, 0.2]), total_tokens=1),
+            TextPartition(data="b", embeddings=np.array([0.2, 0.3]), total_tokens=1),
+        ]
+
+        class DummyPartitioner:
+            def __init__(self) -> None:
+                self.call_mock = AsyncMock(return_value=partitions)
+                self.sentence_model = AsyncMock(return_value=np.array([[0.1, 0.2]]))
+
+            async def __call__(self, text: str):
+                return await self.call_mock(text)
+
+        partitioner = DummyPartitioner()
+
+        settings = BrowserToolSettings(search=True)
+        tool = BrowserTool(settings, self.client, partitioner=partitioner)
+        tool._read = AsyncMock(return_value="html")
+
+        index = MagicMock()
+        index.add = MagicMock()
+        index.search = MagicMock(return_value=(np.array([[0.05]]), np.array([[0]])))
+
+        with patch("avalan.tool.browser.IndexFlatL2", return_value=index) as idx_patch:
+            ctx = ToolCallContext(input=Message(role=MessageRole.USER, content="q"))
+            result = await tool("http://t", context=ctx)
+
+        partitioner.call_mock.assert_awaited_once_with("html")
+        partitioner.sentence_model.assert_awaited_once_with(["q"])
+        idx_patch.assert_called_once_with(partitions[0].embeddings.shape[0])
+        index.add.assert_called_once()
+        index.search.assert_called_once()
+        self.assertEqual(result, "a\nb")
+
+
+class BrowserToolCallDebugTestCase(IsolatedAsyncioTestCase):
+    async def test_call_debug_source(self):
+        debug_io = StringIO("debug")
+        settings = BrowserToolSettings(debug=True, debug_url="http://t", debug_source=debug_io)
+        tool = BrowserTool(settings, MagicMock())
+        result = await tool("http://t", context=ToolCallContext())
+        self.assertEqual(result, "debug")
