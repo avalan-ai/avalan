@@ -113,7 +113,7 @@ class TransformerModel(Engine, ABC):
         tokenizer = self._load_tokenizer(tokenizer_name_or_path, use_fast)
         if self._settings.tokens:
             _l(
-                f"Adding {len(self._tokens)} tokens to tokenizer "
+                f"Adding {len(self._settings.tokens)} tokens to tokenizer "
                 f"{tokenizer.name_or_path}: {self._settings.tokens}"
             )
             added_tokens = tokenizer.add_tokens(self._settings.tokens)
