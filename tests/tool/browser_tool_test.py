@@ -1,6 +1,6 @@
 import types
 from contextlib import AsyncExitStack
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
 from avalan.tool.browser import BrowserTool, BrowserToolSet
@@ -82,3 +82,13 @@ class BrowserToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, toolset)
         dummy_stack.enter_async_context.assert_awaited_once_with("client1")
         dummy_tool.with_client.assert_called_once_with("client2")
+
+
+class BrowserToolWithClientTestCase(TestCase):
+    def test_with_client(self):
+        client1 = MagicMock()
+        client2 = MagicMock()
+        tool = BrowserTool(client1)
+        result = tool.with_client(client2)
+        self.assertIs(result, tool)
+        self.assertIs(tool._client, client2)
