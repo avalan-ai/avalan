@@ -18,6 +18,8 @@ from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
 from typing import Optional
+from dataclasses import fields
+from ...tool.browser import BrowserToolSettings
 from uuid import UUID, uuid4
 from jinja2 import Environment, FileSystemLoader
 from os.path import dirname, join
@@ -94,6 +96,23 @@ def get_orchestrator_settings(
         json_config=None,
         tools=tools if tools is not None else args.tool or [],
     )
+
+
+def get_tool_settings(args: Namespace, *, prefix: str, settings_cls: type):
+    """Return tool settings from CLI ``args`` using dataclass ``settings_cls``."""
+
+    values: dict[str, object] = {}
+    for field in fields(settings_cls):
+        if field.name == "debug_urls":
+            continue
+
+        attr = f"tool_{prefix}_{field.name}"
+        if hasattr(args, attr):
+            value = getattr(args, attr)
+            if value is not None:
+                values[field.name] = value
+
+    return settings_cls(**values)
 
 
 async def agent_message_search(
@@ -255,12 +274,16 @@ async def agent_run(
                     tools=args.tool,
                 )
                 logger.debug("Loading agent from inline settings")
+                browser_settings = get_tool_settings(
+                    args, prefix="browser", settings_cls=BrowserToolSettings
+                )
                 orchestrator = await OrchestratorLoader.load_from_settings(
                     settings,
                     hub=hub,
                     logger=logger,
                     participant_id=participant_id,
                     stack=stack,
+                    browser_settings=browser_settings,
                 )
             orchestrator.event_manager.add_listener(_event_listener)
 

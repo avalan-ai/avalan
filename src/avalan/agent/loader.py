@@ -201,6 +201,7 @@ class OrchestratorLoader:
         logger: Logger,
         participant_id: UUID,
         stack: AsyncExitStack,
+        browser_settings: BrowserToolSettings | None = None,
     ) -> Orchestrator:
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)
@@ -247,16 +248,23 @@ class OrchestratorLoader:
             settings.sentence_model_window_size,
         )
 
-        browser_settings = BrowserToolSettings(
-            debug=True,
-            debug_urls={
-                "https://pypi.org/project/avalan/": open("docs/examples/pypi_avalan_source.md")
-            },
-            search=True
-        )
+        if browser_settings is None:
+            browser_settings = BrowserToolSettings(
+                debug=True,
+                debug_urls={
+                    "https://pypi.org/project/avalan/": open(
+                        "docs/examples/pypi_avalan_source.md"
+                    )
+                },
+                search=True,
+            )
         available_toolsets = [
-            BrowserToolSet(settings=browser_settings, partitioner=text_partitioner, namespace="browser"),
-            MathToolSet(namespace="math")
+            BrowserToolSet(
+                settings=browser_settings,
+                partitioner=text_partitioner,
+                namespace="browser",
+            ),
+            MathToolSet(namespace="math"),
         ]
 
         tool = ToolManager.create_instance(

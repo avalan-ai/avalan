@@ -213,6 +213,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             memory_engine_max_tokens=500,
             memory_engine_overlap=125,
             memory_engine_window=250,
+            tool_browser_engine=None,
+            tool_browser_debug=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -417,7 +421,51 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         fs_patch.assert_awaited_once()
         settings = fs_patch.call_args.args[0]
         self.assertTrue(settings.call_options["skip_special_tokens"])
+        browser_settings = fs_patch.call_args.kwargs["browser_settings"]
+        self.assertIsInstance(browser_settings, agent_cmds.BrowserToolSettings)
+        self.assertEqual(browser_settings.engine, "firefox")
+        self.assertFalse(browser_settings.debug)
+        self.assertFalse(browser_settings.search)
         ff_patch.assert_not_called()
+
+    async def test_run_with_browser_settings(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.tool_browser_engine = "chromium"
+        self.args.tool_browser_debug = True
+        self.args.tool_browser_search = True
+        self.args.tool_browser_search_context = 5
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        bs = fs_patch.call_args.kwargs["browser_settings"]
+        self.assertEqual(bs.engine, "chromium")
+        self.assertTrue(bs.debug)
+        self.assertTrue(bs.search)
+        self.assertEqual(bs.search_context, 5)
 
 
 if __name__ == "__main__":
