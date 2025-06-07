@@ -179,6 +179,84 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
 
+    async def test_agent_init_output_without_tool_settings(self):
+        args = Namespace(
+            name="N",
+            role="R",
+            task="T",
+            instructions="I",
+            memory_recent=True,
+            memory_permanent="",
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=True,
+            tool=None,
+            tool_browser_engine=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
+            patch.object(
+                agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertNotIn("[tool.browser.open]", output)
+
+    async def test_agent_init_tool_settings_output(self):
+        args = Namespace(
+            name="N",
+            role="R",
+            task="T",
+            instructions="I",
+            memory_recent=True,
+            memory_permanent="",
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=True,
+            tool=None,
+            tool_browser_engine="chromium",
+            tool_browser_search=True,
+            tool_browser_search_context=5,
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
+            patch.object(
+                agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("[tool.browser.open]", output)
+        self.assertIn('engine = "chromium"', output)
+        self.assertIn("search = true", output)
+
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -422,10 +500,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         settings = fs_patch.call_args.args[0]
         self.assertTrue(settings.call_options["skip_special_tokens"])
         browser_settings = fs_patch.call_args.kwargs["browser_settings"]
-        self.assertIsInstance(browser_settings, agent_cmds.BrowserToolSettings)
-        self.assertEqual(browser_settings.engine, "firefox")
-        self.assertFalse(browser_settings.debug)
-        self.assertFalse(browser_settings.search)
+        self.assertIsNone(browser_settings)
         ff_patch.assert_not_called()
 
     async def test_run_with_browser_settings(self):

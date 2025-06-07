@@ -15,6 +15,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
         settings = agent_cmds.get_tool_settings(
             args, prefix="browser", settings_cls=BrowserToolSettings
         )
+        self.assertIsInstance(settings, BrowserToolSettings)
         self.assertEqual(settings.engine, "webkit")
         self.assertTrue(settings.debug)
         self.assertFalse(settings.search)
@@ -30,7 +31,4 @@ class GetToolSettingsTestCase(unittest.TestCase):
         settings = agent_cmds.get_tool_settings(
             args, prefix="browser", settings_cls=BrowserToolSettings
         )
-        self.assertEqual(settings.engine, "firefox")
-        self.assertFalse(settings.debug)
-        self.assertFalse(settings.search)
-        self.assertEqual(settings.search_context, 10)
+        self.assertIsNone(settings)

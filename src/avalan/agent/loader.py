@@ -184,12 +184,26 @@ class OrchestratorLoader:
                 else None,
             )
 
+            tool_config = config.get("tool", {}).get("browser", {}).get("open")
+            if not tool_config and "browser" in config.get("tool", {}):
+                tool_config = config["tool"]["browser"]
+            browser_settings = None
+            if tool_config:
+                if "debug_source" in tool_config and isinstance(
+                    tool_config["debug_source"], str
+                ):
+                    tool_config["debug_source"] = open(
+                        tool_config["debug_source"]
+                    )
+                browser_settings = BrowserToolSettings(**tool_config)
+
             return await cls.load_from_settings(
                 settings,
                 hub=hub,
                 logger=logger,
                 participant_id=participant_id,
                 stack=stack,
+                browser_settings=browser_settings,
             )
 
     @classmethod
