@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
-from typing import Optional
+from typing import Optional, Mapping
 from dataclasses import fields
 from ...tool.browser import BrowserToolSettings
 from uuid import UUID, uuid4
@@ -98,21 +98,58 @@ def get_orchestrator_settings(
     )
 
 
-def get_tool_settings(args: Namespace, *, prefix: str, settings_cls: type):
-    """Return tool settings from CLI ``args`` using dataclass ``settings_cls``."""
+def _tool_settings_from_mapping(
+    mapping: Mapping[str, object] | Namespace,
+    *,
+    prefix: str | None = None,
+    settings_cls: type,
+    open_files: bool = True,
+) -> object:
+    """Return tool settings from a mapping using dataclass ``settings_cls``."""
 
     values: dict[str, object] = {}
     for field in fields(settings_cls):
-        attr = f"tool_{prefix}_{field.name}"
-        if hasattr(args, attr):
-            value = getattr(args, attr)
-            if value is not None:
-                if field.name == "debug_source":
-                    value = open(value)
+        key = f"tool_{prefix}_{field.name}" if prefix else field.name
+        if isinstance(mapping, Namespace):
+            if hasattr(mapping, key):
+                value = getattr(mapping, key)
+            else:
+                continue
+        else:
+            if key in mapping:
+                value = mapping[key]
+            elif prefix and field.name in mapping:
+                value = mapping[field.name]
+            else:
+                continue
 
-                values[field.name] = value
+        if value is not None:
+            if (
+                field.name == "debug_source"
+                and open_files
+                and isinstance(value, str)
+            ):
+                value = open(value)
+            values[field.name] = value
+
+    if not values:
+        return None
 
     return settings_cls(**values)
+
+
+def get_tool_settings(
+    args: Namespace,
+    *,
+    prefix: str,
+    settings_cls: type,
+    open_files: bool = True,
+) -> object:
+    """Return tool settings from CLI ``args`` using dataclass ``settings_cls``."""
+
+    return _tool_settings_from_mapping(
+        args, prefix=prefix, settings_cls=settings_cls, open_files=open_files
+    )
 
 
 async def agent_message_search(
@@ -498,11 +535,18 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         tools=args.tool or [],
     )
 
+    browser_tool = get_tool_settings(
+        args,
+        prefix="browser",
+        settings_cls=BrowserToolSettings,
+        open_files=False,
+    )
+
     env = Environment(
         loader=FileSystemLoader(join(dirname(__file__), "..", "..", "agent")),
         trim_blocks=True,
         lstrip_blocks=True,
     )
     template = env.get_template("blueprint.toml")
-    rendered = template.render(orchestrator=settings)
+    rendered = template.render(orchestrator=settings, browser_tool=browser_tool)
     console.print(Syntax(rendered, "toml"))

@@ -34,3 +34,16 @@ uri = "{{ orchestrator.uri }}"
 [run]
 max_new_tokens = {{ orchestrator.call_options['max_new_tokens'] }}
 skip_special_tokens = {{ orchestrator.call_options['skip_special_tokens'] | lower }}
+
+{% if browser_tool %}
+[tool.browser.open]
+{% for k, v in browser_tool.items() %}
+{% if v is boolean %}
+{{ k }} = {{ v | lower }}
+{% elif v is number %}
+{{ k }} = {{ v }}
+{% elif v is string %}
+{{ k }} = "{{ v }}"
+{% endif %}
+{% endfor %}
+{% endif %}
