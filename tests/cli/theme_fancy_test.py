@@ -5,6 +5,8 @@ import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 from rich.spinner import Spinner
+from rich.text import Text
+from rich.table import Table
 from rich import box
 import numpy as np
 from numpy.linalg import norm
@@ -13,6 +15,7 @@ from avalan.entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
+    HubCacheFile,
     HubCacheDeletion,
     Message,
     ModelConfig,
@@ -518,3 +521,174 @@ class FancyThemeAdditionalTestCase(unittest.TestCase):
         self.assertIn("avalan", text)
         self.assertIn("1.0", text)
         self.assertIn("tok", text)
+
+
+class FancyThemeMoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+
+    def test_cache_delete_none(self):
+        result = self.theme.cache_delete(None)
+        self.assertIsInstance(result, Text)
+        self.assertIn("Nothing found", result.plain)
+
+    def test_cache_list_multiple_revision_files(self):
+        now = datetime.now()
+        file1 = HubCacheFile(
+            name="f1",
+            path="/f1",
+            size_on_disk=1,
+            last_accessed=now,
+            last_modified=now,
+        )
+        file2 = HubCacheFile(
+            name="f2",
+            path="/f2",
+            size_on_disk=1,
+            last_accessed=now,
+            last_modified=now,
+        )
+        cache = HubCache(
+            model_id="m",
+            path="/p",
+            size_on_disk=2,
+            revisions=["r1", "r2"],
+            files={"r1": [file1, file2], "r2": []},
+            total_files=2,
+            total_revisions=2,
+        )
+        group = self.theme.cache_list(
+            "/c",
+            [cache],
+            display_models=["m"],
+            show_summary=False,
+        )
+        table = group.renderables[0].renderable
+        self.assertEqual(table.row_count, 2)
+        self.assertIn("[bright_black]", table.columns[0]._cells[1])
+
+    def test_memory_partitions_many(self):
+        part = TextPartition(data="t", total_tokens=1, embeddings=np.array([1]))
+        group = self.theme.memory_partitions([part] * 5, display_partitions=3)
+        self.assertEqual(len(group.renderables), 4)
+
+    def test_sentence_transformer_model_config(self):
+        cfg = ModelConfig(
+            architectures=["a"],
+            attribute_map={},
+            bos_token_id=1,
+            bos_token="<s>",
+            decoder_start_token_id=None,
+            eos_token_id=2,
+            eos_token="</s>",
+            finetuning_task=None,
+            hidden_size=1,
+            hidden_sizes=None,
+            keys_to_ignore_at_inference=[],
+            loss_type="ce",
+            max_position_embeddings=10,
+            model_type="t",
+            num_attention_heads=1,
+            num_hidden_layers=1,
+            num_labels=1,
+            output_attentions=False,
+            output_hidden_states=False,
+            pad_token_id=0,
+            pad_token="<pad>",
+            prefix="pre",
+            sep_token_id=3,
+            sep_token="<sep>",
+            state_size=1,
+            task_specific_params=None,
+            torch_dtype=float,
+            vocab_size=10,
+            tokenizer_class=None,
+        )
+        st_cfg = SentenceTransformerModelConfig(
+            backend="torch",
+            similarity_function="cosine",
+            truncate_dimension=128,
+            transformer_model_config=cfg,
+        )
+        align = self.theme._sentence_transformer_model_config(
+            st_cfg, is_runnable=True, summary=False
+        )
+        table = align.renderable
+        headers = table.columns[0]._cells
+        self.assertIn("Truncate dimension", headers)
+
+    def test_fill_model_config_table(self):
+        cfg = ModelConfig(
+            architectures=["a"],
+            attribute_map={},
+            bos_token_id=1,
+            bos_token="<s>",
+            decoder_start_token_id=None,
+            eos_token_id=2,
+            eos_token="</s>",
+            finetuning_task=None,
+            hidden_size=1,
+            hidden_sizes=None,
+            keys_to_ignore_at_inference=[],
+            loss_type="ce",
+            max_position_embeddings=10,
+            model_type="t",
+            num_attention_heads=1,
+            num_hidden_layers=1,
+            num_labels=1,
+            output_attentions=False,
+            output_hidden_states=False,
+            pad_token_id=0,
+            pad_token="<pad>",
+            prefix="pre",
+            sep_token_id=3,
+            sep_token="<sep>",
+            state_size=1,
+            task_specific_params=None,
+            torch_dtype=float,
+            vocab_size=10,
+            tokenizer_class=None,
+        )
+        table = Table(show_lines=True)
+        table.add_column()
+        table.add_column()
+        filled = self.theme._fill_model_config_table(
+            cfg, table, is_runnable=True, summary=False
+        )
+        cells = filled.columns[0]._cells
+        self.assertIn("Runs on this instance", cells)
+        self.assertIn("Architectures", cells)
+        self.assertIn("Start of stream token", cells)
+
+    def test_tokenizer_config_tokens(self):
+        cfg = TokenizerConfig(
+            name_or_path="t",
+            tokens=["a"],
+            special_tokens=["b"],
+            tokenizer_model_max_length=10,
+            fast=True,
+        )
+        panel = self.theme.tokenizer_config(cfg)
+        headers = panel.renderable.columns[0]._cells
+        self.assertIn("Added tokens", headers)
+
+    def test_tokens_table_multiple(self):
+        t1 = Token(id=1, token="a", probability=0.1)
+        t2 = Token(id=2, token="b", probability=0.2)
+        table = self.theme._tokens_table([t1, t2], t1, t2)
+        self.assertEqual(table.row_count, 2)
+        self.assertIn("[cyan]", table.columns[1]._cells[1])
+
+    def test_parameter_count_none(self):
+        self.assertEqual(self.theme._parameter_count(None), "N/A")
+
+    def test_symmetric_indices(self):
+        self.assertEqual(
+            FancyTheme._symmetric_indices([0.1, 0.5, 0.2, 0.4]),
+            [2, 0, 1, 3],
+        )
+
+    def test_percentage(self):
+        self.assertEqual(FancyTheme._percentage(0.5), "50%")
+        self.assertEqual(FancyTheme._percentage(0.123), "12.3%")
+        self.assertEqual(FancyTheme._percentage(1), "100%")
