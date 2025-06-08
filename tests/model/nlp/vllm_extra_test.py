@@ -1,8 +1,10 @@
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vllm import VllmModel, VllmStream
+from avalan.model.nlp.text.generation import TextGenerationModel
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from transformers import PreTrainedModel, PreTrainedTokenizerFast
 
 
 class VllmStreamTestCase(IsolatedAsyncioTestCase):
@@ -28,24 +30,25 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         return VllmModel(self.model_id, settings)
 
     def test_constructor_loads_model_and_tokenizer(self):
-        llm_instance = MagicMock()
+        llm_instance = MagicMock(spec=PreTrainedModel)
         vllm_mock = MagicMock()
         vllm_mock.LLM.return_value = llm_instance
         vllm_mock.SamplingParams = MagicMock()
 
-        tokenizer_mock = MagicMock()
+        tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
+        type(tokenizer_mock).chat_template = PropertyMock(return_value=None)
         type(tokenizer_mock).name_or_path = PropertyMock(
             return_value=self.model_id
         )
 
-        with patch.dict(
-            "sys.modules",
-            {"vllm": vllm_mock},
-        ):
-            with patch(
-                "avalan.model.transformer.AutoTokenizer.from_pretrained",
-                return_value=tokenizer_mock,
-            ) as auto_tok:
+        with patch.dict("sys.modules", {"vllm": vllm_mock}):
+            with (
+                patch(
+                    "avalan.model.transformer.AutoTokenizer.from_pretrained",
+                    return_value=tokenizer_mock,
+                ) as auto_tok,
+                patch("avalan.model.nlp.text.vllm.LLM", vllm_mock.LLM),
+            ):
                 settings = TransformerEngineSettings()
                 model = VllmModel(self.model_id, settings)
 
@@ -71,7 +74,7 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(loaded, "llm")
         llm_mock.assert_called_once_with(
             model=self.model_id,
-            tokenizer=None,
+            tokenizer=self.model_id,
             trust_remote_code=False,
         )
 
@@ -91,11 +94,12 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
 
     def test_prompt(self):
         model = self._make_model()
-        model._tokenizer = MagicMock()
+        model._tokenizer = MagicMock(spec=PreTrainedTokenizerFast)
+        type(model._tokenizer).chat_template = PropertyMock(return_value=None)
         model._tokenizer.decode.return_value = "decoded"
 
         with patch.object(
-            VllmModel,
+            TextGenerationModel,
             "_tokenize_input",
             return_value={"input_ids": [[1, 2]]},
         ) as tok:
