@@ -25,9 +25,11 @@ class VllmStream(TextGenerationVendorStream):
         self._iterator = generator
 
     async def __anext__(self) -> str:
-        try:
-            chunk = await to_thread(next, self._iterator)
-        except StopIteration:
+        def _next(default: str | None = None) -> str | None:
+            return next(self._iterator, default)
+
+        chunk = await to_thread(_next)
+        if chunk is None:
             raise StopAsyncIteration
         return chunk
 
