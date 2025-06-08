@@ -391,6 +391,151 @@ uri = \"ai://local/model\"
                 )
         await stack.aclose()
 
+    async def test_sentence_model_engine_config(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+["memory.engine"]
+model_id = "smodel"
+max_tokens = 300
+overlap_size = 60
+window_size = 120
+backend = "onnx"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                result = await OrchestratorLoader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.sentence_model_id, "smodel")
+                self.assertEqual(settings.sentence_model_max_tokens, 300)
+                self.assertEqual(settings.sentence_model_overlap_size, 60)
+                self.assertEqual(settings.sentence_model_window_size, 120)
+                self.assertEqual(
+                    settings.sentence_model_engine_config, {"backend": "onnx"}
+                )
+            await stack.aclose()
+
+    async def test_browser_debug_source(self):
+        with TemporaryDirectory() as tmp:
+            debug_path = f"{tmp}/debug.txt"
+            with open(debug_path, "w", encoding="utf-8") as fh:
+                fh.write("debug")
+
+            config = f"""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.browser.open]
+debug = true
+debug_source = \"{debug_path}\"
+"""
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                result = await OrchestratorLoader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                browser_settings = lfs_patch.call_args.kwargs[
+                    "browser_settings"
+                ]
+                self.assertTrue(browser_settings.debug)
+                self.assertIsNotNone(browser_settings.debug_source)
+                self.assertEqual(browser_settings.debug_source.read(), "debug")
+                browser_settings.debug_source.close()
+            await stack.aclose()
+
+    async def test_json_settings_provided(self):
+        config = """
+[agent]
+role = \"assistant\"
+task = \"do\"
+instructions = \"ins\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[json]
+value = { type = \"string\", description = \"d\" }
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                result = await OrchestratorLoader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(
+                    settings.json_config,
+                    {"value": {"type": "string", "description": "d"}},
+                )
+            await stack.aclose()
+
 
 class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
     async def test_load_default_orchestrator_from_settings(self):
