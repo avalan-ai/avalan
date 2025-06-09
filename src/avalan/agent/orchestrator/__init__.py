@@ -24,7 +24,7 @@ from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
 from logging import Logger
-from typing import Any, Union, Type
+from typing import Any, Type
 from uuid import UUID, uuid4
 
 
@@ -54,7 +54,7 @@ class Orchestrator:
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
-        operations: Union[Operation, list[Operation]],
+        operations: Operation | list[Operation],
         *,
         call_options: dict | None = None,
         exit_memory: bool = True,

@@ -22,7 +22,7 @@ from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.theme import Theme
 from time import perf_counter
-from typing import Tuple, Union
+from typing import Tuple
 
 
 def model_display(
@@ -34,7 +34,7 @@ def model_display(
     *vargs,
     is_sentence_transformer: bool | None = None,
     load: bool | None = None,
-    model: Union[SentenceTransformerModel, TextGenerationModel] | None = None,
+    model: SentenceTransformerModel | TextGenerationModel | None = None,
     summary: bool | None = None,
 ) -> None:
     assert args.model
@@ -340,7 +340,7 @@ async def token_generation(
         args.start_thinking if hasattr(args, "start_thinking") else False
     )
     tokens = []
-    text_tokens: list[Union[Token, TokenDetail, str]] = []
+    text_tokens: list[Token | TokenDetail | str] = []
     tool_events: list[Event] = []
     tool_event_calls: list[Event] = []
     tool_event_results: list[Event] = []

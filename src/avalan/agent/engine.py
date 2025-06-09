@@ -15,7 +15,7 @@ from ..tool.manager import ToolManager
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from dataclasses import replace
-from typing import Any, Union, Tuple
+from typing import Any, Tuple
 from uuid import UUID, uuid4
 
 
@@ -82,7 +82,7 @@ class EngineAgent(ABC):
 
     async def __call__(
         self, specification: Specification, input: str, **kwargs
-    ) -> Union[TextGenerationResponse, str]:
+    ) -> TextGenerationResponse | str:
         await self._event_manager.trigger(
             Event(type=EventType.CALL_PREPARE_BEFORE)
         )
@@ -100,7 +100,7 @@ class EngineAgent(ABC):
         system_prompt: str | None = None,
         skip_special_tokens=True,
         **kwargs,
-    ) -> Union[TextGenerationResponse]:
+    ) -> TextGenerationResponse:
         # Process settings
         if settings and kwargs:
             settings = replace(settings, **kwargs)

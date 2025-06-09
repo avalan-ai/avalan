@@ -1,6 +1,5 @@
 from ..entities import MessageRole
 from pydantic import BaseModel, Field
-from typing import Union
 
 
 class ChatMessage(BaseModel):
@@ -27,7 +26,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool | None = Field(
         False, description="Whether to stream back partial progress"
     )
-    stop: Union[str, list[str]] | None = Field(
+    stop: str | list[str] | None = Field(
         None,
         description="Sequence where the API will stop generating further tokens",
     )

@@ -15,7 +15,7 @@ from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
 from logging import Logger
 from dataclasses import dataclass
-from typing import Annotated, Union, get_args, get_origin
+from typing import Annotated, get_args, get_origin
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,9 +35,7 @@ class Property:
 
 
 class JsonSpecification(Specification):
-    def __init__(
-        self, output: Union[type, list[Property]], role: str, **kwargs
-    ):
+    def __init__(self, output: type | list[Property], role: str, **kwargs):
         if not isinstance(output, list):
             annotations = getattr(output, "__annotations__", None)
             assert annotations
@@ -89,7 +87,7 @@ class JsonOrchestrator(Orchestrator):
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
-        output: Union[type, list[Property]],
+        output: type | list[Property],
         *,
         role: str,
         task: str,

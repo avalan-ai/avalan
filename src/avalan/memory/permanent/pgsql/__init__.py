@@ -11,7 +11,7 @@ from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.types import TypeInfo
-from typing import TypeVar, Type, Union
+from typing import TypeVar, Type
 
 
 T = TypeVar("T")
@@ -174,12 +174,12 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
 
     @staticmethod
     def _to_engine_messages(
-        messages: Union[list[PermanentMessage], list[PermanentMessageScored]],
+        messages: list[PermanentMessage] | list[PermanentMessageScored],
         *args,
         limit: int | None,
         reverse: bool = False,
         scored: bool = False,
-    ) -> Union[list[EngineMessage], list[EngineMessageScored]]:
+    ) -> list[EngineMessage] | list[EngineMessageScored]:
         engine_messages = [
             EngineMessageScored(
                 agent_id=m.agent_id,

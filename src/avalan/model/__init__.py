@@ -19,7 +19,6 @@ from typing import (
     Callable,
     Literal,
     Generator,
-    Union,
     TypedDict,
 )
 
@@ -50,7 +49,7 @@ class TemplateMessage(TypedDict):
     content: str
 
 
-class TextGenerationResponse(AsyncIterator[Union[Token | TokenDetail | str]]):
+class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _json_patterns: list[Pattern] = [
         # Markdown code fence with explicit json tag
         compile(r"```json\s*(\{.*?\})\s*```", DOTALL),
@@ -219,15 +218,15 @@ class TextGenerationVendorStream(TextGenerationStream):
         return self
 
 
-EngineResponse = Union[
-    TextGenerationResponse,
-    TextGenerationVendorStream,
-    Generator[str, None, None],
-    Generator[Union[Token, TokenDetail], None, None],
-    ImageEntity,
-    list[ImageEntity],
-    list[str],
-    dict[str, str],
-    ndarray,
-    str,
-]
+EngineResponse = (
+    TextGenerationResponse
+    | TextGenerationVendorStream
+    | Generator[str, None, None]
+    | Generator[Token | TokenDetail, None, None]
+    | ImageEntity
+    | list[ImageEntity]
+    | list[str]
+    | dict[str, str]
+    | ndarray
+    | str
+)

@@ -49,7 +49,7 @@ from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
 from textwrap import wrap
-from typing import Callable, Generator, Tuple, Union
+from typing import Callable, Generator, Tuple
 from uuid import UUID
 
 
@@ -948,7 +948,7 @@ class FancyTheme(Theme):
 
     def model_display(
         self,
-        model_config: Union[ModelConfig, SentenceTransformerModelConfig] | None,
+        model_config: ModelConfig | SentenceTransformerModelConfig | None,
         tokenizer_config: TokenizerConfig,
         *args,
         is_runnable: bool | None = None,

@@ -25,7 +25,7 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Any, Type, Union
+from typing import Any, Type
 
 
 class Engine(ABC):
@@ -37,11 +37,9 @@ class Engine(ABC):
     _transformers_logging_level: int
     _loaded_model: bool = False
     _loaded_tokenizer: bool = False
-    _tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast] | None = (
-        None
-    )
-    _model: Union[PreTrainedModel, TextGenerationVendor] | None = None
-    _config: Union[ModelConfig, SentenceTransformerModelConfig] | None = None
+    _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
+    _model: PreTrainedModel | TextGenerationVendor | None = None
+    _config: ModelConfig | SentenceTransformerModelConfig | None = None
     _tokenizer_config: TokenizerConfig | None = None
     _parameter_types: set[str] | None = None
     _parameter_count: int | None = None
@@ -104,7 +102,7 @@ class Engine(ABC):
     @property
     def config(
         self,
-    ) -> Union[ModelConfig, SentenceTransformerModelConfig] | None:
+    ) -> ModelConfig | SentenceTransformerModelConfig | None:
         return self._config
 
     @property
@@ -130,7 +128,7 @@ class Engine(ABC):
     @property
     def tokenizer(
         self,
-    ) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast] | None:
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast | None:
         return self._tokenizer
 
     @abstractmethod
@@ -138,7 +136,7 @@ class Engine(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def _load_model(self) -> Union[PreTrainedModel, TextGenerationVendor]:
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
         raise NotImplementedError()
 
     def is_runnable(self, device: str | None = None) -> bool | None:
@@ -164,7 +162,7 @@ class Engine(ABC):
 
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True
-    ) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         raise (
             TokenizerNotSupportedException()
             if not self.uses_tokenizer()
@@ -315,9 +313,7 @@ class Engine(ABC):
         )
 
         if self._model and not self._config:
-            config: (
-                Union[ModelConfig, SentenceTransformerModelConfig] | None
-            ) = None
+            config: ModelConfig | SentenceTransformerModelConfig | None = None
             mc = (
                 self._model.config
                 if hasattr(self._model, "config")
