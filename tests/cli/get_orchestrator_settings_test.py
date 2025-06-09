@@ -79,3 +79,28 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.memory_permanent, "dsn")
         self.assertEqual(result.tools, ["b"])
         self.assertEqual(result.sentence_model_id, "m")
+
+    def test_chat_template_settings(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent="dsn",
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+            run_chat_enable_thinking=True,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000003")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertTrue(
+            result.call_options["chat_template_settings"]["enable_thinking"]
+        )

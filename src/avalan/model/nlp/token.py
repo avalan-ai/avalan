@@ -38,6 +38,7 @@ class TokenClassificationModel(BaseNLPModel):
         system_prompt: str | None,
         context: str | None,
         tensor_format: Literal["pt"] = "pt",
+        chat_template_settings: dict[str, object] | None = None,
     ) -> BatchEncoding:
         assert not system_prompt, (
             "Token classification model "

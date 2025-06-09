@@ -152,7 +152,11 @@ class TextGenerationModel(BaseNLPModel):
             else self._tokenizer.eos_token_id,
         )
         inputs = self._tokenize_input(
-            input, system_prompt, context=None, tool=tool
+            input,
+            system_prompt,
+            context=None,
+            tool=tool,
+            chat_template_settings=settings.chat_template_settings,
         )
         return TextGenerationResponse(
             output_fn,
@@ -337,6 +341,7 @@ class TextGenerationModel(BaseNLPModel):
         context: str | None,
         tensor_format: Literal["pt"] = "pt",
         chat_template: str | None = None,
+        chat_template_settings: dict[str, object] | None = None,
         tool: ToolManager | None = None,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
@@ -375,13 +380,8 @@ class TextGenerationModel(BaseNLPModel):
             inputs = self._tokenizer.apply_chat_template(
                 template_messages,
                 chat_template=chat_template,
-                tools=tool.json_schemas()
-                if tool
-                else None,
-                add_generation_prompt=True,
-                tokenize=True,
-                add_special_tokens=True,
-                return_dict=True,
+                tools=tool.json_schemas() if tool else None,
+                **(chat_template_settings or {}),
                 return_tensors=tensor_format,
             )
 

@@ -102,6 +102,10 @@ class OrchestratorLoader:
             )
 
             call_options = config["run"] if "run" in config else None
+            if call_options and "chat" in call_options:
+                call_options["chat_template_settings"] = call_options.pop(
+                    "chat"
+                )
             template_vars = config["template"] if "template" in config else None
 
             # Memory configuration

@@ -57,6 +57,12 @@ def get_orchestrator_settings(
         else args.run_max_new_tokens
     )
 
+    chat_template_settings = {
+        k[len("run_chat_") :]: v
+        for k, v in vars(args).items()
+        if k.startswith("run_chat_") and v is not None
+    }
+
     return OrchestratorSettings(
         agent_id=agent_id,
         orchestrator_type=None,
@@ -77,6 +83,11 @@ def get_orchestrator_settings(
         call_options={
             "max_new_tokens": call_tokens,
             "skip_special_tokens": args.run_skip_special_tokens,
+            **(
+                {"chat_template_settings": chat_template_settings}
+                if chat_template_settings
+                else {}
+            ),
         },
         template_vars=None,
         memory_permanent=(

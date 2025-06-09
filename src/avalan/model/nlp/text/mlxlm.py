@@ -100,6 +100,7 @@ class MlxLmModel(TextGenerationModel):
             context=None,
             tensor_format="pt",
             tool=tool,
+            chat_template_settings=settings.chat_template_settings,
         )
         prompt = self._tokenizer.decode(
             inputs["input_ids"][0],

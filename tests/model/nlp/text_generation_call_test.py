@@ -29,7 +29,11 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         response = await self.model("hi", settings=settings)
 
         tokenize_mock.assert_called_once_with(
-            "hi", None, context=None, tool=None
+            "hi",
+            None,
+            context=None,
+            tool=None,
+            chat_template_settings=settings.chat_template_settings,
         )
         self.assertIs(response._output_fn, string_output)
         self.assertEqual(response._kwargs["inputs"], tok_inputs)

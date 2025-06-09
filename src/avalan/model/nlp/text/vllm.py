@@ -68,7 +68,11 @@ class VllmModel(TextGenerationModel):
         )
 
     def _prompt(
-        self, input: Input, system_prompt: str | None, tool: ToolManager | None
+        self,
+        input: Input,
+        system_prompt: str | None,
+        tool: ToolManager | None,
+        chat_template_settings: dict[str, object] | None,
     ) -> str:
         inputs = super()._tokenize_input(
             input,
@@ -76,6 +80,7 @@ class VllmModel(TextGenerationModel):
             context=None,
             tensor_format="pt",
             tool=tool,
+            chat_template_settings=chat_template_settings,
         )
         return self._tokenizer.decode(
             inputs["input_ids"][0], skip_special_tokens=False
@@ -111,7 +116,12 @@ class VllmModel(TextGenerationModel):
         tool: ToolManager | None = None,
     ) -> TextGenerationVendorStream | str:
         settings = settings or GenerationSettings()
-        prompt = self._prompt(input, system_prompt, tool)
+        prompt = self._prompt(
+            input,
+            system_prompt,
+            tool,
+            settings.chat_template_settings,
+        )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:
             return await self._stream_generator(prompt, generation_settings)
