@@ -47,8 +47,12 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             created_at=datetime.now(timezone.utc),
         )
         partitions = [
-            TextPartition(data="a", embeddings=np.array([0.1]), total_tokens=1),
-            TextPartition(data="b", embeddings=np.array([0.2]), total_tokens=1),
+            TextPartition(
+                data="a", embeddings=np.array([0.1]), total_tokens=1
+            ),
+            TextPartition(
+                data="b", embeddings=np.array([0.2]), total_tokens=1
+            ),
         ]
 
         mem_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -181,10 +185,12 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                         ) AS \"score\"
                     FROM \"sessions\"
                     INNER JOIN \"message_partitions\" ON (
-                        \"sessions\".\"id\" = \"message_partitions\".\"session_id\"
+                        \"sessions\".\"id\" =
+                            \"message_partitions\".\"session_id\"
                     )
                     INNER JOIN \"messages\" ON (
-                        \"message_partitions\".\"message_id\" = \"messages\".\"id\"
+                        \"message_partitions\".\"message_id\" =
+                            \"messages\".\"id\"
                     )
                     WHERE \"sessions\".\"id\" = %s
                     AND \"sessions\".\"participant_id\" = %s

@@ -14,7 +14,7 @@ from logging import Logger
 from os.path import expanduser
 from os import getenv
 from tqdm import tqdm
-from typing import Callable, Iterable, Type
+from typing import Callable, Iterable
 from urllib.parse import urlparse
 
 
@@ -109,9 +109,11 @@ class HuggingfaceHub:
                                 )
                                 for rfile in revision.files
                             ],
-                            key=lambda f: f.size_on_disk
-                            if sort_files_by_size
-                            else f.name,
+                            key=lambda f: (
+                                f.size_on_disk
+                                if sort_files_by_size
+                                else f.name
+                            ),
                             reverse=sort_files_by_size,
                         )
                         for revision in info.revisions
@@ -137,7 +139,7 @@ class HuggingfaceHub:
     def download(
         self,
         model_id: str,
-        tqdm_class: Type[tqdm] | Callable[..., tqdm] | None = None,
+        tqdm_class: type[tqdm] | Callable[..., tqdm] | None = None,
     ) -> str:
         try:
             path = self._hf.snapshot_download(
@@ -191,44 +193,65 @@ class HuggingfaceHub:
         return User(
             name=user_result["name"],
             full_name=user_result["fullname"],
-            access_token_name=user_result["auth"]["accessToken"]["displayName"],
+            access_token_name=user_result["auth"]["accessToken"][
+                "displayName"
+            ],
         )
 
     @staticmethod
     def _model(model_info: ModelInfo) -> Model:
         model = Model(
             id=model_info.id,
-            parameters=model_info.safetensors.total
-            if model_info.safetensors
-            else None,
-            parameter_types=list(model_info.safetensors.parameters.keys())
-            if model_info.safetensors and model_info.safetensors.parameters
-            else None,
+            parameters=(
+                model_info.safetensors.total
+                if model_info.safetensors
+                else None
+            ),
+            parameter_types=(
+                list(model_info.safetensors.parameters.keys())
+                if model_info.safetensors and model_info.safetensors.parameters
+                else None
+            ),
             inference=model_info.inference,
-            library_name=model_info.library_name
-            if model_info.library_name
-            else model_info.card_data["library_name"]
-            if model_info.card_data and "library_name" in model_info.card_data
-            else None,
-            license=model_info.card_data["license"]
-            if model_info.card_data and "license" in model_info.card_data
-            else None,
+            library_name=(
+                model_info.library_name
+                if model_info.library_name
+                else (
+                    model_info.card_data["library_name"]
+                    if model_info.card_data
+                    and "library_name" in model_info.card_data
+                    else None
+                )
+            ),
+            license=(
+                model_info.card_data["license"]
+                if model_info.card_data and "license" in model_info.card_data
+                else None
+            ),
             pipeline_tag=model_info.pipeline_tag,
             tags=model_info.tags,
-            architectures=model_info.config["architectures"]
-            if model_info.config and "architectures" in model_info.config
-            else None,
-            model_type=model_info.config["model_type"]
-            if model_info.config and "model_type" in model_info.config
-            else None,
-            auto_model=model_info.transformers_info["auto_model"]
-            if model_info.transformers_info
-            and "auto_model" in model_info.transformers_info
-            else None,
-            processor=model_info.transformers_info["processor"]
-            if model_info.transformers_info
-            and "processor" in model_info.transformers_info
-            else None,
+            architectures=(
+                model_info.config["architectures"]
+                if model_info.config and "architectures" in model_info.config
+                else None
+            ),
+            model_type=(
+                model_info.config["model_type"]
+                if model_info.config and "model_type" in model_info.config
+                else None
+            ),
+            auto_model=(
+                model_info.transformers_info["auto_model"]
+                if model_info.transformers_info
+                and "auto_model" in model_info.transformers_info
+                else None
+            ),
+            processor=(
+                model_info.transformers_info["processor"]
+                if model_info.transformers_info
+                and "processor" in model_info.transformers_info
+                else None
+            ),
             gated=model_info.gated,
             private=model_info.private,
             disabled=model_info.disabled,

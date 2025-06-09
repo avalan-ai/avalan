@@ -104,7 +104,9 @@ class SequenceToSequenceModelCallTestCase(IsolatedAsyncioTestCase):
                 SequenceToSequenceModel, "_tokenize_input", return_value=inputs
             ) as tok_mock,
             patch.object(
-                SequenceToSequenceModel, "_generate_output", return_value=[[42]]
+                SequenceToSequenceModel,
+                "_generate_output",
+                return_value=[[42]],
             ) as gen_mock,
         ):
             gen_settings = GenerationSettings(max_length=5)

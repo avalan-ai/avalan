@@ -32,15 +32,13 @@ async def create_chat_completion(
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert request and request.messages
 
-    # request = model='gpt-4o' messages=[ChatMessage(role='user', content='Explain LLM distillation')] temperature=1.0 top_p=1.0 n=1 stream=True stop=None max_tokens=None presence_penalty=0.0 frequency_penalty=0.0 logit_bias=None user=None
-
     input = [
         Message(role=chat_message.role, content=chat_message.content)
         for chat_message in request.messages
     ]
 
-    response_id = (
-        f"chatcmpl-{int(time() * 1000)}"  # generate a pseudo-unique ID
+    response_id = (  # generate a pseudo-unique ID
+        f"chatcmpl-{int(time() * 1000)}"
     )
     timestamp = int(time())
 

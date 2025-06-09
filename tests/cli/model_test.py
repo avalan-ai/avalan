@@ -96,7 +96,9 @@ class CliModelTestCase(TestCase):
             ) as ks,
             patch.object(model_cmds, "cache_delete") as cache_delete,
         ):
-            model_cmds.model_uninstall(args, self.console, self.theme, self.hub)
+            model_cmds.model_uninstall(
+                args, self.console, self.theme, self.hub
+            )
 
         ks.assert_called_once_with()
         secrets.delete.assert_called_once_with("pw")
@@ -428,15 +430,17 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         call_args: list[dict] = []
 
         async def fake_tokens(*p, **kw):
-            call_args.append({
-                "text_tokens": list(p[7]),
-                "tokens": list(p[8]) if p[8] else None,
-                "tool_events": list(p[11]),
-                "tool_event_calls": list(p[12]),
-                "tool_event_results": list(p[13]),
-                "spinner": p[14],
-                "input_token_count": p[9],
-            })
+            call_args.append(
+                {
+                    "text_tokens": list(p[7]),
+                    "tokens": list(p[8]) if p[8] else None,
+                    "tool_events": list(p[11]),
+                    "tool_event_calls": list(p[12]),
+                    "tool_event_results": list(p[13]),
+                    "spinner": p[14],
+                    "input_token_count": p[9],
+                }
+            )
             yield (None, "frame")
 
         theme = MagicMock()
@@ -481,7 +485,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             first["tool_events"][0].type, model_cmds.EventType.TOOL_EXECUTE
         )
         self.assertEqual(
-            first["tool_event_calls"][0].type, model_cmds.EventType.TOOL_EXECUTE
+            first["tool_event_calls"][0].type,
+            model_cmds.EventType.TOOL_EXECUTE,
         )
         self.assertIsNotNone(first["spinner"])
 

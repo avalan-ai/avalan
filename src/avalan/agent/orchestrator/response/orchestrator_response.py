@@ -231,10 +231,14 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             return output
 
         if self._event_manager:
-            await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
+            await self._event_manager.trigger(
+                Event(type=EventType.TOOL_DETECT)
+            )
 
         calls = (
-            self._tool_manager.get_calls(output) if self._tool_manager else None
+            self._tool_manager.get_calls(output)
+            if self._tool_manager
+            else None
         )
         if not calls:
             return output
@@ -355,7 +359,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._buffer.write(token_str)
 
         if self._event_manager:
-            await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
+            await self._event_manager.trigger(
+                Event(type=EventType.TOOL_DETECT)
+            )
 
         calls = (
             self._tool_manager.get_calls(self._buffer.getvalue())

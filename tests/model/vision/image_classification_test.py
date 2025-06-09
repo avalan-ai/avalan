@@ -101,7 +101,9 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance.return_value = MagicMock(logits=logits)
             config_mock = MagicMock()
             config_mock.id2label = {0: "cat"}
-            type(model_instance).config = PropertyMock(return_value=config_mock)
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
             model_mock.return_value = model_instance
 
             image_mock = MagicMock()

@@ -19,13 +19,16 @@ from logging import ERROR, Logger, getLogger
 from torch import cuda
 from torch.backends import mps
 from transformers import logging as transformers_logging
-from transformers.utils.logging import disable_progress_bar, enable_progress_bar
+from transformers.utils.logging import (
+    disable_progress_bar,
+    enable_progress_bar,
+)
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Any, Type
+from typing import Any
 
 
 class Engine(ABC):
@@ -90,9 +93,11 @@ class Engine(ABC):
         if self._settings.auto_load_model or auto_load_tokenizer:
             self._load(
                 load_tokenizer=auto_load_tokenizer,
-                tokenizer_name_or_path=self._settings.tokenizer_name_or_path
-                if auto_load_tokenizer
-                else None,
+                tokenizer_name_or_path=(
+                    self._settings.tokenizer_name_or_path
+                    if auto_load_tokenizer
+                    else None
+                ),
             )
 
     @property
@@ -185,7 +190,7 @@ class Engine(ABC):
 
     def __exit__(
         self,
-        exc_type: Type[BaseException] | None,
+        exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
     ):
@@ -199,7 +204,7 @@ class Engine(ABC):
                 self._transformers_logging_level
             )
             _l(
-                f"Restored transformers logging level to "
+                "Restored transformers logging level to "
                 f"{self._transformers_logging_level}"
             )
         return self._exit_stack.__exit__(exc_type, exc_value, traceback)
@@ -317,9 +322,11 @@ class Engine(ABC):
             mc = (
                 self._model.config
                 if hasattr(self._model, "config")
-                else self._model[0].auto_model.config
-                if is_sentence_transformer
-                else None
+                else (
+                    self._model[0].auto_model.config
+                    if is_sentence_transformer
+                    else None
+                )
             )
 
             if mc:
@@ -327,57 +334,77 @@ class Engine(ABC):
                     architectures=mc.architectures,
                     attribute_map=mc.attribute_map,
                     bos_token_id=mc.bos_token_id,
-                    bos_token=self._tokenizer.decode(mc.bos_token_id)
-                    if self._tokenizer and mc.bos_token_id
-                    else None,
+                    bos_token=(
+                        self._tokenizer.decode(mc.bos_token_id)
+                        if self._tokenizer and mc.bos_token_id
+                        else None
+                    ),
                     decoder_start_token_id=mc.decoder_start_token_id,
                     eos_token_id=mc.eos_token_id,
-                    eos_token=self._tokenizer.decode(mc.eos_token_id)
-                    if self._tokenizer and mc.eos_token_id
-                    else None,
+                    eos_token=(
+                        self._tokenizer.decode(mc.eos_token_id)
+                        if self._tokenizer and mc.eos_token_id
+                        else None
+                    ),
                     finetuning_task=mc.finetuning_task,
-                    hidden_size=mc.hidden_size
-                    if hasattr(mc, "hidden_size")
-                    else None,
-                    hidden_sizes=mc.hidden_sizes
-                    if hasattr(mc, "hidden_sizes")
-                    else None,
-                    keys_to_ignore_at_inference=mc.keys_to_ignore_at_inference
-                    if hasattr(mc, "keys_to_ignore_at_inference")
-                    else None,
-                    loss_type=mc.loss_type
-                    if hasattr(mc, "loss_type")
-                    else None,
-                    max_position_embeddings=mc.max_position_embeddings
-                    if hasattr(mc, "max_position_embeddings")
-                    else None,
+                    hidden_size=(
+                        mc.hidden_size if hasattr(mc, "hidden_size") else None
+                    ),
+                    hidden_sizes=(
+                        mc.hidden_sizes
+                        if hasattr(mc, "hidden_sizes")
+                        else None
+                    ),
+                    keys_to_ignore_at_inference=(
+                        mc.keys_to_ignore_at_inference
+                        if hasattr(mc, "keys_to_ignore_at_inference")
+                        else None
+                    ),
+                    loss_type=(
+                        mc.loss_type if hasattr(mc, "loss_type") else None
+                    ),
+                    max_position_embeddings=(
+                        mc.max_position_embeddings
+                        if hasattr(mc, "max_position_embeddings")
+                        else None
+                    ),
                     model_type=mc.model_type,
-                    num_attention_heads=mc.num_attention_heads
-                    if hasattr(mc, "num_attention_heads")
-                    else None,
-                    num_hidden_layers=mc.num_hidden_layers
-                    if hasattr(mc, "num_hidden_layers")
-                    else None,
+                    num_attention_heads=(
+                        mc.num_attention_heads
+                        if hasattr(mc, "num_attention_heads")
+                        else None
+                    ),
+                    num_hidden_layers=(
+                        mc.num_hidden_layers
+                        if hasattr(mc, "num_hidden_layers")
+                        else None
+                    ),
                     num_labels=mc.num_labels,
                     output_attentions=mc.output_attentions,
                     output_hidden_states=mc.output_hidden_states,
                     pad_token_id=mc.pad_token_id,
-                    pad_token=self._tokenizer.decode(mc.pad_token_id)
-                    if self._tokenizer and mc.pad_token_id
-                    else None,
+                    pad_token=(
+                        self._tokenizer.decode(mc.pad_token_id)
+                        if self._tokenizer and mc.pad_token_id
+                        else None
+                    ),
                     prefix=mc.prefix,
                     sep_token_id=mc.sep_token_id,
-                    sep_token=self._tokenizer.decode(mc.sep_token_id)
-                    if self._tokenizer and mc.sep_token_id
-                    else None,
-                    state_size=len(self._model.state_dict().keys())
-                    if self._model.state_dict
-                    else 0,
+                    sep_token=(
+                        self._tokenizer.decode(mc.sep_token_id)
+                        if self._tokenizer and mc.sep_token_id
+                        else None
+                    ),
+                    state_size=(
+                        len(self._model.state_dict().keys())
+                        if self._model.state_dict
+                        else 0
+                    ),
                     task_specific_params=mc.task_specific_params,
                     torch_dtype=str(mc.torch_dtype),
-                    vocab_size=mc.vocab_size
-                    if hasattr(mc, "vocab_size")
-                    else None,
+                    vocab_size=(
+                        mc.vocab_size if hasattr(mc, "vocab_size") else None
+                    ),
                     tokenizer_class=mc.tokenizer_class,
                 )
 
@@ -408,9 +435,7 @@ class Engine(ABC):
         return (
             "cuda"
             if cuda.is_available()
-            else "mps"
-            if mps.is_available()
-            else "cpu"
+            else "mps" if mps.is_available() else "cpu"
         )
 
     @staticmethod

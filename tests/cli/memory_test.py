@@ -81,7 +81,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
                 memory_cmds, "get_model_settings", return_value={}
             ) as gms_patch,
             patch.object(memory_cmds, "ModelManager", return_value=manager),
-            patch.object(memory_cmds.Path, "read_text", return_value="content"),
+            patch.object(
+                memory_cmds.Path, "read_text", return_value="content"
+            ),
             patch.object(
                 memory_cmds, "TextPartitioner", return_value=tp_inst
             ) as tp_patch,

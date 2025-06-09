@@ -55,14 +55,20 @@ class TransformerModel(Engine, ABC):
         _l = self._log
         _l(f"Saving tokenizer {self._tokenizer.name_or_path} to {path}")
         paths = self._tokenizer.save_pretrained(path)
-        _l(f"Saved tokenizer {self._tokenizer.name_or_path} to {path}: {paths}")
+        _l(
+            f"Saved tokenizer {self._tokenizer.name_or_path} to {path}:"
+            f" {paths}"
+        )
         return list(paths)
 
     def tokenize(
         self, text: str, tokenizer_name_or_path: str | None = None
     ) -> list[Token]:
         _l = self._log
-        if not hasattr(self, "_loaded_tokenizer") or not self._loaded_tokenizer:
+        if (
+            not hasattr(self, "_loaded_tokenizer")
+            or not self._loaded_tokenizer
+        ):
             self.load(
                 load_model=False,
                 load_tokenizer=True,
@@ -128,29 +134,32 @@ class TransformerModel(Engine, ABC):
                 f"to tokenizer {tokenizer.name_or_path}: "
                 f"{self._settings.special_tokens}"
             )
-            added_tokens = tokenizer.add_special_tokens({
-                "additional_special_tokens": [
-                    AddedToken(
-                        token,
-                        # Defines whether this token should strip all potential
-                        # whitespaces on its left side
-                        lstrip=False,
-                        # Defines whether this token should match against the
-                        # normalized version of the input text
-                        normalized=False,
-                        # Defines whether this token should strip all potential
-                        # whitespaces on its right side
-                        rstrip=False,
-                        # Defines whether this token should only match single
-                        # words
-                        single_word=False,
-                        # Defines whether this token should be skipped when
-                        # decoding
-                        special=False,
-                    )
-                    for token in self._settings.special_tokens
-                ]
-            })
+            added_tokens = tokenizer.add_special_tokens(
+                {
+                    "additional_special_tokens": [
+                        AddedToken(
+                            token,
+                            # Defines whether this token should strip all
+                            # potential
+                            # whitespaces on its left side
+                            lstrip=False,
+                            # Defines whether this token should match against
+                            # the normalized version of the input text
+                            normalized=False,
+                            # Defines whether this token should strip all
+                            # potential whitespaces on its right side
+                            rstrip=False,
+                            # Defines whether this token should only match
+                            # single words
+                            single_word=False,
+                            # Defines whether this token should be skipped when
+                            # decoding
+                            special=False,
+                        )
+                        for token in self._settings.special_tokens
+                    ]
+                }
+            )
             _l(
                 f"Added {added_tokens} special tokens to tokenizer "
                 f"{tokenizer.name_or_path}"

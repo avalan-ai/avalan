@@ -2,7 +2,7 @@ from ..entities import EngineMessage
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import PermanentMessageMemory, VectorFunction
-from typing import Any, Type
+from typing import Any
 from uuid import UUID
 
 
@@ -129,10 +129,12 @@ class MemoryManager:
             and self._permanent_message_memory
             and self._recent_message_memory
         ):
-            messages = await self._permanent_message_memory.get_recent_messages(
-                participant_id=self._participant_id,
-                session_id=session_id,
-                limit=load_recent_messages_limit,
+            messages = (
+                await self._permanent_message_memory.get_recent_messages(
+                    participant_id=self._participant_id,
+                    session_id=session_id,
+                    limit=load_recent_messages_limit,
+                )
             )
             self._recent_message_memory.reset()
             for message in messages:
@@ -171,7 +173,7 @@ class MemoryManager:
 
     def __exit__(
         self,
-        exc_type: Type[BaseException] | None,
+        exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
     ):

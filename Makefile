@@ -4,8 +4,9 @@ install:
 	poetry sync --extras all
 
 lint:
-	poetry run ruff check --fix
-	poetry run ruff format
+	poetry run ruff format --preview src/ tests/
+	poetry run black --preview --enable-unstable-feature=string_processing src/ tests/
+	poetry run ruff check --fix src/ tests/
 
 test:
 	poetry sync --extras test

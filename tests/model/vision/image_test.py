@@ -6,7 +6,11 @@ from avalan.model.vision.image import (
 )
 from avalan.model.engine import Engine
 from logging import Logger
-from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
+from transformers import (
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerFast,
+)
 from unittest import IsolatedAsyncioTestCase, main, TestCase
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -52,13 +56,17 @@ class ImageToTextModelInstantiationTestCase(TestCase):
             )
 
             self.assertIs(model.model, model_instance)
-            processor_mock.assert_called_once_with(self.model_id, use_fast=True)
+            processor_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             model_mock.assert_called_once_with(
                 self.model_id,
                 device_map=Engine.get_default_device(),
             )
             model_instance.eval.assert_called_once()
-            tokenizer_mock.assert_called_once_with(self.model_id, use_fast=True)
+            tokenizer_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
 
 
 class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):

@@ -17,4 +17,7 @@ class SearchEngineTool(Tool):
         self.__name__ = "search"
 
     async def __call__(self, query: str, engine: str) -> str:
-        return f"The weather is nice and warm, with 23 degrees celsius, clear skies, and winds under 11 kmh."
+        return (
+            "The weather is nice and warm, with 23 degrees celsius, clear"
+            " skies, and winds under 11 kmh."
+        )

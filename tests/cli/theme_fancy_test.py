@@ -75,7 +75,9 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
 
 class FancyThemeTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
-        self.theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        self.theme = FancyTheme(
+            lambda s: s, lambda s, p, n: s if n == 1 else p
+        )
 
     def test_quantity_data(self):
         self.assertEqual(self.theme.quantity_data, ["likes"])
@@ -116,12 +118,15 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
 
     def test_ask_methods(self):
         self.assertEqual(
-            self.theme.ask_access_token(), "Enter your Huggingface access token"
+            self.theme.ask_access_token(),
+            "Enter your Huggingface access token",
         )
         self.assertEqual(
             self.theme.ask_delete_paths(), "Delete selected paths?"
         )
-        self.assertEqual(self.theme.ask_login_to_hub(), "Login to huggingface?")
+        self.assertEqual(
+            self.theme.ask_login_to_hub(), "Login to huggingface?"
+        )
         self.assertEqual(
             self.theme.ask_secret_password("k"), "Enter secret for k"
         )
@@ -207,7 +212,9 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(res.renderable.rows), 1)
 
     def test_memory_partitions(self):
-        part = TextPartition(data="t", total_tokens=1, embeddings=np.array([1]))
+        part = TextPartition(
+            data="t", total_tokens=1, embeddings=np.array([1])
+        )
         group = self.theme.memory_partitions([part] * 3, display_partitions=2)
         self.assertEqual(len(group.renderables), 3)
 
@@ -374,7 +381,9 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
 
 class FancyThemeAdditionalTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        self.theme = FancyTheme(
+            lambda s: s, lambda s, p, n: s if n == 1 else p
+        )
 
     def test_bye(self):
         self.assertEqual(self.theme.bye(), ":vulcan_salute: bye :)")
@@ -525,7 +534,9 @@ class FancyThemeAdditionalTestCase(unittest.TestCase):
 
 class FancyThemeMoreTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        self.theme = FancyTheme(
+            lambda s: s, lambda s, p, n: s if n == 1 else p
+        )
 
     def test_cache_delete_none(self):
         result = self.theme.cache_delete(None)
@@ -568,7 +579,9 @@ class FancyThemeMoreTests(unittest.TestCase):
         self.assertIn("[bright_black]", table.columns[0]._cells[1])
 
     def test_memory_partitions_many(self):
-        part = TextPartition(data="t", total_tokens=1, embeddings=np.array([1]))
+        part = TextPartition(
+            data="t", total_tokens=1, embeddings=np.array([1])
+        )
         group = self.theme.memory_partitions([part] * 5, display_partitions=3)
         self.assertEqual(len(group.renderables), 4)
 

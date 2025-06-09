@@ -58,9 +58,9 @@ class TextGenerationModel(BaseNLPModel):
         return True
 
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
-        assert self._settings.loader_class in self._loaders, (
-            f"Unrecognized loader {self._settings.loader_class}"
-        )
+        assert (
+            self._settings.loader_class in self._loaders
+        ), f"Unrecognized loader {self._settings.loader_class}"
 
         if self._settings.quantization and find_spec("bitsandbytes"):
             from transformers import BitsAndBytesConfig
@@ -83,9 +83,9 @@ class TextGenerationModel(BaseNLPModel):
             trust_remote_code=self._settings.trust_remote_code,
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
-            low_cpu_mem_usage=True
-            if self._device
-            else self._settings.low_cpu_mem_usage,
+            low_cpu_mem_usage=(
+                True if self._device else self._settings.low_cpu_mem_usage
+            ),
             torch_dtype=BaseNLPModel._get_weight_type(
                 self._settings.weight_type
             ),
@@ -140,16 +140,20 @@ class TextGenerationModel(BaseNLPModel):
         output_fn = (
             self._string_output
             if not settings.use_async_generator
-            else self._token_generator
-            if manual_sampling
-            else self._stream_generator
+            else (
+                self._token_generator
+                if manual_sampling
+                else self._stream_generator
+            )
         )
         generation_settings = replace(
             settings,
             do_sample=do_sample,
-            pad_token_id=settings.pad_token_id
-            if settings.pad_token_id is not None
-            else self._tokenizer.eos_token_id,
+            pad_token_id=(
+                settings.pad_token_id
+                if settings.pad_token_id is not None
+                else self._tokenizer.eos_token_id
+            ),
         )
         inputs = self._tokenize_input(
             input,
@@ -286,15 +290,23 @@ class TextGenerationModel(BaseNLPModel):
             logits_probs = (
                 log_softmax(logits, dim=-1)
                 if probability_distribution == "log_softmax"
-                else gumbel_softmax(
-                    logits, tau=settings.temperature, hard=False, dim=-1
+                else (
+                    gumbel_softmax(
+                        logits, tau=settings.temperature, hard=False, dim=-1
+                    )
+                    if probability_distribution == "gumbel_softmax"
+                    else (
+                        entmax.sparsemax(logits, dim=-1)
+                        if enable_entmax
+                        and probability_distribution == "sparsemax"
+                        else (
+                            entmax.entmax15(logits, dim=-1)
+                            if enable_entmax
+                            and probability_distribution == "entmax"
+                            else softmax(logits / settings.temperature, dim=-1)
+                        )
+                    )
                 )
-                if probability_distribution == "gumbel_softmax"
-                else entmax.sparsemax(logits, dim=-1)
-                if enable_entmax and probability_distribution == "sparsemax"
-                else entmax.entmax15(logits, dim=-1)
-                if enable_entmax and probability_distribution == "entmax"
-                else softmax(logits / settings.temperature, dim=-1)
             )
 
             tokens: list[Token] | None = None
@@ -364,9 +376,12 @@ class TextGenerationModel(BaseNLPModel):
                     prompt += (
                         "User: "
                         if template_message["role"] == MessageRole.USER
-                        else "Assistant: "
-                        if template_message["role"] == MessageRole.ASSISTANT
-                        else ""
+                        else (
+                            "Assistant: "
+                            if template_message["role"]
+                            == MessageRole.ASSISTANT
+                            else ""
+                        )
                     )
                 prompt += template_message["content"].strip() + "\n"
 

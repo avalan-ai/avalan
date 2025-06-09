@@ -42,9 +42,9 @@ class SentenceTransformerModel(BaseNLPModel):
                 "torch_dtype": BaseNLPModel._get_weight_type(
                     self._settings.weight_type
                 ),
-                "low_cpu_mem_usage": True
-                if self._device
-                else self._settings.low_cpu_mem_usage,
+                "low_cpu_mem_usage": (
+                    True if self._device else self._settings.low_cpu_mem_usage
+                ),
                 "device_map": self._device,
             },
             backend="torch",

@@ -53,8 +53,8 @@ def get_input(
             with (
                 open(tty_path)
                 if is_input_available and force_prompt
-                else nullcontext() as tty
-            ):
+                else nullcontext()
+            ) as tty:
                 kwargs = {}
                 if is_input_available and force_prompt:
                     kwargs["stream"] = tty

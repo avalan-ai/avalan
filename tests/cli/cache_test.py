@@ -55,7 +55,9 @@ class CliCacheDeleteTestCase(unittest.TestCase):
         execute = MagicMock()
         self.hub.cache_delete.return_value = (cache_del, execute)
         self.theme.ask_delete_paths.return_value = "ask"
-        with patch.object(cache_cmds, "confirm", return_value=False) as confirm:
+        with patch.object(
+            cache_cmds, "confirm", return_value=False
+        ) as confirm:
             cache_cmds.cache_delete(
                 self.args, self.console, self.theme, self.hub
             )

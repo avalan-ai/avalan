@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..flow.flow import Flow
@@ -24,7 +24,7 @@ class Node:
         self.func: Callable[..., Any] | None = func
         self.subgraph: Flow | None = subgraph
 
-    def execute(self, inputs: Dict[str, Any]) -> Any:
+    def execute(self, inputs: dict[str, Any]) -> Any:
         # Delegate to subgraph if present
         if self.subgraph is not None:
             initial = (
@@ -48,7 +48,8 @@ class Node:
                     val = next(iter(inputs.values()))
                     if not isinstance(val, self.input_schema):
                         raise TypeError(
-                            f"{self.name} input {val!r} not {self.input_schema}"
+                            f"{self.name} input {val!r} not"
+                            f" {self.input_schema}"
                         )
                 elif not isinstance(inputs, self.input_schema):
                     raise TypeError(

@@ -33,9 +33,11 @@ class BaseNLPModel(TransformerModel, ABC):
         eos_token_id = (
             settings.eos_token_id
             if settings.eos_token_id
-            else self._tokenizer.eos_token_id
-            if not settings.forced_eos_token_id and self._tokenizer
-            else None
+            else (
+                self._tokenizer.eos_token_id
+                if not settings.forced_eos_token_id and self._tokenizer
+                else None
+            )
         )
         generation_kwargs = {
             "bos_token_id": settings.bos_token_id,
@@ -58,8 +60,9 @@ class BaseNLPModel(TransformerModel, ABC):
             "output_hidden_states": settings.output_hidden_states,
             "output_logits": settings.output_logits,
             "output_scores": settings.output_scores,
-            "pad_token_id": settings.pad_token_id
-            or self._tokenizer.eos_token_id,
+            "pad_token_id": (
+                settings.pad_token_id or self._tokenizer.eos_token_id
+            ),
             "penalty_alpha": settings.penalty_alpha,
             "prompt_lookup_num_tokens": settings.prompt_lookup_num_tokens,
             "repetition_penalty": settings.repetition_penalty,
@@ -98,27 +101,47 @@ class BaseNLPModel(TransformerModel, ABC):
         wtype = (
             tbool
             if weight_type == "bool"
-            else bfloat16
-            if weight_type == "bf16"
-            else float16
-            if weight_type == "f16"
-            else float32
-            if weight_type == "f32"
-            else float64
-            if weight_type == "f64"
-            else int8
-            if weight_type == "i8"
-            else int16
-            if weight_type == "i16"
-            else int32
-            if weight_type == "i32"
-            else int64
-            if weight_type == "i64"
-            else uint8
-            if weight_type == "ui8"
-            else weight_type
-            if weight_type == "auto"
-            else "auto"
+            else (
+                bfloat16
+                if weight_type == "bf16"
+                else (
+                    float16
+                    if weight_type == "f16"
+                    else (
+                        float32
+                        if weight_type == "f32"
+                        else (
+                            float64
+                            if weight_type == "f64"
+                            else (
+                                int8
+                                if weight_type == "i8"
+                                else (
+                                    int16
+                                    if weight_type == "i16"
+                                    else (
+                                        int32
+                                        if weight_type == "i32"
+                                        else (
+                                            int64
+                                            if weight_type == "i64"
+                                            else (
+                                                uint8
+                                                if weight_type == "ui8"
+                                                else (
+                                                    weight_type
+                                                    if weight_type == "auto"
+                                                    else "auto"
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
         )
         assert wtype
         return wtype

@@ -12,7 +12,11 @@ from avalan.model.vision.image import (
 from avalan.model.vision import BaseVisionModel
 from avalan.model.nlp import BaseNLPModel
 from logging import Logger
-from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
+from transformers import (
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerFast,
+)
 from unittest import TestCase, IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch, PropertyMock
 from PIL import Image
@@ -74,7 +78,9 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
 
             self.assertIs(model.model, model_instance)
             self.assertIs(model._processor, processor_instance)
-            processor_mock.assert_called_once_with(self.model_id, use_fast=True)
+            processor_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             wt_mock.assert_called_once_with(settings.weight_type)
             model_mock.assert_called_once_with(
                 self.model_id,
@@ -118,7 +124,9 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
 
             self.assertIs(model.model, model_instance)
             self.assertIs(model._processor, processor_instance)
-            processor_mock.assert_called_once_with(self.model_id, use_fast=True)
+            processor_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             wt_mock.assert_called_once_with(settings.weight_type)
             model_mock.assert_called_once_with(
                 self.model_id,
@@ -161,7 +169,9 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
             )
 
             self.assertIs(model.model, model_instance)
-            processor_mock.assert_called_once_with(self.model_id, use_fast=True)
+            processor_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             wt_mock.assert_called_once_with(settings.weight_type)
             gemma_mock.assert_called_once_with(
                 self.model_id,
@@ -244,9 +254,11 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 result,
-                batch_decode_return[0]
-                if isinstance(batch_decode_return, list)
-                else batch_decode_return,
+                (
+                    batch_decode_return[0]
+                    if isinstance(batch_decode_return, list)
+                    else batch_decode_return
+                ),
             )
             get_image_mock.assert_called_once_with("img.jpg")
             image.convert.assert_called_once_with("RGB")
@@ -265,17 +277,21 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
             expected_messages = []
             if system_prompt:
-                expected_messages.append({
-                    "role": str(MessageRole.SYSTEM),
-                    "content": [{"type": "text", "text": system_prompt}],
-                })
-            expected_messages.append({
-                "role": str(MessageRole.USER),
-                "content": [
-                    {"type": "image", "image": expected_image},
-                    {"type": "text", "text": "prompt"},
-                ],
-            })
+                expected_messages.append(
+                    {
+                        "role": str(MessageRole.SYSTEM),
+                        "content": [{"type": "text", "text": system_prompt}],
+                    }
+                )
+            expected_messages.append(
+                {
+                    "role": str(MessageRole.USER),
+                    "content": [
+                        {"type": "image", "image": expected_image},
+                        {"type": "text", "text": "prompt"},
+                    ],
+                }
+            )
             processor_instance.apply_chat_template.assert_called_once_with(
                 expected_messages,
                 tokenize=False,

@@ -178,12 +178,14 @@ c = 3
                 self.assertIsNone(functions[1].parameters[0].type)
                 self.assertEqual(functions[1].parameters[0].name, "self")
                 self.assertEqual(
-                    functions[1].parameters[1].parameter_type, "typed_parameter"
+                    functions[1].parameters[1].parameter_type,
+                    "typed_parameter",
                 )
                 self.assertEqual(functions[1].parameters[1].type, "str")
                 self.assertEqual(functions[1].parameters[1].name, "name")
                 self.assertEqual(
-                    functions[1].parameters[2].parameter_type, "typed_parameter"
+                    functions[1].parameters[2].parameter_type,
+                    "typed_parameter",
                 )
                 self.assertEqual(functions[1].parameters[2].type, "int")
                 self.assertEqual(functions[1].parameters[2].name, "age")
@@ -211,7 +213,8 @@ c = 3
                 self.assertIsNone(functions[2].parameters[2].type)
                 self.assertEqual(functions[2].parameters[2].name, "*")
                 self.assertEqual(
-                    functions[2].parameters[3].parameter_type, "typed_parameter"
+                    functions[2].parameters[3].parameter_type,
+                    "typed_parameter",
                 )
                 self.assertEqual(functions[2].parameters[3].type, "datetime")
                 self.assertEqual(functions[2].parameters[3].name, "extra")
@@ -225,7 +228,9 @@ c = 3
                     functions[2].parameters[5].parameter_type,
                     "typed_default_parameter",
                 )
-                self.assertEqual(functions[2].parameters[5].type, "Node | None")
+                self.assertEqual(
+                    functions[2].parameters[5].type, "Node | None"
+                )
                 self.assertEqual(functions[2].parameters[5].name, "third")
                 self.assertEqual(
                     functions[2].parameters[6].parameter_type,
