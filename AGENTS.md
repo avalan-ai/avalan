@@ -43,7 +43,8 @@ using the built-in collection classes directly, instead of importing `List`,
 Type hints encouraged throughout the codebase.
 
 Right before committing, run `make lint` to perform syntax checks and
-formatting fixes via [ruff](https://docs.astral.sh/ruff/):
+formatting fixes with [black](https://black.readthedocs.io/en/stable/) and
+ [ruff](https://docs.astral.sh/ruff/):
 
 ```bash
 make lint
