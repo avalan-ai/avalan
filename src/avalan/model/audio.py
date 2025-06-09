@@ -3,7 +3,7 @@ from ..compat import override
 from ..model import TextGenerationVendor, TokenizerNotSupportedException
 from ..model.engine import Engine
 from PIL import Image
-from torch import argmax, no_grad
+from torch import argmax, inference_mode
 from torchaudio import load
 from torchaudio.transforms import Resample
 from transformers import (
@@ -72,7 +72,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             sampling_rate=sampling_rate,
             return_tensors=tensor_format,
         )
-        with no_grad():
+        with inference_mode():
             # shape (batch, time_steps, vocab_size)
             logits = self._model(inputs.input_values).logits
         predicted_ids = argmax(logits, dim=-1)

@@ -3,7 +3,7 @@ from ...entities import GenerationSettings, Input
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from dataclasses import replace
-from torch import argmax, no_grad, softmax, Tensor
+from torch import argmax, inference_mode, softmax, Tensor
 from transformers import (
     AutoModelForSequenceClassification,
     AutoModelForSeq2SeqLM,
@@ -69,7 +69,7 @@ class SequenceClassificationModel(BaseNLPModel):
             + "needs to be loaded first"
         )
         inputs = self._tokenize_input(input, system_prompt=None, context=None)
-        with no_grad():
+        with inference_mode():
             outputs = self._model(**inputs)
             # logits shape (batch_size, num_labels)
             label_probs = softmax(outputs.logits, dim=-1)

@@ -11,7 +11,7 @@ from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
 from ...model.transformer import TransformerModel
 from PIL import Image
-from torch import no_grad, Tensor
+from torch import inference_mode, Tensor
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
@@ -50,7 +50,7 @@ class ImageClassificationModel(BaseVisionModel):
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(image, return_tensors=tensor_format)
 
-        with no_grad():
+        with inference_mode():
             logits = self._model(**inputs).logits
 
         label_index = logits.argmax(dim=1).item()

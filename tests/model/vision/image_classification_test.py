@@ -83,8 +83,9 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 AutoModelForImageClassification, "from_pretrained"
             ) as model_mock,
             patch(
-                "avalan.model.vision.image.no_grad", new=lambda: nullcontext()
-            ),
+                "avalan.model.vision.image.inference_mode",
+                return_value=nullcontext(),
+            ) as inference_mode_mock,
             patch.object(BaseVisionModel, "_get_image") as get_image_mock,
         ):
             processor_instance = MagicMock()
@@ -124,6 +125,7 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(
                 model_instance.call_args, call(**{"pixel_values": "inputs"})
             )
+            inference_mode_mock.assert_called_once_with()
 
 
 if __name__ == "__main__":

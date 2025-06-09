@@ -4,7 +4,7 @@ from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from contextlib import nullcontext
 from numpy import ndarray
-from torch import no_grad
+from torch import inference_mode
 from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
@@ -72,6 +72,10 @@ class SentenceTransformerModel(BaseNLPModel):
             + "needs to be loaded first"
         )
         assert isinstance(input, str) or isinstance(input, list)
-        with no_grad() if not enable_gradient_calculation else nullcontext():
+        with (
+            inference_mode()
+            if not enable_gradient_calculation
+            else nullcontext()
+        ):
             embeddings = self._model.encode(input, convert_to_numpy=True)
         return embeddings
