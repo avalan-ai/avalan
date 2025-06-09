@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from numpy import ndarray
@@ -185,6 +185,15 @@ class GenerationSettings:
     enable_gradient_calculation: bool = False
     # Use async generator (token streaming)
     use_async_generator: bool = True
+    # Parameters passed to tokenizer.apply_chat_template
+    chat_template_settings: dict[str, object] | None = field(
+        default_factory=lambda: {
+            "add_generation_prompt": True,
+            "tokenize": True,
+            "add_special_tokens": True,
+            "return_dict": True,
+        }
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -232,7 +241,9 @@ class Message:
     name: Optional[str] = None
     arguments: Optional[dict] = None
 
+
 Input = Union[str, list[str], Message, list[Message]]
+
 
 @dataclass(frozen=True, kw_only=True)
 class EngineMessage:
@@ -457,5 +468,3 @@ class User:
     name: str
     full_name: Optional[str] = None
     access_token_name: Optional[str] = None
-
-

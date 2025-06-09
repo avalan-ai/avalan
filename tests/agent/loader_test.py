@@ -534,6 +534,50 @@ value = { type = \"string\", description = \"d\" }
                     settings.json_config,
                     {"value": {"type": "string", "description": "d"}},
                 )
+        await stack.aclose()
+
+    async def test_run_chat_settings_from_file(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.chat]
+enable_thinking = true
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                result = await OrchestratorLoader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertTrue(
+                    settings.call_options["chat_template_settings"][
+                        "enable_thinking"
+                    ]
+                )
             await stack.aclose()
 
 

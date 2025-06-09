@@ -1,4 +1,5 @@
 from argparse import ArgumentParser, Namespace
+import sys
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
 from .. import license, name, site, version
@@ -1079,8 +1080,25 @@ class CLI:
 
         return parser
 
+    @staticmethod
+    def _extract_chat_template_settings(
+        argv: list[str],
+    ) -> tuple[list[str], dict[str, bool]]:
+        options: dict[str, bool] = {}
+        new_argv: list[str] = []
+        for arg in argv:
+            if arg.startswith("--run-chat-"):
+                key = arg[len("--run-chat-") :].replace("-", "_")
+                options[key] = True
+            else:
+                new_argv.append(arg)
+        return new_argv, options
+
     async def __call__(self) -> None:
-        args = self._parser.parse_args()
+        argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
+        args = self._parser.parse_args(argv)
+        for key, value in chat_opts.items():
+            setattr(args, f"run_chat_{key}", value)
 
         current_locale, _ = getlocale()
         try:
