@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
-from typing import Optional, Mapping
+from typing import Mapping
 from dataclasses import fields
 from ...tool.browser import BrowserToolSettings
 from uuid import UUID, uuid4
@@ -392,7 +392,7 @@ async def agent_run(
                 )
             )
 
-        input_string: Optional[str] = None
+        input_string: str | None = None
         in_conversation = False
         while not input_string or in_conversation:
             logger.debug(

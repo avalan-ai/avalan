@@ -11,7 +11,7 @@ from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.types import TypeInfo
-from typing import Optional, TypeVar, Type, Union
+from typing import TypeVar, Type, Union
 
 
 T = TypeVar("T")
@@ -26,7 +26,7 @@ class BasePgsqlMemory(MemoryStore[T]):
     async def open(self) -> None:
         await self._database.open()
 
-    async def search(self, query: str) -> Optional[list[T]]:
+    async def search(self, query: str) -> list[T] | None:
         raise NotImplementedError()
 
     async def _fetch_all(
@@ -52,8 +52,8 @@ class BasePgsqlMemory(MemoryStore[T]):
         return result
 
     async def _fetch_field(
-        self, field: str, query: str, parameters: Optional[tuple] = None
-    ) -> Optional[str]:
+        self, field: str, query: str, parameters: tuple | None = None
+    ) -> str | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(query, parameters)
@@ -73,7 +73,7 @@ class BasePgsqlMemory(MemoryStore[T]):
 
     async def _try_fetch_one(
         self, entity: Type[T], query: str, parameters: tuple
-    ) -> Optional[T]:
+    ) -> T | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(query, parameters)
@@ -113,7 +113,7 @@ class BasePgsqlMemory(MemoryStore[T]):
 
 
 class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
-    _composite_types: Optional[list[str]]
+    _composite_types: list[str] | None
 
     @classmethod
     async def create_instance_from_pool(
@@ -127,12 +127,12 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
 
     def __init__(
         self,
-        dsn: Optional[str],
+        dsn: str | None,
         *args,
-        pool: Optional[AsyncConnectionPool] = None,
-        composite_types: Optional[list[str]] = None,
-        pool_minimum: Optional[int] = None,
-        pool_maximum: Optional[int] = None,
+        pool: AsyncConnectionPool | None = None,
+        composite_types: list[str] | None = None,
+        pool_minimum: int | None = None,
+        pool_maximum: int | None = None,
         **kwargs,
     ):
         assert pool or (
@@ -176,7 +176,7 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
     def _to_engine_messages(
         messages: Union[list[PermanentMessage], list[PermanentMessageScored]],
         *args,
-        limit: Optional[int],
+        limit: int | None,
         reverse: bool = False,
         scored: bool = False,
     ) -> Union[list[EngineMessage], list[EngineMessageScored]]:

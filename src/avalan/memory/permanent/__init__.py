@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from numpy import ndarray
-from typing import Literal, Optional
+from typing import Literal
 from ...compat import override
 from uuid import UUID
 
@@ -68,7 +68,7 @@ class PermanentMessage:
     id: UUID
     agent_id: UUID
     model_id: str
-    session_id: Optional[UUID]
+    session_id: UUID | None
     author: MessageRole
     data: str
     partitions: int
@@ -83,7 +83,7 @@ class PermanentMessageScored(PermanentMessage):
 @dataclass(frozen=True, kw_only=True)
 class PermanentMessagePartition:
     agent_id: UUID
-    session_id: Optional[UUID]
+    session_id: UUID | None
     message_id: UUID
     partition: int
     data: str
@@ -102,7 +102,7 @@ class PermanentMemoryPartition:
 
 
 class PermanentMessageMemory(MessageMemory):
-    _session_id: Optional[UUID] = None
+    _session_id: UUID | None = None
     _sentence_model: SentenceTransformerModel
 
     def __init__(
@@ -118,7 +118,7 @@ class PermanentMessageMemory(MessageMemory):
         return bool(self._session_id)
 
     @property
-    def session_id(self) -> Optional[UUID]:
+    def session_id(self) -> UUID | None:
         return self._session_id
 
     def reset(self) -> None:
@@ -176,7 +176,7 @@ class PermanentMessageMemory(MessageMemory):
         session_id: UUID,
         participant_id: UUID,
         *args,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 
@@ -189,7 +189,7 @@ class PermanentMessageMemory(MessageMemory):
         session_id: UUID,
         participant_id: UUID,
         function: VectorFunction,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 
@@ -220,8 +220,8 @@ class PermanentMemory(MemoryStore[Memory]):
         data: str,
         identifier: str,
         partitions: list[TextPartition],
-        symbols: Optional[dict] = None,
-        model_id: Optional[str] = None,
+        symbols: dict | None = None,
+        model_id: str | None = None,
     ) -> None:
         raise NotImplementedError()
 
@@ -233,7 +233,7 @@ class PermanentMemory(MemoryStore[Memory]):
         participant_id: UUID,
         namespace: str,
         function: VectorFunction,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[Memory]:
         raise NotImplementedError()
 

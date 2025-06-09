@@ -6,7 +6,6 @@ from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
 from logging import Logger
-from typing import Optional
 from uuid import UUID
 
 
@@ -20,16 +19,16 @@ class DefaultOrchestrator(Orchestrator):
         tool: ToolManager,
         event_manager: EventManager,
         *,
-        name: Optional[str],
+        name: str | None,
         role: str,
         task: str,
         instructions: str,
-        rules: Optional[list[str]],
-        template_id: Optional[str] = None,
-        settings: Optional[TransformerEngineSettings] = None,
-        call_options: Optional[dict] = None,
-        template_vars: Optional[dict] = None,
-        id: Optional[UUID] = None,
+        rules: list[str] | None,
+        template_id: str | None = None,
+        settings: TransformerEngineSettings | None = None,
+        call_options: dict | None = None,
+        template_vars: dict | None = None,
+        id: UUID | None = None,
     ):
         specification = Specification(
             role=role,

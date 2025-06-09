@@ -11,7 +11,6 @@ from ....memory.permanent import (
 from ....memory.permanent.pgsql import PgsqlMemory
 from datetime import datetime, timezone
 from pgvector.psycopg import Vector
-from typing import Optional
 from uuid import UUID, uuid4
 
 
@@ -203,7 +202,7 @@ class PgsqlMessageMemory(PgsqlMemory[PermanentMessage], PermanentMessageMemory):
         session_id: UUID,
         participant_id: UUID,
         *args,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[EngineMessage]:
         messages = await self._fetch_all(
             PermanentMessage,
@@ -240,7 +239,7 @@ class PgsqlMessageMemory(PgsqlMemory[PermanentMessage], PermanentMessageMemory):
         session_id: UUID,
         participant_id: UUID,
         function: VectorFunction,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[EngineMessageScored]:
         assert agent_id and session_id and participant_id and search_partitions
         search_function = str(function)

@@ -2,15 +2,15 @@ from ..entities import EngineMessage
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import PermanentMessageMemory, VectorFunction
-from typing import Any, Optional, Type
+from typing import Any, Type
 from uuid import UUID
 
 
 class MemoryManager:
     _agent_id: UUID
     _participant_id: UUID
-    _permanent_message_memory: Optional[PermanentMessageMemory] = None
-    _recent_message_memory: Optional[RecentMessageMemory] = None
+    _permanent_message_memory: PermanentMessageMemory | None = None
+    _recent_message_memory: RecentMessageMemory | None = None
     _text_partitioner: TextPartitioner
 
     @classmethod
@@ -20,10 +20,10 @@ class MemoryManager:
         agent_id: UUID,
         participant_id: UUID,
         text_partitioner: TextPartitioner,
-        with_permanent_message_memory: Optional[str] = None,
+        with_permanent_message_memory: str | None = None,
         with_recent_message_memory: bool = True,
     ):
-        permanent_memory: Optional[PermanentMessageMemory] = None
+        permanent_memory: PermanentMessageMemory | None = None
         if with_permanent_message_memory:
             from .permanent.pgsql.message import PgsqlMessageMemory
 
@@ -48,8 +48,8 @@ class MemoryManager:
         *args,
         agent_id: UUID,
         participant_id: UUID,
-        permanent_message_memory: Optional[PermanentMessageMemory],
-        recent_message_memory: Optional[RecentMessageMemory],
+        permanent_message_memory: PermanentMessageMemory | None,
+        recent_message_memory: RecentMessageMemory | None,
         text_partitioner: TextPartitioner,
     ):
         assert agent_id and participant_id
@@ -70,15 +70,15 @@ class MemoryManager:
         return bool(self._recent_message_memory)
 
     @property
-    def permanent_message(self) -> Optional[PermanentMessageMemory]:
+    def permanent_message(self) -> PermanentMessageMemory | None:
         return self._permanent_message_memory
 
     @property
-    def recent_message(self) -> Optional[RecentMessageMemory]:
+    def recent_message(self) -> RecentMessageMemory | None:
         return self._recent_message_memory
 
     @property
-    def recent_messages(self) -> Optional[list[EngineMessage]]:
+    def recent_messages(self) -> list[EngineMessage] | None:
         return (
             self._recent_message_memory.data
             if self._recent_message_memory
@@ -115,7 +115,7 @@ class MemoryManager:
         session_id: UUID,
         *args,
         load_recent_messages: bool = True,
-        load_recent_messages_limit: Optional[int] = None,
+        load_recent_messages_limit: int | None = None,
     ) -> None:
         if self._permanent_message_memory:
             await self._permanent_message_memory.continue_session(
@@ -155,7 +155,7 @@ class MemoryManager:
         participant_id: UUID,
         *args,
         function: VectorFunction,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[EngineMessage]:
         assert self._permanent_message_memory
         search_partitions = await self._text_partitioner(search)
@@ -171,8 +171,8 @@ class MemoryManager:
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
+        exc_type: Type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any | None,
     ):
         pass

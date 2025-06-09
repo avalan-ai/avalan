@@ -24,7 +24,7 @@ from humanize import intcomma, intword, naturalsize, naturaltime
 from logging import Logger
 from numpy import ndarray
 from rich.console import RenderableType
-from typing import Callable, Generator, Literal, Optional, Tuple, Union
+from typing import Callable, Generator, Literal, Tuple, Union
 from uuid import UUID
 
 Formatter = Union[
@@ -93,7 +93,7 @@ class Theme(ABC):
         agent: Orchestrator,
         *args,
         models: list[Model | str],
-        cans_access: Optional[bool],
+        cans_access: bool | None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -123,7 +123,7 @@ class Theme(ABC):
 
     @abstractmethod
     def cache_delete(
-        self, cache_deletion: Optional[HubCacheDeletion], deleted: bool
+        self, cache_deletion: HubCacheDeletion | None, deleted: bool
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -132,7 +132,7 @@ class Theme(ABC):
         self,
         cache_dir: str,
         cached_models: list[HubCache],
-        display_models: Optional[list[str]] = None,
+        display_models: list[str] | None = None,
         show_summary: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
@@ -171,12 +171,12 @@ class Theme(ABC):
         meanv: float,
         stdv: float,
         normv: float,
-        embedding_peek: Optional[int] = 3,
+        embedding_peek: int | None = 3,
         horizontal: bool = True,
         input_string_peek: int = 40,
         show_stats: bool = True,
-        partition: Optional[int] = None,
-        total_partitions: Optional[int] = None,
+        partition: int | None = None,
+        total_partitions: int | None = None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -203,7 +203,7 @@ class Theme(ABC):
         self,
         model: Model,
         *args,
-        can_access: Optional[bool] = None,
+        can_access: bool | None = None,
         expand: bool = False,
         summary: bool = False,
     ) -> RenderableType:
@@ -212,9 +212,7 @@ class Theme(ABC):
     @abstractmethod
     def model_display(
         self,
-        model_config: Optional[
-            Union[ModelConfig, SentenceTransformerModelConfig]
-        ],
+        model_config: Union[ModelConfig, SentenceTransformerModelConfig] | None,
         tokenizer_config: TokenizerConfig,
         *args,
         is_runnable: bool | None = None,
@@ -260,9 +258,9 @@ class Theme(ABC):
     def tokenizer_tokens(
         self,
         dtokens: list[Token],
-        added_tokens: Optional[list[str]],
-        special_tokens: Optional[list[str]],
-        current_dtoken: Optional[Token] = None,
+        added_tokens: list[str] | None,
+        special_tokens: list[str] | None,
+        current_dtoken: Token | None = None,
         dtokens_selected: list[Token] = [],
     ) -> RenderableType:
         raise NotImplementedError()
@@ -271,14 +269,14 @@ class Theme(ABC):
     async def tokens(
         self,
         model_id: str,
-        added_tokens: Optional[list[str]],
-        special_tokens: Optional[list[str]],
-        display_token_size: Optional[int],
+        added_tokens: list[str] | None,
+        special_tokens: list[str] | None,
+        display_token_size: int | None,
         display_probabilities: bool,
         pick: int,
-        focus_on_token_when: Optional[Callable[[Token], bool]],
+        focus_on_token_when: Callable[[Token], bool] | None,
         text_tokens: list[str],
-        tokens: Optional[list[Token]],
+        tokens: list[Token] | None,
         input_token_count: int,
         total_tokens: int,
         tool_events: list[Event] | None,
@@ -289,9 +287,9 @@ class Theme(ABC):
         ellapsed: float,
         console_width: int,
         logger: Logger,
-        event_stats: Optional[EventStats] = None,
-        maximum_frames: Optional[int] = None,
-        logits_count: Optional[int] = None,
+        event_stats: EventStats | None = None,
+        maximum_frames: int | None = None,
+        logits_count: int | None = None,
         tool_events_limit: int | None = None,
         think_height: int = 6,
         think_padding: int = 1,
@@ -301,7 +299,7 @@ class Theme(ABC):
         limit_think_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[Tuple[Optional[Token], RenderableType], None, None]:
+    ) -> Generator[Tuple[Token | None, RenderableType], None, None]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -311,7 +309,7 @@ class Theme(ABC):
         name: str,
         version: str,
         license: str,
-        user: Optional[User],
+        user: User | None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -395,7 +393,7 @@ class Theme(ABC):
         self,
         data: Data,
         value: DataValue,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
         icon: Union[bool, str] = True,
     ) -> str:
         return (

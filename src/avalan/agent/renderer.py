@@ -11,7 +11,7 @@ from jinja2 import (
 )
 from os import linesep
 from os.path import dirname, join
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 
@@ -22,7 +22,7 @@ class Renderer:
     _templates: dict[str, Template] = {}
 
     def __init__(
-        self, templates_path: Optional[str] = None, clean_spaces: bool = True
+        self, templates_path: str | None = None, clean_spaces: bool = True
     ):
         self._clean_spaces = clean_spaces
         self._environment = TemplateEnvironment(
@@ -48,7 +48,7 @@ class Renderer:
     def from_string(
         self,
         template: str,
-        template_vars: Optional[dict] = None,
+        template_vars: dict | None = None,
         encoding: str = "utf-8",
     ) -> str:
         return (
@@ -69,8 +69,8 @@ class TemplateEngineAgent(EngineAgent):
         event_manager: EventManager,
         renderer: Renderer,
         *args,
-        name: Optional[str] = None,
-        id: Optional[UUID] = None,
+        name: str | None = None,
+        id: UUID | None = None,
     ):
         super().__init__(
             model,

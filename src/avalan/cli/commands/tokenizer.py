@@ -6,7 +6,6 @@ from ...model.nlp.text.generation import TextGenerationModel
 from logging import Logger
 from rich.console import Console
 from rich.theme import Theme
-from typing import Optional
 
 
 async def tokenize(
@@ -15,7 +14,7 @@ async def tokenize(
     theme: Theme,
     hub: HuggingfaceHub,
     logger: Logger,
-) -> Optional[list[Token]]:
+) -> list[Token] | None:
     assert args.tokenizer
 
     _, _i, _n = theme._, theme.icons, theme._n

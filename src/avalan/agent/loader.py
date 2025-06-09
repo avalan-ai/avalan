@@ -20,7 +20,6 @@ from logging import Logger
 from os import access, R_OK
 from os.path import exists
 from tomllib import load
-from typing import Optional
 from uuid import UUID, uuid4
 
 
@@ -35,7 +34,7 @@ class OrchestratorLoader:
         cls,
         path: str,
         *args,
-        agent_id: Optional[UUID],
+        agent_id: UUID | None,
         hub: HuggingfaceHub,
         logger: Logger,
         participant_id: UUID,
@@ -357,8 +356,8 @@ class OrchestratorLoader:
         event_manager: EventManager,
         config: dict,
         agent_config: dict,
-        call_options: Optional[dict],
-        template_vars: Optional[dict],
+        call_options: dict | None,
+        template_vars: dict | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
         assert "instructions" in agent_config, (
