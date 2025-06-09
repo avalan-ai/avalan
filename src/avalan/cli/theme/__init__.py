@@ -24,12 +24,12 @@ from humanize import intcomma, intword, naturalsize, naturaltime
 from logging import Logger
 from numpy import ndarray
 from rich.console import RenderableType
-from typing import Callable, Generator, Literal, Tuple, Union
+from typing import Callable, Generator, Literal, Tuple
 from uuid import UUID
 
-Formatter = Union[
-    Callable[[datetime], str], Callable[[float], str], Callable[[int], str]
-]
+Formatter = (
+    Callable[[datetime], str] | Callable[[float], str] | Callable[[int], str]
+)
 Formatters = dict[Literal["datetime", "number", "quantity", "size"], Formatter]
 Spinner = Literal["cache_accessing", "connecting", "thinking", "downloading"]
 Data = StrEnum(
@@ -39,7 +39,7 @@ Data = StrEnum(
         **{field.name: field.name for field in fields(User)},
     },
 )
-DataValue = Union[datetime, float, int, str, None]
+DataValue = datetime | float | int | str | None
 Stylers = dict[Data, Callable[[DataValue], str]]
 
 
@@ -212,7 +212,7 @@ class Theme(ABC):
     @abstractmethod
     def model_display(
         self,
-        model_config: Union[ModelConfig, SentenceTransformerModelConfig] | None,
+        model_config: ModelConfig | SentenceTransformerModelConfig | None,
         tokenizer_config: TokenizerConfig,
         *args,
         is_runnable: bool | None = None,
@@ -394,7 +394,7 @@ class Theme(ABC):
         data: Data,
         value: DataValue,
         prefix: str | None = None,
-        icon: Union[bool, str] = True,
+        icon: bool | str = True,
     ) -> str:
         return (
             self._all_stylers[data](data, value, prefix, icon)

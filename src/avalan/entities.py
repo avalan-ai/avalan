@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from numpy import ndarray
 from torch import dtype, Tensor
-from typing import Literal, Union
+from typing import Literal
 from uuid import UUID
 
 AttentionImplementation = Literal[
@@ -51,7 +51,7 @@ WeightType = Literal[
     "ui8",
 ]
 
-ToolValue = Union[bool, float, int, str, None]
+ToolValue = bool | float | int | str | None
 
 
 class MessageRole(StrEnum):
@@ -97,7 +97,7 @@ class EngineUri:
     password: str | None
     vendor: Vendor | None
     model_id: str | None
-    params: dict[str, Union[str, int, float, bool]]
+    params: dict[str, str | int | float | bool]
 
     @property
     def is_local(self) -> bool:
@@ -116,11 +116,11 @@ class GenerationSettings:
     # The maximum length the generated tokens can have. Corresponds to the length of the input prompt + max_new_tokens. Its effect is overridden by max_new_tokens, if also set.
     max_length: int | None = 20
     # Controls the stopping condition for beam-based methods, like beam-search. It accepts the following values: True, where the generation stops as soon as there are num_beams complete candidates; False, where an heuristic is applied and the generation stops when is it very unlikely to find better candidates; "never", where the beam search procedure only stops when there cannot be better candidates (canonical beam search algorithm)
-    early_stopping: Union[str, bool] | None = False
+    early_stopping: str | bool | None = False
     # The maximum amount of time you allow the computation to run for in seconds. generation will still finish the current pass after allocated time has been passed.
     max_time: float | None = None
     # A string or a list of strings that should terminate generation if the model outputs them.
-    stop_strings: Union[str, list[str]] | None = None
+    stop_strings: str | list[str] | None = None
 
     # Generation strategy ----------------------------------------------------
     # Whether or not to use sampling. Use greedy decoding otherwise
@@ -166,7 +166,7 @@ class GenerationSettings:
     # The id of the token to force as the first generated token after the decoder_start_token_id. Useful for multilingual models like mBART where the first generated token needs to be the target language token.
     forced_bos_token_id: int | None = None
     # The id of the token to force as the last generated token when max_length is reached. Optionally, use a list to set multiple end-of-sequence tokens
-    forced_eos_token_id: Union[int, list[int]] | None = None
+    forced_eos_token_id: int | list[int] | None = None
 
     # Special token usage in generation --------------------------------------
     # The id of the padding token.
@@ -174,7 +174,7 @@ class GenerationSettings:
     # The id of the beginning-of-sequence token
     bos_token_id: int | None = None
     # The id of the end-of-sequence token. Optionally, use a list to set multiple end-of-sequence tokens
-    eos_token_id: Union[int, list[int]] | None = None
+    eos_token_id: int | list[int] | None = None
 
     # Assistant generation ---------------------------------------------------
     # The number of tokens to be output as candidate tokens.
@@ -242,7 +242,7 @@ class Message:
     arguments: dict | None = None
 
 
-Input = Union[str, list[str], Message, list[Message]]
+Input = str | list[str] | Message | list[Message]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -401,7 +401,7 @@ class TokenizerConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class Token:
-    id: Union[Tensor, int]
+    id: Tensor | int
     token: str
     probability: float | None = None
 

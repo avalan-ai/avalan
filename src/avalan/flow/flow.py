@@ -1,6 +1,6 @@
 from ..flow.connection import Connection
 from ..flow.node import Node
-from typing import Any, Callable, Dict, Union, Tuple
+from typing import Any, Callable, Dict, Tuple
 from re import match
 
 
@@ -89,7 +89,7 @@ class Flow:
 
     def execute(
         self,
-        initial_node: Union[str, Node] | None = None,
+        initial_node: str | Node | None = None,
         initial_data: Any = None,
     ) -> Any:
         # Determine start nodes

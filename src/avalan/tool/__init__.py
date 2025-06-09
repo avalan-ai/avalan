@@ -4,7 +4,7 @@ from contextlib import AsyncExitStack, ContextDecorator
 from inspect import isfunction, signature, Signature
 from transformers.utils import get_json_schema
 from types import FunctionType
-from typing import get_type_hints, Union
+from typing import get_type_hints
 
 
 class Tool(ABC, ContextDecorator):
@@ -16,18 +16,20 @@ class Tool(ABC, ContextDecorator):
     def json_schema(self, prefix: str | None = None) -> dict:
         schema = get_json_schema(self)
         if (
-            prefix and
-            "type" in schema and
-            schema["type"] == "function" and
-            "function" in schema and
-            "name" in schema["function"]
+            prefix
+            and "type" in schema
+            and schema["type"] == "function"
+            and "function" in schema
+            and "name" in schema["function"]
         ):
             schema["function"]["name"] = prefix + schema["function"]["name"]
 
         return schema
 
     @staticmethod
-    def _get_signature(function: FunctionType, exclude_type_names: list[str]) -> Signature:
+    def _get_signature(
+        function: FunctionType, exclude_type_names: list[str]
+    ) -> Signature:
         function_signature = signature(function)
         parameters = [
             param
@@ -49,7 +51,9 @@ class Tool(ABC, ContextDecorator):
         traceback: BaseException | None,
     ) -> bool:
         if self._exit_stack:
-            return await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
+            return await self._exit_stack.__aexit__(
+                exc_type, exc_value, traceback
+            )
         return True
 
 
@@ -73,7 +77,7 @@ class ToolSet(ContextDecorator):
         *,
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
-        tools: Sequence[Union[Callable,"ToolSet"]]
+        tools: Sequence[Callable | "ToolSet"],
     ):
         self._namespace = namespace
         self._exit_stack = exit_stack or AsyncExitStack()
@@ -82,14 +86,22 @@ class ToolSet(ContextDecorator):
         exclude_type_names = ["self", "context"]
 
         for i, tool in enumerate(self.tools):
-            if not isfunction(tool) and callable(tool) and isinstance(tool,Tool):
+            if (
+                not isfunction(tool)
+                and callable(tool)
+                and isinstance(tool, Tool)
+            ):
                 type_hints = {
                     type_name: type_type
-                    for type_name, type_type in get_type_hints(tool.__call__).items()
+                    for type_name, type_type in get_type_hints(
+                        tool.__call__
+                    ).items()
                     if type_name not in exclude_type_names
                 }
                 tool.__annotations__ = type_hints
-                tool.__signature__ = Tool._get_signature(tool.__call__, exclude_type_names)
+                tool.__signature__ = Tool._get_signature(
+                    tool.__call__, exclude_type_names
+                )
                 if not tool.__doc__ and tool.__call__.__doc__:
                     tool.__doc__ = tool.__call__.__doc__
                 self.tools[i] = tool
@@ -124,8 +136,10 @@ class ToolSet(ContextDecorator):
     def json_schemas(self, prefix: str | None = None) -> list[dict] | None:
         schemas = []
         prefix = (
-            f"{prefix}." if prefix else
-            f"{self.namespace}." if self.namespace
+            f"{prefix}."
+            if prefix
+            else f"{self.namespace}."
+            if self.namespace
             else ""
         )
         for tool in self.tools:
@@ -136,17 +150,17 @@ class ToolSet(ContextDecorator):
                 continue
 
             schema = (
-                tool.json_schema(prefix) if isinstance(tool, Tool) else
-                get_json_schema(tool)
+                tool.json_schema(prefix)
+                if isinstance(tool, Tool)
+                else get_json_schema(tool)
             )
             if (
-                not isinstance(tool, Tool) and
-                "type" in schema and
-                schema["type"] == "function" and
-                "function" in schema and
-                "name" in schema["function"]
+                not isinstance(tool, Tool)
+                and "type" in schema
+                and schema["type"] == "function"
+                and "function" in schema
+                and "name" in schema["function"]
             ):
                 schema["function"]["name"] = prefix + schema["function"]["name"]
             schemas.append(schema)
         return schemas
-

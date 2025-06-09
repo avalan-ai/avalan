@@ -17,14 +17,14 @@ from ....tool.manager import ToolManager
 from queue import Queue
 from io import StringIO
 from time import perf_counter
-from typing import Any, AsyncIterator, Union
+from typing import Any, AsyncIterator
 
 
-class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
+class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     """Async iterator handling tool execution during streaming."""
 
     _response: TextGenerationResponse
-    _response_iterator: AsyncIterator[Union[Token, TokenDetail, Event]] | None
+    _response_iterator: AsyncIterator[Token | TokenDetail | Event] | None
     _engine_agent: EngineAgent
     _operation: Operation
     _engine_args: dict
@@ -82,16 +82,14 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         self._response_iterator = self._response.__aiter__()
         self._buffer = StringIO()
         self._calls = Queue()
-        self._tool_context = ToolCallContext(
-            input=self._input
-        )
+        self._tool_context = ToolCallContext(input=self._input)
         self._tool_call_events = Queue()
         self._tool_process_events = Queue()
         self._tool_result_events = Queue()
         self._step = 0
         return self
 
-    async def __anext__(self) -> Union[Token, TokenDetail, Event]:
+    async def __anext__(self) -> Token | TokenDetail | Event:
         assert self._response_iterator
 
         if not self._tool_process_events.empty():
@@ -123,7 +121,11 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
             if self._event_manager:
                 await self._event_manager.trigger(execute_event)
 
-            result = await self._tool_manager(call, self._tool_context) if self._tool_manager else None
+            result = (
+                await self._tool_manager(call, self._tool_context)
+                if self._tool_manager
+                else None
+            )
 
             end = perf_counter()
             result_event = Event(
@@ -231,7 +233,9 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         if self._event_manager:
             await self._event_manager.trigger(Event(type=EventType.TOOL_DETECT))
 
-        calls = self._tool_manager.get_calls(output) if self._tool_manager else None
+        calls = (
+            self._tool_manager.get_calls(output) if self._tool_manager else None
+        )
         if not calls:
             return output
 
@@ -246,7 +250,11 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
                 )
                 await self._event_manager.trigger(execute_event)
 
-            result = await self._tool_manager(call, self._tool_context) if self._tool_manager else None
+            result = (
+                await self._tool_manager(call, self._tool_context)
+                if self._tool_manager
+                else None
+            )
             results.append(result)
 
             if self._event_manager:
@@ -312,8 +320,8 @@ class OrchestratorResponse(AsyncIterator[Union[Token, TokenDetail, Event]]):
         return response
 
     async def _emit(
-        self, token: Union[Token, TokenDetail, str]
-    ) -> Union[Token, TokenDetail, Event]:
+        self, token: Token | TokenDetail | str
+    ) -> Token | TokenDetail | Event:
         token_str = token.token if hasattr(token, "token") else token
 
         if self._event_manager:

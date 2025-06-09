@@ -5,12 +5,13 @@ from ...model.nlp.sentence import SentenceTransformerModel
 from logging import Logger
 from re import split
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
-from typing import Callable, Union
+from typing import Callable
+
 
 class TextPartitioner(Partitioner):
     _PARAGRAPH_PATTERN = r"(?:\r\n|\r|\n){2,}"
     _model: SentenceTransformerModel
-    _tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
+    _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast
     _logger: Logger
     _max_tokens: int
     _window_size: int

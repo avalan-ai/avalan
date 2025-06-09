@@ -6,7 +6,6 @@ from ..entities import (
 )
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Union
 
 
 class NoOperationAvailableException(Exception):
@@ -52,7 +51,7 @@ class Specification:
 @dataclass(frozen=True, kw_only=True)
 class EngineEnvironment:
     engine_uri: EngineUri
-    settings: Union[EngineSettings, TransformerEngineSettings]
+    settings: EngineSettings | TransformerEngineSettings
     type: EngineType = EngineType.TEXT_GENERATION
 
 
