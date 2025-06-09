@@ -13,7 +13,7 @@ from torch import (
     int16,
     int32,
     int64,
-    no_grad,
+    inference_mode,
     Tensor,
     uint8,
 )
@@ -78,7 +78,7 @@ class BaseNLPModel(TransformerModel, ABC):
             del generation_kwargs["eos_token_id"]
 
         with (
-            no_grad()
+            inference_mode()
             if not settings.enable_gradient_calculation
             else nullcontext()
         ):

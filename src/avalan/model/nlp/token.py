@@ -1,7 +1,7 @@
 from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
-from torch import argmax, no_grad
+from torch import argmax, inference_mode
 from transformers import AutoModelForTokenClassification, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
@@ -62,7 +62,7 @@ class TokenClassificationModel(BaseNLPModel):
             + "needs to be loaded first"
         )
         inputs = self._tokenize_input(input, system_prompt=None, context=None)
-        with no_grad():
+        with inference_mode():
             outputs = self._model(**inputs)
             # logits shape (1, seq_len, num_labels)
             label_ids = argmax(outputs.logits, dim=2)

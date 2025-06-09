@@ -78,7 +78,9 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.model.audio.load") as load_mock,
             patch("avalan.model.audio.Resample") as resample_mock,
             patch("avalan.model.audio.argmax") as argmax_mock,
-            patch("avalan.model.audio.no_grad", new=lambda: nullcontext()),
+            patch(
+                "avalan.model.audio.inference_mode", return_value=nullcontext()
+            ) as inference_mode_mock,
         ):
             processor_instance = MagicMock()
             processor_instance.return_value = MagicMock(input_values="inputs")
@@ -128,6 +130,7 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance.assert_called_once_with("inputs")
             argmax_mock.assert_called_once_with("logits", dim=-1)
             processor_instance.batch_decode.assert_called_once_with("pred")
+            inference_mode_mock.assert_called_once_with()
 
 
 if __name__ == "__main__":

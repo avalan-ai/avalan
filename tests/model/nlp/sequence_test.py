@@ -103,8 +103,9 @@ class SequenceClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 AutoModelForSequenceClassification, "from_pretrained"
             ) as auto_model_mock,
             patch(
-                "avalan.model.nlp.sequence.no_grad", new=lambda: nullcontext()
-            ),
+                "avalan.model.nlp.sequence.inference_mode",
+                return_value=nullcontext(),
+            ) as inference_mode_mock,
             patch("avalan.model.nlp.sequence.softmax") as softmax_mock,
             patch("avalan.model.nlp.sequence.argmax") as argmax_mock,
         ):
@@ -153,6 +154,7 @@ class SequenceClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             )
             softmax_mock.assert_called_once_with(outputs.logits, dim=-1)
             argmax_mock.assert_called_once_with("probs", dim=-1)
+            inference_mode_mock.assert_called_once_with()
 
 
 if __name__ == "__main__":

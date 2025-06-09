@@ -131,7 +131,10 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 TokenClassificationModel, "_tokenize_input", return_value=inputs
             ) as tokenize_mock,
             patch("avalan.model.nlp.token.argmax") as argmax_mock,
-            patch("avalan.model.nlp.token.no_grad", new=lambda: nullcontext()),
+            patch(
+                "avalan.model.nlp.token.inference_mode",
+                return_value=nullcontext(),
+            ) as inference_mode_mock,
         ):
             tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_mock.convert_ids_to_tokens.return_value = ["a", "b", "c"]
@@ -169,6 +172,7 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 self.model_id, use_fast=True
             )
             auto_model_mock.assert_called_once()
+            inference_mode_mock.assert_called_once_with()
 
 
 if __name__ == "__main__":
