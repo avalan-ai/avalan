@@ -28,7 +28,9 @@ class ChatCompletionRequest(BaseModel):
     )
     stop: str | list[str] | None = Field(
         None,
-        description="Sequence where the API will stop generating further tokens",
+        description=(
+            "Sequence where the API will stop generating further tokens"
+        ),
     )
     max_tokens: int | None = Field(
         None, ge=1, description="Maximum tokens to generate in the completion"
@@ -37,17 +39,25 @@ class ChatCompletionRequest(BaseModel):
         0.0,
         ge=-2.0,
         le=2.0,
-        description="Penalty for new tokens based on whether they appear in text so far",
+        description=(
+            "Penalty for new tokens based on whether they appear in text"
+            " so far"
+        ),
     )
     frequency_penalty: float | None = Field(
         0.0,
         ge=-2.0,
         le=2.0,
-        description="Penalty for new tokens based on their frequency in text so far",
+        description=(
+            "Penalty for new tokens based on their frequency in text so far"
+        ),
     )
     logit_bias: dict[str, int] | None = Field(
         None,
-        description="Modify the likelihood of specified tokens appearing in the completion",
+        description=(
+            "Modify the likelihood of specified tokens appearing in the"
+            " completion"
+        ),
     )
     user: str | None = Field(
         None, description="Unique identifier representing your end-user"

@@ -26,12 +26,16 @@ async def tokenize(
             device=args.device,
             cache_dir=hub.cache_dir,
             tokenizer_name_or_path=tokenizer_name_or_path,
-            tokens=args.token
-            if args.token and isinstance(args.token, list)
-            else None,
-            special_tokens=args.special_token
-            if args.special_token and isinstance(args.special_token, list)
-            else None,
+            tokens=(
+                args.token
+                if args.token and isinstance(args.token, list)
+                else None
+            ),
+            special_tokens=(
+                args.special_token
+                if args.special_token and isinstance(args.special_token, list)
+                else None
+            ),
             auto_load_model=False,
             auto_load_tokenizer=True,
             disable_loading_progress_bar=args.disable_loading_progress_bar,

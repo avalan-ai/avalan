@@ -14,7 +14,8 @@ class DummyOrchestrator(Orchestrator):
 
 
 @skip(
-    "FastAPI imports produce TypeError: Cannot create a consistent method resolution order (MRO) for bases object, WebSocketDisconnect"
+    "FastAPI imports produce TypeError: Cannot create a consistent method"
+    " resolution order (MRO) for bases object, WebSocketDisconnect"
 )
 class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -24,7 +25,7 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         self.FastAPI = FastAPI
         self.TestClient = TestClient
 
-        # Create a dummy `avalan.server` package to avoid executing its __init__
+        # Create a dummy `avalan.server` pkg to avoid executing its __init__
         server_pkg = ModuleType("avalan.server")
         server_pkg.__path__ = [str(Path("src/avalan/server").resolve())]
         sys.modules["avalan.server"] = server_pkg

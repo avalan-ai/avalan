@@ -22,7 +22,6 @@ from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
 from rich.theme import Theme
-from typing import Tuple
 
 
 async def memory_document_index(
@@ -286,8 +285,8 @@ async def memory_embeddings(
 
                 joined = '", "'.join(compare_strings)
                 logger.debug(
-                    f'Similarities between "{input_string}" and '
-                    f'["{joined}"]: ' + similarities.__repr__()
+                    f'Similarities between "{input_string}" and ["{joined}"]: '
+                    + similarities.__repr__()
                 )
 
                 # Closest match
@@ -315,9 +314,9 @@ async def memory_embeddings(
                 index = IndexFlatL2(input_string_embeddings.shape[0])
 
                 if partitioner:
-                    knowledge_stack = vstack([
-                        kp.embeddings for kp in knowledge_partitions
-                    ]).astype("float32", copy=False)
+                    knowledge_stack = vstack(
+                        [kp.embeddings for kp in knowledge_partitions]
+                    ).astype("float32", copy=False)
                     index.add(knowledge_stack)
                 else:
                     index.add(
@@ -331,7 +330,7 @@ async def memory_embeddings(
                     "float32", copy=False
                 )
                 distances, ids = index.search(search_stack, search_k)
-                matches: list[Tuple[int, int, float]] = [
+                matches: list[tuple[int, int, float]] = [
                     (q_id, kn_id, float(dist))
                     for q_id, (dist_row, id_row) in enumerate(
                         zip(distances, ids)
@@ -347,9 +346,7 @@ async def memory_embeddings(
                     knowledge_chunk = (
                         knowledge_partitions[kn_id].data
                         if knowledge_partitions
-                        else input_string
-                        if kn_id == 0
-                        else None
+                        else input_string if kn_id == 0 else None
                     )
                     if not knowledge_chunk:
                         continue
@@ -420,5 +417,7 @@ async def memory_search(
             )
 
             console.print(
-                theme.memory_search_matches(participant_id, namespace, memories)
+                theme.memory_search_matches(
+                    participant_id, namespace, memories
+                )
             )

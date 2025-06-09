@@ -37,7 +37,9 @@ class TranslationModelCallTestCase(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, "hola")
-        tok_mock.assert_called_once_with("hi", system_prompt=None, context=None)
+        tok_mock.assert_called_once_with(
+            "hi", system_prompt=None, context=None
+        )
         gen_mock.assert_called_once()
         args = gen_mock.call_args.args
         self.assertIs(args[0], inputs)

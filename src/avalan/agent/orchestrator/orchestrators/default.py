@@ -32,9 +32,11 @@ class DefaultOrchestrator(Orchestrator):
     ):
         specification = Specification(
             role=role,
-            goal=Goal(task=task, instructions=[instructions])
-            if task and instructions
-            else None,
+            goal=(
+                Goal(task=task, instructions=[instructions])
+                if task and instructions
+                else None
+            ),
             rules=rules,
             template_id=template_id or "agent.md",
             template_vars=template_vars,

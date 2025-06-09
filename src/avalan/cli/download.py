@@ -1,10 +1,9 @@
 from rich.console import RenderableType
 from rich.progress import Progress
 from tqdm.std import tqdm as std_tqdm
-from typing import Tuple
 
 
-def create_live_tqdm_class(progress_template: Tuple[RenderableType, ...]):
+def create_live_tqdm_class(progress_template: tuple[RenderableType, ...]):
     class LiveTqdm(tqdm_rich_progress):
         def __init__(self, *args, **kwargs):
             extended_kwargs = {**kwargs}
@@ -14,7 +13,8 @@ def create_live_tqdm_class(progress_template: Tuple[RenderableType, ...]):
     return LiveTqdm
 
 
-""" Heavily inspired by https://github.com/tqdm/tqdm/blob/master/tqdm/rich.py """
+""" Heavily inspired by
+    https://github.com/tqdm/tqdm/blob/master/tqdm/rich.py """
 
 
 class tqdm_rich_progress(std_tqdm):

@@ -81,7 +81,8 @@ class CodePartitioner:
             error_message = error_node.text.decode(encoding)
             error_row, error_column = error_node.start_point
             raise PartitionerException(
-                f'{error_name}: "{error_message}" at {error_row},{error_column}'
+                f'{error_name}: "{error_message}" at'
+                f" {error_row},{error_column}"
             )
 
         self._logger.debug(f"Partitioning {language_name} code")
@@ -249,7 +250,10 @@ class CodePartitioner:
         node: Node,
         encoding: Encoding,
     ) -> Function:
-        assert node.type in ("function_definition", "async_function_definition")
+        assert node.type in (
+            "function_definition",
+            "async_function_definition",
+        )
         function_id, function_name = cls._get_function_id_and_name_from_node(
             current_namespace, current_class_name, node, encoding
         )
@@ -260,12 +264,16 @@ class CodePartitioner:
             namespace=current_namespace,
             class_name=current_class_name,
             name=function_name,
-            parameters=cls._get_parameters(params_node, encoding)
-            if params_node
-            else None,
-            return_type=return_type_node.text.decode(encoding)
-            if return_type_node
-            else None,
+            parameters=(
+                cls._get_parameters(params_node, encoding)
+                if params_node
+                else None
+            ),
+            return_type=(
+                return_type_node.text.decode(encoding)
+                if return_type_node
+                else None
+            ),
         )
 
     @staticmethod
@@ -275,7 +283,10 @@ class CodePartitioner:
         node: Node,
         encoding: Encoding,
     ) -> tuple[str, str]:
-        assert node.type in ("function_definition", "async_function_definition")
+        assert node.type in (
+            "function_definition",
+            "async_function_definition",
+        )
         function_name_node = node.child_by_field_name("name")
         assert function_name_node
         function_name = function_name_node.text.decode(encoding)

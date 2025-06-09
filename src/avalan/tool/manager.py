@@ -92,9 +92,7 @@ class ToolManager(ContextDecorator):
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
     async def __call__(
-        self,
-        call: ToolCall,
-        context: ToolCallContext
+        self, call: ToolCall, context: ToolCallContext
     ) -> ToolCallResult | None:
         """Execute a single tool call and return the result."""
         assert call
@@ -106,10 +104,17 @@ class ToolManager(ContextDecorator):
 
         is_native_tool = isinstance(tool, Tool)
         result = (
-            await tool(*call.arguments.values(), context=context) if is_native_tool and call.arguments
-            else tool(context=context) if is_native_tool
-            else await tool(*call.arguments.values()) if call.arguments
-            else tool()
+            await tool(*call.arguments.values(), context=context)
+            if is_native_tool and call.arguments
+            else (
+                tool(context=context)
+                if is_native_tool
+                else (
+                    await tool(*call.arguments.values())
+                    if call.arguments
+                    else tool()
+                )
+            )
         )
 
         return ToolCallResult(

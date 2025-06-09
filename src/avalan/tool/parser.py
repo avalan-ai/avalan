@@ -2,7 +2,7 @@ from ast import literal_eval
 from ..entities import ToolCall, ToolFormat
 from json import JSONDecodeError, loads
 from re import DOTALL, search
-from typing import Any, Tuple
+from typing import Any
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -23,13 +23,19 @@ class ToolCallParser:
         calls = (
             self._parse_json(text)
             if self._tool_format is ToolFormat.JSON
-            else self._parse_react(text)
-            if self._tool_format is ToolFormat.REACT
-            else self._parse_bracket(text)
-            if self._tool_format is ToolFormat.BRACKET
-            else self._parse_openai_json(text)
-            if self._tool_format is ToolFormat.OPENAI
-            else None
+            else (
+                self._parse_react(text)
+                if self._tool_format is ToolFormat.REACT
+                else (
+                    self._parse_bracket(text)
+                    if self._tool_format is ToolFormat.BRACKET
+                    else (
+                        self._parse_openai_json(text)
+                        if self._tool_format is ToolFormat.OPENAI
+                        else None
+                    )
+                )
+            )
         )
         if not calls:
             calls = self._parse_tag(text)
@@ -38,14 +44,14 @@ class ToolCallParser:
     def set_eos_token(self, eos_token: str) -> None:
         self._eos_token = eos_token
 
-    def _parse_json(self, text: str) -> Tuple[str, dict[str, Any]] | None:
+    def _parse_json(self, text: str) -> tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)
             return payload["tool"], payload.get("arguments", {})
         except Exception:
             return None
 
-    def _parse_react(self, text: str) -> Tuple[str, dict[str, Any]] | None:
+    def _parse_react(self, text: str) -> tuple[str, dict[str, Any]] | None:
         act = search(r"Action:\s*(\w+)", text)
         inp = search(r"Action Input:\s*({.*})", text, DOTALL)
         if act and inp:
@@ -55,7 +61,7 @@ class ToolCallParser:
                 pass
         return None
 
-    def _parse_bracket(self, text: str) -> Tuple[str, dict[str, Any]] | None:
+    def _parse_bracket(self, text: str) -> tuple[str, dict[str, Any]] | None:
         m = search(r"\[(\w+)\]\(([^)]+)\)", text)
         if m:
             return m.group(1), {"input": m.group(2)}
@@ -63,7 +69,7 @@ class ToolCallParser:
 
     def _parse_openai_json(
         self, text: str
-    ) -> Tuple[str, dict[str, Any]] | None:
+    ) -> tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)
             name = payload.get("name")
@@ -74,7 +80,7 @@ class ToolCallParser:
             pass
         return None
 
-    def _parse_tag(self, text: str) -> Tuple[str, dict[str, Any]] | None:
+    def _parse_tag(self, text: str) -> tuple[str, dict[str, Any]] | None:
         tool_calls: list[ToolCall] = []
 
         if self._eos_token:
@@ -145,7 +151,9 @@ class ToolCallParser:
             try:
                 tool_calls.append(
                     ToolCall(
-                        id=uuid4(), name=m.group(1), arguments=loads(m.group(2))
+                        id=uuid4(),
+                        name=m.group(1),
+                        arguments=loads(m.group(2)),
                     )
                 )
             except JSONDecodeError:
@@ -160,7 +168,9 @@ class ToolCallParser:
             try:
                 tool_calls.append(
                     ToolCall(
-                        id=uuid4(), name=m.group(1), arguments=loads(m.group(2))
+                        id=uuid4(),
+                        name=m.group(1),
+                        arguments=loads(m.group(2)),
                     )
                 )
             except JSONDecodeError:
@@ -174,7 +184,9 @@ class ToolCallParser:
             try:
                 tool_calls.append(
                     ToolCall(
-                        id=uuid4(), name=m.group(1), arguments=loads(m.group(2))
+                        id=uuid4(),
+                        name=m.group(1),
+                        arguments=loads(m.group(2)),
                     )
                 )
             except JSONDecodeError:

@@ -11,8 +11,7 @@ from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.types import TypeInfo
-from typing import TypeVar, Type
-
+from typing import TypeVar
 
 T = TypeVar("T")
 
@@ -30,7 +29,7 @@ class BasePgsqlMemory(MemoryStore[T]):
         raise NotImplementedError()
 
     async def _fetch_all(
-        self, entity: Type[T], query: str, parameters: tuple
+        self, entity: type[T], query: str, parameters: tuple
     ) -> list[T]:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
@@ -44,7 +43,7 @@ class BasePgsqlMemory(MemoryStore[T]):
                 )
 
     async def _fetch_one(
-        self, entity: Type[T], query: str, parameters: tuple
+        self, entity: type[T], query: str, parameters: tuple
     ) -> T:
         result = await self._try_fetch_one(entity, query, parameters)
         if result is None:
@@ -72,7 +71,7 @@ class BasePgsqlMemory(MemoryStore[T]):
                 return result is not None
 
     async def _try_fetch_one(
-        self, entity: Type[T], query: str, parameters: tuple
+        self, entity: type[T], query: str, parameters: tuple
     ) -> T | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
@@ -82,7 +81,7 @@ class BasePgsqlMemory(MemoryStore[T]):
                 return entity(**dict(result)) if result is not None else None
 
     async def _update_and_fetch_one(
-        self, entity: Type[T], query: str, parameters: tuple
+        self, entity: type[T], query: str, parameters: tuple
     ) -> T:
         row = await self._update_and_fetch_row(query, parameters)
         return entity(**row)
@@ -181,17 +180,19 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         scored: bool = False,
     ) -> list[EngineMessage] | list[EngineMessageScored]:
         engine_messages = [
-            EngineMessageScored(
-                agent_id=m.agent_id,
-                model_id=m.model_id,
-                message=Message(role=m.author, content=m.data),
-                score=m.score,
-            )
-            if scored
-            else EngineMessage(
-                agent_id=m.agent_id,
-                model_id=m.model_id,
-                message=Message(role=m.author, content=m.data),
+            (
+                EngineMessageScored(
+                    agent_id=m.agent_id,
+                    model_id=m.model_id,
+                    message=Message(role=m.author, content=m.data),
+                    score=m.score,
+                )
+                if scored
+                else EngineMessage(
+                    agent_id=m.agent_id,
+                    model_id=m.model_id,
+                    message=Message(role=m.author, content=m.data),
+                )
             )
             for m in messages
         ]

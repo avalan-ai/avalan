@@ -329,7 +329,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.dummy_stack = AsyncMock()
         self.dummy_stack.__aenter__.return_value = self.dummy_stack
         self.dummy_stack.__aexit__.return_value = False
-        self.dummy_stack.enter_async_context = AsyncMock(return_value=self.orch)
+        self.dummy_stack.enter_async_context = AsyncMock(
+            return_value=self.orch
+        )
 
     async def test_returns_when_no_input(self):
         with (

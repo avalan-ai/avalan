@@ -54,25 +54,25 @@ class OrchestratorLoader:
             # Validate settings
 
             assert "agent" in config, "No agent section in configuration"
-            assert "engine" in config, (
-                "No engine section defined in configuration"
-            )
-            assert "uri" in config["engine"], (
-                "No uri defined in engine section of configuration"
-            )
+            assert (
+                "engine" in config
+            ), "No engine section defined in configuration"
+            assert (
+                "uri" in config["engine"]
+            ), "No uri defined in engine section of configuration"
 
             agent_config = config["agent"]
             for setting in ["role"]:
-                assert setting in agent_config, (
-                    f"No {setting} defined in agent section of configuration"
-                )
+                assert (
+                    setting in agent_config
+                ), f"No {setting} defined in agent section of configuration"
 
-            assert "engine" in config, (
-                "No engine section defined in configuration"
-            )
-            assert "uri" in config["engine"], (
-                "No uri defined in engine section of configuration"
-            )
+            assert (
+                "engine" in config
+            ), "No engine section defined in configuration"
+            assert (
+                "uri" in config["engine"]
+            ), "No uri defined in engine section of configuration"
 
             uri = config["engine"]["uri"]
             engine_config = config["engine"]
@@ -87,25 +87,31 @@ class OrchestratorLoader:
             agent_id = (
                 agent_id
                 if agent_id
-                else config["agent"]["id"]
-                if "id" in config["agent"]
-                else uuid4()
+                else (
+                    config["agent"]["id"]
+                    if "id" in config["agent"]
+                    else uuid4()
+                )
             )
 
-            assert orchestrator_type is None or orchestrator_type in ["json"], (
+            assert orchestrator_type is None or orchestrator_type in [
+                "json"
+            ], (
                 f"Unknown type {config['agent']['type']} in agent section "
                 + "of configuration"
             )
-            assert "role" in agent_config, (
-                "No role defined in agent section of configuration"
-            )
+            assert (
+                "role" in agent_config
+            ), "No role defined in agent section of configuration"
 
             call_options = config["run"] if "run" in config else None
             if call_options and "chat" in call_options:
                 call_options["chat_template_settings"] = call_options.pop(
                     "chat"
                 )
-            template_vars = config["template"] if "template" in config else None
+            template_vars = (
+                config["template"] if "template" in config else None
+            )
 
             # Memory configuration
 
@@ -120,17 +126,17 @@ class OrchestratorLoader:
                 if memory_options and "permanent" in memory_options
                 else None
             )
-            assert not memory_permanent or isinstance(memory_permanent, str), (
-                "Permanent message memory should be a string"
-            )
+            assert not memory_permanent or isinstance(
+                memory_permanent, str
+            ), "Permanent message memory should be a string"
             memory_recent = (
                 memory_options["recent"]
                 if memory_options and "recent" in memory_options
                 else False
             )
-            assert isinstance(memory_recent, bool), (
-                "Recent message memory can only be set or unset"
-            )
+            assert isinstance(
+                memory_recent, bool
+            ), "Recent message memory can only be set or unset"
 
             sentence_model_id = (
                 config["memory.engine"]["model_id"]
@@ -182,9 +188,9 @@ class OrchestratorLoader:
                 sentence_model_max_tokens=sentence_model_max_tokens,
                 sentence_model_overlap_size=sentence_model_overlap_size,
                 sentence_model_window_size=sentence_model_window_size,
-                json_config=config.get("json")
-                if isinstance(config, dict)
-                else None,
+                json_config=(
+                    config.get("json") if isinstance(config, dict) else None
+                ),
             )
 
             tool_config = config.get("tool", {}).get("browser", {}).get("open")
@@ -240,7 +246,8 @@ class OrchestratorLoader:
         sentence_model = stack.enter_context(sentence_model)
 
         logger.debug(
-            "Loading text partitioner for model %s for agent %s with settings (%s, %s, %s)",
+            "Loading text partitioner for model %s for agent %s with settings"
+            " (%s, %s, %s)",
             settings.sentence_model_id,
             settings.agent_id,
             settings.sentence_model_max_tokens,
@@ -257,7 +264,8 @@ class OrchestratorLoader:
         )
 
         logger.debug(
-            "Loading tool manager for agent %s with partitioner and a sentence model %s with settings (%s, %s, %s)",
+            "Loading tool manager for agent %s with partitioner and a sentence"
+            " model %s with settings (%s, %s, %s)",
             settings.agent_id,
             settings.sentence_model_id,
             settings.sentence_model_max_tokens,
@@ -360,15 +368,15 @@ class OrchestratorLoader:
         template_vars: dict | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
-        assert "instructions" in agent_config, (
-            "No instructions defined in agent section of configuration"
-        )
-        assert "task" in agent_config, (
-            "No task defined in agent section of configuration"
-        )
-        assert "role" in agent_config, (
-            "No role defined in agent section of configuration"
-        )
+        assert (
+            "instructions" in agent_config
+        ), "No instructions defined in agent section of configuration"
+        assert (
+            "task" in agent_config
+        ), "No task defined in agent section of configuration"
+        assert (
+            "role" in agent_config
+        ), "No role defined in agent section of configuration"
 
         properties: list[Property] = []
         for property_name in config.get("json", []):

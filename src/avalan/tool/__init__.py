@@ -140,9 +140,7 @@ class ToolSet(ContextDecorator):
         prefix = (
             f"{prefix}."
             if prefix
-            else f"{self.namespace}."
-            if self.namespace
-            else ""
+            else f"{self.namespace}." if self.namespace else ""
         )
         for tool in self.tools:
             if isinstance(tool, ToolSet):
@@ -163,6 +161,8 @@ class ToolSet(ContextDecorator):
                 and "function" in schema
                 and "name" in schema["function"]
             ):
-                schema["function"]["name"] = prefix + schema["function"]["name"]
+                schema["function"]["name"] = (
+                    prefix + schema["function"]["name"]
+                )
             schemas.append(schema)
         return schemas

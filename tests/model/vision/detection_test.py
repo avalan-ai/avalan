@@ -110,7 +110,9 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance = MagicMock(spec=PreTrainedModel)
             config_mock = MagicMock()
             config_mock.id2label = {1: "label"}
-            type(model_instance).config = PropertyMock(return_value=config_mock)
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
             model_instance.return_value = "outputs"
             model_mock.return_value = model_instance
 

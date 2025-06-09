@@ -124,7 +124,9 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance = TruthyMagicMock()
             model_instance.__class__ = PreTrainedModel
             model_instance.return_value = outputs_instance
-            type(model_instance).config = PropertyMock(return_value=MagicMock())
+            type(model_instance).config = PropertyMock(
+                return_value=MagicMock()
+            )
             type(model_instance).name_or_path = PropertyMock(
                 return_value=self.model_id
             )

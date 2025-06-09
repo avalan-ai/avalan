@@ -110,7 +110,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         result_id = _uuid4()
         with (
             patch("avalan.tool.parser.uuid4", return_value=call_id),
-            patch("avalan.tool.manager.uuid4", return_value=result_id)
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
             calls = self.manager.get_calls(text)
             expected_call = ToolCall(
@@ -157,7 +157,9 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(calls, [expected_call])
 
-            results = await namespaced_manager(calls[0], context=ToolCallContext())
+            results = await namespaced_manager(
+                calls[0], context=ToolCallContext()
+            )
 
             expected_result = ToolCallResult(
                 id=result_id,

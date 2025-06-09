@@ -15,7 +15,7 @@ from ..tool.manager import ToolManager
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from dataclasses import replace
-from typing import Any, Tuple
+from typing import Any
 from uuid import UUID, uuid4
 
 
@@ -27,7 +27,7 @@ class EngineAgent(ABC):
     _tool: ToolManager
     _event_manager: EventManager
     _last_output: TextGenerationResponse | None = None
-    _last_prompt: Tuple[Input, str | None] | None = None
+    _last_prompt: tuple[Input, str | None] | None = None
 
     @abstractmethod
     def _prepare_call(
@@ -58,7 +58,8 @@ class EngineAgent(ABC):
         )
         await self._event_manager.trigger(
             Event(
-                type=EventType.INPUT_TOKEN_COUNT_AFTER, payload={"count": count}
+                type=EventType.INPUT_TOKEN_COUNT_AFTER,
+                payload={"count": count},
             )
         )
         return count

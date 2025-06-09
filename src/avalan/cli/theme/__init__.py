@@ -24,7 +24,7 @@ from humanize import intcomma, intword, naturalsize, naturaltime
 from logging import Logger
 from numpy import ndarray
 from rich.console import RenderableType
-from typing import Callable, Generator, Literal, Tuple
+from typing import Callable, Generator, Literal
 from uuid import UUID
 
 Formatter = (
@@ -188,7 +188,10 @@ class Theme(ABC):
 
     @abstractmethod
     def memory_embeddings_search(
-        self, matches: list[SearchMatch], *args, match_preview_length: int = 300
+        self,
+        matches: list[SearchMatch],
+        *args,
+        match_preview_length: int = 300,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -299,7 +302,7 @@ class Theme(ABC):
         limit_think_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[Tuple[Token | None, RenderableType], None, None]:
+    ) -> Generator[tuple[Token | None, RenderableType], None, None]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -351,26 +354,35 @@ class Theme(ABC):
         }
         self._all_stylers = {
             **{
-                data: lambda data, value, prefix=None, icon=True: "".join([
-                    prefix or "",
-                    f"{all_icons[data]} "
-                    if isinstance(icon, bool)
-                    and icon
-                    and data in self._icons
-                    and all_icons[data]
-                    else icon
-                    if isinstance(icon, str)
-                    else "",
-                    f"[{data}]",
-                    formatters["quantity"](value)
-                    if data in quantity_data
-                    else formatters["datetime"](value)
-                    if isinstance(value, datetime)
-                    else formatters["number"](value)
-                    if isinstance(value, int) or isinstance(value, float)
-                    else value,
-                    f"[/{data}]",
-                ])
+                data: lambda data, value, prefix=None, icon=True: "".join(
+                    [
+                        prefix or "",
+                        (
+                            f"{all_icons[data]} "
+                            if isinstance(icon, bool)
+                            and icon
+                            and data in self._icons
+                            and all_icons[data]
+                            else icon if isinstance(icon, str) else ""
+                        ),
+                        f"[{data}]",
+                        (
+                            formatters["quantity"](value)
+                            if data in quantity_data
+                            else (
+                                formatters["datetime"](value)
+                                if isinstance(value, datetime)
+                                else (
+                                    formatters["number"](value)
+                                    if isinstance(value, int)
+                                    or isinstance(value, float)
+                                    else value
+                                )
+                            )
+                        ),
+                        f"[/{data}]",
+                    ]
+                )
                 for data in data_keys
             },
             **self.stylers,

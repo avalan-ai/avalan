@@ -26,15 +26,18 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                 60,
                 30,
                 15,
-                "Lionel Messi, often hailed as one of the greatest footballers of "
-                "all time, has captivated audiences around the globe with his "
-                "extraordinary talent and humble personality. Born on June 24, "
-                "1987, in Rosario, Argentina, Messi began his football journey at "
-                "an early age. Diagnosed with a growth hormone deficiency, his "
-                "potential was initially overshadowed by health concerns. "
-                "Nevertheless, his remarkable talent soon became evident, and at "
-                "13, he moved to Spain to join FC Barcelona, the club that shaped "
-                "him into a global phenomenon.",
+                (
+                    "Lionel Messi, often hailed as one of the greatest"
+                    " footballers of all time, has captivated audiences around"
+                    " the globe with his extraordinary talent and humble"
+                    " personality. Born on June 24, 1987, in Rosario,"
+                    " Argentina, Messi began his football journey at an early"
+                    " age. Diagnosed with a growth hormone deficiency, his"
+                    " potential was initially overshadowed by health concerns."
+                    " Nevertheless, his remarkable talent soon became evident,"
+                    " and at 13, he moved to Spain to join FC Barcelona, the"
+                    " club that shaped him into a global phenomenon."
+                ),
                 [
                     (
                         0,
@@ -42,10 +45,13 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                         0,
                         30,
                         30,
-                        "Lionel Messi, often hailed as one of the greatest "
-                        "footballers of all time, has captivated audiences around "
-                        "the globe with his extraordinary talent and humble "
-                        "personality. Born on June 24, ",
+                        (
+                            "Lionel Messi, often hailed as one of the greatest"
+                            " footballers of all time, has captivated"
+                            " audiences around the globe with his"
+                            " extraordinary talent and humble personality."
+                            " Born on June 24, "
+                        ),
                     ),
                     (
                         90,
@@ -53,10 +59,13 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                         15,
                         45,
                         30,
-                        "audiences around the globe with his extraordinary talent "
-                        "and humble personality. Born on June 24, 1987, in "
-                        "Rosario, Argentina, Messi began his football journey at "
-                        "an early age. Diagnosed with ",
+                        (
+                            "audiences around the globe with his extraordinary"
+                            " talent and humble personality. Born on June 24,"
+                            " 1987, in Rosario, Argentina, Messi began his"
+                            " football journey at an early age. Diagnosed"
+                            " with "
+                        ),
                     ),
                     (
                         188,
@@ -64,10 +73,13 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                         30,
                         60,
                         30,
-                        "1987, in Rosario, Argentina, Messi began his football "
-                        "journey at an early age. Diagnosed with a growth hormone "
-                        "deficiency, his potential was initially overshadowed by "
-                        "health concerns. Nevertheless, his remarkable ",
+                        (
+                            "1987, in Rosario, Argentina, Messi began his"
+                            " football journey at an early age. Diagnosed with"
+                            " a growth hormone deficiency, his potential was"
+                            " initially overshadowed by health concerns."
+                            " Nevertheless, his remarkable "
+                        ),
                     ),
                     (
                         282,
@@ -75,10 +87,13 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                         45,
                         75,
                         30,
-                        "a growth hormone deficiency, his potential was initially "
-                        "overshadowed by health concerns. Nevertheless, his "
-                        "remarkable talent soon became evident, and at 13, he "
-                        "moved to Spain to join FC Barcelona, ",
+                        (
+                            "a growth hormone deficiency, his potential was"
+                            " initially overshadowed by health concerns."
+                            " Nevertheless, his remarkable talent soon became"
+                            " evident, and at 13, he moved to Spain to join FC"
+                            " Barcelona, "
+                        ),
                     ),
                     (
                         401,
@@ -86,9 +101,11 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                         60,
                         90,
                         24,
-                        "talent soon became evident, and at 13, he moved to Spain "
-                        "to join FC Barcelona, the club that shaped him into a "
-                        "global phenomenon.",
+                        (
+                            "talent soon became evident, and at 13, he moved"
+                            " to Spain to join FC Barcelona, the club that"
+                            " shaped him into a global phenomenon."
+                        ),
                     ),
                     (
                         480,
@@ -162,12 +179,13 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                 partitions = await partitioner(input_string)
 
                 self.assertEqual(model_mock.tokenizer.encode.call_count, 1)
-                model_mock.tokenizer.encode.assert_has_calls([
-                    call(input_string, add_special_tokens=False)
-                ])
+                model_mock.tokenizer.encode.assert_has_calls(
+                    [call(input_string, add_special_tokens=False)]
+                )
 
                 self.assertEqual(
-                    model_mock.tokenizer.decode.call_count, len(expected_chunks)
+                    model_mock.tokenizer.decode.call_count,
+                    len(expected_chunks),
                 )
                 self.assertEqual(model_mock.call_count, len(expected_chunks))
 

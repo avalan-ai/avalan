@@ -40,7 +40,6 @@ def get_orchestrator_settings(
     tools: list[str] | None = None,
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
-
     memory_recent = (
         memory_recent
         if memory_recent is not None
@@ -72,9 +71,11 @@ def get_orchestrator_settings(
                 "name": name if name is not None else args.name,
                 "role": role if role is not None else args.role,
                 "task": task if task is not None else args.task,
-                "instructions": instructions
-                if instructions is not None
-                else args.instructions,
+                "instructions": (
+                    instructions
+                    if instructions is not None
+                    else args.instructions
+                ),
             }.items()
             if v is not None
         },
@@ -117,7 +118,6 @@ def _tool_settings_from_mapping(
     open_files: bool = True,
 ) -> object:
     """Return tool settings from a mapping using dataclass ``settings_cls``."""
-
     values: dict[str, object] = {}
     for field in fields(settings_cls):
         key = f"tool_{prefix}_{field.name}" if prefix else field.name
@@ -156,8 +156,6 @@ def get_tool_settings(
     settings_cls: type,
     open_files: bool = True,
 ) -> object:
-    """Return tool settings from CLI ``args`` using dataclass ``settings_cls``."""
-
     return _tool_settings_from_mapping(
         args, prefix=prefix, settings_cls=settings_cls, open_files=open_files
     )
@@ -256,12 +254,12 @@ async def agent_run(
     _, _i = theme._, theme.icons
 
     specs_path = args.specifications_file
-    assert not (specs_path and args.engine_uri), (
-        "specifications file and --engine-uri are mutually exclusive"
-    )
-    assert specs_path or args.engine_uri, (
-        "specifications file or --engine-uri must be specified"
-    )
+    assert not (
+        specs_path and args.engine_uri
+    ), "specifications file and --engine-uri are mutually exclusive"
+    assert (
+        specs_path or args.engine_uri
+    ), "specifications file or --engine-uri must be specified"
     use_async_generator = not args.use_sync_generator
     display_tokens = args.display_tokens or 0
     dtokens_pick = 10 if display_tokens > 0 else 0
@@ -307,7 +305,8 @@ async def agent_run(
                 )
             else:
                 assert args.engine_uri and args.role, (
-                    "--engine-uri and --role required when no specifications file"
+                    "--engine-uri and --role required when no specifications"
+                    " file"
                 )
                 assert not args.specifications_file or not args.engine_uri
                 memory_recent = (
@@ -559,5 +558,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         lstrip_blocks=True,
     )
     template = env.get_template("blueprint.toml")
-    rendered = template.render(orchestrator=settings, browser_tool=browser_tool)
+    rendered = template.render(
+        orchestrator=settings, browser_tool=browser_tool
+    )
     console.print(Syntax(rendered, "toml"))

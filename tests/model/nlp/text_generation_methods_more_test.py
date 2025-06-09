@@ -145,7 +145,9 @@ class StringOutputTestCase(TestCase):
         model._log = MagicMock()
         inputs = {"input_ids": torch.tensor([[1, 2]])}
         with patch.object(
-            TextGenerationModel, "_generate_output", return_value=[[1, 2, 3, 4]]
+            TextGenerationModel,
+            "_generate_output",
+            return_value=[[1, 2, 3, 4]],
         ) as gen:
             result = model._string_output(
                 inputs, GenerationSettings(), None, False

@@ -14,7 +14,9 @@ from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
 
 
-class PgsqlMessageMemory(PgsqlMemory[PermanentMessage], PermanentMessageMemory):
+class PgsqlMessageMemory(
+    PgsqlMemory[PermanentMessage], PermanentMessageMemory
+):
     @classmethod
     async def create_instance(
         cls,
@@ -147,9 +149,11 @@ class PgsqlMessageMemory(PgsqlMemory[PermanentMessage], PermanentMessageMemory):
                             str(message.id),
                             str(message.agent_id),
                             str(message.model_id),
-                            str(message.session_id)
-                            if message.session_id
-                            else None,
+                            (
+                                str(message.session_id)
+                                if message.session_id
+                                else None
+                            ),
                             str(message.author),
                             message.data,
                             message.partitions,

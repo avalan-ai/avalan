@@ -23,7 +23,9 @@ class GetToolCallsTestCase(TestCase):
 
     def test_full_tool_call(self):
         calculator = CalculatorTool()
-        text = '<tool_call>{"name": "calculator", "arguments": {}} </tool_call>'
+        text = (
+            '<tool_call>{"name": "calculator", "arguments": {}} </tool_call>'
+        )
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[ToolSet(tools=[calculator])],

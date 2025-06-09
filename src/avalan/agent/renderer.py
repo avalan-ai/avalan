@@ -91,45 +91,57 @@ class TemplateEngineAgent(EngineAgent):
         template_vars.setdefault(
             "roles",
             (
-                [
-                    self._renderer.from_string(persona, template_vars)
-                    for persona in specification.role.persona
-                ]
-                if isinstance(specification.role, Role)
-                else [specification.role]
-                if isinstance(specification.role, str)
+                (
+                    [
+                        self._renderer.from_string(persona, template_vars)
+                        for persona in specification.role.persona
+                    ]
+                    if isinstance(specification.role, Role)
+                    else (
+                        [specification.role]
+                        if isinstance(specification.role, str)
+                        else specification.role
+                    )
+                )
+                if template_vars
                 else specification.role
-            )
-            if template_vars
-            else specification.role,
+            ),
         )
         template_vars.setdefault(
             "task",
-            self._renderer.from_string(specification.goal.task, template_vars)
-            if specification.goal and template_vars
-            else specification.goal.task
-            if specification.goal
-            else None,
+            (
+                self._renderer.from_string(
+                    specification.goal.task, template_vars
+                )
+                if specification.goal and template_vars
+                else specification.goal.task if specification.goal else None
+            ),
         )
         template_vars.setdefault(
             "instructions",
-            [
-                self._renderer.from_string(instruction, template_vars)
-                for instruction in specification.goal.instructions
-            ]
-            if specification.goal and template_vars
-            else specification.goal.instructions
-            if specification.goal
-            else None,
+            (
+                [
+                    self._renderer.from_string(instruction, template_vars)
+                    for instruction in specification.goal.instructions
+                ]
+                if specification.goal and template_vars
+                else (
+                    specification.goal.instructions
+                    if specification.goal
+                    else None
+                )
+            ),
         )
         template_vars.setdefault(
             "rules",
-            [
-                self._renderer.from_string(rule, template_vars)
-                for rule in specification.rules
-            ]
-            if template_vars and specification.rules
-            else specification.rules,
+            (
+                [
+                    self._renderer.from_string(rule, template_vars)
+                    for rule in specification.rules
+                ]
+                if template_vars and specification.rules
+                else specification.rules
+            ),
         )
         system_prompt = self._renderer(template_id, **template_vars)
 

@@ -31,14 +31,9 @@ class MathToolSet(ToolSet):
         self,
         *,
         exit_stack: AsyncExitStack | None = None,
-        namespace: str | None = None
+        namespace: str | None = None,
     ):
-        tools = [
-            CalculatorTool()
-        ]
+        tools = [CalculatorTool()]
         return super().__init__(
-            exit_stack=exit_stack,
-            namespace=namespace,
-            tools=tools
+            exit_stack=exit_stack, namespace=namespace, tools=tools
         )
-

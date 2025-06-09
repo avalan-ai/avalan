@@ -104,9 +104,9 @@ class ImageTextToTextModel(ImageToTextModel):
     }
 
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
-        assert self._settings.loader_class in self._loaders, (
-            f"Unrecognized loader {self._settings.loader_class}"
-        )
+        assert (
+            self._settings.loader_class in self._loaders
+        ), f"Unrecognized loader {self._settings.loader_class}"
 
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
@@ -145,17 +145,21 @@ class ImageTextToTextModel(ImageToTextModel):
 
         messages = []
         if system_prompt:
-            messages.append({
-                "role": str(MessageRole.SYSTEM),
-                "content": [{"type": "text", "text": system_prompt}],
-            })
-        messages.append({
-            "role": str(MessageRole.USER),
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
-            ],
-        })
+            messages.append(
+                {
+                    "role": str(MessageRole.SYSTEM),
+                    "content": [{"type": "text", "text": system_prompt}],
+                }
+            )
+        messages.append(
+            {
+                "role": str(MessageRole.USER),
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        )
 
         text = self._processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True

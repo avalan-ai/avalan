@@ -35,7 +35,9 @@ class OllamaClient(TextGenerationVendor):
 
     def __init__(self, base_url: str | None = None):
         assert AsyncClient, "ollama is not available"
-        self._client = AsyncClient(host=base_url) if base_url else AsyncClient()
+        self._client = (
+            AsyncClient(host=base_url) if base_url else AsyncClient()
+        )
 
     @override
     async def __call__(

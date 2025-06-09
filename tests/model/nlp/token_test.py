@@ -86,7 +86,9 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
 
             model_instance = MagicMock(spec=PreTrainedModel)
             config_mock = MagicMock()
-            type(model_instance).config = PropertyMock(return_value=config_mock)
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
             auto_model_mock.return_value = model_instance
 
             model = TokenClassificationModel(
@@ -128,7 +130,9 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 AutoModelForTokenClassification, "from_pretrained"
             ) as auto_model_mock,
             patch.object(
-                TokenClassificationModel, "_tokenize_input", return_value=inputs
+                TokenClassificationModel,
+                "_tokenize_input",
+                return_value=inputs,
             ) as tokenize_mock,
             patch("avalan.model.nlp.token.argmax") as argmax_mock,
             patch(

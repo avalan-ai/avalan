@@ -152,12 +152,15 @@ all = [
   "uvicorn==0.34.2",
 ]
 
+[tool.black]
+line-length = 79
+
 [tool.ruff]
-line-length   = 80
+line-length   = 79  # PEP 8
 indent-width  = 4
 src           = ["src"]
 fix           = true
-target-version = "py311"
+target-version = "py311" # PEP 585, 604, 634–636
 preview        = true
 
 [tool.ruff.format]
@@ -166,6 +169,33 @@ line-ending                = "auto"
 quote-style                = "double"
 docstring-code-format      = true
 skip-magic-trailing-comma  = false
+
+[tool.ruff.lint]
+select = [
+  "E",       # PEP 8 errors
+  "W",       # PEP 8 warnings
+  "F",       # Flake8 (pyflakes) errors
+  "D",       # pydocstyle (PEP 257) docstring checks
+  "UP006",   # non-PEP585 — migrate typing.List → list etc.
+  "UP007",   # non-PEP604-union — migrate Union[X, Y] → X | Y
+  "UP045",   # non-PEP604-optional — migrate Optional[X] → X | None
+]
+ignore = [
+  "D100",  # Missing docstring in public module
+  "D101",  # Missing docstring in public class
+  "D102",  # Missing docstring in public method
+  "D103",  # Missing docstring in public function
+  "D104",  # Missing docstring in public package
+  "D105",  # Missing docstring in magic method
+  "D107",  # Missing docstring in `__init__`
+  "D400",  # First line should end with a period
+]
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = false
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
 
 [tool.isort]
 profile = "black"
@@ -178,7 +208,7 @@ version = "1.0.11"
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
 isort = "^6.0.1"
-
+black = "^25.1.0"
 
 [tool.poetry-dynamic-versioning]
 enable = true

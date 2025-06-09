@@ -1,14 +1,14 @@
 from ..flow.connection import Connection
 from ..flow.node import Node
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable
 from re import match
 
 
 class Flow:
     def __init__(self) -> None:
-        self.nodes: Dict[str, Node] = {}
+        self.nodes: dict[str, Node] = {}
         self.connections: list[Connection] = []
-        self.outgoing: Dict[str, list[Connection]] = {}
+        self.outgoing: dict[str, list[Connection]] = {}
 
     def add_node(self, node: Node) -> None:
         self.nodes[node.name] = node
@@ -61,7 +61,7 @@ class Flow:
                         node.shape = nshape
             self.add_connection(src_id, dst_id, label=label)
 
-    def _parse_node(self, text: str) -> Tuple[str, str | None, str | None]:
+    def _parse_node(self, text: str) -> tuple[str, str | None, str | None]:
         m = match(r"^([A-Za-z0-9_]+)", text)
         if not m:
             return text, None, None
@@ -108,7 +108,7 @@ class Flow:
         for c in self.connections:
             indegree_map[c.dest.name] += 1
 
-        buffers: Dict[str, Dict[str, Any]] = {n: {} for n in self.nodes}
+        buffers: dict[str, dict[str, Any]] = {n: {} for n in self.nodes}
         if initial_data is not None and len(start) == 1:
             buffers[start[0].name] = {"__init__": initial_data}
 
@@ -117,7 +117,7 @@ class Flow:
             indegree_map[n.name] = 0
             ready.append(n)
 
-        outputs: Dict[str, Any] = {}
+        outputs: dict[str, Any] = {}
         while ready:
             node = ready.pop(0)
             inp = buffers[node.name]

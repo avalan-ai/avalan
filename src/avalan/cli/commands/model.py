@@ -22,7 +22,6 @@ from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.theme import Theme
 from time import perf_counter
-from typing import Tuple
 
 
 def model_display(
@@ -150,7 +149,9 @@ async def model_run(
                 model = hub.model(engine_uri.model_id)
                 console.print(
                     Padding(
-                        theme.model(model, can_access=can_access, summary=True),
+                        theme.model(
+                            model, can_access=can_access, summary=True
+                        ),
                         pad=(0, 0, 1, 0),
                     )
                 )
@@ -192,9 +193,9 @@ async def model_run(
                     input_string,
                     system_prompt=system_prompt,
                     settings=settings,
-                    stopping_criterias=[stopping_criteria]
-                    if stopping_criteria
-                    else None,
+                    stopping_criterias=(
+                        [stopping_criteria] if stopping_criteria else None
+                    ),
                     manual_sampling=display_tokens,
                     pick=dtokens_pick,
                     skip_special_tokens=args.quiet or args.skip_special_tokens,
@@ -264,9 +265,11 @@ async def model_search(
         return [
             theme.model(
                 model,
-                can_access=model_access[model.id]
-                if model.id in model_access
-                else None,
+                can_access=(
+                    model_access[model.id]
+                    if model.id in model_access
+                    else None
+                ),
             )
             for model in models
         ]
@@ -354,13 +357,15 @@ async def token_generation(
         input_token_count = (
             response.input_token_count
             if response.input_token_count
-            else orchestrator.input_token_count
-            if orchestrator
-            else lm.input_token_count(input_string)
+            else (
+                orchestrator.input_token_count
+                if orchestrator
+                else lm.input_token_count(input_string)
+            )
         )
         ttft: float | None = None
         ttnt: float | None = None
-        token_frame_list: list[Tuple[Token | None, RenderableType]] = None
+        token_frame_list: list[tuple[Token | None, RenderableType]] = None
         last_current_dtoken: Token | None = None
         tool_running_spinner: Spinner | None = None
 
@@ -429,29 +434,35 @@ async def token_generation(
             token_frames_promise = theme.tokens(
                 lm.model_id,
                 lm.tokenizer_config.tokens if lm.tokenizer_config else None,
-                lm.tokenizer_config.special_tokens
-                if lm.tokenizer_config
-                else None,
+                (
+                    lm.tokenizer_config.special_tokens
+                    if lm.tokenizer_config
+                    else None
+                ),
                 display_tokens,
                 args.display_probabilities if dtokens_pick > 0 else False,
                 dtokens_pick,
                 # Which tokens to mark as interesting
                 lambda dtoken: (
-                    dtoken.probability < args.display_probabilities_maximum
-                    or len([
-                        t
-                        for t in dtoken.tokens
-                        if t.id != dtoken.id
-                        and t.probability
-                        >= args.display_probabilities_sample_minimum
-                    ])
-                    > 0
-                )
-                if display_tokens
-                and args.display_probabilities
-                and args.display_probabilities_maximum > 0
-                and args.display_probabilities_maximum > 0
-                else None,
+                    (
+                        dtoken.probability < args.display_probabilities_maximum
+                        or len(
+                            [
+                                t
+                                for t in dtoken.tokens
+                                if t.id != dtoken.id
+                                and t.probability
+                                >= args.display_probabilities_sample_minimum
+                            ]
+                        )
+                        > 0
+                    )
+                    if display_tokens
+                    and args.display_probabilities
+                    and args.display_probabilities_maximum > 0
+                    and args.display_probabilities_maximum > 0
+                    else None
+                ),
                 text_tokens,
                 tokens or None,
                 input_token_count,

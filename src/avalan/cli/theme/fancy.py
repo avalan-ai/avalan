@@ -49,7 +49,7 @@ from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
 from textwrap import wrap
-from typing import Callable, Generator, Tuple
+from typing import Callable, Generator
 from uuid import UUID
 
 
@@ -116,7 +116,9 @@ class FancyTheme(Theme):
             "memory": "magenta",
             "memory_embedding_comparison": "dark_orange3",
             "memory_embedding_comparison_similarity": "dark_orange3",
-            "memory_embedding_comparison_similarity_high": "bold dark_olive_green3",
+            "memory_embedding_comparison_similarity_high": (
+                "bold dark_olive_green3"
+            ),
             "memory_embedding_comparison_similarity_middle": "orange_red1",
             "memory_embedding_comparison_similarity_low": "dark_red",
             "model_id": "cyan",
@@ -164,19 +166,26 @@ class FancyTheme(Theme):
         return Panel.fit(
             Padding(
                 Group(
-                    *_lf([
-                        f"[{description_color}]"
-                        f"{description}[/{description_color}]",
-                        _i["author"]
-                        + (
-                            f" [bright_black]{author}[/bright_black]"
-                            + " · "
-                            + _i["library_name"]
-                            + f" [bright_black]{library_name}[/bright_black]"
-                        )
-                        if highlight
-                        else None,
-                    ])
+                    *_lf(
+                        [
+                            (
+                                f"[{description_color}]"
+                                f"{description}[/{description_color}]"
+                            ),
+                            (
+                                _i["author"]
+                                + (
+                                    f" [bright_black]{author}[/bright_black]"
+                                    + " · "
+                                    + _i["library_name"]
+                                    + f" [bright_black]{library_name}"
+                                    + "[/bright_black]"
+                                )
+                                if highlight
+                                else None
+                            ),
+                        ]
+                    )
                 )
             ),
             title=_i["task_id"] + f" [cyan]{name}[/cyan]",
@@ -194,57 +203,75 @@ class FancyTheme(Theme):
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         models_group = Group(
-            *_lf([
-                _i["model_id"]
-                + " "
-                + ", ".join([
-                    _("{model_id} ({parameters})").format(
-                        model_id=_f("model_id", model.id, icon=False),
-                        parameters=_f(
-                            "parameters",
-                            _("{n} params").format(
-                                n=self._parameter_count(model.parameters)
-                            ),
-                            icon=False,
-                        ),
-                    )
-                    if isinstance(model, Model)
-                    else str(model)
-                    for model in models
-                ]),
-                _f(
-                    "memory",
-                    _j(
-                        ", ",
+            *_lf(
+                [
+                    _i["model_id"]
+                    + " "
+                    + ", ".join(
                         [
-                            _("short-term message")
-                            if agent.memory.has_recent_message
-                            else None,
-                            _("long-term message ({driver})").format(
-                                driver=type(
-                                    agent.memory.permanent_message
-                                ).__name__
+                            (
+                                _("{model_id} ({parameters})").format(
+                                    model_id=_f(
+                                        "model_id", model.id, icon=False
+                                    ),
+                                    parameters=_f(
+                                        "parameters",
+                                        _("{n} params").format(
+                                            n=self._parameter_count(
+                                                model.parameters
+                                            )
+                                        ),
+                                        icon=False,
+                                    ),
+                                )
+                                if isinstance(model, Model)
+                                else str(model)
                             )
-                            if agent.memory.has_permanent_message
-                            else None,
-                        ],
-                        empty=_("stateless"),
+                            for model in models
+                        ]
                     ),
-                ),
-                _f(
-                    "session",
-                    " "
-                    + _("session: {session_id}").format(
-                        session_id=_f(
-                            "session_id",
-                            str(agent.memory.permanent_message.session_id),
+                    _f(
+                        "memory",
+                        _j(
+                            ", ",
+                            [
+                                (
+                                    _("short-term message")
+                                    if agent.memory.has_recent_message
+                                    else None
+                                ),
+                                (
+                                    _("long-term message ({driver})").format(
+                                        driver=type(
+                                            agent.memory.permanent_message
+                                        ).__name__
+                                    )
+                                    if agent.memory.has_permanent_message
+                                    else None
+                                ),
+                            ],
+                            empty=_("stateless"),
+                        ),
+                    ),
+                    (
+                        _f(
+                            "session",
+                            " "
+                            + _("session: {session_id}").format(
+                                session_id=_f(
+                                    "session_id",
+                                    str(
+                                        agent.memory.permanent_message.session_id
+                                    ),
+                                )
+                            ),
                         )
+                        if agent.memory.has_permanent_message
+                        and agent.memory.permanent_message.has_session
+                        else None
                     ),
-                )
-                if agent.memory.has_permanent_message
-                and agent.memory.permanent_message.has_session
-                else None,
-            ])
+                ]
+            )
         )
         return Panel(
             models_group,
@@ -327,9 +354,9 @@ class FancyTheme(Theme):
             ]:
                 if deletable_paths:
                     panel = Panel(
-                        Group(*[
-                            _f(field_name, path) for path in deletable_paths
-                        ]),
+                        Group(
+                            *[_f(field_name, path) for path in deletable_paths]
+                        ),
                         title=title,
                     )
                     elements.append(Padding(panel, pad=(1, 0, 0, 0)))
@@ -398,10 +425,14 @@ class FancyTheme(Theme):
 
                         summarized_revision = revision[:6]
                         table.add_row(
-                            f"[cyan]{summarized_revision}[/cyan]"
-                            if new_revision
-                            else f"[bright_black]{summarized_revision}"
-                            "[/bright_black]",
+                            (
+                                f"[cyan]{summarized_revision}[/cyan]"
+                                if new_revision
+                                else (
+                                    f"[bright_black]{summarized_revision}"
+                                    "[/bright_black]"
+                                )
+                            ),
                             file.name,
                             f"[bold cyan]{naturalsize(file.size_on_disk)}"
                             "[/bold cyan]",
@@ -456,26 +487,32 @@ class FancyTheme(Theme):
     ) -> RenderableType:
         _, _i = self._, self._icons
         return Group(
-            *_lf([
-                Padding(
-                    " ".join([
-                        "[bold red]"
-                        + _i["download_access_denied"]
-                        + "[/bold red]",
-                        "[red]"
-                        + _(
-                            "Access denied while trying to download {model_id}"
-                        ).format(model_id=model_id)
-                        + "[/red]",
-                    ])
-                ),
-                Padding(
-                    _(
-                        "Ensure you accepted {model_id} license terms: {model_url}"
-                    ).format(model_id=model_id, model_url=model_url),
-                    pad=(1, 0, 0, 0),
-                ),
-            ])
+            *_lf(
+                [
+                    Padding(
+                        " ".join(
+                            [
+                                "[bold red]"
+                                + _i["download_access_denied"]
+                                + "[/bold red]",
+                                "[red]"
+                                + _(
+                                    "Access denied while trying to download"
+                                    " {model_id}"
+                                ).format(model_id=model_id)
+                                + "[/red]",
+                            ]
+                        )
+                    ),
+                    Padding(
+                        _(
+                            "Ensure you accepted {model_id} license terms:"
+                            " {model_url}"
+                        ).format(model_id=model_id, model_url=model_url),
+                        pad=(1, 0, 0, 0),
+                    ),
+                ]
+            )
         )
 
     def download_start(self, model_id: str) -> RenderableType:
@@ -491,8 +528,10 @@ class FancyTheme(Theme):
         _ = self._
         return (
             SpinnerColumn(),
-            "[progress.description]{task.description}"
-            "[progress.percentage]{task.percentage:>4.0f}%",
+            (
+                "[progress.description]{task.description}"
+                "[progress.percentage]{task.percentage:>4.0f}%"
+            ),
             BarColumn(bar_width=None),
             "[",
             MofNCompleteColumn(),
@@ -504,12 +543,14 @@ class FancyTheme(Theme):
     def download_finished(self, model_id: str, path: str) -> RenderableType:
         _, _i = self._, self._icons
         return Padding(
-            " ".join([
-                "[bold green]" + _i["download_finished"] + "[/bold green]",
-                _("Downloaded model {model_id} to {path}").format(
-                    model_id=model_id, path=path
-                ),
-            ])
+            " ".join(
+                [
+                    "[bold green]" + _i["download_finished"] + "[/bold green]",
+                    _("Downloaded model {model_id} to {path}").format(
+                        model_id=model_id, path=path
+                    ),
+                ]
+            )
         )
 
     def logging_in(self, domain: str) -> str:
@@ -622,9 +663,11 @@ class FancyTheme(Theme):
             stats.add_column(_("‖v‖"))
             stats.add_row(
                 *(
-                    clamp(x, format="{:.4g}")
-                    if isinstance(x, float)
-                    else intcomma(x)
+                    (
+                        clamp(x, format="{:.4g}")
+                        if isinstance(x, float)
+                        else intcomma(x)
+                    )
                     for x in (
                         total_tokens,
                         embeddings.size,
@@ -640,10 +683,12 @@ class FancyTheme(Theme):
         assert peek_table or stats
 
         return Group(
-            *_lf([
-                Align(peek_table, align="center") if peek_table else None,
-                Align(stats, align="center") if stats else None,
-            ])
+            *_lf(
+                [
+                    Align(peek_table, align="center") if peek_table else None,
+                    Align(stats, align="center") if stats else None,
+                ]
+            )
         )
 
     def memory_embeddings_comparison(
@@ -669,9 +714,11 @@ class FancyTheme(Theme):
             field_class = (
                 "memory_embedding_comparison_similarity_high"
                 if similarity.l2_distance <= 0.80
-                else "memory_embedding_comparison_similarity_middle"
-                if similarity.l2_distance <= 1.2
-                else "memory_embedding_comparison_similarity_low"
+                else (
+                    "memory_embedding_comparison_similarity_middle"
+                    if similarity.l2_distance <= 1.2
+                    else "memory_embedding_comparison_similarity_low"
+                )
             )
 
             table.add_row(
@@ -709,7 +756,10 @@ class FancyTheme(Theme):
         return Align(table, align="center")
 
     def memory_embeddings_search(
-        self, matches: list[SearchMatch], *args, match_preview_length: int = 300
+        self,
+        matches: list[SearchMatch],
+        *args,
+        match_preview_length: int = 300,
     ) -> RenderableType:
         assert matches
         _, _f = self._, self._f
@@ -727,9 +777,11 @@ class FancyTheme(Theme):
             field_class = (
                 "memory_embedding_comparison_similarity_high"
                 if match.l2_distance <= 0.80
-                else "memory_embedding_comparison_similarity_middle"
-                if match.l2_distance <= 1.2
-                else "memory_embedding_comparison_similarity_low"
+                else (
+                    "memory_embedding_comparison_similarity_middle"
+                    if match.l2_distance <= 1.2
+                    else "memory_embedding_comparison_similarity_low"
+                )
             )
             is_most = i == 0
             table.add_row(
@@ -740,9 +792,11 @@ class FancyTheme(Theme):
                 ),
                 _f(
                     field_class,
-                    match.match
-                    if len(match.match) <= match_preview_length
-                    else match.match[:match_preview_length] + "...",
+                    (
+                        match.match
+                        if len(match.match) <= match_preview_length
+                        else match.match[:match_preview_length] + "..."
+                    ),
                     icon=False,
                 ),
                 _f(
@@ -816,133 +870,190 @@ class FancyTheme(Theme):
         expand: bool = False,
         summary: bool = False,
     ) -> RenderableType:
-        assert (not expand and not summary) or (expand ^ summary), (
-            "From expand and summary, only one can be set"
-        )
+        assert (not expand and not summary) or (
+            expand ^ summary
+        ), "From expand and summary, only one can be set"
         _, _f, _i = self._, self._f, self._icons
 
         return Panel(
             Group(
-                *_lf([
-                    _j(
-                        " · ",
-                        [
-                            _j(
-                                " ",
-                                [
-                                    _f(
-                                        "checking_access",
-                                        _("checking access"),
-                                    )
-                                    if can_access is None
-                                    else _f("can_access", _("access granted"))
-                                    if can_access
-                                    else _f("no_access", _("access denied")),
-                                    _f("author", model.author),
-                                    _f("license", model.license)
-                                    if expand and model.license
-                                    else None,
-                                    _f("gated", _("gated"))
-                                    if model.gated
-                                    else None,
-                                    _f("private", _("private"))
-                                    if model.private
-                                    else None,
-                                    _f("disabled", _("disabled"))
-                                    if model.disabled
-                                    else None,
-                                ],
-                            ),
-                            (
-                                _i["created_at"]
-                                + " "
-                                + _j(
-                                    ", ",
+                *_lf(
+                    [
+                        _j(
+                            " · ",
+                            [
+                                _j(
+                                    " ",
                                     [
-                                        _f(
-                                            "created_at",
-                                            model.created_at,
-                                            _("created: "),
-                                            icon=False,
-                                        )
-                                        if expand
-                                        else None,
-                                        _f(
-                                            "updated_at",
-                                            model.updated_at,
-                                            _("updated: "),
-                                            icon=False,
+                                        (
+                                            _f(
+                                                "checking_access",
+                                                _("checking access"),
+                                            )
+                                            if can_access is None
+                                            else (
+                                                _f(
+                                                    "can_access",
+                                                    _("access granted"),
+                                                )
+                                                if can_access
+                                                else _f(
+                                                    "no_access",
+                                                    _("access denied"),
+                                                )
+                                            )
+                                        ),
+                                        _f("author", model.author),
+                                        (
+                                            _f("license", model.license)
+                                            if expand and model.license
+                                            else None
+                                        ),
+                                        (
+                                            _f("gated", _("gated"))
+                                            if model.gated
+                                            else None
+                                        ),
+                                        (
+                                            _f("private", _("private"))
+                                            if model.private
+                                            else None
+                                        ),
+                                        (
+                                            _f("disabled", _("disabled"))
+                                            if model.disabled
+                                            else None
                                         ),
                                     ],
-                                )
+                                ),
+                                (
+                                    (
+                                        _i["created_at"]
+                                        + " "
+                                        + _j(
+                                            ", ",
+                                            [
+                                                (
+                                                    _f(
+                                                        "created_at",
+                                                        model.created_at,
+                                                        _("created: "),
+                                                        icon=False,
+                                                    )
+                                                    if expand
+                                                    else None
+                                                ),
+                                                _f(
+                                                    "updated_at",
+                                                    model.updated_at,
+                                                    _("updated: "),
+                                                    icon=False,
+                                                ),
+                                            ],
+                                        )
+                                    )
+                                    if not summary
+                                    else None
+                                ),
+                            ],
+                        ),
+                        (
+                            _j(
+                                " · ",
+                                [
+                                    (
+                                        _f("model_type", model.model_type)
+                                        + (
+                                            " ("
+                                            + ", ".join(model.architectures)
+                                            + ")"
+                                            if expand and model.architectures
+                                            else ""
+                                        )
+                                        if model.model_type
+                                        else None
+                                    ),
+                                    (
+                                        _f("library_name", model.library_name)
+                                        if model.library_name
+                                        else None
+                                    ),
+                                    (
+                                        _f("inference", model.inference)
+                                        if expand and model.inference
+                                        else None
+                                    ),
+                                    (
+                                        _f("pipeline_tag", model.pipeline_tag)
+                                        if model.pipeline_tag
+                                        else None
+                                    ),
+                                ],
                             )
                             if not summary
-                            else None,
-                        ],
-                    ),
-                    _j(
-                        " · ",
-                        [
-                            _f("model_type", model.model_type)
-                            + (
-                                " (" + ", ".join(model.architectures) + ")"
-                                if expand and model.architectures
-                                else ""
-                            )
-                            if model.model_type
-                            else None,
-                            _f("library_name", model.library_name)
-                            if model.library_name
-                            else None,
-                            _f("inference", model.inference)
-                            if expand and model.inference
-                            else None,
-                            _f("pipeline_tag", model.pipeline_tag)
-                            if model.pipeline_tag
-                            else None,
-                        ],
-                    )
-                    if not summary
-                    else None,
-                    Rule(style="gray30") if expand and model.tags else None,
-                    _f("tags", " " + ", ".join(model.tags))
-                    if expand and model.tags
-                    else None,
-                ])
+                            else None
+                        ),
+                        (
+                            Rule(style="gray30")
+                            if expand and model.tags
+                            else None
+                        ),
+                        (
+                            _f("tags", " " + ", ".join(model.tags))
+                            if expand and model.tags
+                            else None
+                        ),
+                    ]
+                )
             ),
             # Model ID
-            title=_f("model_id", model.id)
-            + (
-                " "
-                + _j(
+            title=(
+                _f("model_id", model.id)
+                + (
+                    " "
+                    + _j(
+                        " ",
+                        [
+                            _f(
+                                "parameters",
+                                self._parameter_count(model.parameters),
+                            ),
+                            (
+                                _f(
+                                    "parameter_types",
+                                    ", ".join(model.parameter_types),
+                                )
+                                if expand and model.parameter_types
+                                else None
+                            ),
+                            _("parameters") if expand else _("params"),
+                        ],
+                    )
+                )
+                if not summary
+                else ""
+            ),
+            # Stats
+            subtitle=(
+                _j(
                     " ",
                     [
-                        _f(
-                            "parameters",
-                            self._parameter_count(model.parameters),
+                        (
+                            _f("downloads", model.downloads)
+                            if model.downloads
+                            else None
                         ),
-                        _f("parameter_types", ", ".join(model.parameter_types))
-                        if expand and model.parameter_types
-                        else None,
-                        _("parameters") if expand else _("params"),
+                        _f("likes", model.likes) if model.likes else None,
+                        (
+                            _f("ranking", model.ranking)
+                            if model.ranking
+                            else None
+                        ),
                     ],
                 )
-            )
-            if not summary
-            else "",
-            # Stats
-            subtitle=_j(
-                " ",
-                [
-                    _f("downloads", model.downloads)
-                    if model.downloads
-                    else None,
-                    _f("likes", model.likes) if model.likes else None,
-                    _f("ranking", model.ranking) if model.ranking else None,
-                ],
-            )
-            if expand
-            else None,
+                if expand
+                else None
+            ),
             box=box.SQUARE,
         )
 
@@ -956,30 +1067,43 @@ class FancyTheme(Theme):
     ) -> RenderableType:
         _ = self._
         return Group(
-            *_lf([
-                Padding(
-                    self._sentence_transformer_model_config(
-                        model_config, is_runnable=is_runnable, summary=summary
-                    )
-                    if isinstance(model_config, SentenceTransformerModelConfig)
-                    else self._model_config(
-                        model_config, is_runnable=is_runnable, summary=summary
+            *_lf(
+                [
+                    (
+                        Padding(
+                            (
+                                self._sentence_transformer_model_config(
+                                    model_config,
+                                    is_runnable=is_runnable,
+                                    summary=summary,
+                                )
+                                if isinstance(
+                                    model_config,
+                                    SentenceTransformerModelConfig,
+                                )
+                                else self._model_config(
+                                    model_config,
+                                    is_runnable=is_runnable,
+                                    summary=summary,
+                                )
+                            ),
+                            pad=(0, 0, 0, 0),
+                        )
+                        if model_config
+                        else None
                     ),
-                    pad=(0, 0, 0, 0),
-                )
-                if model_config
-                else None,
-                Padding(
-                    Panel(
-                        self.tokenizer_config(
-                            tokenizer_config, summary=summary
+                    Padding(
+                        Panel(
+                            self.tokenizer_config(
+                                tokenizer_config, summary=summary
+                            ),
+                            title=_("Tokenizer settings"),
+                            border_style="bright_black",
                         ),
-                        title=_("Tokenizer settings"),
-                        border_style="bright_black",
+                        pad=(0, 0, 0, 0),
                     ),
-                    pad=(0, 0, 0, 0),
-                ),
-            ])
+                ]
+            )
         )
 
     def _sentence_transformer_model_config(
@@ -1013,9 +1137,11 @@ class FancyTheme(Theme):
         if not summary:
             config_table.add_row(
                 _("Truncate dimension"),
-                intcomma(config.truncate_dimension)
-                if config.truncate_dimension
-                else _("No truncation"),
+                (
+                    intcomma(config.truncate_dimension)
+                    if config.truncate_dimension
+                    else _("No truncation")
+                ),
             )
 
         return Align(config_table, align="center")
@@ -1102,15 +1228,19 @@ class FancyTheme(Theme):
 
             config_table.add_row(
                 _("Returns all attentions"),
-                "[bold]" + _("Yes") + "[/bold]"
-                if config.output_attentions
-                else _("No"),
+                (
+                    "[bold]" + _("Yes") + "[/bold]"
+                    if config.output_attentions
+                    else _("No")
+                ),
             )
             config_table.add_row(
                 _("Returns all hidden states"),
-                "[bold]" + _("Yes") + "[/bold]"
-                if config.output_hidden_states
-                else _("No"),
+                (
+                    "[bold]" + _("Yes") + "[/bold]"
+                    if config.output_hidden_states
+                    else _("No")
+                ),
             )
 
             if config.torch_dtype:
@@ -1161,22 +1291,24 @@ class FancyTheme(Theme):
     ):
         _, _f, _i = self._, self._f, self._icons
         group = Group(
-            *_lf([
-                Panel(
-                    engine_message.message.content,
-                    title=(
-                        _i["agent_output"] + " " + _f("id", agent.name)
-                        if engine_message.is_from_agent
-                        else _i["user_input"]
-                        + "  "
-                        + _f("participant_id", participant_id)
-                    ),
-                    title_align="left",
-                    expand=True,
-                    box=box.SQUARE,
-                )
-                for engine_message in messages
-            ])
+            *_lf(
+                [
+                    Panel(
+                        engine_message.message.content,
+                        title=(
+                            _i["agent_output"] + " " + _f("id", agent.name)
+                            if engine_message.is_from_agent
+                            else _i["user_input"]
+                            + "  "
+                            + _f("participant_id", participant_id)
+                        ),
+                        title_align="left",
+                        expand=True,
+                        box=box.SQUARE,
+                    )
+                    for engine_message in messages
+                ]
+            )
         )
         return group
 
@@ -1201,29 +1333,31 @@ class FancyTheme(Theme):
     ):
         _, _f, _i = self._, self._f, self._icons
         group = Group(
-            *_lf([
-                Panel(
-                    engine_message.message.content,
-                    title=(
-                        _i["agent_output"] + " " + _f("id", agent.name)
-                        if engine_message.is_from_agent
-                        else _i["user_input"]
-                        + "  "
-                        + _f("participant_id", participant_id)
-                    ),
-                    title_align="left",
-                    subtitle=_("Matching score: {score}").format(
-                        score=_f(
-                            "score",
-                            clamp(engine_message.score, format="{:.8g}"),
-                        )
-                    ),
-                    subtitle_align="left",
-                    expand=True,
-                    box=box.SQUARE,
-                )
-                for engine_message in messages
-            ])
+            *_lf(
+                [
+                    Panel(
+                        engine_message.message.content,
+                        title=(
+                            _i["agent_output"] + " " + _f("id", agent.name)
+                            if engine_message.is_from_agent
+                            else _i["user_input"]
+                            + "  "
+                            + _f("participant_id", participant_id)
+                        ),
+                        title_align="left",
+                        subtitle=_("Matching score: {score}").format(
+                            score=_f(
+                                "score",
+                                clamp(engine_message.score, format="{:.8g}"),
+                            )
+                        ),
+                        subtitle_align="left",
+                        expand=True,
+                        box=box.SQUARE,
+                    )
+                    for engine_message in messages
+                ]
+            )
         )
         return group
 
@@ -1232,23 +1366,27 @@ class FancyTheme(Theme):
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         group = Group(
-            *_lf([
-                Panel(
-                    memory.data,
-                    title=(_i["memory"] + " " + _f("id", memory.identifier)),
-                    title_align="left",
-                    subtitle=_(
-                        "Participant: {participant} – Namespace: {ns}"
-                    ).format(
-                        participant=_f("participant_id", participant_id),
-                        ns=_f("id", namespace),
-                    ),
-                    subtitle_align="left",
-                    expand=True,
-                    box=box.SQUARE,
-                )
-                for memory in memories
-            ])
+            *_lf(
+                [
+                    Panel(
+                        memory.data,
+                        title=(
+                            _i["memory"] + " " + _f("id", memory.identifier)
+                        ),
+                        title_align="left",
+                        subtitle=_(
+                            "Participant: {participant} – Namespace: {ns}"
+                        ).format(
+                            participant=_f("participant_id", participant_id),
+                            ns=_f("id", namespace),
+                        ),
+                        subtitle_align="left",
+                        expand=True,
+                        box=box.SQUARE,
+                    )
+                    for memory in memories
+                ]
+            )
         )
         return group
 
@@ -1278,7 +1416,9 @@ class FancyTheme(Theme):
                 )
             config_table.add_row(
                 _("Special tokens"),
-                ", ".join([f"[cyan]{t}[/cyan]" for t in config.special_tokens]),
+                ", ".join(
+                    [f"[cyan]{t}[/cyan]" for t in config.special_tokens]
+                ),
             )
         config_table.add_row(
             _("Maximum sequence length"),
@@ -1305,27 +1445,40 @@ class FancyTheme(Theme):
         token_panels = [
             Panel(
                 Padding(
-                    f"[gray50]#{dtoken.id}[/gray50] {dtoken.token}"
-                    if display_details
-                    else Text(
-                        f"{dtoken.token}",
-                        style="white on dark_green"
-                        if current_dtoken and dtoken == current_dtoken
-                        else None,
+                    (
+                        f"[gray50]#{dtoken.id}[/gray50] {dtoken.token}"
+                        if display_details
+                        else Text(
+                            f"{dtoken.token}",
+                            style=(
+                                "white on dark_green"
+                                if current_dtoken and dtoken == current_dtoken
+                                else None
+                            ),
+                        )
                     ),
                     pad=(0, 1, 0, 1),
                 ),
                 padding=(1 if not compact_dtokens else 0, 0),
-                border_style="green on dark_green"
-                if current_dtoken and dtoken == current_dtoken
-                else "cyan"
-                if dtoken in dtokens_selected
-                else "magenta"
-                if (
-                    (added_tokens and dtoken.token in added_tokens)
-                    or (special_tokens and dtoken.token in special_tokens)
-                )
-                else "gray30",
+                border_style=(
+                    "green on dark_green"
+                    if current_dtoken and dtoken == current_dtoken
+                    else (
+                        "cyan"
+                        if dtoken in dtokens_selected
+                        else (
+                            "magenta"
+                            if (
+                                (added_tokens and dtoken.token in added_tokens)
+                                or (
+                                    special_tokens
+                                    and dtoken.token in special_tokens
+                                )
+                            )
+                            else "gray30"
+                        )
+                    )
+                ),
                 box=box.SQUARE,
             )
             for dtoken in dtokens
@@ -1372,7 +1525,7 @@ class FancyTheme(Theme):
         limit_think_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[Tuple[Token | None, RenderableType], None, None]:
+    ) -> Generator[tuple[Token | None, RenderableType], None, None]:
         _, _n, _f, _l = self._, self._n, self._f, logger.debug
 
         # Prepare data for rendering
@@ -1436,60 +1589,82 @@ class FancyTheme(Theme):
 
         # Build think and, EventStats answer panels
         progress_title = " · ".join(
-            _lf([
-                _f(
-                    "input_token_count",
-                    _("{total_tokens} input tokens").format(
-                        total_tokens=input_token_count
+            _lf(
+                [
+                    _f(
+                        "input_token_count",
+                        _("{total_tokens} input tokens").format(
+                            total_tokens=input_token_count
+                        ),
                     ),
-                ),
-                _f(
-                    "total_tokens",
-                    _("{total_tokens} output tokens").format(
-                        total_tokens=total_tokens
+                    _f(
+                        "total_tokens",
+                        _("{total_tokens} output tokens").format(
+                            total_tokens=total_tokens
+                        ),
                     ),
-                ),
-                _f("ttft", _("ttft: {ttft} s").format(ttft=f"{ttft:.2f}"))
-                if ttft
-                else None,
-                _f("ttnt", _("ttnt: {ttnt} s").format(ttnt=f"{ttnt:.2f}"))
-                if ttnt
-                else None,
-                _f(
-                    "tokens_rate",
-                    _("{tokens_rate} t/s").format(
-                        tokens_rate=f"{total_tokens / ellapsed:.2f}"
+                    (
+                        _f(
+                            "ttft",
+                            _("ttft: {ttft} s").format(ttft=f"{ttft:.2f}"),
+                        )
+                        if ttft
+                        else None
                     ),
-                ),
-                _f(
-                    "events",
-                    _("{total} events").format(
-                        total=event_stats.total_triggers
+                    (
+                        _f(
+                            "ttnt",
+                            _("ttnt: {ttnt} s").format(ttnt=f"{ttnt:.2f}"),
+                        )
+                        if ttnt
+                        else None
                     ),
-                )
-                if event_stats
-                else None,
-                _f(
-                    "tool_calls",
-                    _("{total} tool calls").format(
-                        total=event_stats.triggers[EventType.TOOL_EXECUTE]
+                    _f(
+                        "tokens_rate",
+                        _("{tokens_rate} t/s").format(
+                            tokens_rate=f"{total_tokens / ellapsed:.2f}"
+                        ),
                     ),
-                )
-                if event_stats
-                and EventType.TOOL_EXECUTE in event_stats.triggers
-                and event_stats.triggers[EventType.TOOL_EXECUTE]
-                else None,
-                _f(
-                    "tool_call_results",
-                    _("{total} results").format(
-                        total=event_stats.triggers[EventType.TOOL_RESULT]
+                    (
+                        _f(
+                            "events",
+                            _("{total} events").format(
+                                total=event_stats.total_triggers
+                            ),
+                        )
+                        if event_stats
+                        else None
                     ),
-                )
-                if event_stats
-                and EventType.TOOL_RESULT in event_stats.triggers
-                and event_stats.triggers[EventType.TOOL_RESULT]
-                else None,
-            ])
+                    (
+                        _f(
+                            "tool_calls",
+                            _("{total} tool calls").format(
+                                total=event_stats.triggers[
+                                    EventType.TOOL_EXECUTE
+                                ]
+                            ),
+                        )
+                        if event_stats
+                        and EventType.TOOL_EXECUTE in event_stats.triggers
+                        and event_stats.triggers[EventType.TOOL_EXECUTE]
+                        else None
+                    ),
+                    (
+                        _f(
+                            "tool_call_results",
+                            _("{total} results").format(
+                                total=event_stats.triggers[
+                                    EventType.TOOL_RESULT
+                                ]
+                            ),
+                        )
+                        if event_stats
+                        and EventType.TOOL_RESULT in event_stats.triggers
+                        and event_stats.triggers[EventType.TOOL_RESULT]
+                        else None
+                    ),
+                ]
+            )
         )
         think_pannel = (
             Panel(
@@ -1500,9 +1675,11 @@ class FancyTheme(Theme):
                 title_align="left",
                 subtitle=progress_title if not wrapped_output else None,
                 subtitle_align="right",
-                height=think_height + 2 * think_padding
-                if limit_think_height
-                else None,
+                height=(
+                    think_height + 2 * think_padding
+                    if limit_think_height
+                    else None
+                ),
                 padding=think_padding,
                 expand=True,
                 box=box.SQUARE,
@@ -1513,15 +1690,19 @@ class FancyTheme(Theme):
         answer_panel = (
             Panel(
                 wrapped_output,
-                title=_("{model_id} response").format(
-                    model_id=_f("id", model_id)
-                )
-                if think_wrapped_output is None
-                else None,
+                title=(
+                    _("{model_id} response").format(
+                        model_id=_f("id", model_id)
+                    )
+                    if think_wrapped_output is None
+                    else None
+                ),
                 title_align="left",
-                subtitle=progress_title
-                if wrapped_output or not think_wrapped_output
-                else None,
+                subtitle=(
+                    progress_title
+                    if wrapped_output or not think_wrapped_output
+                    else None
+                ),
                 subtitle_align="right",
                 height=height + 2 * padding if limit_answer_height else None,
                 padding=padding,
@@ -1534,49 +1715,61 @@ class FancyTheme(Theme):
 
         tool_event_log: list[str] | None = _lf(
             [
-                _(
-                    'Executed tool {tool} call #{call_id} with {total_arguments} arguments: {arguments}. Got result "{result}" in {ellapsed_with_unit}.'
-                ).format(
-                    tool="[gray78]"
-                    + event.payload["result"].call.name
-                    + "[/gray78]",
-                    ellapsed_with_unit="[gray78]"
-                    + naturaldelta(event.ellapsed, minimum_unit="microseconds")
-                    + "[/gray78]",
-                    call_id="[gray78]"
-                    + str(event.payload["result"].call.id)[:8]
-                    + "[/gray78]",
-                    total_arguments=len(
-                        event.payload["result"].call.arguments or []
-                    ),
-                    arguments="[gray78]"
-                    + (
-                        s
-                        if len(s := str(event.payload["result"].call.arguments))
-                        <= 50
-                        else s[:47] + "..."
+                (
+                    _(
+                        "Executed tool {tool} call #{call_id} with"
+                        " {total_arguments} arguments: {arguments}. Got result"
+                        ' "{result}" in {ellapsed_with_unit}.'
+                    ).format(
+                        tool="[gray78]"
+                        + event.payload["result"].call.name
+                        + "[/gray78]",
+                        ellapsed_with_unit="[gray78]"
+                        + naturaldelta(
+                            event.ellapsed, minimum_unit="microseconds"
+                        )
+                        + "[/gray78]",
+                        call_id="[gray78]"
+                        + str(event.payload["result"].call.id)[:8]
+                        + "[/gray78]",
+                        total_arguments=len(
+                            event.payload["result"].call.arguments or []
+                        ),
+                        arguments="[gray78]"
+                        + (
+                            s
+                            if len(
+                                s := str(
+                                    event.payload["result"].call.arguments
+                                )
+                            )
+                            <= 50
+                            else s[:47] + "..."
+                        )
+                        + "[/gray78]",
+                        result="[spring_green3]"
+                        + event.payload["result"].result
+                        + "[/spring_green3]",
                     )
-                    + "[/gray78]",
-                    result="[spring_green3]"
-                    + event.payload["result"].result
-                    + "[/spring_green3]",
+                    if event.type == EventType.TOOL_RESULT
+                    and event.payload["result"]
+                    else (
+                        _n(
+                            "Executing {total_calls} tool: {calls}",
+                            "Executing {total_calls} tools: {calls}",
+                            len(event.payload),
+                        ).format(
+                            total_calls=len(event.payload),
+                            calls="[gray78]"
+                            + "[/gray78], [gray78]".join(
+                                [call.name for call in event.payload]
+                            )
+                            + "[/gray78]",
+                        )
+                        if event.type == EventType.TOOL_PROCESS
+                        else None
+                    )
                 )
-                if event.type == EventType.TOOL_RESULT
-                and event.payload["result"]
-                else _n(
-                    "Executing {total_calls} tool: {calls}",
-                    "Executing {total_calls} tools: {calls}",
-                    len(event.payload),
-                ).format(
-                    total_calls=len(event.payload),
-                    calls="[gray78]"
-                    + "[/gray78], [gray78]".join([
-                        call.name for call in event.payload
-                    ])
-                    + "[/gray78]",
-                )
-                if event.type == EventType.TOOL_PROCESS
-                else None
                 for event in tool_events
             ]
             if tool_events and tool_events_limit is None or tool_events_limit
@@ -1607,19 +1800,23 @@ class FancyTheme(Theme):
         if tool_running_spinner and len(tool_event_calls) != len(
             tool_event_results
         ):
-            tool_running_panel = Padding(tool_running_spinner, pad=(1, 0, 1, 0))
+            tool_running_panel = Padding(
+                tool_running_spinner, pad=(1, 0, 1, 0)
+            )
 
         # Quick return of no need for token details
         if display_token_size is None or tokens is None:
             yield (
                 None,
                 Group(
-                    *_lf([
-                        think_pannel or None,
-                        tools_panel or None,
-                        tool_running_panel or None,
-                        answer_panel or None,
-                    ])
+                    *_lf(
+                        [
+                            think_pannel or None,
+                            tools_panel or None,
+                            tool_running_panel or None,
+                            answer_panel or None,
+                        ]
+                    )
                 ),
             )
             return
@@ -1642,15 +1839,18 @@ class FancyTheme(Theme):
                     current_selected_index = (
                         0
                         if dtokens_selected_last_index_yielded is None
-                        else dtokens_selected_last_index_yielded + 1
-                        if dtokens_selected_last_index_yielded + 1
-                        < dtokens_total_selected
-                        else None
+                        else (
+                            dtokens_selected_last_index_yielded + 1
+                            if dtokens_selected_last_index_yielded + 1
+                            < dtokens_total_selected
+                            else None
+                        )
                     )
                     _l(
-                        f"Selected {current_selected_index} selected token for "
-                        f"yielding, with {dtokens_selected_last_index_yielded} "
-                        "being the previous yielded"
+                        f"Selected {current_selected_index} selected token for"
+                        " yielding, with"
+                        f" {dtokens_selected_last_index_yielded} being the"
+                        " previous yielded"
                     )
 
                     current_dtoken = (
@@ -1667,7 +1867,9 @@ class FancyTheme(Theme):
                         _l(
                             f'Selected "{current_dtoken.token}" as '
                             "interesting token, with "
-                            + clamp(current_dtoken.probability, format="{:.4g}")
+                            + clamp(
+                                current_dtoken.probability, format="{:.4g}"
+                            )
                             + f"and {current_dtoken.tokens}"
                         )
 
@@ -1694,10 +1896,12 @@ class FancyTheme(Theme):
                         else None
                     )
                     labels = (
-                        " ".join([
-                            f"{i + 1}"
-                            for i in range(len(current_symmetric_data))
-                        ])
+                        " ".join(
+                            [
+                                f"{i + 1}"
+                                for i in range(len(current_symmetric_data))
+                            ]
+                        )
                         if current_symmetric_data
                         else " "
                     )
@@ -1710,11 +1914,13 @@ class FancyTheme(Theme):
                             0 for i in range(pick)
                         ]:
                             if value * chart_height >= level:
-                                chart_row += "".join([
-                                    "[green]",
-                                    "█ ",
-                                    "[/green]",
-                                ])
+                                chart_row += "".join(
+                                    [
+                                        "[green]",
+                                        "█ ",
+                                        "[/green]",
+                                    ]
+                                )
                             else:
                                 chart_row += "  "
                         chart_rows.append(chart_row)
@@ -1756,36 +1962,53 @@ class FancyTheme(Theme):
 
                 # Build token distribution panel
                 tokens_distribution_panel = Panel(
-                    Group(
-                        *_lf([
-                            tokens_panel,
-                            Align(
-                                Panel.fit(
-                                    f" [gray50]#{current_dtoken.id}[/gray50]"
-                                    f" {current_dtoken.token} ",
-                                    border_style="green",
-                                    padding=0,
-                                ),
-                                align="center",
+                    (
+                        Group(
+                            *_lf(
+                                [
+                                    tokens_panel,
+                                    (
+                                        Align(
+                                            Panel.fit(
+                                                " [gray50]"
+                                                + f"#{current_dtoken.id}"
+                                                + "[/gray50]"
+                                                f" {current_dtoken.token} ",
+                                                border_style="green",
+                                                padding=0,
+                                            ),
+                                            align="center",
+                                        )
+                                        if current_dtoken
+                                        else None
+                                    ),
+                                    (
+                                        chart
+                                        if current_dtoken and chart
+                                        else None
+                                    ),
+                                    (
+                                        Align(
+                                            Columns(
+                                                _lf(
+                                                    [
+                                                        dbatch_first_table,
+                                                        dbatch_second_table,
+                                                    ]
+                                                )
+                                            ),
+                                            align="center",
+                                        )
+                                        if dbatch_first_table
+                                        or dbatch_second_table
+                                        else None
+                                    ),
+                                ]
                             )
-                            if current_dtoken
-                            else None,
-                            chart if current_dtoken and chart else None,
-                            Align(
-                                Columns(
-                                    _lf([
-                                        dbatch_first_table,
-                                        dbatch_second_table,
-                                    ])
-                                ),
-                                align="center",
-                            )
-                            if dbatch_first_table or dbatch_second_table
-                            else None,
-                        ])
-                    )
-                    if chart
-                    else tokens_panel,
+                        )
+                        if chart
+                        else tokens_panel
+                    ),
                     title=_("token distribution"),
                     title_align="left",
                     border_style="bright_black",
@@ -1794,15 +2017,19 @@ class FancyTheme(Theme):
             yield (
                 current_dtoken,
                 Group(
-                    *_lf([
-                        think_pannel or None,
-                        tools_panel or None,
-                        tool_running_panel or None,
-                        answer_panel or None,
-                        tokens_distribution_panel
-                        if tokens and tokens_distribution_panel
-                        else None,
-                    ])
+                    *_lf(
+                        [
+                            think_pannel or None,
+                            tools_panel or None,
+                            tool_running_panel or None,
+                            answer_panel or None,
+                            (
+                                tokens_distribution_panel
+                                if tokens and tokens_distribution_panel
+                                else None
+                            ),
+                        ]
+                    )
                 ),
             )
 
@@ -1835,16 +2062,18 @@ class FancyTheme(Theme):
         table.add_column(justify="right")
         table.add_column()
         for dtoken in dbatch:
-            is_current_token = current_dtoken and current_dtoken.id == dtoken.id
+            is_current_token = (
+                current_dtoken and current_dtoken.id == dtoken.id
+            )
             is_max_dtoken = max_dtoken and max_dtoken.id == dtoken.id
             dtoken_color = (
                 "bold green"
                 if is_current_token and is_max_dtoken
-                else "green"
-                if is_current_token
-                else "cyan"
-                if is_max_dtoken
-                else dtable_color
+                else (
+                    "green"
+                    if is_current_token
+                    else "cyan" if is_max_dtoken else dtable_color
+                )
             )
             table.add_row(
                 f"[gray50]#{dtoken.id}[/gray50]",
@@ -1869,17 +2098,22 @@ class FancyTheme(Theme):
                     _j(
                         " - ",
                         [
-                            " ".join([
-                                _i["avalan"] + f" [link={url}]{name}[/link]",
-                                f"[version]{version}[/version]",
-                                "[bright_black]"
-                                + _i["license"]
-                                + f" {license_text}[/bright_black]",
-                            ]),
+                            " ".join(
+                                [
+                                    _i["avalan"]
+                                    + f" [link={url}]{name}[/link]",
+                                    f"[version]{version}[/version]",
+                                    "[bright_black]"
+                                    + _i["license"]
+                                    + f" {license_text}[/bright_black]",
+                                ]
+                            ),
                             _f("user", user.name) if user else None,
-                            _f("access_token_name", user.access_token_name)
-                            if user
-                            else None,
+                            (
+                                _f("access_token_name", user.access_token_name)
+                                if user
+                                else None
+                            ),
                         ],
                     )
                 ),
@@ -1900,10 +2134,7 @@ class FancyTheme(Theme):
 
     @staticmethod
     def _symmetric_indices(data: list[float]) -> list[float]:
-        """
-        Sorts the data in descending order and arranges them so that
-        the highest values are in the center, with lower values at the edges.
-        """
+        """Sorts data desc so that highest values in center lower at edge"""
         assert data
         sorted_data = sorted(data, reverse=True)
         n = len(sorted_data)

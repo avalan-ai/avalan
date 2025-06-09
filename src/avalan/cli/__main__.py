@@ -69,7 +69,6 @@ def add_agent_settings_arguments(parser: ArgumentParser) -> ArgumentParser:
     ArgumentParser
         The created argument group with all settings options.
     """
-
     group = parser.add_argument_group("inline agent settings")
     group.add_argument("--engine-uri", type=str, help="Agent engine URI")
     group.add_argument("--name", type=str, help="Agent name")
@@ -147,7 +146,6 @@ def add_tool_settings_arguments(
     ArgumentParser
         The argument group created.
     """
-
     group = parser.add_argument_group(f"{prefix} tool settings")
 
     for field in fields(settings_cls):
@@ -211,8 +209,10 @@ class CLI:
             "--cache-dir",
             default=cache_dir,
             type=str,
-            help=f"Path to huggingface cache hub (defaults to {cache_dir}, "
-            "can also be specified with $HF_HUB_CACHE)",
+            help=(
+                f"Path to huggingface cache hub (defaults to {cache_dir}, "
+                "can also be specified with $HF_HUB_CACHE)"
+            ),
         )
         global_parser.add_argument(
             "--device",
@@ -226,8 +226,10 @@ class CLI:
             "--disable-loading-progress-bar",
             action="store_true",
             default=False,
-            help="If specified, the shard loading progress bar "
-            "will not be shown",
+            help=(
+                "If specified, the shard loading progress bar "
+                "will not be shown"
+            ),
         )
         global_parser.add_argument(
             "--hf-token",
@@ -258,8 +260,9 @@ class CLI:
             "--low-cpu-mem-usage",
             action="store_true",
             default=False,
-            help="If specified, loads the model using ~1x model size "
-            "CPU memory",
+            help=(
+                "If specified, loads the model using ~1x model size CPU memory"
+            ),
         )
         global_parser.add_argument(
             "--login",
@@ -276,13 +279,17 @@ class CLI:
             "-q",
             default=False,
             action="store_true",
-            help="If specified, no welcome screen and only model output is "
-            "displayed in model run (sets "
-            + ", ".join([
-                "--disable-loading-progress-bar",
-                "--skip-hub-access-check",
-                "--skip-special-tokens",
-            ])
+            help=(
+                "If specified, no welcome screen and only model output is "
+                "displayed in model run (sets "
+            )
+            + ", ".join(
+                [
+                    "--disable-loading-progress-bar",
+                    "--skip-hub-access-check",
+                    "--skip-special-tokens",
+                ]
+            )
             + " automatically)",
         )
         global_parser.add_argument(
@@ -345,8 +352,10 @@ class CLI:
             "--partition-overlap",
             default=125,
             type=int,
-            help="How many tokens can potentially overlap in "
-            "different partitions",
+            help=(
+                "How many tokens can potentially overlap in "
+                "different partitions"
+            ),
         )
         memory_partitions_parser.add_argument(
             "--partition-window",
@@ -371,7 +380,9 @@ class CLI:
             "--special-token",
             type=str,
             action="append",
-            help="Special token to add to tokenizer, only when model is loaded",
+            help=(
+                "Special token to add to tokenizer, only when model is loaded"
+            ),
         )
         model_options_parser.add_argument(
             "--token",
@@ -382,8 +393,10 @@ class CLI:
         model_options_parser.add_argument(
             "--tokenizer",
             type=str,
-            help="Path to tokenizer to use instead of model's default, only "
-            "if model is loaded",
+            help=(
+                "Path to tokenizer to use instead of model's default, only "
+                "if model is loaded"
+            ),
         )
 
         # Inference options shared by commands: agent run, model run
@@ -394,30 +407,38 @@ class CLI:
             nargs="?",
             const=500,  # 500 is the default if argument present but no value
             default=None,
-            help="Pause (in ms.) when cycling through selected tokens as "
-            "defined by --display-probabilities",
+            help=(
+                "Pause (in ms.) when cycling through selected tokens as "
+                "defined by --display-probabilities"
+            ),
         )
         model_inference_display_parser.add_argument(
             "--display-probabilities",
             action="store_true",
-            help="If --display-tokens specified, show also the token "
-            "probability distribution",
+            help=(
+                "If --display-tokens specified, show also the token "
+                "probability distribution"
+            ),
         )
         model_inference_display_parser.add_argument(
             "--display-probabilities-maximum",
             type=float,
             default=0.8,
-            help="When --display-probabilities is used, select tokens which "
-            "logit probability is no higher than this value. "
-            "Defaults to 0.8",
+            help=(
+                "When --display-probabilities is used, select tokens which "
+                "logit probability is no higher than this value. "
+                "Defaults to 0.8"
+            ),
         )
         model_inference_display_parser.add_argument(
             "--display-probabilities-sample-minimum",
             type=float,
             default=0.1,
-            help="When --display-probabilities is used, select tokens that "
-            "have alternate tokens with a logit probability at least or "
-            "higher than this value. Defaults to 0.1",
+            help=(
+                "When --display-probabilities is used, select tokens that "
+                "have alternate tokens with a logit probability at least or "
+                "higher than this value. Defaults to 0.1"
+            ),
         )
         model_inference_display_parser.add_argument(
             "--display-time-to-n-token",
@@ -425,8 +446,10 @@ class CLI:
             nargs="?",
             const=256,  # 256 is the default if argument present but no value
             default=None,
-            help="Display the time it takes to reach the given Nth token "
-            "(defaults to 256)",
+            help=(
+                "Display the time it takes to reach the given Nth token "
+                "(defaults to 256)"
+            ),
         )
         model_inference_display_parser.add_argument(
             "--display-tokens",
@@ -526,8 +549,9 @@ class CLI:
             "--no-session",
             action="store_true",
             default=False,
-            help="If specified, don't use sessions in persistent "
-            "message memory",
+            help=(
+                "If specified, don't use sessions in persistent message memory"
+            ),
         )
         agent_session_group.add_argument(
             "--session",
@@ -549,8 +573,10 @@ class CLI:
         agent_run_parser.add_argument(
             "--participant",
             default=uuid4(),
-            help="If specified, this is the participant ID interacting with "
-            "the agent",
+            help=(
+                "If specified, this is the participant ID interacting with "
+                "the agent"
+            ),
         )
         agent_run_parser.add_argument(
             "--stats",
@@ -568,13 +594,17 @@ class CLI:
         agent_run_parser.add_argument(
             "--tty",
             default="/dev/tty",
-            help="TTY stream (only applicable if combining --conversation "
-            "with input piping)",
+            help=(
+                "TTY stream (only applicable if combining --conversation "
+                "with input piping)"
+            ),
         )
 
         add_agent_settings_arguments(agent_run_parser)
         add_tool_settings_arguments(
-            agent_run_parser, prefix="browser", settings_cls=BrowserToolSettings
+            agent_run_parser,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
         )
 
         agent_serve_parser = agent_command_parsers.add_parser(
@@ -642,8 +672,10 @@ class CLI:
         cache_delete_parser.add_argument(
             "--delete",
             action="store_true",
-            help="Actually delete. If not provided, a dry run is performed "
-            "and data that would be deleted is shown, yet not deleted",
+            help=(
+                "Actually delete. If not provided, a dry run is performed "
+                "and data that would be deleted is shown, yet not deleted"
+            ),
         )
         cache_delete_parser.add_argument(
             "--model",
@@ -684,8 +716,10 @@ class CLI:
         cache_list_parser.add_argument(
             "--summary",
             action="store_true",
-            help="If specified, when showing one or more models show only "
-            "summary",
+            help=(
+                "If specified, when showing one or more models show only "
+                "summary"
+            ),
         )
 
         # Deploy command
@@ -864,8 +898,9 @@ class CLI:
         # Model command
         model_parser = command_parsers.add_parser(
             name="model",
-            description="Manage a model, showing details, loading or "
-            "downloading it",
+            description=(
+                "Manage a model, showing details, loading or downloading it"
+            ),
         )
         model_command_parsers = model_parser.add_subparsers(
             dest="model_command"
@@ -906,15 +941,19 @@ class CLI:
             "--attention",
             type=str,
             choices=get_args(AttentionImplementation),
-            help="Attention implementation to use (defaults to best available)",
+            help=(
+                "Attention implementation to use (defaults to best available)"
+            ),
         )
         model_run_parser.add_argument(
             "--do-sample",
             default=True,
             action="store_true",
-            help="Tell if the token generation process should be "
-            "deterministic or stochastic. When enabled, it's stochastic "
-            "and uses probability distribution.",
+            help=(
+                "Tell if the token generation process should be "
+                "deterministic or stochastic. When enabled, it's stochastic "
+                "and uses probability distribution."
+            ),
         )
         model_run_parser.add_argument(
             "--enable-gradient-calculation",
@@ -926,8 +965,10 @@ class CLI:
             "--use-cache",
             default=False,
             action="store_true",
-            help="Past key values are used to speed up decoding if applicable "
-            "to model.",
+            help=(
+                "Past key values are used to speed up decoding if applicable "
+                "to model."
+            ),
         )
         model_run_parser.add_argument(
             "--max-new-tokens",
@@ -938,15 +979,19 @@ class CLI:
         model_run_parser.add_argument(
             "--min-p",
             type=float,
-            help="Minimum token probability, which will be scaled by the "
-            "probability of the most likely token [0, 1]",
+            help=(
+                "Minimum token probability, which will be scaled by the "
+                "probability of the most likely token [0, 1]"
+            ),
         )
         model_run_parser.add_argument(
             "--repetition-penalty",
             default=1.0,
             type=float,
-            help="Exponential penalty on sequences not in the original input. "
-            "Defaults to 1.0, which means no penalty.",
+            help=(
+                "Exponential penalty on sequences not in the original input. "
+                "Defaults to 1.0, which means no penalty."
+            ),
         )
         model_run_parser.add_argument(
             "--skip-special-tokens",
@@ -980,15 +1025,19 @@ class CLI:
         model_run_parser.add_argument(
             "--top-k",
             type=int,
-            help="Number of highest probability vocabulary tokens to keep for "
-            "top-k-filtering.",
+            help=(
+                "Number of highest probability vocabulary tokens to keep for "
+                "top-k-filtering."
+            ),
         )
         model_run_parser.add_argument(
             "--top-p",
             type=float,
-            help="If set to < 1, only the smallest set of most probable "
-            "tokens with probabilities that add up to top_p or higher "
-            "are kept for generation.",
+            help=(
+                "If set to < 1, only the smallest set of most probable "
+                "tokens with probabilities that add up to top_p or higher "
+                "are kept for generation."
+            ),
         )
         model_run_parser.add_argument(
             "--trust-remote-code",
@@ -1024,14 +1073,18 @@ class CLI:
         model_uninstall_parser.add_argument(
             "--delete",
             action="store_true",
-            help="Actually delete. If not provided, a dry run is performed "
-            "and data that would be deleted is shown, yet not deleted",
+            help=(
+                "Actually delete. If not provided, a dry run is performed "
+                "and data that would be deleted is shown, yet not deleted"
+            ),
         )
 
         # Tokenizer command
         tokenizer_parser = command_parsers.add_parser(
             name="tokenizer",
-            description="Manage tokenizers, loading, modifying and saving them",
+            description=(
+                "Manage tokenizers, loading, modifying and saving them"
+            ),
             parents=[global_parser],
         )
         tokenizer_parser.add_argument(
@@ -1044,8 +1097,10 @@ class CLI:
         tokenizer_parser.add_argument(
             "--save",
             type=str,
-            help="Save tokenizer (useful if modified via --special-token or "
-            "--token) to given path, only if model is loaded",
+            help=(
+                "Save tokenizer (useful if modified via --special-token or "
+                "--token) to given path, only if model is loaded"
+            ),
         )
         tokenizer_parser.add_argument(
             "--special-token",

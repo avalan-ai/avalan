@@ -38,7 +38,9 @@ class SemanticSegmentationModelInstantiationTestCase(TestCase):
             )
 
             self.assertIs(model.model, model_instance)
-            processor_mock.assert_called_once_with(self.model_id, use_fast=True)
+            processor_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
             model_mock.assert_called_once_with(
                 self.model_id,
                 device_map=Engine.get_default_device(),
@@ -104,7 +106,9 @@ class SemanticSegmentationModelCallTestCase(IsolatedAsyncioTestCase):
             )
             model_instance.assert_called_once()
             self.assertEqual(model_instance.call_count, 1)
-            self.assertEqual(model_instance.call_args, call(**processor_result))
+            self.assertEqual(
+                model_instance.call_args, call(**processor_result)
+            )
 
             unique_mock.assert_called_once_with(mask_tensor)
 

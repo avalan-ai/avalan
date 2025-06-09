@@ -68,7 +68,8 @@ class ToolSetCallableTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(schemas[0]["type"], "function")
             self.assertEqual(schemas[0]["function"]["name"], "dummy")
             self.assertEqual(
-                schemas[0]["function"]["description"], "Return upper-case text."
+                schemas[0]["function"]["description"],
+                "Return upper-case text.",
             )
             self.assertEqual(
                 schemas[0]["function"]["parameters"]["type"], "object"
@@ -85,7 +86,9 @@ class ToolSetCallableTestCase(IsolatedAsyncioTestCase):
                 ],
                 "Text to upper-case.",
             )
-            self.assertEqual(schemas[0]["function"]["return"]["type"], "string")
+            self.assertEqual(
+                schemas[0]["function"]["return"]["type"], "string"
+            )
             self.assertEqual(
                 schemas[0]["function"]["return"]["description"],
                 "Upper-cased text.",

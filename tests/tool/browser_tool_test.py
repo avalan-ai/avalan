@@ -4,11 +4,15 @@ from avalan.entities import (
     TextPartition,
     ToolCallContext,
 )
-from avalan.tool.browser import BrowserTool, BrowserToolSet, BrowserToolSettings
+from avalan.tool.browser import (
+    BrowserTool,
+    BrowserToolSet,
+    BrowserToolSettings,
+)
 from contextlib import AsyncExitStack
 import types
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import numpy as np
 
@@ -63,7 +67,11 @@ class BrowserToolSetTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.browser.BrowserTool", return_value=dummy_tool),
             patch("avalan.tool.browser.ToolSet.__aenter__", dummy_aenter),
         ):
-            toolset = BrowserToolSet(settings=BrowserToolSettings(), exit_stack=dummy_stack, namespace="b")
+            toolset = BrowserToolSet(
+                settings=BrowserToolSettings(),
+                exit_stack=dummy_stack,
+                namespace="b",
+            )
             self.assertEqual(toolset.namespace, "b")
             self.assertEqual(toolset._client, "client1")
             self.assertEqual(toolset.tools, [dummy_tool])
@@ -96,14 +104,20 @@ class BrowserToolCallSearchTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_search_with_partitioner(self):
         partitions = [
-            TextPartition(data="a", embeddings=np.array([0.1, 0.2]), total_tokens=1),
-            TextPartition(data="b", embeddings=np.array([0.2, 0.3]), total_tokens=1),
+            TextPartition(
+                data="a", embeddings=np.array([0.1, 0.2]), total_tokens=1
+            ),
+            TextPartition(
+                data="b", embeddings=np.array([0.2, 0.3]), total_tokens=1
+            ),
         ]
 
         class DummyPartitioner:
             def __init__(self) -> None:
                 self.call_mock = AsyncMock(return_value=partitions)
-                self.sentence_model = AsyncMock(return_value=np.array([[0.1, 0.2]]))
+                self.sentence_model = AsyncMock(
+                    return_value=np.array([[0.1, 0.2]])
+                )
 
             async def __call__(self, text: str):
                 return await self.call_mock(text)
@@ -116,10 +130,16 @@ class BrowserToolCallSearchTestCase(IsolatedAsyncioTestCase):
 
         index = MagicMock()
         index.add = MagicMock()
-        index.search = MagicMock(return_value=(np.array([[0.05]]), np.array([[0]])))
+        index.search = MagicMock(
+            return_value=(np.array([[0.05]]), np.array([[0]]))
+        )
 
-        with patch("avalan.tool.browser.IndexFlatL2", return_value=index) as idx_patch:
-            ctx = ToolCallContext(input=Message(role=MessageRole.USER, content="q"))
+        with patch(
+            "avalan.tool.browser.IndexFlatL2", return_value=index
+        ) as idx_patch:
+            ctx = ToolCallContext(
+                input=Message(role=MessageRole.USER, content="q")
+            )
             result = await tool("http://t", context=ctx)
 
         partitioner.call_mock.assert_awaited_once_with("html")
@@ -133,7 +153,9 @@ class BrowserToolCallSearchTestCase(IsolatedAsyncioTestCase):
 class BrowserToolCallDebugTestCase(IsolatedAsyncioTestCase):
     async def test_call_debug_source(self):
         debug_io = StringIO("debug")
-        settings = BrowserToolSettings(debug=True, debug_url="http://t", debug_source=debug_io)
+        settings = BrowserToolSettings(
+            debug=True, debug_url="http://t", debug_source=debug_io
+        )
         tool = BrowserTool(settings, MagicMock())
         result = await tool("http://t", context=ToolCallContext())
         self.assertEqual(result, "debug")

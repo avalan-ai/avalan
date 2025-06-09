@@ -24,7 +24,7 @@ from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
 from logging import Logger
-from typing import Any, Type
+from typing import Any
 from uuid import UUID, uuid4
 
 
@@ -139,9 +139,7 @@ class Orchestrator:
             self._operation_step + 1
             if self._operation_step
             and self._operation_step < self._total_operations
-            else 0
-            if not self._operation_step
-            else None
+            else 0 if not self._operation_step else None
         )
         self._operation_step = operation_step
         if self._operation_step is None:
@@ -233,7 +231,7 @@ class Orchestrator:
 
     async def __aexit__(
         self,
-        exc_type: Type[BaseException] | None,
+        exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
     ):

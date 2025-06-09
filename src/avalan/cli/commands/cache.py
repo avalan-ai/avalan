@@ -59,5 +59,7 @@ def cache_list(
 ) -> None:
     cached_models = hub.cache_scan()
     console.print(
-        theme.cache_list(hub.cache_dir, cached_models, args.model, args.summary)
+        theme.cache_list(
+            hub.cache_dir, cached_models, args.model, args.summary
+        )
     )

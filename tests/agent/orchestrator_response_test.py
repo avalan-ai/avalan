@@ -192,8 +192,8 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = (
-            lambda text: [ToolCall(id=uuid4(), name="calc", arguments=None)]
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
             if text == "call"
             else None
         )
@@ -372,8 +372,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = (
-            lambda text: [ToolCall(id=uuid4(), name="calc", arguments=None)]
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
             if text == "call"
             else None
         )

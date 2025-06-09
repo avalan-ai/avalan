@@ -51,7 +51,9 @@ class SequenceClassificationModelInstantiationTestCase(TestCase):
             model_instance = MagicMock(spec=PreTrainedModel)
             config_mock = MagicMock()
             config_mock.id2label = {0: "LABEL_0"}
-            type(model_instance).config = PropertyMock(return_value=config_mock)
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
             type(model_instance).name_or_path = PropertyMock(
                 return_value=self.model_id
             )
@@ -127,7 +129,9 @@ class SequenceClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance.return_value = outputs
             config_mock = MagicMock()
             config_mock.id2label = {0: "OK"}
-            type(model_instance).config = PropertyMock(return_value=config_mock)
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
             auto_model_mock.return_value = model_instance
 
             softmax_mock.return_value = "probs"

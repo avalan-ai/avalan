@@ -124,7 +124,9 @@ class PermanentMessageMemory(MessageMemory):
     def reset(self) -> None:
         raise NotImplementedError()
 
-    async def reset_session(self, agent_id: UUID, participant_id: UUID) -> None:
+    async def reset_session(
+        self, agent_id: UUID, participant_id: UUID
+    ) -> None:
         self._session_id = await self.create_session(
             agent_id=agent_id, participant_id=participant_id
         )

@@ -187,7 +187,9 @@ class ModelManager(ContextDecorator):
             parsed = urlparse(uri)
 
         if parsed.scheme != "ai":
-            raise ValueError(f"Invalid scheme {parsed.scheme!r}, expected 'ai'")
+            raise ValueError(
+                f"Invalid scheme {parsed.scheme!r}, expected 'ai'"
+            )
 
         vendor = parsed.hostname
         if not vendor or vendor not in get_args(Vendor) or vendor == "local":

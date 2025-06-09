@@ -30,11 +30,15 @@ class AnthropicStream(TextGenerationVendorStream):
                 value = (
                     delta.text
                     if hasattr(delta, "text")
-                    else delta.partial_json
-                    if hasattr(delta, "partial_json")
-                    else delta.thinking
-                    if hasattr(delta, "thinking")
-                    else None
+                    else (
+                        delta.partial_json
+                        if hasattr(delta, "partial_json")
+                        else (
+                            delta.thinking
+                            if hasattr(delta, "thinking")
+                            else None
+                        )
+                    )
                 )
                 if value is not None:
                     return value
