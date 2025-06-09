@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from logging import Logger
 from tree_sitter_python import language as python
 from tree_sitter import Language, Node, Parser
-from typing import Literal, Optional
+from typing import Literal
 
 LanguageName = Literal["python"]
 
@@ -27,17 +27,17 @@ ParameterType = Literal[
 class Parameter:
     parameter_type: ParameterType
     name: str
-    type: Optional[str]
+    type: str | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class Function:
     id: str
-    namespace: Optional[str]
-    class_name: Optional[str]
+    namespace: str | None
+    class_name: str | None
     name: str
-    parameters: Optional[list[Parameter]]
-    return_type: Optional[str]
+    parameters: list[Parameter] | None
+    return_type: str | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -66,8 +66,8 @@ class CodePartitioner:
         input: str,
         encoding: Encoding,
         max_chars: int,
-        namespace: Optional[str] = None,
-    ) -> tuple[list[CodePartition], Optional[list[Function]]]:
+        namespace: str | None = None,
+    ) -> tuple[list[CodePartition], list[Function] | None]:
         parser, language = self._get_parser(language_name)
         tree = parser.parse(input.encode(encoding), encoding=encoding)
         root_node = tree.root_node
@@ -117,9 +117,9 @@ class CodePartitioner:
         max_chars: int,
         node: Node,
         last_end: int = 0,
-        current_namespace: Optional[str] = None,
-        current_class_name: Optional[str] = None,
-        current_symbols: Optional[list[Symbol]] = None,
+        current_namespace: str | None = None,
+        current_class_name: str | None = None,
+        current_symbols: list[Symbol] | None = None,
     ) -> list[CodePartition]:
         if current_symbols is None:
             current_symbols = []
@@ -202,10 +202,10 @@ class CodePartitioner:
     @classmethod
     def _get_functions(
         cls,
-        current_namespace: Optional[str],
+        current_namespace: str | None,
         node: Node,
         encoding: Encoding,
-        current_class_name: Optional[str] = None,
+        current_class_name: str | None = None,
     ) -> list[Function]:
         assert node and encoding
         results = []
@@ -244,8 +244,8 @@ class CodePartitioner:
     @classmethod
     def _get_function_from_node(
         cls,
-        current_namespace: Optional[str],
-        current_class_name: Optional[str],
+        current_namespace: str | None,
+        current_class_name: str | None,
         node: Node,
         encoding: Encoding,
     ) -> Function:
@@ -270,8 +270,8 @@ class CodePartitioner:
 
     @staticmethod
     def _get_function_id_and_name_from_node(
-        current_namespace: Optional[str],
-        current_class_name: Optional[str],
+        current_namespace: str | None,
+        current_class_name: str | None,
         node: Node,
         encoding: Encoding,
     ) -> tuple[str, str]:
@@ -288,7 +288,7 @@ class CodePartitioner:
     @staticmethod
     def _get_parameters(
         node: Node, encoding: Encoding
-    ) -> list[dict[str, Optional[str]]]:
+    ) -> list[dict[str, str | None]]:
         assert node
         parameters = []
         for child in node.children:

@@ -4,7 +4,6 @@ from rich.padding import Padding
 from rich.prompt import Confirm, Prompt
 from select import select
 from sys import stdin
-from typing import Optional
 
 
 class PromptWithoutPrefix(Prompt):
@@ -26,7 +25,7 @@ def has_input(console: Console) -> bool:
 
 def get_input(
     console: Console,
-    prompt: Optional[str],
+    prompt: str | None,
     *,
     echo_stdin: bool = True,
     force_prompt: bool = False,
@@ -36,7 +35,7 @@ def get_input(
     strip_stdin: bool = True,
     suffix_line: bool = True,
     tty_path: str = "/dev/tty",
-) -> Optional[str]:
+) -> str | None:
     full_prompt = f"{prompt} "
     is_input_available = has_input(console)
     if not force_prompt and is_input_available:

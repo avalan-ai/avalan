@@ -24,13 +24,13 @@ from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
 from logging import Logger
-from typing import Any, Optional, Union, Type
+from typing import Any, Union, Type
 from uuid import UUID, uuid4
 
 
 class Orchestrator:
     _id: UUID
-    _name: Optional[str]
+    _name: str | None
     _operations: list[Operation]
     _renderer: Renderer
     _total_operations: int
@@ -41,10 +41,10 @@ class Orchestrator:
     _event_manager: EventManager
     _engine_agents: dict[EngineEnvironment, EngineAgent] = {}
     _engines_stack: ExitStack = ExitStack()
-    _operation_step: Optional[int] = None
+    _operation_step: int | None = None
     _model_ids: set[str] = set()
-    _call_options: Optional[dict] = None
-    _last_engine_agent: Optional[EngineAgent] = None
+    _call_options: dict | None = None
+    _last_engine_agent: EngineAgent | None = None
     _exit_memory: bool = True
 
     def __init__(
@@ -56,11 +56,11 @@ class Orchestrator:
         event_manager: EventManager,
         operations: Union[Operation, list[Operation]],
         *,
-        call_options: Optional[dict] = None,
+        call_options: dict | None = None,
         exit_memory: bool = True,
-        id: Optional[UUID] = None,
-        name: Optional[str] = None,
-        renderer: Optional[Renderer] = None,
+        id: UUID | None = None,
+        name: str | None = None,
+        renderer: Renderer | None = None,
     ):
         self._logger = logger
         self._model_manager = model_manager
@@ -78,11 +78,11 @@ class Orchestrator:
         self._call_options = call_options
 
     @property
-    def engine_agent(self) -> Optional[EngineAgent]:
+    def engine_agent(self) -> EngineAgent | None:
         return self._last_engine_agent
 
     @property
-    def engine(self) -> Optional[Engine]:
+    def engine(self) -> Engine | None:
         return (
             self._last_engine_agent.engine if self._last_engine_agent else None
         )
@@ -92,7 +92,7 @@ class Orchestrator:
         return self._id
 
     @property
-    def input_token_count(self) -> Optional[int]:
+    def input_token_count(self) -> int | None:
         return (
             self._last_engine_agent.input_token_count
             if self._last_engine_agent
@@ -115,7 +115,7 @@ class Orchestrator:
         return self._model_ids
 
     @property
-    def name(self) -> Optional[str]:
+    def name(self) -> str | None:
         return self._name
 
     @property
@@ -195,7 +195,7 @@ class Orchestrator:
         )
 
     async def __aenter__(self):
-        first_agent: Optional[TemplateEngineAgent] = None
+        first_agent: TemplateEngineAgent | None = None
         model_ids: list[str] = []
         for operation in self._operations:
             # Load engine with environment
@@ -233,9 +233,9 @@ class Orchestrator:
 
     async def __aexit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
+        exc_type: Type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any | None,
     ):
         if (
             self._last_engine_agent

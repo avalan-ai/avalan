@@ -15,7 +15,7 @@ from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
 from logging import Logger
 from dataclasses import dataclass
-from typing import Annotated, Optional, Union, get_args, get_origin
+from typing import Annotated, Union, get_args, get_origin
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -31,7 +31,7 @@ class Property:
     }
     name: str
     data_type: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class JsonSpecification(Specification):
@@ -94,12 +94,12 @@ class JsonOrchestrator(Orchestrator):
         role: str,
         task: str,
         instructions: str,
-        name: Optional[str] = None,
-        rules: Optional[list[str]] = [],
-        template_id: Optional[str] = None,
-        settings: Optional[TransformerEngineSettings] = None,
-        call_options: Optional[dict] = None,
-        template_vars: Optional[dict] = None,
+        name: str | None = None,
+        rules: list[str] | None = [],
+        template_id: str | None = None,
+        settings: TransformerEngineSettings | None = None,
+        call_options: dict | None = None,
+        template_vars: dict | None = None,
     ):
         specification = JsonSpecification(
             output=output,

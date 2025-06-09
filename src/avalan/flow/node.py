@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..flow.flow import Flow
@@ -9,20 +9,20 @@ class Node:
     def __init__(
         self,
         name: str,
-        label: Optional[str] = None,
-        shape: Optional[str] = None,
-        input_schema: Optional[type] = None,
-        output_schema: Optional[type] = None,
-        func: Optional[Callable[..., Any]] = None,
-        subgraph: Optional[Flow] = None,
+        label: str | None = None,
+        shape: str | None = None,
+        input_schema: type | None = None,
+        output_schema: type | None = None,
+        func: Callable[..., Any] | None = None,
+        subgraph: Flow | None = None,
     ) -> None:
         self.name: str = name
         self.label: str = label or name
-        self.shape: Optional[str] = shape
-        self.input_schema: Optional[type] = input_schema
-        self.output_schema: Optional[type] = output_schema
-        self.func: Optional[Callable[..., Any]] = func
-        self.subgraph: Optional[Flow] = subgraph
+        self.shape: str | None = shape
+        self.input_schema: type | None = input_schema
+        self.output_schema: type | None = output_schema
+        self.func: Callable[..., Any] | None = func
+        self.subgraph: Flow | None = subgraph
 
     def execute(self, inputs: Dict[str, Any]) -> Any:
         # Delegate to subgraph if present

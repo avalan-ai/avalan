@@ -1,6 +1,6 @@
 from ..entities import MessageRole
 from pydantic import BaseModel, Field
-from typing import Optional, Union
+from typing import Union
 
 
 class ChatMessage(BaseModel):
@@ -15,42 +15,42 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(
         ..., description="List of messages in the conversation"
     )
-    temperature: Optional[float] = Field(
+    temperature: float | None = Field(
         1.0, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    top_p: Optional[float] = Field(
+    top_p: float | None = Field(
         1.0, ge=0.0, le=1.0, description="Nucleus sampling probability"
     )
-    n: Optional[int] = Field(
+    n: int | None = Field(
         1, ge=1, description="Number of completions to generate"
     )
-    stream: Optional[bool] = Field(
+    stream: bool | None = Field(
         False, description="Whether to stream back partial progress"
     )
-    stop: Optional[Union[str, list[str]]] = Field(
+    stop: Union[str, list[str]] | None = Field(
         None,
         description="Sequence where the API will stop generating further tokens",
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         None, ge=1, description="Maximum tokens to generate in the completion"
     )
-    presence_penalty: Optional[float] = Field(
+    presence_penalty: float | None = Field(
         0.0,
         ge=-2.0,
         le=2.0,
         description="Penalty for new tokens based on whether they appear in text so far",
     )
-    frequency_penalty: Optional[float] = Field(
+    frequency_penalty: float | None = Field(
         0.0,
         ge=-2.0,
         le=2.0,
         description="Penalty for new tokens based on their frequency in text so far",
     )
-    logit_bias: Optional[dict[str, int]] = Field(
+    logit_bias: dict[str, int] | None = Field(
         None,
         description="Modify the likelihood of specified tokens appearing in the completion",
     )
-    user: Optional[str] = Field(
+    user: str | None = Field(
         None, description="Unique identifier representing your end-user"
     )
 

@@ -12,7 +12,6 @@ from ....memory.permanent import (
 from ....memory.permanent.pgsql import PgsqlMemory
 from datetime import datetime, timezone
 from pgvector.psycopg import Vector
-from typing import Optional
 from uuid import UUID, uuid4
 
 
@@ -133,7 +132,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         participant_id: UUID,
         namespace: str,
         function: VectorFunction,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[Memory]:
         assert participant_id and namespace and search_partitions
         search_function = str(function)
@@ -182,7 +181,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         session_id: UUID,
         participant_id: UUID,
         function: VectorFunction,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[EngineMessageScored]:
         assert agent_id and session_id and participant_id and search_partitions
         search_function = str(function)

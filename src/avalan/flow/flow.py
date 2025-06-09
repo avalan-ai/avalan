@@ -1,6 +1,6 @@
 from ..flow.connection import Connection
 from ..flow.node import Node
-from typing import Any, Callable, Dict, Optional, Union, Tuple
+from typing import Any, Callable, Dict, Union, Tuple
 from re import match
 
 
@@ -18,9 +18,9 @@ class Flow:
         self,
         src_name: str,
         dest_name: str,
-        label: Optional[str] = None,
-        conditions: Optional[list[Callable[[Any], bool]]] = None,
-        filters: Optional[list[Callable[[Any], Any]]] = None,
+        label: str | None = None,
+        conditions: list[Callable[[Any], bool]] | None = None,
+        filters: list[Callable[[Any], Any]] | None = None,
     ) -> None:
         if src_name not in self.nodes or dest_name not in self.nodes:
             raise KeyError(f"Unknown node: {src_name} or {dest_name}")
@@ -61,9 +61,7 @@ class Flow:
                         node.shape = nshape
             self.add_connection(src_id, dst_id, label=label)
 
-    def _parse_node(
-        self, text: str
-    ) -> Tuple[str, Optional[str], Optional[str]]:
+    def _parse_node(self, text: str) -> Tuple[str, str | None, str | None]:
         m = match(r"^([A-Za-z0-9_]+)", text)
         if not m:
             return text, None, None
@@ -91,7 +89,7 @@ class Flow:
 
     def execute(
         self,
-        initial_node: Optional[Union[str, Node]] = None,
+        initial_node: Union[str, Node] | None = None,
         initial_data: Any = None,
     ) -> Any:
         # Determine start nodes

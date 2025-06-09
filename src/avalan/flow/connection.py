@@ -1,5 +1,5 @@
 from ..flow.node import Node
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 
 class Connection:
@@ -7,13 +7,13 @@ class Connection:
         self,
         src: Node,
         dest: Node,
-        label: Optional[str] = None,
-        conditions: Optional[list[Callable[[Any], bool]]] = None,
-        filters: Optional[list[Callable[[Any], Any]]] = None,
+        label: str | None = None,
+        conditions: list[Callable[[Any], bool]] | None = None,
+        filters: list[Callable[[Any], Any]] | None = None,
     ) -> None:
         self.src: Node = src
         self.dest: Node = dest
-        self.label: Optional[str] = label
+        self.label: str | None = label
         self.conditions: list[Callable[[Any], bool]] = conditions or []
         self.filters: list[Callable[[Any], Any]] = filters or []
 

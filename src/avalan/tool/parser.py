@@ -2,24 +2,24 @@ from ast import literal_eval
 from ..entities import ToolCall, ToolFormat
 from json import JSONDecodeError, loads
 from re import DOTALL, search
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 from uuid import uuid4
 from xml.etree import ElementTree
 
 
 class ToolCallParser:
-    _eos_token: Optional[str]
-    _tool_format: Optional[ToolFormat]
+    _eos_token: str | None
+    _tool_format: ToolFormat | None
 
     def __init__(
         self,
-        tool_format: Optional[ToolFormat] = None,
-        eos_token: Optional[str] = None,
+        tool_format: ToolFormat | None = None,
+        eos_token: str | None = None,
     ) -> None:
         self._tool_format = tool_format
         self._eos_token = eos_token
 
-    def __call__(self, text: str) -> Optional[list[ToolCall]]:
+    def __call__(self, text: str) -> list[ToolCall] | None:
         calls = (
             self._parse_json(text)
             if self._tool_format is ToolFormat.JSON
@@ -38,14 +38,14 @@ class ToolCallParser:
     def set_eos_token(self, eos_token: str) -> None:
         self._eos_token = eos_token
 
-    def _parse_json(self, text: str) -> Optional[Tuple[str, dict[str, Any]]]:
+    def _parse_json(self, text: str) -> Tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)
             return payload["tool"], payload.get("arguments", {})
         except Exception:
             return None
 
-    def _parse_react(self, text: str) -> Optional[Tuple[str, dict[str, Any]]]:
+    def _parse_react(self, text: str) -> Tuple[str, dict[str, Any]] | None:
         act = search(r"Action:\s*(\w+)", text)
         inp = search(r"Action Input:\s*({.*})", text, DOTALL)
         if act and inp:
@@ -55,7 +55,7 @@ class ToolCallParser:
                 pass
         return None
 
-    def _parse_bracket(self, text: str) -> Optional[Tuple[str, dict[str, Any]]]:
+    def _parse_bracket(self, text: str) -> Tuple[str, dict[str, Any]] | None:
         m = search(r"\[(\w+)\]\(([^)]+)\)", text)
         if m:
             return m.group(1), {"input": m.group(2)}
@@ -63,7 +63,7 @@ class ToolCallParser:
 
     def _parse_openai_json(
         self, text: str
-    ) -> Optional[Tuple[str, dict[str, Any]]]:
+    ) -> Tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)
             name = payload.get("name")
@@ -74,7 +74,7 @@ class ToolCallParser:
             pass
         return None
 
-    def _parse_tag(self, text: str) -> Optional[Tuple[str, dict[str, Any]]]:
+    def _parse_tag(self, text: str) -> Tuple[str, dict[str, Any]] | None:
         tool_calls: list[ToolCall] = []
 
         if self._eos_token:

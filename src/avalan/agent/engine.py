@@ -15,19 +15,19 @@ from ..tool.manager import ToolManager
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from dataclasses import replace
-from typing import Any, Optional, Union, Tuple
+from typing import Any, Union, Tuple
 from uuid import UUID, uuid4
 
 
 class EngineAgent(ABC):
     _id: UUID
-    _name: Optional[str]
+    _name: str | None
     _model: Engine
     _memory: MemoryManager
     _tool: ToolManager
     _event_manager: EventManager
-    _last_output: Optional[TextGenerationResponse] = None
-    _last_prompt: Optional[Tuple[Input, Optional[str]]] = None
+    _last_output: TextGenerationResponse | None = None
+    _last_prompt: Tuple[Input, str | None] | None = None
 
     @abstractmethod
     def _prepare_call(
@@ -44,10 +44,10 @@ class EngineAgent(ABC):
         return self._model
 
     @property
-    def output(self) -> Optional[TextGenerationResponse]:
+    def output(self) -> TextGenerationResponse | None:
         return self._last_output
 
-    async def input_token_count(self) -> Optional[int]:
+    async def input_token_count(self) -> int | None:
         if not self._last_prompt:
             return None
         await self._event_manager.trigger(
@@ -70,8 +70,8 @@ class EngineAgent(ABC):
         tool: ToolManager,
         event_manager: EventManager,
         *args,
-        name: Optional[str] = None,
-        id: Optional[UUID] = None,
+        name: str | None = None,
+        id: UUID | None = None,
     ):
         self._id = id or uuid4()
         self._name = name
@@ -96,8 +96,8 @@ class EngineAgent(ABC):
         self,
         input: str,
         *args,
-        settings: Optional[GenerationSettings] = None,
-        system_prompt: Optional[str] = None,
+        settings: GenerationSettings | None = None,
+        system_prompt: str | None = None,
         skip_special_tokens=True,
         **kwargs,
     ) -> Union[TextGenerationResponse]:
@@ -124,7 +124,7 @@ class EngineAgent(ABC):
             self._memory.has_permanent_message
             or self._memory.has_recent_message
         ) and isinstance(input, Message):
-            previous_message: Optional[Message] = None
+            previous_message: Message | None = None
             new_message: Message = input
 
             # Handle last message if not already consumed

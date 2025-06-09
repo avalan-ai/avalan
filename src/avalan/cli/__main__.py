@@ -1132,7 +1132,7 @@ class CLI:
         hub: HuggingfaceHub,
         suggest_login: bool = False,
     ) -> None:
-        user: Optional[User] = None
+        user: User | None = None
         _ = theme._
 
         verbosity = args.verbose or 0

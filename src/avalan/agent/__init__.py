@@ -6,7 +6,7 @@ from ..entities import (
 )
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Optional, Union
+from typing import Union
 
 
 class NoOperationAvailableException(Exception):
@@ -40,13 +40,13 @@ class Role:
 @dataclass(frozen=True, kw_only=True)
 class Specification:
     role: Role
-    goal: Optional[Goal]
+    goal: Goal | None
     rules: list[str] = field(default_factory=list)
     input_type: InputType = InputType.TEXT
     output_type: OutputType = OutputType.TEXT
-    settings: Optional[GenerationSettings] = None
-    template_id: Optional[str] = None
-    template_vars: Optional[dict] = None
+    settings: GenerationSettings | None = None
+    template_id: str | None = None
+    template_vars: dict | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

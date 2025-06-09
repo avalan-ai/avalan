@@ -49,7 +49,7 @@ from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
 from textwrap import wrap
-from typing import Callable, Generator, Optional, Tuple, Union
+from typing import Callable, Generator, Tuple, Union
 from uuid import UUID
 
 
@@ -190,7 +190,7 @@ class FancyTheme(Theme):
         agent: Orchestrator,
         *args,
         models: list[Model | str],
-        can_access: Optional[bool],
+        can_access: bool | None,
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         models_group = Group(
@@ -277,7 +277,7 @@ class FancyTheme(Theme):
         return _i["bye"] + " " + _("bye :)")
 
     def cache_delete(
-        self, cache_deletion: Optional[HubCacheDeletion], deleted=False
+        self, cache_deletion: HubCacheDeletion | None, deleted=False
     ) -> RenderableType:
         _, _f, _n, _i = self._, self._f, self._n, self._icons
         if not cache_deletion or (
@@ -356,7 +356,7 @@ class FancyTheme(Theme):
         self,
         cache_dir: str,
         cached_models: list[HubCache],
-        display_models: Optional[list[str]] = None,
+        display_models: list[str] | None = None,
         show_summary: bool = False,
     ) -> RenderableType:
         _ = self._
@@ -387,7 +387,7 @@ class FancyTheme(Theme):
                     footer_style="bold cyan",
                 )
 
-                last_revision: Optional[str] = None
+                last_revision: str | None = None
                 for revision, files in model_cache.files.items():
                     for file in files:
                         new_revision = (
@@ -527,12 +527,12 @@ class FancyTheme(Theme):
         meanv: float,
         stdv: float,
         normv: float,
-        embedding_peek: Optional[int] = 3,
+        embedding_peek: int | None = 3,
         horizontal: bool = True,
         input_string_peek: int = 30,
         show_stats: bool = True,
-        partition: Optional[int] = None,
-        total_partitions: Optional[int] = None,
+        partition: int | None = None,
+        total_partitions: int | None = None,
     ) -> RenderableType:
         _ = self._
 
@@ -542,7 +542,7 @@ class FancyTheme(Theme):
             or (embedding_peek and embeddings.size > 2 * embedding_peek)
         )
 
-        peek_table: Optional[Table] = None
+        peek_table: Table | None = None
         if embedding_peek and embeddings.size > 2 * embedding_peek:
             input_title = (
                 input_string[:input_string_peek] + "…"
@@ -604,7 +604,7 @@ class FancyTheme(Theme):
                         intcomma(start_i + i), clamp(v, format="{:.4g}")
                     )
 
-        stats: Optional[Table] = None
+        stats: Table | None = None
         if show_stats:
             stats = Table(
                 show_footer=False,
@@ -812,7 +812,7 @@ class FancyTheme(Theme):
         self,
         model: Model,
         *args,
-        can_access: Optional[bool] = None,
+        can_access: bool | None = None,
         expand: bool = False,
         summary: bool = False,
     ) -> RenderableType:
@@ -948,9 +948,7 @@ class FancyTheme(Theme):
 
     def model_display(
         self,
-        model_config: Optional[
-            Union[ModelConfig, SentenceTransformerModelConfig]
-        ],
+        model_config: Union[ModelConfig, SentenceTransformerModelConfig] | None,
         tokenizer_config: TokenizerConfig,
         *args,
         is_runnable: bool | None = None,
@@ -1296,10 +1294,10 @@ class FancyTheme(Theme):
     def tokenizer_tokens(
         self,
         dtokens: list[Token],
-        added_tokens: Optional[list[str]],
-        special_tokens: Optional[list[str]],
+        added_tokens: list[str] | None,
+        special_tokens: list[str] | None,
         display_details: bool = False,
-        current_dtoken: Optional[Token] = None,
+        current_dtoken: Token | None = None,
         dtokens_selected: list[Token] = [],
     ) -> RenderableType:
         # Build token panels
@@ -1343,14 +1341,14 @@ class FancyTheme(Theme):
     async def tokens(
         self,
         model_id: str,
-        added_tokens: Optional[list[str]],
-        special_tokens: Optional[list[str]],
-        display_token_size: Optional[int],
+        added_tokens: list[str] | None,
+        special_tokens: list[str] | None,
+        display_token_size: int | None,
         display_probabilities: bool,
         pick: int,
-        focus_on_token_when: Optional[Callable[[Token], bool]],
+        focus_on_token_when: Callable[[Token], bool] | None,
         text_tokens: list[str],
-        tokens: Optional[list[Token]],
+        tokens: list[Token] | None,
         input_token_count: int,
         total_tokens: int,
         tool_events: list[Event] | None,
@@ -1362,9 +1360,9 @@ class FancyTheme(Theme):
         ellapsed: float,
         console_width: int,
         logger: Logger,
-        event_stats: Optional[EventStats] = None,
-        maximum_frames: Optional[int] = None,
-        logits_count: Optional[int] = None,
+        event_stats: EventStats | None = None,
+        maximum_frames: int | None = None,
+        logits_count: int | None = None,
         tool_events_limit: int | None = None,
         think_height: int = 6,
         think_padding: int = 1,
@@ -1374,7 +1372,7 @@ class FancyTheme(Theme):
         limit_think_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[Tuple[Optional[Token], RenderableType], None, None]:
+    ) -> Generator[Tuple[Token | None, RenderableType], None, None]:
         _, _n, _f, _l = self._, self._n, self._f, logger.debug
 
         # Prepare data for rendering
@@ -1563,7 +1561,8 @@ class FancyTheme(Theme):
                     + event.payload["result"].result
                     + "[/spring_green3]",
                 )
-                if event.type == EventType.TOOL_RESULT and event.payload["result"]
+                if event.type == EventType.TOOL_RESULT
+                and event.payload["result"]
                 else _n(
                     "Executing {total_calls} tool: {calls}",
                     "Executing {total_calls} tools: {calls}",
@@ -1626,19 +1625,19 @@ class FancyTheme(Theme):
             return
 
         # Deal with token details
-        dtokens_selected_last_index_yielded: Optional[int] = None
+        dtokens_selected_last_index_yielded: int | None = None
         yielded_frames = 0
         yield_next_frame = True
 
         # As long as we need more frames, we keep yielding
         while yield_next_frame:
-            current_selected_index: Optional[int] = None
-            tokens_distribution_panel: Optional[Panel] = None
+            current_selected_index: int | None = None
+            tokens_distribution_panel: Panel | None = None
 
             if display_token_size and tokens:
                 # Pick current token to highlight
                 current_data = None
-                current_dtoken: Optional[Token] = None
+                current_dtoken: Token | None = None
                 if display_probabilities and dtokens_selected:
                     current_selected_index = (
                         0
@@ -1819,8 +1818,8 @@ class FancyTheme(Theme):
     def _tokens_table(
         self,
         dbatch: list[Token],
-        current_dtoken: Optional[Token],
-        max_dtoken: Optional[Token],
+        current_dtoken: Token | None,
+        max_dtoken: Token | None,
     ):
         _p = self._percentage
 
@@ -1860,7 +1859,7 @@ class FancyTheme(Theme):
         name: str,
         version: str,
         license: str,
-        user: Optional[User],
+        user: User | None,
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         license_text = _("{license} license").format(license=license)
@@ -1889,7 +1888,7 @@ class FancyTheme(Theme):
             pad=(0, 0, 0, 0),  # Might bring lower padding back (0,0,1,0)
         )
 
-    def _parameter_count(self, parameters: Optional[int]) -> str:
+    def _parameter_count(self, parameters: int | None) -> str:
         _ = self._
         if not parameters:
             return _("N/A")

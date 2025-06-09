@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from ..entities import EngineMessage
 from dataclasses import dataclass
 from threading import Lock
-from typing import Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 from ..compat import override
 from uuid import UUID
 
@@ -12,7 +12,7 @@ T = TypeVar("T")
 @dataclass(frozen=True)
 class MemoryChunk(Generic[T]):
     repository_key: str
-    key: Optional[str]
+    key: str | None
     data: T
 
 
@@ -26,12 +26,12 @@ class MemoryStore(ABC, Generic[T]):
         raise NotImplementedError()
 
     @abstractmethod
-    async def search(self, query: str) -> Optional[list[T]]:
+    async def search(self, query: str) -> list[T] | None:
         raise NotImplementedError()
 
 
 class MessageMemory(MemoryStore[EngineMessage], ABC):
-    def search(self, query: str) -> Optional[list[EngineMessage]]:
+    def search(self, query: str) -> list[EngineMessage] | None:
         raise NotImplementedError()
 
 
