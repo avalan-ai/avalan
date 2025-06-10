@@ -224,60 +224,65 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if self._event_manager:
             response.add_done_callback(self._on_consumed)
 
-        if output is None:
-            output = await response.to_str()
+        text = output or await response.to_str()
 
         if not self._tool_manager:
-            return output
+            self._response = response
+            return text
 
-        if self._event_manager:
-            await self._event_manager.trigger(
-                Event(type=EventType.TOOL_DETECT)
-            )
-
-        calls = (
-            self._tool_manager.get_calls(output)
-            if self._tool_manager
-            else None
-        )
-        if not calls:
-            return output
-
-        results: list[ToolCallResult] = []
-        for call in calls:
+        current_response = response
+        previous_text = text
+        delta = text
+        while True:
             if self._event_manager:
-                start = perf_counter()
-                execute_event = Event(
-                    type=EventType.TOOL_EXECUTE,
-                    payload={"call": call},
-                    started=start,
+                await self._event_manager.trigger(
+                    Event(type=EventType.TOOL_DETECT)
                 )
-                await self._event_manager.trigger(execute_event)
 
-            result = (
-                await self._tool_manager(call, self._tool_context)
+            calls = (
+                self._tool_manager.get_calls(delta)
                 if self._tool_manager
                 else None
             )
-            results.append(result)
+            if not calls:
+                break
 
-            if self._event_manager:
-                end = perf_counter()
-                result_event = Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": result},
-                    started=start,
-                    finished=end,
-                    ellapsed=end - start,
+            results: list[ToolCallResult] = []
+            for call in calls:
+                if self._event_manager:
+                    start = perf_counter()
+                    execute_event = Event(
+                        type=EventType.TOOL_EXECUTE,
+                        payload={"call": call},
+                        started=start,
+                    )
+                    await self._event_manager.trigger(execute_event)
+
+                result = (
+                    await self._tool_manager(call, self._tool_context)
+                    if self._tool_manager
+                    else None
                 )
-                await self._event_manager.trigger(result_event)
+                results.append(result)
 
-        response = await self._react_process(output, results)
-        response_output = await response.to_str()
-        response_output = response_output.replace(output, "")
+                if self._event_manager:
+                    end = perf_counter()
+                    result_event = Event(
+                        type=EventType.TOOL_RESULT,
+                        payload={"result": result},
+                        started=start,
+                        finished=end,
+                        ellapsed=end - start,
+                    )
+                    await self._event_manager.trigger(result_event)
 
-        self._response = response
-        return await self._react(self._response, response_output)
+            current_response = await self._react_process(delta, results)
+            new_text = await current_response.to_str()
+            delta = new_text.replace(previous_text, "")
+            previous_text = new_text
+
+        self._response = current_response
+        return delta
 
     async def _react_process(
         self, output: str, results: list[ToolCallResult]
@@ -304,6 +309,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             self._input if isinstance(self._input, list) else [self._input]
         )
         messages.extend(tool_messages)
+
+        self._input = messages
+        self._tool_context = ToolCallContext(input=self._input)
 
         event_tool_model_run = Event(
             type=EventType.TOOL_MODEL_RUN,

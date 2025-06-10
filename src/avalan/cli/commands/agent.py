@@ -481,7 +481,7 @@ async def agent_serve(
             version=version,
             prefix_openai=args.prefix_openai,
             prefix_mcp=args.prefix_mcp,
-            agents=[orchestrator],
+            orchestrators=[orchestrator],
             host=args.host,
             port=args.port,
             reload=args.reload,
