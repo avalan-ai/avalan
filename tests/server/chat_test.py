@@ -40,7 +40,7 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
     async def test_non_streaming_completion(self):
         app = self.FastAPI()
         app.state.orchestrator = AsyncMock(spec=DummyOrchestrator)
-        app.state.orchestrator.__call__.side_effect = TextGenerationResponse(
+        app.state.orchestrator.return_value = TextGenerationResponse(
             lambda: "ok", use_async_generator=False
         )
         app.include_router(self.chat.router)
@@ -75,6 +75,9 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
 
         app = self.FastAPI()
         app.state.orchestrator = AsyncMock(spec=StreamingOrchestrator)
+        app.state.orchestrator.return_value = TextGenerationResponse(
+            output_fn, use_async_generator=True
+        )
         app.include_router(self.chat.router)
 
         client = self.TestClient(app)
@@ -86,5 +89,56 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         with client.stream("POST", "/chat/completions", json=payload) as resp:
             self.assertEqual(resp.status_code, 200)
             chunks = list(resp.iter_lines())
-        self.assertEqual(chunks[0], "data: [DONE]")
-        self.assertEqual(chunks[1], "")
+        self.assertIn('"content":"a"', chunks[0])
+        self.assertIn('"content":"b"', chunks[2])
+        self.assertEqual(chunks[-2], "data: [DONE]")
+        self.assertEqual(chunks[-1], "")
+
+    async def test_streaming_completion_with_events(self):
+        class SequenceResponse:
+            def __init__(self, seq):
+                self._seq = seq
+
+            def __aiter__(self):
+                self._iter = iter(self._seq)
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        class EventfulOrchestrator(Orchestrator):
+            async def __call__(self, messages, settings=None):
+                from avalan.event import Event, EventType
+
+                sequence = [
+                    "a",
+                    Event(type=EventType.TOOL_PROCESS, payload=[]),
+                    "b",
+                    Event(type=EventType.TOOL_RESULT, payload={"ok": True}),
+                    "c",
+                ]
+                return SequenceResponse(sequence)
+
+        orch = object.__new__(EventfulOrchestrator)
+        app = self.FastAPI()
+        app.state.orchestrator = orch
+        app.include_router(self.chat.router)
+
+        client = self.TestClient(app)
+        payload = {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        }
+        with client.stream("POST", "/chat/completions", json=payload) as resp:
+            self.assertEqual(resp.status_code, 200)
+            chunks = list(resp.iter_lines())
+
+        self.assertIn('"content":"a"', chunks[0])
+        self.assertIn('"content":"b"', chunks[2])
+        self.assertIn('"content":"c"', chunks[4])
+        self.assertEqual(chunks[-2], "data: [DONE]")
+        self.assertEqual(chunks[-1], "")
