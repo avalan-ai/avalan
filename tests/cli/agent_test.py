@@ -133,6 +133,101 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         asrv.assert_called_once()
         server.serve.assert_awaited_once()
 
+    async def test_agent_serve_from_settings(self):
+        args = Namespace(
+            host="0.0.0.0",
+            port=80,
+            specifications_file=None,
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            reload=False,
+            engine_uri="uri",
+            role="assistant",
+            name=None,
+            task=None,
+            instructions=None,
+            memory_recent=None,
+            memory_permanent=None,
+            memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            run_max_new_tokens=None,
+            run_skip_special_tokens=False,
+            tool=None,
+            tool_browser_engine=None,
+            tool_browser_debug=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+        orch = MagicMock()
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value=orch),
+            ) as lfs,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as lf,
+            patch.object(
+                agent_cmds, "agents_server", return_value=server
+            ) as asrv,
+        ):
+            await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
+        lfs.assert_awaited_once()
+        lf.assert_not_called()
+        asrv.assert_called_once()
+        server.serve.assert_awaited_once()
+
+    async def test_agent_serve_needs_settings(self):
+        args = Namespace(
+            host="0.0.0.0",
+            port=80,
+            specifications_file=None,
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            reload=False,
+            engine_uri=None,
+            role=None,
+            name=None,
+            task=None,
+            instructions=None,
+            memory_recent=None,
+            memory_permanent=None,
+            memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            run_max_new_tokens=None,
+            run_skip_special_tokens=False,
+            tool=None,
+            tool_browser_engine=None,
+            tool_browser_debug=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+
+        with self.assertRaises(AssertionError):
+            await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
 
 class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_agent_init(self):

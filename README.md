@@ -62,6 +62,19 @@ Serve your agents on an OpenAI API compatible endpoint:
 avalan agent serve docs/examples/agent_tool.toml -vvv
 ```
 
+Or build the agent from inline settings and serve its OpenAI API endpoints:
+
+```bash
+avalan agent serve \
+    --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+    --tool "math.calculator" \
+    --memory-recent \
+    --run-max-new-tokens 1024 \
+    --name "Tool" \
+    --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+    -vvv
+```
+
 You can hit your tool streaming agent OpenAPI API endpoint just like you
 would with OpenAI, just change the `--base-url`:
 

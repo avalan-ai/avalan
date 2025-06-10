@@ -502,6 +502,7 @@ class CLI:
         agent_serve_parser.add_argument(
             "specifications_file",
             type=str,
+            nargs="?",
             help="File that holds the agent specifications",
         )
         agent_serve_parser.add_argument(
@@ -533,6 +534,13 @@ class CLI:
             action="store_true",
             default=False,
             help="Hot reload on code changes",
+        )
+
+        CLI._add_agent_settings_arguments(agent_serve_parser)
+        CLI._add_tool_settings_arguments(
+            agent_serve_parser,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
         )
 
         agent_init_parser = agent_command_parsers.add_parser(
