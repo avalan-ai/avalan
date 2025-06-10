@@ -62,6 +62,13 @@ Serve your agents on an OpenAI API compatible endpoint:
 avalan agent serve docs/examples/agent_tool.toml -vvv
 ```
 
+Or build the agent from inline settings:
+
+```bash
+avalan agent serve --engine-uri "microsoft/Phi-4-mini-instruct" \
+    --role "You are a helpful assistant" -vvv
+```
+
 You can hit your tool streaming agent OpenAPI API endpoint just like you
 would with OpenAI, just change the `--base-url`:
 

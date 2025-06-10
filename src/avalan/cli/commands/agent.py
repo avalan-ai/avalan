@@ -254,11 +254,12 @@ async def agent_run(
     _, _i = theme._, theme.icons
 
     specs_path = args.specifications_file
+    engine_uri = getattr(args, "engine_uri", None)
     assert not (
-        specs_path and args.engine_uri
+        specs_path and engine_uri
     ), "specifications file and --engine-uri are mutually exclusive"
     assert (
-        specs_path or args.engine_uri
+        specs_path or engine_uri
     ), "specifications file or --engine-uri must be specified"
     use_async_generator = not args.use_sync_generator
     display_tokens = args.display_tokens or 0
@@ -459,23 +460,57 @@ async def agent_serve(
     name: str,
     version: str,
 ) -> None:
-    assert args.host and args.port and args.specifications_file
+    assert args.host and args.port
     specs_path = args.specifications_file
+    engine_uri = getattr(args, "engine_uri", None)
+    assert not (
+        specs_path and engine_uri
+    ), "specifications file and --engine-uri are mutually exclusive"
+    assert (
+        specs_path or engine_uri
+    ), "specifications file or --engine-uri must be specified"
 
     async with AsyncExitStack() as stack:
-        logger.debug(f"Loading agent from {specs_path}")
+        if specs_path:
+            logger.debug(f"Loading agent from {specs_path}")
 
-        orchestrator = await OrchestratorLoader.from_file(
-            specs_path,
-            agent_id=uuid4(),
-            hub=hub,
-            logger=logger,
-            participant_id=uuid4(),
-            stack=stack,
-        )
+            orchestrator = await OrchestratorLoader.from_file(
+                specs_path,
+                agent_id=uuid4(),
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+        else:
+            assert args.role
+            memory_recent = (
+                args.memory_recent if args.memory_recent is not None else True
+            )
+            settings = get_orchestrator_settings(
+                args,
+                agent_id=uuid4(),
+                memory_recent=memory_recent,
+                tools=args.tool,
+            )
+            logger.debug("Loading agent from inline settings")
+            browser_settings = get_tool_settings(
+                args, prefix="browser", settings_cls=BrowserToolSettings
+            )
+            orchestrator = await OrchestratorLoader.load_from_settings(
+                settings,
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+                browser_settings=browser_settings,
+            )
         orchestrator = await stack.enter_async_context(orchestrator)
 
-        logger.debug(f"Agent loaded from {specs_path}")
+        logger.debug(
+            "Agent loaded from"
+            f" {specs_path if specs_path else 'inline settings'}"
+        )
         server = agents_server(
             name=name,
             version=version,

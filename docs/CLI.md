@@ -108,10 +108,11 @@ You'll need your Huggingface access token exported as `HF_ACCESS_TOKEN`.
 
 ### agent run
 
-Run an AI agent described in a TOML file:
+Run an AI agent described in a TOML file, or build it from the command line:
 
 ```bash
 avalan agent run docs/examples/agent_gettext_translator.toml --quiet
+avalan agent run --engine-uri microsoft/Phi-4-mini-instruct --role "Hi"
 ```
 
 ### agent serve
@@ -120,6 +121,7 @@ Run an agent as an HTTP server:
 
 ```bash
 avalan agent serve docs/examples/agent_gettext_translator.toml --port 8000
+avalan agent serve --engine-uri microsoft/Phi-4-mini-instruct --role "Hi" --port 8000
 ```
 
 ### agent message search
@@ -414,12 +416,12 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                           [--host HOST] [--port PORT]
                           [--prefix-mcp PREFIX_MCP]
                           [--prefix-openai PREFIX_OPENAI] [--reload]
-                          specifications_file
+                          [specifications_file]
 
 Serve an AI agent as an API endpoint
 
 positional arguments:
-  specifications_file   File that holds the agent specifications
+  specifications_file   File that holds the agent specifications (optional)
 
 options:
   -h, --help            show this help message and exit
