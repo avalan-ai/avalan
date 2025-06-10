@@ -13,6 +13,7 @@ def get_model_settings(
 ) -> dict:
     """Return settings used to load a model."""
     return dict(
+        base_url=args.base_url if hasattr(args, "base_url") else None,
         engine_uri=engine_uri,
         attention=args.attention if hasattr(args, "attention") else None,
         device=args.device,

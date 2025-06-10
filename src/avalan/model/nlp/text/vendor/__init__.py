@@ -27,7 +27,9 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         logger: Logger | None = None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
-        assert settings.access_token, "API key needed for vendor"
+        assert (
+            settings.base_url or settings.access_token
+        ), "API key needed for vendor"
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
 

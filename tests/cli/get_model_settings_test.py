@@ -10,6 +10,7 @@ class GetModelSettingsTestCase(unittest.TestCase):
         engine_uri = MagicMock()
         args = Namespace(
             attention="flash",
+            base_url="http://localhost:9001/v1",
             device="cpu",
             disable_loading_progress_bar=True,
             sentence_transformer=True,
@@ -28,6 +29,7 @@ class GetModelSettingsTestCase(unittest.TestCase):
         expected = {
             "engine_uri": engine_uri,
             "attention": "flash",
+            "base_url": "http://localhost:9001/v1",
             "device": "cpu",
             "disable_loading_progress_bar": True,
             "is_sentence_transformer": True,

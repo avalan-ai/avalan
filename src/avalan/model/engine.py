@@ -34,7 +34,7 @@ from typing import Any
 class Engine(ABC):
     _device: str
     _logger: Logger
-    _model_id: str
+    _model_id: str | None
     _settings: EngineSettings
     _transformers_logging_logger: Logger
     _transformers_logging_level: int
@@ -63,11 +63,10 @@ class Engine(ABC):
 
     def __init__(
         self,
-        model_id: str,
+        model_id: str | None,
         settings: EngineSettings | None = None,
         logger: Logger | None = None,
     ):
-        assert model_id
         self._logger = logger if logger else getLogger()
         self._model_id = model_id
         self._settings = settings if settings else EngineSettings()
@@ -115,7 +114,7 @@ class Engine(ABC):
         return self._model
 
     @property
-    def model_id(self) -> str:
+    def model_id(self) -> str | None:
         return self._model_id
 
     @property
@@ -230,7 +229,7 @@ class Engine(ABC):
         if self._settings.disable_loading_progress_bar:
             disable_progress_bar()
 
-        if load_tokenizer:
+        if load_tokenizer and self._model_id:
             _l(f"Loading tokenizer {tokenizer_name_or_path or self._model_id}")
             self._tokenizer = self._load_tokenizer_with_tokens(
                 tokenizer_name_or_path or self._model_id, use_fast=True
@@ -248,7 +247,8 @@ class Engine(ABC):
         is_sentence_transformer = False
         if self._settings.auto_load_model:
             _l(
-                f"Loading pretrained model {self._model_id} from "
+                "Loading pretrained model "
+                f"{self._model_id or str(self._model)} from "
                 f"cache {self._settings.cache_dir}"
             )
             self._model = self._load_model()
