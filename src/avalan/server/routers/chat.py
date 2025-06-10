@@ -1,5 +1,6 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import GenerationSettings, Message, MessageRole
+from ...event import Event
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -57,7 +58,9 @@ async def create_chat_completion(
 
         async def generate_chunks():
             async for token in response:
-                # OpenAI stream delta chunk
+                if isinstance(token, Event):
+                    continue
+
                 choice = ChatCompletionChunkChoice(
                     delta=ChatCompletionChunkChoiceDelta(content=token)
                 )
