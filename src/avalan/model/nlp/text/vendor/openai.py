@@ -50,7 +50,7 @@ class OpenAIClient(TextGenerationVendor):
 
 class OpenAIModel(TextGenerationVendorModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
-        assert self._settings.access_token
+        assert self._settings.base_url or self._settings.access_token
         return OpenAIClient(
             base_url=self._settings.base_url,
             api_key=self._settings.access_token,

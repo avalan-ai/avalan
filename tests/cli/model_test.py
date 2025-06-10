@@ -18,6 +18,7 @@ class CliModelTestCase(TestCase):
         engine_uri = MagicMock()
         args = Namespace(
             attention="flash",
+            base_url="http://localhost:9001/v1",
             device="cpu",
             disable_loading_progress_bar=True,
             sentence_transformer=True,
@@ -36,6 +37,7 @@ class CliModelTestCase(TestCase):
         result = get_model_settings(args, self.hub, self.logger, engine_uri)
         expected = {
             "engine_uri": engine_uri,
+            "base_url": "http://localhost:9001/v1",
             "attention": "flash",
             "device": "cpu",
             "disable_loading_progress_bar": True,

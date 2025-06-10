@@ -45,7 +45,7 @@ class ModelManager(ContextDecorator):
 
     def get_engine_settings(
         self,
-        engine_uri,
+        engine_uri: EngineUri,
         settings: dict | None = None,
         is_sentence_transformer: bool | None = None,
     ) -> TransformerEngineSettings:
@@ -72,6 +72,7 @@ class ModelManager(ContextDecorator):
         engine_uri: EngineUri,
         *args,
         attention: AttentionImplementation | None = None,
+        base_url: str | None = None,
         device: str | None = None,
         disable_loading_progress_bar: bool = False,
         is_sentence_transformer: bool | None = None,
@@ -86,6 +87,7 @@ class ModelManager(ContextDecorator):
         weight_type: WeightType = "auto",
     ) -> SentenceTransformerModel | TextGenerationModel:
         engine_settings_args = dict(
+            base_url=base_url,
             cache_dir=self._hub.cache_dir,
             device=device,
             disable_loading_progress_bar=quiet or disable_loading_progress_bar,

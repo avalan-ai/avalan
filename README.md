@@ -27,7 +27,7 @@ echo 'Who are you, and who is Leo Messi?' \
 
 Just as easily as you can run local models, you can use vendors. Simply swap in a vendor-backed [engine URI](docs/ai_uri.md) to run on an external API. For instance, to hit OpenAI's GPT-4o endpoint with the same sampling parameters:
 
-```
+```bash
 echo 'Who are you, and who is Leo Messi?' \
   | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
       --system "You are Aurora, a helpful assistant" \
@@ -55,6 +55,20 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
 Check the GPU hard at work towards the bottom:
 
 ![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
+
+Serve your agents on an OpenAI API compatible endpoint:
+
+```bash
+avalan agent serve docs/examples/agent_tool.toml -vvv
+```
+
+You can hit your tool streaming agent OpenAPI API endpoint just like you
+would with OpenAI, just change the `--base-url`:
+
+```bash
+echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
+    avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
+```
 
 With tooling, agents get real-time knowledge. Here's an 8B model looking for avalan's latest release, using a browser to do so:
 

@@ -56,127 +56,6 @@ from uuid import uuid4
 from warnings import filterwarnings
 
 
-def add_agent_settings_arguments(parser: ArgumentParser) -> ArgumentParser:
-    """Add agent inline settings arguments to ``parser``.
-
-    Parameters
-    ----------
-    parser: ArgumentParser
-        Argument parser to which the options will be added.
-
-    Returns
-    -------
-    ArgumentParser
-        The created argument group with all settings options.
-    """
-    group = parser.add_argument_group("inline agent settings")
-    group.add_argument("--engine-uri", type=str, help="Agent engine URI")
-    group.add_argument("--name", type=str, help="Agent name")
-    group.add_argument("--role", type=str, help="Agent role")
-    group.add_argument("--task", type=str, help="Agent task")
-    group.add_argument("--instructions", type=str, help="Agent instructions")
-    group.add_argument(
-        "--memory-recent",
-        dest="memory_recent",
-        action="store_true",
-        default=None,
-    )
-    group.add_argument(
-        "--no-memory-recent", dest="memory_recent", action="store_false"
-    )
-    group.add_argument(
-        "--memory-permanent", type=str, help="Permanent memory DSN"
-    )
-    group.add_argument(
-        "--memory-engine-model-id",
-        type=str,
-        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
-        help="Sentence transformer model for memory",
-    )
-    group.add_argument(
-        "--memory-engine-max-tokens",
-        type=int,
-        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS,
-        help="Maximum tokens for memory sentence transformer",
-    )
-    group.add_argument(
-        "--memory-engine-overlap",
-        type=int,
-        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE,
-        help="Overlap size for memory sentence transformer",
-    )
-    group.add_argument(
-        "--memory-engine-window",
-        type=int,
-        default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE,
-        help="Window size for memory sentence transformer",
-    )
-    group.add_argument(
-        "--run-max-new-tokens",
-        type=int,
-        help="Maximum count of tokens on output",
-        default=None,
-    )
-    group.add_argument(
-        "--run-skip-special-tokens",
-        action="store_true",
-        default=False,
-        help="Skip special tokens on output",
-    )
-    group.add_argument("--tool", type=str, action="append", help="Enable tool")
-    return group
-
-
-def add_tool_settings_arguments(
-    parser: ArgumentParser, *, prefix: str, settings_cls: type
-) -> ArgumentParser:
-    """Add tool settings arguments using dataclass ``settings_cls``.
-
-    Parameters
-    ----------
-    parser: ArgumentParser
-        Parser to which the options will be added.
-    prefix: str
-        Prefix for the CLI options (e.g. ``browser``).
-    settings_cls: type
-        Dataclass defining the settings.
-
-    Returns
-    -------
-    ArgumentParser
-        The argument group created.
-    """
-    group = parser.add_argument_group(f"{prefix} tool settings")
-
-    for field in fields(settings_cls):
-        option = f"--tool-{prefix}-{field.name.replace('_', '-')}"
-        dest = f"tool_{prefix}_{field.name}"
-
-        ftype = field.type
-        origin = get_origin(ftype)
-        args = get_type_args(ftype)
-        if origin is not None:
-            if origin is list or origin is tuple:
-                ftype = args[0]
-            elif origin is Optional or type(None) in args:
-                ftype = next((a for a in args if a is not type(None)), str)
-            elif origin.__name__ == "Literal":
-                ftype = type(args[0])
-
-        if ftype is bool or isinstance(field.default, bool):
-            group.add_argument(
-                option, dest=dest, action="store_true", default=None
-            )
-        elif ftype is int or isinstance(field.default, int):
-            group.add_argument(option, dest=dest, type=int, default=None)
-        elif ftype is float or isinstance(field.default, float):
-            group.add_argument(option, dest=dest, type=float, default=None)
-        else:
-            group.add_argument(option, dest=dest, type=str, default=None)
-
-    return group
-
-
 class CLI:
     _REFRESH_RATE = 4
 
@@ -370,6 +249,14 @@ class CLI:
             "model",
             type=str,
             help="Model to use",
+        )
+        model_options_parser.add_argument(
+            "--base-url",
+            type=str,
+            help=(
+                "If specified and model is a vendor model that supports it,"
+                "load model using the given base URL"
+            ),
         )
         model_options_parser.add_argument(
             "--load",
@@ -600,8 +487,8 @@ class CLI:
             ),
         )
 
-        add_agent_settings_arguments(agent_run_parser)
-        add_tool_settings_arguments(
+        CLI._add_agent_settings_arguments(agent_run_parser)
+        CLI._add_tool_settings_arguments(
             agent_run_parser,
             prefix="browser",
             settings_cls=BrowserToolSettings,
@@ -653,7 +540,7 @@ class CLI:
             description="Create an agent definition",
             parents=[global_parser],
         )
-        add_agent_settings_arguments(agent_init_parser)
+        CLI._add_agent_settings_arguments(agent_init_parser)
 
         # Cache command
         cache_parser = command_parsers.add_parser(
@@ -1148,6 +1035,105 @@ class CLI:
             else:
                 new_argv.append(arg)
         return new_argv, options
+
+    @staticmethod
+    def _add_agent_settings_arguments(
+        parser: ArgumentParser,
+    ) -> ArgumentParser:
+        group = parser.add_argument_group("inline agent settings")
+        group.add_argument("--engine-uri", type=str, help="Agent engine URI")
+        group.add_argument("--name", type=str, help="Agent name")
+        group.add_argument("--role", type=str, help="Agent role")
+        group.add_argument("--task", type=str, help="Agent task")
+        group.add_argument(
+            "--instructions", type=str, help="Agent instructions"
+        )
+        group.add_argument(
+            "--memory-recent",
+            dest="memory_recent",
+            action="store_true",
+            default=None,
+        )
+        group.add_argument(
+            "--no-memory-recent", dest="memory_recent", action="store_false"
+        )
+        group.add_argument(
+            "--memory-permanent", type=str, help="Permanent memory DSN"
+        )
+        group.add_argument(
+            "--memory-engine-model-id",
+            type=str,
+            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            help="Sentence transformer model for memory",
+        )
+        group.add_argument(
+            "--memory-engine-max-tokens",
+            type=int,
+            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS,
+            help="Maximum tokens for memory sentence transformer",
+        )
+        group.add_argument(
+            "--memory-engine-overlap",
+            type=int,
+            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE,
+            help="Overlap size for memory sentence transformer",
+        )
+        group.add_argument(
+            "--memory-engine-window",
+            type=int,
+            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE,
+            help="Window size for memory sentence transformer",
+        )
+        group.add_argument(
+            "--run-max-new-tokens",
+            type=int,
+            help="Maximum count of tokens on output",
+            default=None,
+        )
+        group.add_argument(
+            "--run-skip-special-tokens",
+            action="store_true",
+            default=False,
+            help="Skip special tokens on output",
+        )
+        group.add_argument(
+            "--tool", type=str, action="append", help="Enable tool"
+        )
+        return group
+
+    @staticmethod
+    def _add_tool_settings_arguments(
+        parser: ArgumentParser, *, prefix: str, settings_cls: type
+    ) -> ArgumentParser:
+        group = parser.add_argument_group(f"{prefix} tool settings")
+
+        for field in fields(settings_cls):
+            option = f"--tool-{prefix}-{field.name.replace('_', '-')}"
+            dest = f"tool_{prefix}_{field.name}"
+
+            ftype = field.type
+            origin = get_origin(ftype)
+            args = get_type_args(ftype)
+            if origin is not None:
+                if origin is list or origin is tuple:
+                    ftype = args[0]
+                elif origin is Optional or type(None) in args:
+                    ftype = next((a for a in args if a is not type(None)), str)
+                elif origin.__name__ == "Literal":
+                    ftype = type(args[0])
+
+            if ftype is bool or isinstance(field.default, bool):
+                group.add_argument(
+                    option, dest=dest, action="store_true", default=None
+                )
+            elif ftype is int or isinstance(field.default, int):
+                group.add_argument(option, dest=dest, type=int, default=None)
+            elif ftype is float or isinstance(field.default, float):
+                group.add_argument(option, dest=dest, type=float, default=None)
+            else:
+                group.add_argument(option, dest=dest, type=str, default=None)
+
+        return group
 
     async def __call__(self) -> None:
         argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
