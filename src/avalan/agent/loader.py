@@ -15,6 +15,7 @@ from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
+from ..tool.code import CodeToolSet
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK
@@ -280,6 +281,7 @@ class OrchestratorLoader:
                 namespace="browser",
             ),
             MathToolSet(namespace="math"),
+            CodeToolSet(namespace="code"),
         ]
 
         tool = ToolManager.create_instance(
