@@ -56,6 +56,21 @@ Check the GPU hard at work towards the bottom:
 
 ![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
 
+Here's a tool using agent that uses the `code.run` tool to execute Python
+code built by the agent, and inform the result:
+
+```bash
+echo "Create a python function to uppercase a string, split it spaces, and then return the words joined by a dash, and execute the function with the string 'Leo Messi is the greatest footballer of all times'" \
+  | avalan agent run \
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --tool "code.run" \
+      --memory-recent \
+      --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats
+```
+
 Serve your agents on an OpenAI API compatible endpoint:
 
 ```bash

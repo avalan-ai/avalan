@@ -11,7 +11,9 @@ license = { text = "MIT" }
 authors = [
   { name = "The Avalan Team", email = "avalan@avalan.ai" },
 ]
-requires-python = ">=3.11.11"
+# the upper 3.14 python version limit is because of RestrictedPython
+# @see https://github.com/zopefoundation/RestrictedPython/issues/298
+requires-python = ">=3.11.11,<3.14"
 dependencies = [
   "packaging (==25.0)",
   "humanize (==4.12.3)",
@@ -83,6 +85,8 @@ test = [
   "psycopg[binary,pool]==3.2.9",
   "pydantic==2.11.5",
   "pytest==8.3.5",
+  "RestrictedPython==8.0",
+  "sympy==1.14.0",
   "tiktoken==0.9.0",
   "torch==2.7.0",
   "torchaudio==2.7.0",
@@ -92,6 +96,7 @@ test = [
 ]
 tool = [
   "playwright==1.52.0",
+  "RestrictedPython==8.0",
   "sympy==1.14.0",
 ]
 secrets = [
@@ -129,6 +134,7 @@ all = [
   "fastapi==0.115.12",
   "google-genai==1.16.1",
   "jinja2==3.1.6",
+  "keyring==25.6.0",
   "markitdown[pdf]==0.1.1",
   "mcp==1.9.1",
   "mlx-lm==0.24.1",
@@ -140,9 +146,9 @@ all = [
   "playwright==1.52.0",
   "pydantic==2.11.5",
   "pytest==8.3.5",
+  "RestrictedPython==8.0",
   "sentence-transformers==4.1.0",
   "sentencepiece==0.2.0",
-  "keyring==25.6.0",
   "sympy==1.14.0",
   "tiktoken==0.9.0",
   "torchaudio==2.7.0",

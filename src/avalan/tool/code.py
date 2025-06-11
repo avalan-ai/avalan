@@ -1,36 +1,61 @@
-from contextlib import AsyncExitStack
-from importlib import import_module
-
 from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
-
+from contextlib import AsyncExitStack
+from importlib import import_module
+from RestrictedPython import compile_restricted, safe_globals, RestrictingNodeTransformer
 
 class CodeTool(Tool):
-    """Execute Python code in a restricted environment.
+    """Execute Python function code in a restricted environment.
 
     Args:
-        code: Python code to execute.
+        code: Python code to execute, which should define a function named
+        `run`, with whatever arguments needed, and returning its result on
+        a string.
+        args: Positional arguments to send the `run` function.
+        kwargs: Keyword arguments to send the `run` function.
 
     Returns:
-        Value of a variable named ``result`` defined in the executed code,
-        or an empty string if not present.
+        A string, which is the value returned by the `run` function.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.__name__ = "code"
+        self.__name__ = "run"
 
-    async def __call__(self, code: str, *, context: ToolCallContext) -> str:
-        compile_restricted = import_module(
-            "RestrictedPython"
-        ).compile_restricted
-        safe_builtins = import_module("RestrictedPython.Guards").safe_builtins
-        compiled = compile_restricted(code, "<tool>", "exec")
-        globals_dict: dict[str, object] = {"__builtins__": safe_builtins}
-        locals_dict: dict[str, object] = {}
-        exec(compiled, globals_dict, locals_dict)
-        return str(locals_dict.get("result", ""))
+    async def __call__(self, code: str, *args: any, context: ToolCallContext, **kwargs: any) -> str:
+        locals_dict = {}
+        byte_code = compile_restricted(
+            code,
+            filename='<avalan:tool:code>',
+            mode='exec',
+            flags=0,
+            dont_inherit=False,
+            policy=RestrictingNodeTransformer
+        )
+        exec(
+            byte_code,
+            globals=safe_globals,
+            locals=locals_dict
+        )
+        assert "run" in locals_dict
+
+        function = locals_dict["run"]
+
+        if args and not kwargs and isinstance(args, tuple) and len(args) == 2:
+            (args, kwargs) = args
+            if args and not kwargs and isinstance(args, dict):
+                kwargs = args
+                args = None
+
+        result = (
+            function(*args, **kwargs) if args and kwargs else
+            function(*args) if args else
+            function(**kwargs) if kwargs else
+            function()
+        )
+
+        return str(result)
 
 
 class CodeToolSet(ToolSet):

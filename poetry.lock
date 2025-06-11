@@ -3242,6 +3242,23 @@ socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
 
 [[package]]
+name = "restrictedpython"
+version = "8.0"
+description = "RestrictedPython is a defined subset of the Python language which allows to provide a program input into a trusted environment."
+optional = true
+python-versions = "<3.14,>=3.9"
+groups = ["main"]
+markers = "extra == \"test\" or extra == \"tool\" or extra == \"all\""
+files = [
+    {file = "RestrictedPython-8.0-py3-none-any.whl", hash = "sha256:ed3d894efd7d6cac0a5f13f75583b8458378d400d7dd4c083b59233eba85fe69"},
+    {file = "restrictedpython-8.0.tar.gz", hash = "sha256:3af2312bc67e5fced887fb85b006c89861da72488128b155beea81eb6a0a9b24"},
+]
+
+[package.extras]
+docs = ["Sphinx", "furo"]
+test = ["pytest", "pytest-mock"]
+
+[[package]]
 name = "rich"
 version = "14.0.0"
 description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
@@ -3390,27 +3407,12 @@ files = [
 
 [[package]]
 name = "rsa"
-version = "4.2"
-description = "Pure-Python RSA implementation"
-optional = true
-python-versions = "*"
-groups = ["main"]
-markers = "python_version >= \"3.12\" and (extra == \"vendors\" or extra == \"all\")"
-files = [
-    {file = "rsa-4.2.tar.gz", hash = "sha256:aaefa4b84752e3e99bd8333a2e1e3e7a7da64614042bd66f775573424370108a"},
-]
-
-[package.dependencies]
-pyasn1 = ">=0.1.3"
-
-[[package]]
-name = "rsa"
 version = "4.9.1"
 description = "Pure-Python RSA implementation"
 optional = true
 python-versions = "<4,>=3.6"
 groups = ["main"]
-markers = "python_version < \"3.13\" and (extra == \"vendors\" or extra == \"all\")"
+markers = "extra == \"vendors\" or extra == \"all\""
 files = [
     {file = "rsa-4.9.1-py3-none-any.whl", hash = "sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762"},
     {file = "rsa-4.9.1.tar.gz", hash = "sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75"},
@@ -4510,7 +4512,7 @@ type = ["pytest-mypy"]
 
 [extras]
 agent = ["jinja2"]
-all = ["accelerate", "anthropic", "bitsandbytes", "boto3", "faiss-cpu", "fastapi", "google-genai", "jinja2", "keyring", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "sentence-transformers", "sentencepiece", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn"]
+all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "faiss-cpu", "fastapi", "google-genai", "jinja2", "keyring", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "sentence-transformers", "sentencepiece", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn"]
 audio = ["torchaudio"]
 cpu = ["accelerate"]
 memory = ["faiss-cpu", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
@@ -4518,8 +4520,8 @@ mlx = ["mlx-lm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
-test = ["boto3", "faiss-cpu", "fastapi", "keyring", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "tiktoken", "torch", "torchaudio", "transformers", "tree-sitter", "tree-sitter-python"]
-tool = ["playwright", "sympy"]
+test = ["RestrictedPython", "boto3", "faiss-cpu", "fastapi", "keyring", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "sympy", "tiktoken", "torch", "torchaudio", "transformers", "tree-sitter", "tree-sitter-python"]
+tool = ["RestrictedPython", "playwright", "sympy"]
 translation = ["protobuf", "sentencepiece", "tiktoken"]
 vendors = ["anthropic", "google-genai", "openai", "pillow", "tiktoken"]
 vision = ["pillow", "torchvision"]
@@ -4527,5 +4529,5 @@ vllm = ["vllm"]
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.11.11"
-content-hash = "7aef90b8f03facb9318f966c6f1583067c5dc02bdec2d5589a926741f4faf837"
+python-versions = ">=3.11.11,<3.14"
+content-hash = "eaedd434948b3a594c1281f6972d42e0052051ee660ccd94b8685e3c72e6f7a3"
