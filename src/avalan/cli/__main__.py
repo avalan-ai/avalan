@@ -34,6 +34,7 @@ from ..entities import (
 )
 from ..memory.permanent import VectorFunction
 from ..model.hubs.huggingface import HuggingfaceHub
+from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
 from ..agent.loader import OrchestratorLoader
 from ..utils import logger_replace
@@ -1143,6 +1144,21 @@ class CLI:
 
         return group
 
+    @staticmethod
+    def _needs_hf_token(args: Namespace) -> bool:
+        command = args.command
+        if command == "model" and (args.model_command or "display") == "run":
+            engine_uri = ModelManager.parse_uri(args.model)
+            return engine_uri.is_local
+        if command == "agent" and (
+            (args.agent_command or "run") in {"run", "serve"}
+        ):
+            engine = getattr(args, "engine_uri", None)
+            if engine:
+                engine_uri = ModelManager.parse_uri(engine)
+                return engine_uri.is_local
+        return True
+
     async def __call__(self) -> None:
         argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
         args = self._parser.parse_args(argv)
@@ -1162,7 +1178,22 @@ class CLI:
         _ = theme._
         console = Console(theme=Theme(styles=theme.get_styles()))
 
-        access_token = args.hf_token or Prompt.ask(theme.ask_access_token())
+        access_token = args.hf_token
+        requires_token = self._needs_hf_token(args)
+        if requires_token:
+            if not access_token:
+                prompt_kwargs = {}
+                if has_input(console):
+                    try:
+                        prompt_kwargs["stream"] = open("/dev/tty")
+                    except OSError:
+                        pass
+                access_token = Prompt.ask(
+                    theme.ask_access_token(), **prompt_kwargs
+                )
+        else:
+            access_token = access_token or "anonymous"
+
         assert access_token
 
         hub = HuggingfaceHub(access_token, args.cache_dir, self._logger)
