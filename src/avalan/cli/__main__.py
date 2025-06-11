@@ -24,6 +24,7 @@ from ..cli.commands.model import (
     model_uninstall,
 )
 from ..cli.commands.tokenizer import tokenize
+from ..cli.commands.deploy import deploy_run
 from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
@@ -1343,6 +1344,11 @@ class CLI:
                         )
                     case "uninstall":
                         model_uninstall(args, console, theme, hub)
+            case "deploy":
+                subcommand = args.deploy_command or "run"
+                match subcommand:
+                    case "run":
+                        await deploy_run(args, self._logger)
 
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)
