@@ -1,0 +1,11 @@
+[agents]
+publish = "docs/examples/agent_tool.toml"
+port = 9001
+
+[aws]
+vpc = "gallifrey-vpc"
+zone = "us-east-1"
+instance = "g5.xlarge"
+pgsql = "db.r6g.2xlarge"
+database = "avalan"
+

@@ -813,7 +813,7 @@ options:
 Run a deployment definition:
 
 ```bash
-avalan deploy run docs/examples/my_deployment.toml
+avalan deploy run docs/examples/deploy_tool.toml
 ```
 
 ## flow
