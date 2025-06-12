@@ -71,6 +71,40 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
       --stats
 ```
 
+Let's initiate a chat session where we tell the agent our name. Notice the `--memory-permanent` option to specify where messages are stored, the `--id` option to uniquely identify the agent, and `--participant` option specifying a user ID:
+
+```bash
+echo "Hi Tool, my name is Leo. Nice to meet you." \
+  | avalan agent run \
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --memory-recent \
+      --memory-permanent "postgresql://root:password@localhost/avalan" \
+      --id "f4fd12f4-25ea-4c81-9514-d31fb4c48128" \
+      --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
+      --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats
+
+```
+
+Let's have our agent be able to tap into past messages by enabling persistent memory and the `memory.message.read` tool. It should be able to find that our name is `Leo` based off the message we previously posted:
+
+```bash
+echo "Hi Tool, based on our previous conversations, what's my name?" \
+  | avalan agent run \
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --tool "memory.message.read" \
+      --memory-recent \
+      --memory-permanent "postgresql://root:password@localhost/avalan" \
+      --id "f4fd12f4-25ea-4c81-9514-d31fb4c48128" \
+      --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
+      --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats
+```
+
 Serve your agents on an OpenAI API compatible endpoint:
 
 ```bash

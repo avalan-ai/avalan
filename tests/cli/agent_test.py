@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from argparse import Namespace
 from rich.syntax import Syntax
-
 from avalan.cli.commands import agent as agent_cmds
+from avalan.memory.permanent import VectorFunction
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -14,6 +14,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             id="aid",
             participant="pid",
             session="sid",
+            function=VectorFunction.L2_DISTANCE,
             no_repl=False,
             quiet=False,
             skip_hub_access_check=False,
@@ -87,11 +88,70 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             agent_id="aid",
             session_id="sid",
             participant_id="pid",
-            function=agent_cmds.VectorFunction.L2_DISTANCE,
+            function=VectorFunction.L2_DISTANCE,
             limit=1,
         )
         self.console.print.assert_any_call("agent_panel")
         self.console.print.assert_any_call("matches_panel")
+
+    async def test_search_messages_from_settings(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.name = None
+        self.args.task = None
+        self.args.instructions = None
+        self.args.memory_recent = None
+        self.args.memory_permanent = None
+        self.args.memory_engine_model_id = (
+            agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
+        )
+        self.args.memory_engine_max_tokens = 500
+        self.args.memory_engine_overlap = 125
+        self.args.memory_engine_window = 250
+        self.args.run_max_new_tokens = None
+        self.args.run_skip_special_tokens = False
+        self.args.tool_browser_engine = None
+        self.args.tool_browser_debug = None
+        self.args.tool_browser_search = None
+        self.args.tool_browser_search_context = None
+        self.args.tool = None
+
+        orch = MagicMock()
+        orch.engine_agent = True
+        orch.engine = MagicMock(model_id="m")
+        orch.model_ids = ["m"]
+        orch.memory.search_messages = AsyncMock(return_value=["msg"])
+
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "load_from_settings",
+                new=AsyncMock(return_value=orch),
+            ) as lfs,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as lf,
+        ):
+            await agent_cmds.agent_message_search(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        lfs.assert_awaited_once()
+        lf.assert_not_called()
+        dummy_stack.enter_async_context.assert_awaited_once_with(orch)
+        orch.memory.search_messages.assert_awaited_once()
 
 
 class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):

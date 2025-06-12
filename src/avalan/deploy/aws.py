@@ -1,24 +1,21 @@
-from argparse import Namespace
 from asyncio import AbstractEventLoop, get_running_loop
 from botocore.exceptions import ClientError
 from boto3 import client
 from boto3.session import Session
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-from logging import Logger
-from pathlib import Path
-from tomllib import load
 from typing import Callable
+
 
 class DeployError(Exception):
     """Deployment failed."""
+
 
 class AsyncClient:
     def __init__(
         self,
         client: client,
         loop: AbstractEventLoop | None = None,
-        executor: ThreadPoolExecutor | None = None
+        executor: ThreadPoolExecutor | None = None,
     ):
         self._client = client
         self._loop = loop or get_running_loop()
@@ -31,17 +28,20 @@ class AsyncClient:
 
         async def fn(*args, **kwargs):
             return await self._loop.run_in_executor(
-                self._executor,
-                lambda: attr(*args, **kwargs)
+                self._executor, lambda: attr(*args, **kwargs)
             )
+
         return fn
+
 
 class Aws:
     _ec2: AsyncClient
     _rds: AsyncClient
     _session: Session
 
-    def __init__(self, settings: dict | None = None, token_pair: str | None = None):
+    def __init__(
+        self, settings: dict | None = None, token_pair: str | None = None
+    ):
         if settings and "token_pair" in settings and not token_pair:
             token_pair = settings.pop("token_pair")
 
@@ -85,9 +85,7 @@ class Aws:
         )
         return response["GroupId"]
 
-    async def configure_security_group(
-        self, group_id: str, port: int
-    ) -> None:
+    async def configure_security_group(self, group_id: str, port: int) -> None:
         try:
             await self._ec2.authorize_security_group_ingress(
                 GroupId=group_id,
@@ -100,7 +98,9 @@ class Aws:
             if exc.response["Error"]["Code"] != "InvalidPermission.Duplicate":
                 raise
 
-    async def create_rds_if_missing(self, db_id: str, instance_class: str, sg_id: str, storage: int) -> str:
+    async def create_rds_if_missing(
+        self, db_id: str, instance_class: str, sg_id: str, storage: int
+    ) -> str:
         try:
             await self._rds.describe_db_instances(DBInstanceIdentifier=db_id)
         except self._rds.exceptions.DBInstanceNotFoundFault:
@@ -118,9 +118,15 @@ class Aws:
             waiter.wait(DBInstanceIdentifier=db_id)
         return db_id
 
-
     async def create_instance_if_missing(
-        self, vpc_id: str, sg_id: str, ami_id: str, instance_type: str, instance_name: str, agent_path: str, port: int
+        self,
+        vpc_id: str,
+        sg_id: str,
+        ami_id: str,
+        instance_type: str,
+        instance_name: str,
+        agent_path: str,
+        port: int,
     ) -> str:
         user_data = self._create_user_data(agent_path, port)
         response = await self._ec2.describe_instances(
@@ -153,7 +159,6 @@ class Aws:
         )
         return response["Instances"][0]["InstanceId"]
 
-
     def _create_user_data(self, agent_path: str, port: int) -> str:
         cmd = f"avalan agent serve {agent_path} --host 0.0.0.0 --port {port}\n"
         service = f"""
@@ -180,4 +185,3 @@ class Aws:
             "systemctl start avalan.service\n"
         )
         return script
-

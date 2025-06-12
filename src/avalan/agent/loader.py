@@ -15,6 +15,7 @@ from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
+from ..tool.memory import MemoryToolSet
 from ..tool.code import CodeToolSet
 from contextlib import AsyncExitStack
 from logging import Logger
@@ -264,6 +265,16 @@ class OrchestratorLoader:
             window_size=settings.sentence_model_window_size,
         )
 
+        logger.debug("Loading memory manager for agent %s", settings.agent_id)
+
+        memory = await MemoryManager.create_instance(
+            agent_id=settings.agent_id,
+            participant_id=participant_id,
+            text_partitioner=text_partitioner,
+            with_permanent_message_memory=settings.memory_permanent,
+            with_recent_message_memory=settings.memory_recent,
+        )
+
         logger.debug(
             "Loading tool manager for agent %s with partitioner and a sentence"
             " model %s with settings (%s, %s, %s)",
@@ -280,8 +291,9 @@ class OrchestratorLoader:
                 partitioner=text_partitioner,
                 namespace="browser",
             ),
-            MathToolSet(namespace="math"),
             CodeToolSet(namespace="code"),
+            MathToolSet(namespace="math"),
+            MemoryToolSet(memory, namespace="memory"),
         ]
 
         tool = ToolManager.create_instance(
@@ -289,16 +301,6 @@ class OrchestratorLoader:
             enable_tools=settings.tools,
         )
         tool = await stack.enter_async_context(tool)
-
-        logger.debug("Loading memory manager for agent %s", settings.agent_id)
-
-        memory = await MemoryManager.create_instance(
-            agent_id=settings.agent_id,
-            participant_id=participant_id,
-            text_partitioner=text_partitioner,
-            with_permanent_message_memory=settings.memory_permanent,
-            with_recent_message_memory=settings.memory_recent,
-        )
 
         event_manager = EventManager()
         event_manager.add_listener(
@@ -344,7 +346,11 @@ class OrchestratorLoader:
                 tool,
                 event_manager,
                 name=settings.agent_config.get("name"),
-                role=settings.agent_config["role"],
+                role=(
+                    settings.agent_config["role"]
+                    if "role" in settings.agent_config
+                    else None
+                ),
                 task=settings.agent_config.get("task"),
                 instructions=settings.agent_config.get("instructions"),
                 rules=settings.agent_config.get("rules"),

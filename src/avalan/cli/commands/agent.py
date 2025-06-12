@@ -1,4 +1,3 @@
-from argparse import Namespace
 from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
@@ -7,22 +6,22 @@ from ...cli import get_input
 from ...cli.commands.model import token_generation
 from ...entities import OrchestratorSettings
 from ...event import EventStats
-from ...memory.permanent import VectorFunction
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...server import agents_server
+from ...tool.browser import BrowserToolSettings
+from argparse import Namespace
 from contextlib import AsyncExitStack
+from dataclasses import fields
+from jinja2 import Environment, FileSystemLoader
 from logging import Logger
+from os.path import dirname, join
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
 from typing import Mapping
-from dataclasses import fields
-from ...tool.browser import BrowserToolSettings
 from uuid import UUID, uuid4
-from jinja2 import Environment, FileSystemLoader
-from os.path import dirname, join
 
 
 def get_orchestrator_settings(
@@ -169,10 +168,16 @@ async def agent_message_search(
     logger: Logger,
     refresh_per_second: int,
 ) -> None:
-    assert args.specifications_file
     _, _i = theme._, theme.icons
 
     specs_path = args.specifications_file
+    engine_uri = getattr(args, "engine_uri", None)
+    assert not (
+        specs_path and engine_uri
+    ), "specifications file and --engine-uri are mutually exclusive"
+    assert (
+        specs_path or engine_uri
+    ), "specifications file or --engine-uri must be specified"
     agent_id = args.id
     participant_id = args.participant
     session_id = args.session
@@ -196,19 +201,47 @@ async def agent_message_search(
             spinner=theme.get_spinner("agent_loading"),
             refresh_per_second=refresh_per_second,
         ):
-            logger.debug(
-                f"Loading agent from {specs_path} for "
-                f"participant {participant_id}"
-            )
+            if specs_path:
+                logger.debug(
+                    f"Loading agent from {specs_path} for "
+                    f"participant {participant_id}"
+                )
 
-            orchestrator = await OrchestratorLoader.from_file(
-                specs_path,
-                agent_id=agent_id,
-                hub=hub,
-                logger=logger,
-                participant_id=participant_id,
-                stack=stack,
-            )
+                orchestrator = await OrchestratorLoader.from_file(
+                    specs_path,
+                    agent_id=agent_id,
+                    hub=hub,
+                    logger=logger,
+                    participant_id=participant_id,
+                    stack=stack,
+                )
+            else:
+                assert (
+                    args.engine_uri
+                ), "--engine-uri required when no specifications file"
+                logger.debug("Loading agent from inline settings")
+                memory_recent = (
+                    args.memory_recent
+                    if args.memory_recent is not None
+                    else True
+                )
+                settings = get_orchestrator_settings(
+                    args,
+                    agent_id=agent_id,
+                    memory_recent=memory_recent,
+                    tools=args.tool,
+                )
+                browser_settings = get_tool_settings(
+                    args, prefix="browser", settings_cls=BrowserToolSettings
+                )
+                orchestrator = await OrchestratorLoader.load_from_settings(
+                    settings,
+                    hub=hub,
+                    logger=logger,
+                    participant_id=participant_id,
+                    stack=stack,
+                    browser_settings=browser_settings,
+                )
             orchestrator = await stack.enter_async_context(orchestrator)
 
             assert orchestrator.engine_agent and orchestrator.engine.model_id
@@ -228,12 +261,17 @@ async def agent_message_search(
                 theme.agent(orchestrator, models=models, can_access=can_access)
             )
 
+            logger.debug(
+                f'Searching for "{input_string}" across messages on '
+                f"session {session_id} between agent {agent_id} and "
+                f"participant {participant_id}"
+            )
             messages = await orchestrator.memory.search_messages(
                 search=input_string,
                 agent_id=agent_id,
                 session_id=session_id,
                 participant_id=participant_id,
-                function=VectorFunction.L2_DISTANCE,
+                function=args.function,
                 limit=limit,
             )
             console.print(
