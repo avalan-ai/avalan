@@ -1114,6 +1114,29 @@ class CLI:
             help="Skip special tokens on output",
         )
         group.add_argument(
+            "--run-temperature",
+            default=0.7,
+            type=float,
+            help="Temperature [0, 1]",
+        )
+        group.add_argument(
+            "--run-top-k",
+            type=int,
+            help=(
+                "Number of highest probability vocabulary tokens to keep for "
+                "top-k-filtering."
+            ),
+        )
+        group.add_argument(
+            "--run-top-p",
+            type=float,
+            help=(
+                "If set to < 1, only the smallest set of most probable "
+                "tokens with probabilities that add up to top_p or higher "
+                "are kept for generation."
+            ),
+        )
+        group.add_argument(
             "--tool", type=str, action="append", help="Enable tool"
         )
         return group

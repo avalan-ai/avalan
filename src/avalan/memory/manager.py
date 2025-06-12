@@ -158,21 +158,25 @@ class MemoryManager:
         self,
         search: str,
         agent_id: UUID,
-        session_id: UUID,
         participant_id: UUID,
         *args,
         function: VectorFunction,
         limit: int | None = None,
+        search_user_messages: bool = False,
+        session_id: UUID | None = None,
+        exclude_session_id: UUID | None = None
     ) -> list[EngineMessage]:
         assert self._permanent_message_memory
         search_partitions = await self._text_partitioner(search)
         messages = await self._permanent_message_memory.search_messages(
             search_partitions=search_partitions,
+            search_user_messages=search_user_messages,
             agent_id=agent_id,
-            session_id=session_id,
             participant_id=participant_id,
             function=function,
             limit=limit,
+            session_id=session_id,
+            exclude_session_id=exclude_session_id
         )
         return messages
 

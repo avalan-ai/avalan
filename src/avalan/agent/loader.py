@@ -322,9 +322,12 @@ class OrchestratorLoader:
             settings=settings.engine_config,
         )
 
+        assert settings.agent_id
+
         if settings.orchestrator_type == "json":
             assert settings.json_config is not None
             agent = cls._load_json_orchestrator(
+                agent_id=settings.agent_id,
                 engine_uri=engine_uri,
                 engine_settings=engine_settings,
                 logger=logger,
@@ -345,6 +348,7 @@ class OrchestratorLoader:
                 memory,
                 tool,
                 event_manager,
+                id=settings.agent_id,
                 name=settings.agent_config.get("name"),
                 role=(
                     settings.agent_config["role"]
@@ -363,6 +367,7 @@ class OrchestratorLoader:
 
     @staticmethod
     def _load_json_orchestrator(
+        agent_id: UUID,
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
@@ -407,6 +412,7 @@ class OrchestratorLoader:
             tool,
             event_manager,
             properties,
+            id=agent_id,
             name=agent_config["name"] if "name" in agent_config else None,
             role=agent_config["role"],
             task=agent_config["task"],

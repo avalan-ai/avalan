@@ -78,11 +78,12 @@ class MessageReadToolTestCase(IsolatedAsyncioTestCase):
         result = await self.tool("name", context=ctx)
 
         self.manager.search_messages.assert_awaited_once_with(
-            search="name",
             agent_id=self.agent_id,
-            session_id=self.session_id,
-            participant_id=self.participant_id,
+            exclude_session_id=self.session_id,
             function=VectorFunction.L2_DISTANCE,
+            participant_id=self.participant_id,
+            search="name",
+            search_user_messages=True,
             limit=1,
         )
         self.assertEqual(result, "hello")
