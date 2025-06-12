@@ -190,6 +190,13 @@ class Orchestrator:
             engine_args,
             event_manager=self._event_manager,
             tool=self._tool,
+            agent_id=self._id,
+            participant_id=self._memory.participant_id,
+            session_id=(
+                self._memory.permanent_message.session_id
+                if self._memory.permanent_message
+                else None
+            ),
         )
 
     async def __aenter__(self):

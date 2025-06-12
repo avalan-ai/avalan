@@ -62,6 +62,11 @@ class MemoryManager:
             self.add_recent_message_memory(recent_message_memory)
 
     @property
+    def participant_id(self) -> UUID:
+        """Return the participant identifier associated with this memory."""
+        return self._participant_id
+
+    @property
     def has_permanent_message(self) -> bool:
         return bool(self._permanent_message_memory)
 
