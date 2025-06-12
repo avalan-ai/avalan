@@ -238,14 +238,16 @@ class PgsqlMessageMemory(
     async def search_messages(
         self,
         *args,
-        search_partitions: list[TextPartition],
         agent_id: UUID,
-        session_id: UUID,
-        participant_id: UUID,
         function: VectorFunction,
         limit: int | None = None,
+        participant_id: UUID,
+        search_partitions: list[TextPartition],
+        search_user_messages: bool,
+        session_id: UUID | None,
+        exclude_session_id: UUID | None
     ) -> list[EngineMessageScored]:
-        assert agent_id and session_id and participant_id and search_partitions
+        assert agent_id and participant_id and search_partitions
         search_function = str(function)
         search_vector = Vector(search_partitions[0].embeddings)
         messages = await self._fetch_all(
@@ -271,18 +273,26 @@ class PgsqlMessageMemory(
             INNER JOIN "messages" ON (
                 "message_partitions"."message_id" = "messages"."id"
             )
-            WHERE "sessions"."id" = %s
-            AND "sessions"."participant_id" = %s
+            WHERE "sessions"."participant_id" = %s
             AND "sessions"."agent_id" = %s
             AND "messages"."is_deleted" = FALSE
+            AND "messages"."author" = (
+                CASE WHEN %s THEN 'user'::message_author_type
+                ELSE "messages"."author"
+                END
+            )
+            AND "sessions"."id" = COALESCE(%s, "sessions"."id")
+            AND "sessions"."id" != COALESCE(%s::UUID, NULL)
             ORDER BY "score" ASC
             LIMIT %s
         """,
             (
                 search_vector,
-                str(session_id),
                 str(participant_id),
                 str(agent_id),
+                search_user_messages,
+                str(session_id) if session_id else None,
+                str(exclude_session_id) if exclude_session_id else None,
                 limit,
             ),
         )

@@ -460,6 +460,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     participant_id=participant_id,
                     function=function,
                     limit=limit,
+                    search_user_messages=True,
+                    exclude_session_id=None
                 )
 
                 self.assert_query(
@@ -486,10 +488,10 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     INNER JOIN "messages" ON (
                         "message_partitions"."message_id" = "messages"."id"
                     )
-                    WHERE "sessions"."id" = %s
-                    AND "sessions"."participant_id" = %s
+                    WHERE "sessions"."participant_id" = %s
                     AND "sessions"."agent_id" = %s
                     AND "messages"."is_deleted" = FALSE
+                    AND "sessions"."id" = COALESCE(%s, "sessions"."id")
                     ORDER BY "score" ASC
                     LIMIT %s
                 """,
@@ -521,6 +523,127 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     self.assertEqual(result_item.score, score)
                     if i == expected_count - 1:
                         break
+
+    async def test_search_messages(self):
+        fixtures = [
+            (
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                2,
+                "model",
+                VectorFunction.L2_DISTANCE,
+                [
+                    (MessageRole.USER, "A", 1.0),
+                    (MessageRole.ASSISTANT, "B", 1.1),
+                ],
+            ),
+        ]
+        for (
+            agent_id,
+            participant_id,
+            session_id,
+            limit,
+            model_id,
+            function,
+            messages,
+        ) in fixtures:
+            with self.subTest():
+                pool_mock, connection_mock, cursor_mock = (
+                    self.mock_query(
+                        sorted(
+                            [
+                                {
+                                    "id": uuid4(),
+                                    "agent_id": agent_id,
+                                    "model_id": model_id,
+                                    "session_id": session_id,
+                                    "author": str(m[0]),
+                                    "data": m[1],
+                                    "partitions": 1,
+                                    "created_at": datetime.now(timezone.utc),
+                                    "score": m[2],
+                                }
+                                for m in messages
+                            ],
+                            key=lambda r: r["score"],
+                        ),
+                        fetch_all=True,
+                    )
+                )
+                memory = await PgsqlMessageMemory.create_instance_from_pool(
+                    pool=pool_mock
+                )
+                search_partitions = [
+                    TextPartition(
+                        data="", total_tokens=1, embeddings=rand(3)
+                    )
+                ]
+                result = await memory.search_messages(
+                    search_partitions=search_partitions,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    participant_id=participant_id,
+                    function=function,
+                    limit=limit,
+                    search_user_messages=True,
+                    exclude_session_id=None
+                )
+                self.assert_query(
+                    connection_mock,
+                    cursor_mock,
+                    f"""
+                    SELECT
+                        \"messages\".\"id\",
+                        \"messages\".\"agent_id\",
+                        \"messages\".\"model_id\",
+                        \"messages\".\"session_id\",
+                        \"messages\".\"author\",
+                        \"messages\".\"data\",
+                        \"messages\".\"partitions\",
+                        \"messages\".\"created_at\",
+                        {str(function)}(
+                            \"message_partitions\".\"embedding\",
+                            %s
+                        ) AS \"score\"
+                    FROM \"sessions\"
+                    INNER JOIN \"message_partitions\" ON (
+                        \"sessions\".\"id\" =
+                            \"message_partitions\".\"session_id\"
+                    )
+                    INNER JOIN \"messages\" ON (
+                        \"message_partitions\".\"message_id\" =
+                            \"messages\".\"id\"
+                    )
+                    WHERE \"sessions\".\"participant_id\" = %s
+                    AND \"sessions\".\"agent_id\" = %s
+                    AND \"messages\".\"is_deleted\" = FALSE
+                    AND \"messages\".\"author\" = (
+                        CASE WHEN %s THEN 'user'::message_author_type
+                        ELSE \"messages\".\"author\"
+                        END
+                    )
+                    AND \"sessions\".\"id\" = COALESCE(%s, \"sessions\".\"id\")
+                    AND \"sessions\".\"id\" != COALESCE(%s::UUID, NULL)
+                    ORDER BY \"score\" ASC
+                    LIMIT %s
+                    """,
+                    (
+                        Vector(search_partitions[0].embeddings),
+                        str(participant_id),
+                        str(agent_id),
+                        True,
+                        str(session_id),
+                        None,
+                        limit,
+                    ),
+                    fetch_all=True
+                )
+
+                self.assertEqual(len(result), len(messages))
+                for i, msg in enumerate(sorted(messages, key=lambda m: m[2])):
+                    self.assertEqual(result[i].message.content, msg[1])
+
 
     async def test_search_memories(self):
         for fixture in self.fixture_search_memories:

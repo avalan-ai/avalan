@@ -36,7 +36,10 @@ def get_orchestrator_settings(
     memory_recent: bool | None = None,
     memory_permanent: str | None = None,
     max_new_tokens: int | None = None,
+    temperature: float | None = None,
     tools: list[str] | None = None,
+    top_k: int | None = None,
+    top_p: float | None = None
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
     memory_recent = (
@@ -83,6 +86,9 @@ def get_orchestrator_settings(
         call_options={
             "max_new_tokens": call_tokens,
             "skip_special_tokens": args.run_skip_special_tokens,
+            "temperature": temperature,
+            "top_k": top_k,
+            "top_p": top_p,
             **(
                 {"chat_template_settings": chat_template_settings}
                 if chat_template_settings
@@ -269,6 +275,7 @@ async def agent_message_search(
             messages = await orchestrator.memory.search_messages(
                 search=input_string,
                 agent_id=agent_id,
+                search_user_messages=False,
                 session_id=session_id,
                 participant_id=participant_id,
                 function=args.function,

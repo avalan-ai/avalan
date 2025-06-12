@@ -186,12 +186,14 @@ class PermanentMessageMemory(MessageMemory):
     async def search_messages(
         self,
         *args,
-        search_partitions: list[TextPartition],
         agent_id: UUID,
-        session_id: UUID,
-        participant_id: UUID,
         function: VectorFunction,
         limit: int | None = None,
+        participant_id: UUID,
+        search_partitions: list[TextPartition],
+        search_user_messages: bool,
+        session_id: UUID | None,
+        exclude_session_id: UUID | None
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 

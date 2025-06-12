@@ -32,6 +32,7 @@ release:
 		echo "Usage: make release X.Y.Z"; \
 		exit 1; \
 	fi
+	@$(eval NOTES := $(shell git log --format=%B -n1 v$(VERSION)))
 	git checkout main
 	git pull --rebase
 	git tag v$(VERSION) -m "Release v$(VERSION)"
@@ -39,7 +40,7 @@ release:
 	poetry publish --build
 	gh release create v$(VERSION) \
 	  --title "v$(VERSION)" \
-	  --notes-file <(git log --format=%B -n1 "v$(VERSION)")
+	  --notes "$(NOTES)"
 
 %:
 	@:

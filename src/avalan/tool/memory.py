@@ -38,10 +38,11 @@ class MessageReadTool(Tool):
 
         results = await self._memory_manager.search_messages(
             agent_id=context.agent_id,
+            exclude_session_id=context.session_id,
             function=VectorFunction.L2_DISTANCE,
             participant_id=context.participant_id,
             search=search,
-            session_id=context.session_id,
+            search_user_messages=True,
             limit=1,
         )
         if results and results[0].message:

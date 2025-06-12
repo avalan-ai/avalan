@@ -86,6 +86,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         orch.memory.search_messages.assert_awaited_once_with(
             search="hi",
             agent_id="aid",
+            search_user_messages=False,
             session_id="sid",
             participant_id="pid",
             function=VectorFunction.L2_DISTANCE,
