@@ -1338,7 +1338,9 @@ class FancyTheme(Theme):
                     Panel(
                         engine_message.message.content,
                         title=(
-                            _i["agent_output"] + " " + _f("id", agent.name)
+                            _i["agent_output"]
+                            + " "
+                            + _f("id", agent.name or str(agent.id))
                             if engine_message.is_from_agent
                             else _i["user_input"]
                             + "  "

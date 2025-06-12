@@ -382,6 +382,7 @@ class CLI:
         agent_message_search_parser.add_argument(
             "specifications_file",
             type=str,
+            nargs="?",
             help="File that holds the agent specifications",
         )
         agent_message_search_parser.add_argument(
@@ -411,6 +412,12 @@ class CLI:
             type=str,
             required=True,
             help="Search within the given session",
+        )
+        CLI._add_agent_settings_arguments(agent_message_search_parser)
+        CLI._add_tool_settings_arguments(
+            agent_message_search_parser,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
         )
 
         agent_run_parser = agent_command_parsers.add_parser(

@@ -471,7 +471,10 @@ class ToolCall:
 
 @dataclass(frozen=True, kw_only=True)
 class ToolCallContext:
+    agent_id: UUID | None = None
     input: Input | None = None
+    participant_id: UUID | None = None
+    session_id: UUID | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

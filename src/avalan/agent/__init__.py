@@ -38,9 +38,9 @@ class Role:
 
 @dataclass(frozen=True, kw_only=True)
 class Specification:
-    role: Role
+    role: Role | None
     goal: Goal | None
-    rules: list[str] = field(default_factory=list)
+    rules: list[str] | None = field(default_factory=list)
     input_type: InputType = InputType.TEXT
     output_type: OutputType = OutputType.TEXT
     settings: GenerationSettings | None = None

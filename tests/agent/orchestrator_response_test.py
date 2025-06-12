@@ -413,3 +413,39 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, "r")
         agent.assert_awaited_once()
         tool.assert_awaited_once()
+
+
+class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
+    async def test_tool_context_ids(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = True
+
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        aid = uuid4()
+        pid = uuid4()
+        sid = uuid4()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=tool,
+            event_manager=event_manager,
+            agent_id=aid,
+            participant_id=pid,
+            session_id=sid,
+        )
+        resp.__aiter__()
+
+        self.assertEqual(resp._tool_context.agent_id, aid)
+        self.assertEqual(resp._tool_context.participant_id, pid)
+        self.assertEqual(resp._tool_context.session_id, sid)

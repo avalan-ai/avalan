@@ -18,6 +18,7 @@ from queue import Queue
 from io import StringIO
 from time import perf_counter
 from typing import Any, AsyncIterator
+from uuid import UUID
 
 
 class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
@@ -37,6 +38,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _tool_result_events: Queue[Event]
     _input: Input
     _tool_context: ToolCallContext | None
+    _agent_id: UUID | None
+    _participant_id: UUID | None
+    _session_id: UUID | None
 
     def __init__(
         self,
@@ -47,6 +51,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         engine_args: dict,
         event_manager: EventManager | None = None,
         tool: ToolManager | None = None,
+        *,
+        agent_id: UUID | None = None,
+        participant_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         self._input = input
@@ -59,6 +67,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._finished = False
         self._step = 0
         self._tool_context = None
+        self._agent_id = agent_id
+        self._participant_id = participant_id
+        self._session_id = session_id
 
     @property
     def input_token_count(self) -> int:
@@ -82,7 +93,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._response_iterator = self._response.__aiter__()
         self._buffer = StringIO()
         self._calls = Queue()
-        self._tool_context = ToolCallContext(input=self._input)
+        self._tool_context = ToolCallContext(
+            input=self._input,
+            agent_id=self._agent_id,
+            participant_id=self._participant_id,
+            session_id=self._session_id,
+        )
         self._tool_call_events = Queue()
         self._tool_process_events = Queue()
         self._tool_result_events = Queue()
@@ -226,6 +242,14 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         text = output or await response.to_str()
 
+        if self._tool_context is None:
+            self._tool_context = ToolCallContext(
+                input=self._input,
+                agent_id=self._agent_id,
+                participant_id=self._participant_id,
+                session_id=self._session_id,
+            )
+
         if not self._tool_manager:
             self._response = response
             return text
@@ -311,7 +335,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         messages.extend(tool_messages)
 
         self._input = messages
-        self._tool_context = ToolCallContext(input=self._input)
+        self._tool_context = ToolCallContext(
+            input=self._input,
+            agent_id=self._agent_id,
+            participant_id=self._participant_id,
+            session_id=self._session_id,
+        )
 
         event_tool_model_run = Event(
             type=EventType.TOOL_MODEL_RUN,

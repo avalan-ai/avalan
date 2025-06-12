@@ -2,8 +2,12 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from contextlib import AsyncExitStack
-from importlib import import_module
-from RestrictedPython import compile_restricted, safe_globals, RestrictingNodeTransformer
+from RestrictedPython import (
+    compile_restricted,
+    safe_globals,
+    RestrictingNodeTransformer,
+)
+
 
 class CodeTool(Tool):
     """Execute Python function code in a restricted environment.
@@ -23,21 +27,19 @@ class CodeTool(Tool):
         super().__init__()
         self.__name__ = "run"
 
-    async def __call__(self, code: str, *args: any, context: ToolCallContext, **kwargs: any) -> str:
+    async def __call__(
+        self, code: str, *args: any, context: ToolCallContext, **kwargs: any
+    ) -> str:
         locals_dict = {}
         byte_code = compile_restricted(
             code,
-            filename='<avalan:tool:code>',
-            mode='exec',
+            filename="<avalan:tool:code>",
+            mode="exec",
             flags=0,
             dont_inherit=False,
-            policy=RestrictingNodeTransformer
+            policy=RestrictingNodeTransformer,
         )
-        exec(
-            byte_code,
-            globals=safe_globals,
-            locals=locals_dict
-        )
+        exec(byte_code, safe_globals, locals_dict)
         assert "run" in locals_dict
 
         function = locals_dict["run"]
@@ -49,10 +51,13 @@ class CodeTool(Tool):
                 args = None
 
         result = (
-            function(*args, **kwargs) if args and kwargs else
-            function(*args) if args else
-            function(**kwargs) if kwargs else
-            function()
+            function(*args, **kwargs)
+            if args and kwargs
+            else (
+                function(*args)
+                if args
+                else function(**kwargs) if kwargs else function()
+            )
         )
 
         return str(result)

@@ -103,6 +103,7 @@ class ToolManager(ContextDecorator):
             return None
 
         is_native_tool = isinstance(tool, Tool)
+
         result = (
             await tool(*call.arguments.values(), context=context)
             if is_native_tool and call.arguments
