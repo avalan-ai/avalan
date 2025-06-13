@@ -198,7 +198,10 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
             else None
         )
 
+        contexts = []
+
         async def tool_exec(call, context: ToolCallContext):
+            contexts.append(context)
             return ToolCallResult(
                 id=uuid4(),
                 call=call,
@@ -292,6 +295,8 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
             result_event.ellapsed,
             places=2,
         )
+
+        self.assertEqual(contexts[0].calls, [])
 
 
 class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
@@ -449,3 +454,4 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resp._tool_context.agent_id, aid)
         self.assertEqual(resp._tool_context.participant_id, pid)
         self.assertEqual(resp._tool_context.session_id, sid)
+        self.assertEqual(resp._tool_context.calls, [])

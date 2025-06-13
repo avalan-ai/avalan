@@ -5,6 +5,7 @@ from ..entities import (
     EngineUri,
     OrchestratorSettings,
     TransformerEngineSettings,
+    ToolManagerSettings,
 )
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
@@ -299,6 +300,7 @@ class OrchestratorLoader:
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,
             enable_tools=settings.tools,
+            settings=ToolManagerSettings(),
         )
         tool = await stack.enter_async_context(tool)
 

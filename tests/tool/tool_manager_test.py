@@ -1,4 +1,9 @@
-from avalan.entities import ToolCall, ToolCallContext, ToolCallResult
+from avalan.entities import (
+    ToolCall,
+    ToolCallContext,
+    ToolCallResult,
+    ToolManagerSettings,
+)
 from avalan.tool import ToolSet
 from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
@@ -9,7 +14,9 @@ from uuid import uuid4 as _uuid4
 
 class ToolManagerCreationTestCase(TestCase):
     def test_default_instance_empty(self):
-        manager = ToolManager.create_instance(enable_tools=[])
+        manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
         self.assertTrue(manager.is_empty)
         self.assertIsNone(manager.tools)
 
@@ -18,6 +25,7 @@ class ToolManagerCreationTestCase(TestCase):
         manager = ToolManager.create_instance(
             enable_tools=[calculator.__name__],
             available_toolsets=[ToolSet(tools=[calculator])],
+            settings=ToolManagerSettings(),
         )
         self.assertFalse(manager.is_empty)
         self.assertEqual(manager.tools, [calculator])
@@ -38,6 +46,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         self.manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[ToolSet(tools=[calculator])],
+            settings=ToolManagerSettings(),
         )
 
     async def test_callable_class_tool(self):
@@ -45,6 +54,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(
             enable_tools=["adder"],
             available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(),
         )
         call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
         result = await manager(call, context=ToolCallContext())
@@ -84,12 +94,39 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(results, expected_result)
 
+    async def test_avoid_repetition(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(avoid_repetition=True),
+        )
+        call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
+        result1 = await manager(call, context=ToolCallContext())
+        self.assertIsNotNone(result1)
+        result2 = await manager(call, context=ToolCallContext(calls=[call]))
+        self.assertIsNone(result2)
+
+    async def test_maximum_depth(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(maximum_depth=1),
+        )
+        call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
+        result1 = await manager(call, context=ToolCallContext())
+        self.assertIsNotNone(result1)
+        result2 = await manager(call, context=ToolCallContext(calls=[call]))
+        self.assertIsNone(result2)
+
     async def test_async_context(self):
         calculator = CalculatorTool()
         toolset = ToolSet(tools=[calculator])
         manager = ToolManager.create_instance(
             enable_tools=["calculator"],
             available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
         )
         manager._stack.enter_async_context = AsyncMock()
         manager._stack.__aexit__ = AsyncMock(return_value=False)
@@ -137,6 +174,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         namespaced_manager = ToolManager.create_instance(
             enable_tools=["math.calculator"],
             available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
+            settings=ToolManagerSettings(),
         )
         text = (
             '<tool_call>{"name": "math.calculator", '

@@ -38,6 +38,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _tool_result_events: Queue[Event]
     _input: Input
     _tool_context: ToolCallContext | None
+    _call_history: list[ToolCall]
     _agent_id: UUID | None
     _participant_id: UUID | None
     _session_id: UUID | None
@@ -67,6 +68,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._finished = False
         self._step = 0
         self._tool_context = None
+        self._call_history = []
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._session_id = session_id
@@ -98,6 +100,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             agent_id=self._agent_id,
             participant_id=self._participant_id,
             session_id=self._session_id,
+            calls=list(self._call_history),
         )
         self._tool_call_events = Queue()
         self._tool_process_events = Queue()
@@ -137,11 +140,22 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if self._event_manager:
                 await self._event_manager.trigger(execute_event)
 
+            context = ToolCallContext(
+                input=self._tool_context.input,
+                agent_id=self._agent_id,
+                participant_id=self._participant_id,
+                session_id=self._session_id,
+                calls=list(self._call_history),
+            )
+
             result = (
-                await self._tool_manager(call, self._tool_context)
+                await self._tool_manager(call, context)
                 if self._tool_manager
                 else None
             )
+
+            self._call_history.append(call)
+            self._tool_context = context
 
             end = perf_counter()
             result_event = Event(
@@ -248,6 +262,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 agent_id=self._agent_id,
                 participant_id=self._participant_id,
                 session_id=self._session_id,
+                calls=list(self._call_history),
             )
 
         if not self._tool_manager:
@@ -282,11 +297,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     )
                     await self._event_manager.trigger(execute_event)
 
+                context = ToolCallContext(
+                    input=self._tool_context.input,
+                    agent_id=self._agent_id,
+                    participant_id=self._participant_id,
+                    session_id=self._session_id,
+                    calls=list(self._call_history),
+                )
+
                 result = (
-                    await self._tool_manager(call, self._tool_context)
+                    await self._tool_manager(call, context)
                     if self._tool_manager
                     else None
                 )
+                self._call_history.append(call)
+                self._tool_context = context
                 results.append(result)
 
                 if self._event_manager:
@@ -340,6 +365,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             agent_id=self._agent_id,
             participant_id=self._participant_id,
             session_id=self._session_id,
+            calls=list(self._call_history),
         )
 
         event_tool_model_run = Event(

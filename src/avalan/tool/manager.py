@@ -1,6 +1,11 @@
 from . import Tool, ToolSet
 from .parser import ToolCallParser
-from ..entities import ToolCall, ToolCallContext, ToolCallResult, ToolFormat
+from ..entities import (
+    ToolCall,
+    ToolCallContext,
+    ToolCallResult,
+    ToolManagerSettings,
+)
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
 from uuid import uuid4
@@ -18,14 +23,17 @@ class ToolManager(ContextDecorator):
         *,
         available_toolsets: Sequence[ToolSet] | None = None,
         enable_tools: list[str] | None = None,
-        eos_token: str | None = None,
-        tool_format: ToolFormat | None = None,
+        settings: ToolManagerSettings | None = None,
     ):
-        parser = ToolCallParser(eos_token=eos_token, tool_format=tool_format)
+        parser = ToolCallParser(
+            eos_token=settings.eos_token if settings else None,
+            tool_format=settings.tool_format if settings else None,
+        )
         return cls(
             available_toolsets=available_toolsets,
             enable_tools=enable_tools,
             parser=parser,
+            settings=settings,
         )
 
     @property
@@ -48,8 +56,10 @@ class ToolManager(ContextDecorator):
         available_toolsets: Sequence[ToolSet] | None = None,
         enable_tools: list[str] | None = None,
         parser: ToolCallParser,
+        settings: ToolManagerSettings | None = None,
     ):
         self._parser = parser
+        self._settings = settings or ToolManagerSettings()
         self._stack = AsyncExitStack()
 
         enabled_toolsets = []
@@ -96,6 +106,19 @@ class ToolManager(ContextDecorator):
     ) -> ToolCallResult | None:
         """Execute a single tool call and return the result."""
         assert call
+
+        history = context.calls or []
+
+        if self._settings.avoid_repetition and history:
+            last = history[-1]
+            if last.name == call.name and last.arguments == call.arguments:
+                return None
+
+        if (
+            self._settings.maximum_depth is not None
+            and len(history) + 1 > self._settings.maximum_depth
+        ):
+            return None
 
         tool = self._tools.get(call.name, None) if self._tools else None
 
