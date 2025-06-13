@@ -30,6 +30,25 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertFalse(manager.is_empty)
         self.assertEqual(manager.tools, [calculator])
 
+    def test_no_enabled_tools(self):
+        calculator = CalculatorTool()
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            available_toolsets=[ToolSet(tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+        self.assertTrue(manager.is_empty)
+        self.assertIsNone(manager.tools)
+
+    def test_toolset_without_tools(self):
+        manager = ToolManager.create_instance(
+            enable_tools=None,
+            available_toolsets=[ToolSet(tools=[])],
+            settings=ToolManagerSettings(),
+        )
+        self.assertTrue(manager.is_empty)
+        self.assertIsNone(manager.tools)
+
 
 class DummyAdder:
     def __init__(self) -> None:
@@ -38,6 +57,11 @@ class DummyAdder:
     async def __call__(self, a: int, b: int) -> int:
         """Return the sum of ``a`` and ``b``."""
         return a + b
+
+
+class DummyAdderAlt(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "adder_alt"
 
 
 class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
@@ -93,6 +117,112 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
                 result="2",
             )
             self.assertEqual(results, expected_result)
+
+
+class ToolManagerSchemasTestCase(TestCase):
+    def test_json_schemas(self):
+        calculator = CalculatorTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator"],
+            available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+        schemas = manager.json_schemas()
+        self.assertEqual(len(schemas), 1)
+        self.assertEqual(schemas[0]["function"]["name"], "math.calculator")
+
+
+class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        calculator = CalculatorTool()
+        self.manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+
+    async def test_avoid_repetition_different_arguments(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(avoid_repetition=True),
+        )
+        history_call = ToolCall(
+            id=_uuid4(),
+            name="adder",
+            arguments={"a": 2, "b": 2},
+        )
+        call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
+        result = await manager(
+            call, context=ToolCallContext(calls=[history_call])
+        )
+        self.assertIsNotNone(result)
+
+    async def test_avoid_repetition_different_name(self):
+        adder = DummyAdder()
+        alt = DummyAdderAlt()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "adder_alt"],
+            available_toolsets=[ToolSet(tools=[adder, alt])],
+            settings=ToolManagerSettings(avoid_repetition=True),
+        )
+        history_call = ToolCall(
+            id=_uuid4(),
+            name="adder",
+            arguments={"a": 1, "b": 2},
+        )
+        call = ToolCall(
+            id=_uuid4(),
+            name="adder_alt",
+            arguments={"a": 1, "b": 2},
+        )
+        result = await manager(
+            call, context=ToolCallContext(calls=[history_call])
+        )
+        self.assertIsNotNone(result)
+
+    async def test_avoid_repetition_different_name_and_args(self):
+        adder = DummyAdder()
+        alt = DummyAdderAlt()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "adder_alt"],
+            available_toolsets=[ToolSet(tools=[adder, alt])],
+            settings=ToolManagerSettings(avoid_repetition=True),
+        )
+        history_call = ToolCall(
+            id=_uuid4(),
+            name="adder",
+            arguments={"a": 2, "b": 3},
+        )
+        call = ToolCall(
+            id=_uuid4(),
+            name="adder_alt",
+            arguments={"a": 1, "b": 2},
+        )
+        result = await manager(
+            call, context=ToolCallContext(calls=[history_call])
+        )
+        self.assertIsNotNone(result)
+
+    async def test_call_name_not_found(self):
+        call = ToolCall(id=_uuid4(), name="missing", arguments={})
+        result = await self.manager(call, context=ToolCallContext())
+        self.assertIsNone(result)
+
+    async def test_aenter_no_toolsets(self):
+        manager = ToolManager.create_instance(
+            enable_tools=None,
+            available_toolsets=None,
+            settings=ToolManagerSettings(),
+        )
+        manager._stack.enter_async_context = AsyncMock()
+        manager._stack.__aexit__ = AsyncMock(return_value=False)
+
+        async with manager:
+            manager._stack.enter_async_context.assert_not_called()
+
+        manager._stack.__aexit__.assert_awaited_once()
 
     async def test_avoid_repetition(self):
         adder = DummyAdder()
