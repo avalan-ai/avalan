@@ -475,6 +475,7 @@ class ToolCallContext:
     input: Input | None = None
     participant_id: UUID | None = None
     session_id: UUID | None = None
+    calls: list[ToolCall] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -482,6 +483,14 @@ class ToolCallResult(ToolCall):
     id: UUID
     call: ToolCall
     result: ToolValue | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolManagerSettings:
+    eos_token: str | None = None
+    tool_format: ToolFormat | None = None
+    avoid_repetition: bool = False
+    maximum_depth: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
