@@ -37,6 +37,8 @@ echo 'Who are you, and who is Leo Messi?' \
       --top-k 20
 ```
 
+## Tools
+
 Avalan makes it trivial to spin up a chat-based agent that can invoke external tools, even while streaming. Below is an example using a locally installed 8B-parameter LLM, enabling recent memory, and loading a calculator tool. The agent starts with a math question and then keeps the conversation open for follow-up questions:
 
 ```bash
@@ -71,6 +73,36 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
       --stats
 ```
 
+With tooling, agents get real-time knowledge. Here's an 8B model looking for avalan's latest release, using a browser to do so:
+
+```bash
+echo "What's avalan's latest release in pypi?" | \
+    avalan agent run \
+        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+        --tool "browser.open" \
+        --memory-recent \
+        --run-max-new-tokens 1024 \
+        --name "Tool" \
+        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+        --stats
+```
+
+You can point an agent to specific locations for gaining knowledge:
+
+```bash
+echo "Tell me what avalan does based on the web page https://raw.githubusercontent.com/avalan-ai/avalan/refs/heads/main/README.md" | \
+    avalan agent run \
+        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+        --tool "browser.open" \
+        --memory-recent \
+        --run-max-new-tokens 1024 \
+        --name "Tool" \
+        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+        --stats
+```
+
+## Memories
+
 Let's initiate a chat session where we tell the agent our name. Notice the `--memory-permanent` option to specify where messages are stored, the `--id` option to uniquely identify the agent, and `--participant` option specifying a user ID:
 
 ```bash
@@ -78,14 +110,13 @@ echo "Hi Tool, my name is Leo. Nice to meet you." \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
       --memory-recent \
-      --memory-permanent "postgresql://root:password@localhost/avalan" \
+      --memory-permanent-message "postgresql://root:password@localhost/avalan" \
       --id "f4fd12f4-25ea-4c81-9514-d31fb4c48128" \
       --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
       --run-max-new-tokens 1024 \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats
-
 ```
 
 Let's have our agent be able to tap into past messages by enabling persistent memory and the `memory.message.read` tool. It should be able to find that our name is `Leo` based off the message we previously posted:
@@ -96,7 +127,7 @@ echo "Hi Tool, based on our previous conversations, what's my name?" \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
       --tool "memory.message.read" \
       --memory-recent \
-      --memory-permanent "postgresql://root:password@localhost/avalan" \
+      --memory-permanent-message "postgresql://root:password@localhost/avalan" \
       --id "f4fd12f4-25ea-4c81-9514-d31fb4c48128" \
       --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
       --run-max-new-tokens 1024 \
@@ -104,6 +135,19 @@ echo "Hi Tool, based on our previous conversations, what's my name?" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats
 ```
+
+You can store knowledge in knowledge stores that can be then used by agents to solve problems. Let's start by indexing the rules of the "Truco" card game directly from a website into our knowledge store. Notice the `--dsn` parameter to specify the store location, and the `--namespace` parameter to specify our desired knowledge namespace:
+
+```bash
+avalan memory document index \
+    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
+    --dsn "postgresql://root:password@localhost/avalan" \
+    --namespace "games.cards.truco" \
+    "sentence-transformers/all-MiniLM-L6-v2" \
+    "https://trucogame.com/pages/reglamento-de-truco-argentino"
+```
+
+## Serving agents
 
 Serve your agents on an OpenAI API compatible endpoint:
 
@@ -132,33 +176,7 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
-With tooling, agents get real-time knowledge. Here's an 8B model looking for avalan's latest release, using a browser to do so:
-
-```bash
-echo "What's avalan's latest release in pypi?" | \
-    avalan agent run \
-        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-        --tool "browser.open" \
-        --memory-recent \
-        --run-max-new-tokens 1024 \
-        --name "Tool" \
-        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-        --stats
-```
-
-You can point an agent to specific locations for gaining knowledge:
-
-```bash
-echo "Tell me what avalan does based on the web page https://raw.githubusercontent.com/avalan-ai/avalan/refs/heads/main/README.md" | \
-    avalan agent run \
-        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-        --tool "browser.open" \
-        --memory-recent \
-        --run-max-new-tokens 1024 \
-        --name "Tool" \
-        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-        --stats
-```
+## Code
 
 Through the avalan microframework, you can easily integrate real time token
 streaming with your own code, as [this example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/text_generation.py):

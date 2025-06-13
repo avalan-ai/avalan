@@ -49,10 +49,12 @@ async def memory_document_index(
         args.display_partitions if not args.no_display_partitions else None
     )
 
-    model_settings = get_model_settings(
-        args, hub, logger, model_id, is_sentence_transformer=True
-    )
     with ModelManager(hub, logger) as manager:
+        engine_uri = manager.parse_uri(args.model)
+        model_settings = get_model_settings(
+            args, hub, logger, engine_uri, is_sentence_transformer=True
+        )
+
         with manager.load(**model_settings) as stm:
             logger.debug(f"Loaded model {stm.config.__repr__()}")
 

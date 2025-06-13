@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS "memories" (
     "namespace_tree" LTREE GENERATED ALWAYS AS (text2ltree("namespace")) STORED,
     "identifier" TEXT NOT NULL,
     "data" TEXT NOT NULL,
+    "symbols" JSONB default NULL,
     "partitions" INT NOT NULL CHECK ("partitions" > 0),
     "created_at" TIMESTAMP WITH TIME ZONE NOT NULL
                  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
