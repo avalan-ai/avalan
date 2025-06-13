@@ -46,7 +46,9 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         symbols: dict | None = None,
         model_id: str | None = None,
     ) -> None:
-        assert namespace and participant_id and data and identifier and partitions
+        assert (
+            namespace and participant_id and data and identifier and partitions
+        )
         now_utc = datetime.now(timezone.utc)
         entry = Memory(
             id=uuid4(),
@@ -89,7 +91,8 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             "symbols",
                             "created_at"
                         ) VALUES (
-                            %s, %s, %s, %s::memory_types, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s::memory_types,
+                            %s, %s, %s, %s, %s, %s
                         )
                         """,
                         (

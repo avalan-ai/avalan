@@ -76,6 +76,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
 
         tp_inst = AsyncMock(return_value=[partition])
 
+        manager.parse_uri = MagicMock(return_value="engine_uri")
         with (
             patch.object(
                 memory_cmds, "get_model_settings", return_value={}
@@ -98,11 +99,12 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger
             )
 
+        manager.parse_uri.assert_called_once_with(self.args.model)
         gms_patch.assert_called_once_with(
             self.args,
             self.hub,
             self.logger,
-            self.args.model,
+            "engine_uri",
             is_sentence_transformer=True,
         )
         tp_patch.assert_called_once_with(
