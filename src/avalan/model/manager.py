@@ -120,6 +120,7 @@ class ModelManager(ContextDecorator):
         engine_settings: TransformerEngineSettings,
         is_sentence_transformer: bool | None = None,
     ) -> SentenceTransformerModel | TextGenerationModel:
+        assert isinstance(engine_uri, EngineUri)
         model_load_args = dict(
             model_id=engine_uri.model_id,
             settings=engine_settings,

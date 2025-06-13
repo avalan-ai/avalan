@@ -18,7 +18,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             run_skip_special_tokens=False,
             memory_recent=None,
             no_session=False,
-            memory_permanent="dsn",
+            memory_permanent_message="dsn",
+            memory_permanent=None,
             memory_engine_model_id=None,
             memory_engine_max_tokens=200,
             memory_engine_overlap=20,
@@ -48,7 +49,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             run_skip_special_tokens=True,
             memory_recent=False,
             no_session=True,
-            memory_permanent="old_dsn",
+            memory_permanent_message="old_dsn",
+            memory_permanent=["ns@dsn1"],
             memory_engine_model_id="m",
             memory_engine_max_tokens=300,
             memory_engine_overlap=30,
@@ -65,7 +67,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             instructions="j",
             engine_uri="new",
             memory_recent=True,
-            memory_permanent="dsn",
+            memory_permanent_message="dsn",
+            memory_permanent=["ns@dsn2"],
             max_new_tokens=20,
             tools=["b"],
         )
@@ -76,7 +79,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             result.agent_config,
             {"name": "x", "role": "y", "task": "z", "instructions": "j"},
         )
-        self.assertEqual(result.memory_permanent, "dsn")
+        self.assertEqual(result.memory_permanent_message, "dsn")
+        self.assertEqual(result.permanent_memory, {"ns": "dsn2"})
         self.assertEqual(result.tools, ["b"])
         self.assertEqual(result.sentence_model_id, "m")
 
@@ -91,7 +95,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             run_skip_special_tokens=False,
             memory_recent=None,
             no_session=False,
-            memory_permanent="dsn",
+            memory_permanent_message="dsn",
+            memory_permanent=None,
             memory_engine_model_id=None,
             memory_engine_max_tokens=200,
             memory_engine_overlap=20,

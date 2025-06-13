@@ -1,7 +1,11 @@
 from ..entities import EngineMessage
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
-from ..memory.permanent import PermanentMessageMemory, VectorFunction
+from ..memory.permanent import (
+    PermanentMessageMemory,
+    PermanentMemory,
+    VectorFunction,
+)
 from typing import Any
 from uuid import UUID
 
@@ -10,6 +14,7 @@ class MemoryManager:
     _agent_id: UUID
     _participant_id: UUID
     _permanent_message_memory: PermanentMessageMemory | None = None
+    _permanent_memories: dict[str, PermanentMemory]
     _recent_message_memory: RecentMessageMemory | None = None
     _text_partitioner: TextPartitioner
 
@@ -51,15 +56,20 @@ class MemoryManager:
         permanent_message_memory: PermanentMessageMemory | None,
         recent_message_memory: RecentMessageMemory | None,
         text_partitioner: TextPartitioner,
+        permanent_memories: dict[str, PermanentMemory] | None = None,
     ):
         assert agent_id and participant_id
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._text_partitioner = text_partitioner
+        self._permanent_memories = {}
         if permanent_message_memory:
             self.add_permanent_message_memory(permanent_message_memory)
         if recent_message_memory:
             self.add_recent_message_memory(recent_message_memory)
+        if permanent_memories:
+            for namespace, memory in permanent_memories.items():
+                self.add_permanent_memory(namespace, memory)
 
     @property
     def participant_id(self) -> UUID:
@@ -95,6 +105,15 @@ class MemoryManager:
 
     def add_permanent_message_memory(self, memory: PermanentMessageMemory):
         self._permanent_message_memory = memory
+
+    def add_permanent_memory(
+        self, namespace: str, memory: PermanentMemory
+    ) -> None:
+        assert namespace and memory
+        self._permanent_memories[namespace] = memory
+
+    def delete_permanent_memory(self, namespace: str) -> None:
+        self._permanent_memories.pop(namespace, None)
 
     async def append_message(self, engine_message: EngineMessage) -> None:
         assert (
@@ -164,7 +183,7 @@ class MemoryManager:
         limit: int | None = None,
         search_user_messages: bool = False,
         session_id: UUID | None = None,
-        exclude_session_id: UUID | None = None
+        exclude_session_id: UUID | None = None,
     ) -> list[EngineMessage]:
         assert self._permanent_message_memory
         search_partitions = await self._text_partitioner(search)
@@ -176,7 +195,7 @@ class MemoryManager:
             function=function,
             limit=limit,
             session_id=session_id,
-            exclude_session_id=exclude_session_id
+            exclude_session_id=exclude_session_id,
         )
         return messages
 

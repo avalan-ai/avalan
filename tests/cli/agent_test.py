@@ -103,6 +103,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         self.args.task = None
         self.args.instructions = None
         self.args.memory_recent = None
+        self.args.memory_permanent_message = None
         self.args.memory_permanent = None
         self.args.memory_engine_model_id = (
             agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
@@ -208,6 +209,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             task=None,
             instructions=None,
             memory_recent=None,
+            memory_permanent_message=None,
             memory_permanent=None,
             memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
             memory_engine_max_tokens=500,
@@ -270,6 +272,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             task=None,
             instructions=None,
             memory_recent=None,
+            memory_permanent_message=None,
             memory_permanent=None,
             memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
             memory_engine_max_tokens=500,
@@ -298,6 +301,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             task=None,
             instructions=None,
             memory_recent=None,
+            memory_permanent_message=None,
             memory_permanent=None,
             memory_engine_model_id=None,
             memory_engine_max_tokens=500,
@@ -342,7 +346,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             task="T",
             instructions="I",
             memory_recent=True,
-            memory_permanent="",
+            memory_permanent_message="",
+            memory_permanent=None,
             memory_engine_model_id=None,
             memory_engine_max_tokens=500,
             memory_engine_overlap=125,
@@ -380,7 +385,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             task="T",
             instructions="I",
             memory_recent=True,
-            memory_permanent="",
+            memory_permanent_message="",
+            memory_permanent=None,
             memory_engine_model_id=None,
             memory_engine_max_tokens=500,
             memory_engine_overlap=125,
@@ -442,6 +448,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             task=None,
             instructions=None,
             memory_recent=None,
+            memory_permanent_message=None,
             memory_permanent=None,
             memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
             memory_engine_max_tokens=500,

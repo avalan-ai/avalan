@@ -245,7 +245,7 @@ class PgsqlMessageMemory(
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
-        exclude_session_id: UUID | None
+        exclude_session_id: UUID | None,
     ) -> list[EngineMessageScored]:
         assert agent_id and participant_id and search_partitions
         search_function = str(function)

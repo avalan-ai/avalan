@@ -193,7 +193,7 @@ class PermanentMessageMemory(MessageMemory):
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
-        exclude_session_id: UUID | None
+        exclude_session_id: UUID | None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 

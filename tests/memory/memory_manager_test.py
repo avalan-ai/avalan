@@ -1,7 +1,11 @@
 from avalan.entities import EngineMessage, Message, MessageRole
 from avalan.memory.manager import MemoryManager
 from avalan.memory import RecentMessageMemory
-from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
+from avalan.memory.permanent import (
+    PermanentMessageMemory,
+    PermanentMemory,
+    VectorFunction,
+)
 from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -68,6 +72,7 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
         )
+        self.permanent = AsyncMock()
 
     async def test_append_message(self):
         partitions = ["p"]
@@ -130,6 +135,194 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         self.tp.assert_awaited_once_with("hi")
         self.pm.search_messages.assert_awaited_once()
         self.assertEqual(messages, result)
+
+    def test_add_and_delete_permanent_memory(self):
+        self.manager.add_permanent_memory("code", self.permanent)
+        self.assertIn("code", self.manager._permanent_memories)
+        self.manager.delete_permanent_memory("code")
+        self.assertNotIn("code", self.manager._permanent_memories)
+
+
+class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
+    def test_constructor_variants(self):
+        agent_id = uuid4()
+        participant_id = uuid4()
+        tp = AsyncMock()
+
+        manager = MemoryManager(
+            agent_id=agent_id,
+            participant_id=participant_id,
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=tp,
+        )
+        self.assertFalse(manager.has_recent_message)
+        self.assertFalse(manager.has_permanent_message)
+        self.assertEqual(manager.participant_id, participant_id)
+        self.assertIsNone(manager.recent_messages)
+
+        pmem = MagicMock(spec=PermanentMemory)
+        manager = MemoryManager(
+            agent_id=agent_id,
+            participant_id=participant_id,
+            permanent_message_memory=None,
+            recent_message_memory=RecentMessageMemory(),
+            text_partitioner=tp,
+            permanent_memories={"code": pmem},
+        )
+        self.assertTrue(manager.has_recent_message)
+        self.assertIn("code", manager._permanent_memories)
+
+        pmem2 = MagicMock(spec=PermanentMemory)
+        manager = MemoryManager(
+            agent_id=agent_id,
+            participant_id=participant_id,
+            permanent_message_memory=None,
+            recent_message_memory=RecentMessageMemory(),
+            text_partitioner=tp,
+            permanent_memories={"code": pmem, "docs": pmem2},
+        )
+        self.assertEqual(len(manager._permanent_memories), 2)
+
+
+class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
+    def test_recent_messages_property(self):
+        tp = AsyncMock()
+        rm = RecentMessageMemory()
+        msg = EngineMessage(
+            agent_id=uuid4(),
+            model_id="m",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+        rm.append(msg)
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=rm,
+            text_partitioner=tp,
+        )
+        self.assertEqual(manager.recent_messages, [msg])
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=tp,
+        )
+        self.assertIsNone(manager.recent_messages)
+
+
+class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tp = AsyncMock()
+        self.pm = AsyncMock(spec=PermanentMessageMemory)
+        self.rm = RecentMessageMemory()
+
+    async def test_append_message_variants(self):
+        msg = EngineMessage(
+            agent_id=uuid4(),
+            model_id="m",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=self.pm,
+            recent_message_memory=None,
+            text_partitioner=self.tp,
+        )
+        await manager.append_message(msg)
+        self.tp.assert_awaited_once()
+        self.pm.append_with_partitions.assert_awaited_once()
+
+        self.tp.reset_mock()
+        self.pm.reset_mock()
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=self.rm,
+            text_partitioner=self.tp,
+        )
+        await manager.append_message(msg)
+        self.tp.assert_not_called()
+        self.assertEqual(manager.recent_messages, [msg])
+
+        self.tp.reset_mock()
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=self.tp,
+        )
+        await manager.append_message(msg)
+        self.tp.assert_not_called()
+
+    async def test_continue_and_start_session_variants(self):
+        session_id = uuid4()
+        messages = [
+            EngineMessage(
+                agent_id=uuid4(),
+                model_id="m",
+                message=Message(role=MessageRole.USER, content="x"),
+            )
+        ]
+        self.pm.get_recent_messages.return_value = messages
+
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=self.pm,
+            recent_message_memory=None,
+            text_partitioner=self.tp,
+        )
+        await manager.continue_session(session_id)
+        self.pm.continue_session.assert_awaited()
+        self.pm.get_recent_messages.assert_not_awaited()
+        await manager.start_session()
+        self.pm.reset_session.assert_awaited()
+
+        self.pm.reset_mock()
+        self.pm.get_recent_messages.reset_mock()
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=self.rm,
+            text_partitioner=self.tp,
+        )
+        await manager.continue_session(session_id)
+        self.pm.continue_session.assert_not_awaited()
+        self.assertEqual(manager.recent_messages, [])
+        await manager.start_session()
+        self.assertTrue(self.rm.is_empty)
+
+        self.pm.reset_mock()
+        self.pm.get_recent_messages.reset_mock()
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=self.tp,
+        )
+        await manager.continue_session(session_id)
+        await manager.start_session()
+
+
+class MemoryManagerContextTestCase(IsolatedAsyncioTestCase):
+    async def test_context_exit(self):
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=AsyncMock(),
+        )
+        self.assertIsNone(manager.__exit__(None, None, None))
 
 
 if __name__ == "__main__":

@@ -1,16 +1,14 @@
-from ....entities import (
-    EngineMessageScored,
-)
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     Memory,
+    MemoryType,
     PermanentMemory,
     PermanentMemoryPartition,
-    PermanentMessageScored,
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
 from datetime import datetime, timezone
+from json import dumps
 from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
 
@@ -37,20 +35,31 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         return memory
 
     async def append_with_partitions(
-        self, memory: Memory, *args, partitions: list[TextPartition]
+        self,
+        namespace: str,
+        participant_id: UUID,
+        *args,
+        memory_type: MemoryType,
+        data: str,
+        identifier: str,
+        partitions: list[TextPartition],
+        symbols: dict | None = None,
+        model_id: str | None = None,
     ) -> None:
-        assert memory and partitions
+        assert (
+            namespace and participant_id and data and identifier and partitions
+        )
         now_utc = datetime.now(timezone.utc)
         entry = Memory(
             id=uuid4(),
-            model_id=memory.model_id,
-            type=memory.type,
-            participant_id=memory.participant_id,
-            namespace=memory.namespace,
-            identifier=memory.identifier,
-            data=memory.data,
+            model_id=model_id,
+            type=memory_type,
+            participant_id=participant_id,
+            namespace=namespace,
+            identifier=identifier,
+            data=data,
             partitions=len(partitions),
-            symbols=memory.symbols,
+            symbols=symbols,
             created_at=now_utc,
         )
         partition_rows = [
@@ -64,6 +73,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             )
             for i, p in enumerate(partitions)
         ]
+
         async with self._database.connection() as connection:
             async with connection.transaction():
                 async with connection.cursor() as cursor:
@@ -81,7 +91,8 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             "symbols",
                             "created_at"
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s::memory_types,
+                            %s, %s, %s, %s, %s, %s
                         )
                         """,
                         (
@@ -93,7 +104,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             entry.identifier,
                             entry.data,
                             entry.partitions,
-                            entry.symbols,
+                            dumps(entry.symbols) if entry.symbols else None,
                             entry.created_at,
                         ),
                     )
@@ -172,4 +183,3 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             ),
         )
         return memories
-

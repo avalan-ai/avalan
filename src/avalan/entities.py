@@ -402,7 +402,8 @@ class OrchestratorSettings:
     engine_config: dict
     call_options: dict | None
     template_vars: dict | None
-    memory_permanent: str | None
+    memory_permanent_message: str | None
+    permanent_memory: dict[str, str] | None
     memory_recent: bool
     sentence_model_id: str
     sentence_model_engine_config: dict | None

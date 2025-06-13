@@ -1075,7 +1075,15 @@ class CLI:
             "--no-memory-recent", dest="memory_recent", action="store_false"
         )
         group.add_argument(
-            "--memory-permanent", type=str, help="Permanent memory DSN"
+            "--memory-permanent-message",
+            type=str,
+            help="Permanent message memory DSN",
+        )
+        group.add_argument(
+            "--memory-permanent",
+            action="append",
+            dest="memory_permanent",
+            help="Permanent memory definition namespace@dsn",
         )
         group.add_argument(
             "--memory-engine-model-id",

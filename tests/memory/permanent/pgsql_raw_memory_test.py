@@ -1,10 +1,8 @@
-from avalan.entities import MessageRole
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import Memory, MemoryType, VectorFunction
+from avalan.memory.permanent import Memory, MemoryType
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone
 import numpy as np
-from pgvector.psycopg import Vector
 from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection, AsyncCursor
 from unittest import IsolatedAsyncioTestCase
@@ -60,7 +58,14 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             "avalan.memory.permanent.pgsql.raw.uuid4", return_value=mem_id
         ):
             await memory_store.append_with_partitions(
-                base_memory, partitions=partitions
+                base_memory.namespace,
+                base_memory.participant_id,
+                memory_type=base_memory.type,
+                data=base_memory.data,
+                identifier=base_memory.identifier,
+                partitions=partitions,
+                symbols=base_memory.symbols,
+                model_id=base_memory.model_id,
             )
 
         connection_mock.transaction.assert_called_once()
@@ -78,7 +83,8 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                             "symbols",
                             "created_at"
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s::memory_types,
+                            %s, %s, %s, %s, %s, %s
                         )
                         """,
             (
@@ -90,7 +96,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 base_memory.identifier,
                 base_memory.data,
                 len(partitions),
-                base_memory.symbols,
+                None,
                 ANY,
             ),
         )
