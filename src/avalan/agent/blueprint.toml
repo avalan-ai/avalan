@@ -18,8 +18,8 @@ instructions = """
 
 [memory]
 recent = {{ orchestrator.memory_recent | lower }}
-{% if orchestrator.memory_permanent %}
-permanent = "{{ orchestrator.memory_permanent }}"
+{% if orchestrator.memory_permanent_message %}
+permanent_message = "{{ orchestrator.memory_permanent_message }}"
 {% endif %}
 
 [memory.engine]

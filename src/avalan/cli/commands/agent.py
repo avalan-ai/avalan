@@ -34,12 +34,13 @@ def get_orchestrator_settings(
     instructions: str | None = None,
     engine_uri: str | None = None,
     memory_recent: bool | None = None,
-    memory_permanent: str | None = None,
+    memory_permanent_message: str | None = None,
+    memory_permanent: list[str] | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
     tools: list[str] | None = None,
     top_k: int | None = None,
-    top_p: float | None = None
+    top_p: float | None = None,
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
     memory_recent = (
@@ -96,10 +97,23 @@ def get_orchestrator_settings(
             ),
         },
         template_vars=None,
-        memory_permanent=(
-            memory_permanent
-            if memory_permanent is not None
-            else args.memory_permanent
+        memory_permanent_message=(
+            memory_permanent_message
+            if memory_permanent_message is not None
+            else args.memory_permanent_message
+        ),
+        permanent_memory=(
+            {
+                ns: dsn
+                for ns, dsn in (
+                    item.split("@", 1)
+                    for item in (
+                        memory_permanent or args.memory_permanent or []
+                    )
+                )
+            }
+            if (memory_permanent or args.memory_permanent)
+            else None
         ),
         memory_recent=memory_recent,
         sentence_model_id=(
@@ -601,9 +615,9 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         if args.memory_recent is not None
         else Confirm.ask(_("Use recent message memory?"))
     )
-    memory_permanent = (
-        args.memory_permanent
-        if args.memory_permanent is not None
+    memory_permanent_message = (
+        args.memory_permanent_message
+        if args.memory_permanent_message is not None
         else Prompt.ask(_("Permanent memory DSN"), default="")
     )
     engine_uri = args.engine_uri or Prompt.ask(
@@ -620,7 +634,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         instructions=instructions,
         engine_uri=engine_uri,
         memory_recent=memory_recent,
-        memory_permanent=memory_permanent,
+        memory_permanent_message=memory_permanent_message,
         max_new_tokens=args.run_max_new_tokens or 1024,
         tools=args.tool or [],
     )

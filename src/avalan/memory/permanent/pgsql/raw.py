@@ -1,12 +1,8 @@
-from ....entities import (
-    EngineMessageScored,
-)
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     Memory,
     PermanentMemory,
     PermanentMemoryPartition,
-    PermanentMessageScored,
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
@@ -172,4 +168,3 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             ),
         )
         return memories
-

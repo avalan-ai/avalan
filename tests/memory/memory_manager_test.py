@@ -68,6 +68,7 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
         )
+        self.permanent = AsyncMock()
 
     async def test_append_message(self):
         partitions = ["p"]
@@ -130,6 +131,12 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         self.tp.assert_awaited_once_with("hi")
         self.pm.search_messages.assert_awaited_once()
         self.assertEqual(messages, result)
+
+    def test_add_and_delete_permanent_memory(self):
+        self.manager.add_permanent_memory("code", self.permanent)
+        self.assertIn("code", self.manager._permanent_memories)
+        self.manager.delete_permanent_memory("code")
+        self.assertNotIn("code", self.manager._permanent_memories)
 
 
 if __name__ == "__main__":

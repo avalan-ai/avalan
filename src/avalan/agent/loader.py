@@ -18,6 +18,7 @@ from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
 from ..tool.code import CodeToolSet
+from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import access, R_OK
@@ -124,14 +125,22 @@ class OrchestratorLoader:
                 else None
             )
 
-            memory_permanent = (
-                memory_options["permanent"]
-                if memory_options and "permanent" in memory_options
+            memory_permanent_message = (
+                memory_options["permanent_message"]
+                if memory_options and "permanent_message" in memory_options
                 else None
             )
-            assert not memory_permanent or isinstance(
-                memory_permanent, str
-            ), "Permanent message memory should be a string"
+
+            memory_permanent: dict[str, str] | None = None
+            if memory_options and "permanent" in memory_options:
+                memory_permanent_option = memory_options["permanent"]
+                assert isinstance(
+                    memory_permanent_option, dict
+                ), "Permanent memory should be a mapping"
+                memory_permanent = {
+                    str(ns): str(dsn)
+                    for ns, dsn in memory_permanent_option.items()
+                }
             memory_recent = (
                 memory_options["recent"]
                 if memory_options and "recent" in memory_options
@@ -184,7 +193,8 @@ class OrchestratorLoader:
                 tools=enable_tools,
                 call_options=call_options,
                 template_vars=template_vars,
-                memory_permanent=memory_permanent,
+                memory_permanent_message=memory_permanent_message,
+                permanent_memory=memory_permanent,
                 memory_recent=memory_recent,
                 sentence_model_id=sentence_model_id,
                 sentence_model_engine_config=sentence_model_engine_config,
@@ -272,9 +282,18 @@ class OrchestratorLoader:
             agent_id=settings.agent_id,
             participant_id=participant_id,
             text_partitioner=text_partitioner,
-            with_permanent_message_memory=settings.memory_permanent,
+            with_permanent_message_memory=settings.memory_permanent_message,
             with_recent_message_memory=settings.memory_recent,
         )
+
+        for namespace, dsn in (settings.permanent_memory or {}).items():
+            logger.debug(
+                "Loading permanent memory %s for agent %s",
+                namespace,
+                settings.agent_id,
+            )
+            store = await PgsqlRawMemory.create_instance(dsn=dsn)
+            memory.add_permanent_memory(namespace, store)
 
         logger.debug(
             "Loading tool manager for agent %s with partitioner and a sentence"

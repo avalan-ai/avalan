@@ -1,10 +1,8 @@
-from avalan.entities import MessageRole
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import Memory, MemoryType, VectorFunction
+from avalan.memory.permanent import Memory, MemoryType
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone
 import numpy as np
-from pgvector.psycopg import Vector
 from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection, AsyncCursor
 from unittest import IsolatedAsyncioTestCase
