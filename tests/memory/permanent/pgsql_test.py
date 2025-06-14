@@ -158,6 +158,25 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
+    async def test_create_instance(self):
+        with patch.object(
+            PgsqlMessageMemory, "open", AsyncMock()
+        ) as open_patch:
+            memory = await PgsqlMessageMemory.create_instance(
+                dsn="dsn", pool_minimum=1, pool_maximum=2
+            )
+            self.assertIsInstance(memory, PgsqlMessageMemory)
+            open_patch.assert_awaited_once()
+
+        with patch.object(
+            PgsqlMessageMemory, "open", AsyncMock()
+        ) as open_patch:
+            memory = await PgsqlMessageMemory.create_instance(
+                dsn="dsn", pool_open=False
+            )
+            self.assertIsInstance(memory, PgsqlMessageMemory)
+            open_patch.assert_not_awaited()
+
     async def test_create_session(self):
         pool_mock, connection_mock, cursor_mock = self.mock_query({})
         memory = await PgsqlMessageMemory.create_instance_from_pool(
@@ -275,6 +294,70 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
             .strip()
             .startswith("INSERT INTO")
         )
+        cursor_mock.close.assert_awaited_once()
+
+    async def test_append_with_partitions_without_session(self):
+        pool_mock, connection_mock, cursor_mock, _ = self.mock_insert()
+        memory = await PgsqlMessageMemory.create_instance_from_pool(
+            pool=pool_mock
+        )
+        agent_id = uuid4()
+
+        engine_message = EngineMessage(
+            agent_id=agent_id,
+            model_id="model",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+        partitions = [
+            TextPartition(data="a", embeddings=rand(1), total_tokens=1),
+            TextPartition(data="b", embeddings=rand(1), total_tokens=1),
+        ]
+
+        msg_id = UUID("33333333-3333-3333-3333-333333333333")
+        with patch(
+            "avalan.memory.permanent.pgsql.message.uuid4", return_value=msg_id
+        ):
+            await memory.append_with_partitions(
+                engine_message, partitions=partitions
+            )
+
+        connection_mock.transaction.assert_called_once()
+        exec_calls = cursor_mock.execute.await_args_list
+        self.assertEqual(len(exec_calls), 1)
+
+        def norm(txt: str) -> str:
+            return sub(r"\s+", " ", txt.strip())
+
+        insert_query = """
+                        INSERT INTO "messages"(
+                            "id",
+                            "agent_id",
+                            "model_id",
+                            "session_id",
+                            "author",
+                            "data",
+                            "partitions",
+                            "created_at"
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """
+        self.assertEqual(norm(exec_calls[0].args[0]), norm(insert_query))
+        self.assertEqual(
+            exec_calls[0].args[1],
+            (
+                str(msg_id),
+                str(agent_id),
+                "model",
+                None,
+                str(MessageRole.USER),
+                "hi",
+                len(partitions),
+                ANY,
+            ),
+        )
+
+        cursor_mock.executemany.assert_awaited_once()
         cursor_mock.close.assert_awaited_once()
 
     async def test_continue_session(self):
