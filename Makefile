@@ -1,4 +1,4 @@
-.PHONY: install lint release test version
+.PHONY: install lint release test test-coverage version
 
 install:
 	poetry sync --extras all
@@ -11,6 +11,18 @@ lint:
 test:
 	poetry sync --extras test
 	poetry run pytest --verbose -s
+
+test-coverage:
+	$(eval COVERAGE_THRESHOLD := $(filter-out $@,$(MAKECMDGOALS)))
+	@if [ -z "$(COVERAGE_THRESHOLD)" ]; then \
+		echo "Usage: make test-coverage 95"; \
+		exit 1; \
+	fi
+	@poetry run pytest --cov=src/ --cov-report=json &> /dev/null
+	@jq -r \
+		--arg thr "$(COVERAGE_THRESHOLD)" \
+		'.files | to_entries[] | select(.value.summary.percent_covered < ($$thr|tonumber)) | "\(.key): \(.value.summary.percent_covered_display)%"' \
+		coverage.json
 
 version:
 	$(eval VERSION := $(filter-out $@,$(MAKECMDGOALS)))
