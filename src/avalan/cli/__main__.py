@@ -1225,8 +1225,6 @@ class CLI:
 
         if args.help_full:
             return self._help(console, self._parser)
-        print("HERE")
-        exit(0)
 
         access_token = args.hf_token
         requires_token = self._needs_hf_token(args)
