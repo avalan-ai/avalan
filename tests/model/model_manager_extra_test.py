@@ -1,0 +1,64 @@
+from avalan.entities import EngineUri, TransformerEngineSettings
+from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.model.manager import ModelManager
+from logging import Logger
+from unittest import TestCase
+from unittest.mock import MagicMock, patch
+
+
+class ModelManagerExtraTestCase(TestCase):
+    def setUp(self):
+        self.hub = MagicMock(spec=HuggingfaceHub)
+        self.hub.cache_dir = "cache"
+        self.logger = MagicMock(spec=Logger)
+
+    def test_parse_uri_invalid_scheme(self):
+        manager = ModelManager(self.hub, self.logger)
+        with self.assertRaises(ValueError):
+            manager.parse_uri("http://openai/gpt-4o")
+
+    def test_get_engine_settings_user_password_no_secret(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = EngineUri(
+            host="openai",
+            port=None,
+            user="token",
+            password="pass",
+            vendor="openai",
+            model_id="gpt",
+            params={},
+        )
+        settings = manager.get_engine_settings(uri)
+        self.assertIsNone(settings.access_token)
+
+    def test_load_passes_arguments(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="model",
+            params={},
+        )
+        with (
+            patch.object(manager, "get_engine_settings") as get_mock,
+            patch.object(manager, "load_engine") as load_mock,
+        ):
+            get_mock.return_value = TransformerEngineSettings()
+            load_mock.return_value = "model"
+            result = manager.load(
+                uri,
+                base_url="url",
+                quiet=True,
+                attention="sd",
+                trust_remote_code=True,
+            )
+        args = get_mock.call_args.args[1]
+        self.assertTrue(args["disable_loading_progress_bar"])
+        self.assertEqual(args["base_url"], "url")
+        self.assertEqual(args["attention"], "sd")
+        self.assertTrue(args["trust_remote_code"])
+        load_mock.assert_called_once_with(uri, get_mock.return_value, None)
+        self.assertEqual(result, "model")
