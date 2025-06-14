@@ -70,6 +70,20 @@ class Aws:
             raise DeployError(f"VPC {name!r} not found")
         return vpcs[0]["VpcId"]
 
+    async def create_vpc_if_missing(self, name: str, cidr: str) -> str:
+        """Return an existing VPC id or create a new VPC."""
+        try:
+            return await self.get_vpc_id(name)
+        except DeployError:
+            response = await self._ec2.create_vpc(CidrBlock=cidr)
+            vpc_id = response["Vpc"]["VpcId"]
+            await self._ec2.create_tags(
+                Resources=[vpc_id], Tags=[{"Key": "Name", "Value": name}]
+            )
+            waiter = await self._ec2.get_waiter("vpc_available")
+            waiter.wait(VpcIds=[vpc_id])
+            return vpc_id
+
     async def get_security_group(self, name: str, vpc_id: str) -> str:
         response = await self._ec2.describe_security_groups(
             Filters=[{"Name": "group-name", "Values": [name]}]

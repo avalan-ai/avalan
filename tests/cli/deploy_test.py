@@ -77,6 +77,33 @@ database = "db"
             8000,
         )
 
+    async def test_deploy_run_creates_vpc_when_missing(self):
+        config = """
+[agents]
+publish = "agent.toml"
+port = 8000
+
+[aws]
+vpc = "vpc"
+instance = "t2"
+"""
+        with NamedTemporaryFile("w", delete=False) as fh:
+            fh.write(config)
+            path = fh.name
+        args = MagicMock(deployment=path)
+        logger = MagicMock()
+        aws = MagicMock()
+        aws.get_vpc_id = AsyncMock(side_effect=deploy_cmds.DeployError())
+        aws.create_vpc_if_missing = AsyncMock(return_value="v")
+        aws.get_security_group = AsyncMock(return_value="sg")
+        aws.configure_security_group = AsyncMock()
+        aws.create_instance_if_missing = AsyncMock()
+        with patch.object(deploy_cmds, "Aws", return_value=aws):
+            await deploy_cmds.deploy_run(args, logger)
+        aws.create_vpc_if_missing.assert_awaited_once_with(
+            "vpc", "10.0.0.0/16"
+        )
+
     async def test_deploy_run_with_persistent_memory(self):
         config = """
 [agents]

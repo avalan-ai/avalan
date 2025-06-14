@@ -117,6 +117,28 @@ class AwsTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(DeployError):
             await self.aws.get_vpc_id("name")
 
+    async def test_create_vpc_if_missing(self):
+        self.aws._ec2.describe_vpcs = AsyncMock(
+            return_value={"Vpcs": [{"VpcId": "v"}]}
+        )
+        vpc = await self.aws.create_vpc_if_missing("name", "cidr")
+        self.assertEqual(vpc, "v")
+        self.aws._ec2.create_vpc.assert_not_called()
+
+        self.aws._ec2.describe_vpcs = AsyncMock(return_value={"Vpcs": []})
+        self.aws._ec2.create_vpc = AsyncMock(
+            return_value={"Vpc": {"VpcId": "n"}}
+        )
+        self.aws._ec2.create_tags = AsyncMock()
+        waiter = MagicMock()
+        waiter.wait = MagicMock()
+        self.aws._ec2.get_waiter = AsyncMock(return_value=waiter)
+        vpc = await self.aws.create_vpc_if_missing("name", "c")
+        self.assertEqual(vpc, "n")
+        self.aws._ec2.create_vpc.assert_awaited_once_with(CidrBlock="c")
+        self.aws._ec2.create_tags.assert_awaited_once()
+        waiter.wait.assert_called_once_with(VpcIds=["n"])
+
     async def test_get_security_group(self):
         self.aws._ec2.describe_security_groups = AsyncMock(
             return_value={"SecurityGroups": [{"GroupId": "g"}]}

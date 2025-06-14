@@ -37,8 +37,13 @@ async def deploy_run(args: Namespace, logger: Logger) -> None:
         logger.info("Preparing AWS deployment")
         aws = Aws(aws_cfg)
 
+        cidr = aws_cfg.get("cidr", "10.0.0.0/16")
         logger.info(f'Fetching VPC "{vpc_name}"')
-        vpc_id = await aws.get_vpc_id(aws_cfg["vpc"])
+        try:
+            vpc_id = await aws.get_vpc_id(aws_cfg["vpc"])
+        except DeployError:
+            logger.info(f'Creating VPC "{vpc_name}" with CIDR {cidr}')
+            vpc_id = await aws.create_vpc_if_missing(vpc_name, cidr)
 
         logger.info(
             f'Getting or creating security group "{sg_name}" on VPC "{vpc_id}"'
