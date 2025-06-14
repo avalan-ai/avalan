@@ -135,3 +135,62 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     main()
+
+
+class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
+    model_id = "dummy/model"
+
+    async def test_call_without_resampling(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
+            patch("avalan.model.audio.load") as load_mock,
+            patch("avalan.model.audio.Resample") as resample_mock,
+            patch("avalan.model.audio.argmax") as argmax_mock,
+            patch(
+                "avalan.model.audio.inference_mode", return_value=nullcontext()
+            ) as inf_mock,
+        ):
+            processor_instance = MagicMock()
+            processor_instance.return_value = MagicMock(input_values="inputs")
+            processor_instance.batch_decode.return_value = ["ok"]
+            type(processor_instance.tokenizer).pad_token_id = PropertyMock(
+                return_value=1
+            )
+            processor_mock.return_value = processor_instance
+
+            model_instance = MagicMock(spec=PreTrainedModel)
+            call_result = MagicMock(logits="logits")
+            model_instance.return_value = call_result
+            model_mock.return_value = model_instance
+
+            audio_wave = MagicMock()
+            squeezed = MagicMock()
+            squeezed.numpy.return_value = "audio"
+            audio_wave.squeeze.return_value = squeezed
+            load_mock.return_value = (audio_wave, 16000)
+
+            argmax_mock.return_value = "pred"
+
+            settings = EngineSettings()
+            model = SpeechRecognitionModel(
+                self.model_id,
+                settings,
+                logger=logger_mock,
+            )
+
+            result = await model("file.wav", sampling_rate=16000)
+
+            self.assertEqual(result, "ok")
+            load_mock.assert_called_once_with("file.wav")
+            resample_mock.assert_not_called()
+            processor_instance.assert_called_with(
+                "audio",
+                sampling_rate=16000,
+                return_tensors="pt",
+            )
+            model_instance.assert_called_once_with("inputs")
+            argmax_mock.assert_called_once_with("logits", dim=-1)
+            processor_instance.batch_decode.assert_called_once_with("pred")
+            inf_mock.assert_called_once_with()
