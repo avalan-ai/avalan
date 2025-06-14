@@ -228,5 +228,62 @@ class TextPartitionerTestCase(IsolatedAsyncioTestCase):
                     i = i + 1
 
 
+class TextPartitionerPropertyTestCase(IsolatedAsyncioTestCase):
+    def test_sentence_model_property(self):
+        model_mock = AsyncMock(spec=SentenceTransformerModel)
+        model_mock.tokenizer = MagicMock()
+        logger_mock = MagicMock(spec=Logger)
+
+        partitioner = TextPartitioner(
+            model_mock,
+            logger=logger_mock,
+            max_tokens=5,
+            overlap_size=1,
+            window_size=2,
+        )
+
+        self.assertIs(partitioner.sentence_model, model_mock)
+
+
+class TextPartitionerShortTextTestCase(IsolatedAsyncioTestCase):
+    async def test_call_with_empty_lines_short_text(self):
+        model_mock = AsyncMock(spec=SentenceTransformerModel)
+        model_mock.tokenizer = MagicMock()
+        model_mock.tokenizer.encode.side_effect = [[1, 2], [3, 4, 5]]
+        model_mock.side_effect = [arange(2), arange(3, 6)]
+
+        logger_mock = MagicMock(spec=Logger)
+        partitioner = TextPartitioner(
+            model_mock,
+            logger=logger_mock,
+            max_tokens=10,
+            overlap_size=1,
+            window_size=5,
+        )
+
+        text = "alpha beta\n\n\ngamma delta"
+        partitions = await partitioner(text)
+
+        self.assertEqual(len(partitions), 2)
+
+        model_mock.tokenizer.encode.assert_has_calls(
+            [
+                call("alpha beta", add_special_tokens=False),
+                call("gamma delta", add_special_tokens=False),
+            ]
+        )
+        model_mock.assert_has_awaits([call("alpha beta"), call("gamma delta")])
+        model_mock.tokenizer.decode.assert_not_called()
+
+        part1, part2 = partitions
+        self.assertEqual(part1.data, "alpha beta")
+        self.assertEqual(part1.total_tokens, 2)
+        assert_array_equal(part1.embeddings, arange(2))
+
+        self.assertEqual(part2.data, "gamma delta")
+        self.assertEqual(part2.total_tokens, 3)
+        assert_array_equal(part2.embeddings, arange(3, 6))
+
+
 if __name__ == "__main__":
     main()
