@@ -1,4 +1,4 @@
-from avalan.memory.partitioner import Encoding
+from avalan.memory.partitioner import Encoding, PartitionerException
 from avalan.memory.partitioner.code import (
     CodePartitioner,
     LanguageName,
@@ -245,6 +245,33 @@ c = 3
                 self.assertEqual(functions[2].parameters[7].type, "float")
                 self.assertEqual(functions[2].parameters[7].name, "fourth")
                 self.assertIsNone(functions[2].return_type)
+
+    def test_partition_error_node(self):
+        logger_mock = MagicMock(spec=Logger)
+        partitioner = CodePartitioner(logger=logger_mock)
+
+        with self.assertRaises(PartitionerException) as cm:
+            partitioner.partition("python", "def foo(", "utf-8", 32)
+
+        self.assertEqual(str(cm.exception), 'ERROR: "def foo(" at 0,0')
+
+    def test_partition_called_twice(self):
+        logger_mock = MagicMock(spec=Logger)
+        partitioner = CodePartitioner(logger=logger_mock)
+
+        first_partitions, _ = partitioner.partition(
+            "python", "a = 1\n", "utf-8", 32
+        )
+        parser_first = partitioner._parsers["python"][0]
+
+        second_partitions, _ = partitioner.partition(
+            "python", "b = 2\n", "utf-8", 32
+        )
+
+        self.assertIs(partitioner._parsers["python"][0], parser_first)
+        self.assertEqual(len(partitioner._parsers), 1)
+        self.assertEqual(first_partitions[0].data, "a = 1")
+        self.assertEqual(second_partitions[0].data, "b = 2")
 
 
 if __name__ == "__main__":

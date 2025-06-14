@@ -55,7 +55,7 @@ class CodePartition:
 
 class CodePartitioner:
     _logger: Logger
-    _parsers: dict[LanguageName, Parser] = {}
+    _parsers: dict[LanguageName, tuple[Parser, Language]] = {}
 
     def __init__(self, logger: Logger):
         self._logger = logger
@@ -106,7 +106,7 @@ class CodePartitioner:
         language_impl = python()
         language = Language(language_impl)
         parser = Parser(language)
-        self._parsers[language_name] = parser
+        self._parsers[language_name] = (parser, language)
         return parser, language
 
     # Implementation inspiration from Kevin Lu / SweepAI
