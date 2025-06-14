@@ -1,4 +1,4 @@
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser, Namespace, _SubParsersAction
 import sys
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
@@ -1037,6 +1037,12 @@ class CLI:
             help="Training to run",
         )
 
+        parser.add_argument(
+            "--help-full",
+            action="store_true",
+            help="Show help for all commands and subcommands",
+        )
+
         return parser
 
     @staticmethod
@@ -1217,6 +1223,9 @@ class CLI:
         _ = theme._
         console = Console(theme=Theme(styles=theme.get_styles()))
 
+        if args.help_full:
+            return self._help(console, self._parser)
+
         access_token = args.hf_token
         requires_token = self._needs_hf_token(args)
         if requires_token:
@@ -1242,6 +1251,24 @@ class CLI:
         except (CancelledError, KeyboardInterrupt, CommandAbortException):
             if not args.quiet:
                 console.print(theme.bye())
+
+    def _help(
+        self, console: Console, parser: ArgumentParser, path: list[str] = []
+    ) -> None:
+        prog = parser.prog
+        is_root_command = not path
+        console.print(
+            ("#" if is_root_command else "#" * (len(path) + 1)) + f" {prog}"
+        )
+        console.print("")
+        console.print("```")
+        console.print(parser.format_help().strip())
+        console.print("```")
+        console.print("")
+        for action in parser._actions:
+            if isinstance(action, _SubParsersAction):
+                for name, subparser in action.choices.items():
+                    self._help(console, subparser, path + [name])
 
     async def _main(
         self,
