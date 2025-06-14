@@ -1,5 +1,11 @@
 .PHONY: install lint release test test-coverage version
 
+ifneq ($(filter-out test-coverage,$(MAKECMDGOALS)),)
+.PHONY: $(filter-out test-coverage,$(MAKECMDGOALS))
+$(filter-out test-coverage,$(MAKECMDGOALS)):
+	@:
+endif
+
 install:
 	poetry sync --extras all
 
@@ -13,16 +19,17 @@ test:
 	poetry run pytest --verbose -s
 
 test-coverage:
-	$(eval COVERAGE_THRESHOLD := $(filter-out $@,$(MAKECMDGOALS)))
+	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))
+	$(eval COVERAGE_THRESHOLD := $(firstword $(ARGS)))
+	$(eval COVERAGE_PATH := $(if $(word 2,$(ARGS)),$(word 2,$(ARGS)),src/))
+	@poetry run pytest --cov=$(COVERAGE_PATH) --cov-report=json &> /dev/null
 	@if [ -z "$(COVERAGE_THRESHOLD)" ]; then \
-		echo "Usage: make test-coverage 95"; \
-		exit 1; \
+		jq -r '.files | to_entries[] | "\(.key): \(.value.summary.percent_covered_display)%"' coverage.json; \
+	elif [ "$(COVERAGE_THRESHOLD)" -lt 0 ]; then \
+		jq -r --arg thr "$$(echo $(COVERAGE_THRESHOLD) | sed 's/^-//')" '.files | to_entries[] | select(.value.summary.percent_covered < ($$thr|tonumber)) | "\(.key): \(.value.summary.percent_covered_display)%"' coverage.json; \
+	else \
+		jq -r --arg thr "$(COVERAGE_THRESHOLD)" '.files | to_entries[] | select(.value.summary.percent_covered >= ($$thr|tonumber)) | "\(.key): \(.value.summary.percent_covered_display)%"' coverage.json; \
 	fi
-	@poetry run pytest --cov=src/ --cov-report=json &> /dev/null
-	@jq -r \
-		--arg thr "$(COVERAGE_THRESHOLD)" \
-		'.files | to_entries[] | select(.value.summary.percent_covered < ($$thr|tonumber)) | "\(.key): \(.value.summary.percent_covered_display)%"' \
-		coverage.json
 
 version:
 	$(eval VERSION := $(filter-out $@,$(MAKECMDGOALS)))

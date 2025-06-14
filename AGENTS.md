@@ -61,6 +61,30 @@ poetry run pytest --verbose -s
 
 Tests must pass before you commit.
 
+## Test coverage
+
+You can get information about test coverage by running the `test-coverage`
+Makefile target. If you run it without arguments:
+
+```bash
+make test-coverage
+```
+
+You'll get test coverage information for all files in `src/`, in the form:
+`path: percentage`. If you want to get the list of files where test coverage
+is less than 95%, do:
+
+```bash
+make test coverage -- -95
+```
+
+You can also add a specific path. For example, if you're looking for files
+that have less than 95% coverage on folder `src/avalan/tool`:
+
+```bash
+make test-coverage -- -95 src/avalan/tool
+```
+
 ## Commit Messages
 
 - Keep commit messages short and descriptive (e.g. `Fix memory tests`).
