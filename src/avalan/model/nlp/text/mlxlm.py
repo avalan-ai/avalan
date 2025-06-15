@@ -22,9 +22,9 @@ class MlxLmStream(TextGenerationVendorStream):
         self._iterator = generator
 
     async def __anext__(self) -> str:
-        try:
-            chunk = await to_thread(next, self._iterator)
-        except StopIteration:
+        sentinel = object()
+        chunk = await to_thread(next, self._iterator, sentinel)
+        if chunk is sentinel:
             raise StopAsyncIteration
         return chunk
 
