@@ -23,6 +23,7 @@ from avalan.entities import (
     SentenceTransformerModelConfig,
     Similarity,
     Token,
+    TokenDetail,
     TokenizerConfig,
     User,
 )
@@ -377,6 +378,54 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             )
             frame = await gen.__anext__()
         self.assertTrue(frame[1].renderables)
+
+    async def test_tokens_multiple_frames(self):
+        alt1 = Token(id=2, token="b", probability=0.6)
+        alt2 = Token(id=3, token="c", probability=0.4)
+        dtoken = TokenDetail(
+            id=1, token="a", probability=0.8, tokens=[alt1, alt2]
+        )
+
+        with (
+            patch(
+                "avalan.cli.theme.fancy._lf",
+                lambda i: list(filter(None, i or [])),
+            ),
+            patch(
+                "avalan.cli.theme.fancy._j",
+                lambda sep, items: sep.join(str(x) for x in items if x),
+            ),
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=1,
+                display_probabilities=True,
+                pick=2,
+                focus_on_token_when=lambda x: True,
+                text_tokens=["<think>", "x", "</think>", "y"],
+                tokens=[dtoken],
+                input_token_count=0,
+                total_tokens=1,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.1,
+                ttnt=0.1,
+                ellapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+                maximum_frames=2,
+            )
+            frame1 = await gen.__anext__()
+            frame2 = await gen.__anext__()
+            with self.assertRaises(StopAsyncIteration):
+                await gen.__anext__()
+
+        self.assertTrue(frame1[1].renderables)
+        self.assertTrue(frame2[1].renderables)
 
 
 class FancyThemeAdditionalTestCase(unittest.TestCase):

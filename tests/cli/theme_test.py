@@ -261,3 +261,108 @@ class ThemeMiscMethodsTestCase(unittest.TestCase):
         )
         self.assertEqual(theme(model), "model:i")
         self.assertEqual(theme("x"), "x")
+
+
+class ThemeFormatTestCase(unittest.TestCase):
+    def test_custom_format_and_spinner(self):
+        theme = CallableTheme(
+            lambda s: s,
+            lambda s, p, n: s,
+            icons={"id": ":robot:", "likes": ":heart:"},
+            quantity_data=["likes"],
+        )
+
+        self.assertIsNone(theme.get_spinner("thinking"))
+        self.assertEqual(theme._f("id", "test"), ":robot: [id]test[/id]")
+        likes_formatted = theme._f("likes", 1000)
+        self.assertIn("thousand", likes_formatted)
+
+
+class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.theme = CallableTheme(lambda s: s, lambda s, p, n: s)
+
+    def test_base_methods_raise(self):
+        calls = [
+            lambda: Theme.action(
+                self.theme, "n", "d", "a", "id", "lib", True, False
+            ),
+            lambda: Theme.agent(
+                self.theme, SimpleNamespace(), models=[], cans_access=None
+            ),
+            lambda: Theme.ask_access_token(self.theme),
+            lambda: Theme.ask_delete_paths(self.theme),
+            lambda: Theme.ask_login_to_hub(self.theme),
+            lambda: Theme.ask_secret_password(self.theme, "k"),
+            lambda: Theme.ask_override_secret(self.theme, "k"),
+            lambda: Theme.bye(self.theme),
+            lambda: Theme.cache_delete(self.theme, None, False),
+            lambda: Theme.cache_list(self.theme, "/c", []),
+            lambda: Theme.download_access_denied(self.theme, "m", "u"),
+            lambda: Theme.download_start(self.theme, "m"),
+            lambda: Theme.download_progress(self.theme),
+            lambda: Theme.download_finished(self.theme, "m", "/p"),
+            lambda: Theme.logging_in(self.theme, "domain"),
+            lambda: Theme.memory_embeddings(
+                self.theme,
+                "text",
+                np.array([0.0]),
+                total_tokens=0,
+                minv=0.0,
+                maxv=0.0,
+                meanv=0.0,
+                stdv=0.0,
+                normv=0.0,
+            ),
+            lambda: Theme.memory_embeddings_comparison(self.theme, {}, "m"),
+            lambda: Theme.memory_embeddings_search(self.theme, []),
+            lambda: Theme.memory_partitions(
+                self.theme, [], display_partitions=0
+            ),
+            lambda: Theme.model(self.theme, SimpleNamespace()),
+            lambda: Theme.model_display(self.theme, None, None),
+            lambda: Theme.recent_messages(
+                self.theme, "id", SimpleNamespace(), []
+            ),
+            lambda: Theme.saved_tokenizer_files("/d", 0),
+            lambda: Theme.search_message_matches(
+                self.theme, "id", SimpleNamespace(), []
+            ),
+            lambda: Theme.memory_search_matches(self.theme, "id", "ns", []),
+            lambda: Theme.tokenizer_config(self.theme, None),
+            lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
+            lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
+        ]
+
+        for call in calls:
+            with self.assertRaises(NotImplementedError):
+                call()
+
+        async def run_tokens():
+            await Theme.tokens(
+                self.theme,
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                text_tokens=[],
+                tokens=None,
+                input_token_count=0,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                ttft=0.0,
+                ttnt=0.0,
+                ellapsed=0.0,
+                console_width=80,
+                logger=SimpleNamespace(),
+            )
+
+        with self.assertRaises(NotImplementedError):
+            import asyncio
+
+            asyncio.run(run_tokens())
