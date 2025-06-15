@@ -3,7 +3,7 @@
 
 <p align="center">
   <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
-  <img src="https://codecov.io/gh/avalan-ai/avalan/branch/main/graph/badge.svg" alt="Code coverage" />
+  <img src="https://img.shields.io/codecov/c/github/avalan-ai/avalan/main.svg?style=flat-square&logo=codeco" alt="Code coverage" />
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
   <img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" />
   <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
