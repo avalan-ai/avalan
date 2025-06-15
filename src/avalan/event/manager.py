@@ -1,5 +1,6 @@
 from ..event import Event, EventType
-from collections import defaultdict
+from asyncio import Queue
+from collections import defaultdict, deque
 from inspect import iscoroutine
 from typing import Awaitable, Callable, Iterable
 
@@ -8,9 +9,17 @@ Listener = Callable[[Event], Awaitable[None] | None]
 
 class EventManager:
     _listeners: dict[EventType, list[Listener]]
+    _queue: Queue[Event]
+    _history: deque[Event]
 
-    def __init__(self) -> None:
+    def __init__(self, history_length: int = 20) -> None:
         self._listeners = defaultdict(list)
+        self._queue = Queue()
+        self._history = deque(maxlen=history_length)
+
+    @property
+    def history(self) -> list[Event]:
+        return list(self._history)
 
     def add_listener(
         self,
@@ -22,7 +31,15 @@ class EventManager:
             self._listeners[event_type].append(listener)
 
     async def trigger(self, event: Event) -> None:
+        self._history.append(event)
+        self._queue.put_nowait(event)
+
         for listener in self._listeners.get(event.type, []):
             result = listener(event)
             if iscoroutine(result):
                 await result
+
+    async def listen(self):
+        while True:
+            evt = await self._queue.get()
+            yield evt
