@@ -2,7 +2,10 @@ import sys
 import importlib
 import types
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import avalan.model  # noqa: F401
+
 
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 
@@ -69,6 +72,7 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 self.mod.MlxLmModel,
                 "_stream_generator",
+                new_callable=AsyncMock,
                 return_value=self.mod.MlxLmStream(iter(["x"])),
             ) as stream_mock,
         ):
