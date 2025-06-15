@@ -1,5 +1,4 @@
 from ..event import Event, EventType
-import asyncio
 from asyncio import Queue
 from collections import defaultdict, deque
 from inspect import iscoroutine
@@ -10,7 +9,7 @@ Listener = Callable[[Event], Awaitable[None] | None]
 
 class EventManager:
     _listeners: dict[EventType, list[Listener]]
-    _queue: asyncio.Queue[Event]
+    _queue: Queue[Event]
     _history: deque[Event]
 
     def __init__(self, history_length: int = 20) -> None:
