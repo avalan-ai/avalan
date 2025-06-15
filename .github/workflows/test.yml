@@ -20,7 +20,7 @@ jobs:
       - name: Install pytest coverage analyzer
         run: poetry run pip install pytest-cov
       - name: Run tests with coverage analysis
-        run: poetry run pytest --verbose -s --cov=src/ --cov=tests/ --cov-report=xml
+        run: poetry run pytest --verbose -s --cov=src/ --cov-report=xml
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
