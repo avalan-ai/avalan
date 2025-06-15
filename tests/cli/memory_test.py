@@ -205,6 +205,62 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         )
         self.console.print.assert_called_once_with("panel")
 
+    async def test_index_url_transform_called(self):
+        self.args.source = "https://example.com"
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        md_instance = MagicMock()
+        md_instance.convert_stream.return_value = types.SimpleNamespace(
+            text_content="html"
+        )
+
+        response = MagicMock(content=b"<html>")
+        response.raise_for_status = MagicMock()
+        client = MagicMock()
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+        client.get = AsyncMock(return_value=response)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds, "AsyncClient", return_value=client),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds, "MarkItDown", return_value=md_instance
+            ) as md_patch,
+            patch.object(
+                memory_cmds, "to_thread", side_effect=lambda fn, html: fn(html)
+            ),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        md_patch.assert_called_once_with()
+        md_instance.convert_stream.assert_called_once()
+        self.console.print.assert_called_once()
+
     async def test_index_code_partitioner(self):
         self.args.partitioner = "code"
         partition = types.SimpleNamespace(data="d")
@@ -397,6 +453,89 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
         idx_patch.assert_called_once_with(emb.shape[0])
         index.add.assert_called()
         index.search.assert_called()
+        self.assertEqual(
+            [c.args[0] for c in self.console.print.call_args_list],
+            ["emb", "search"],
+        )
+
+    async def test_embeddings_search_with_partitioner(self):
+        self.args.search = ["q"]
+        self.args.compare = None
+        self.args.partition = True
+        emb = np.array([1.0])
+        partition = TextPartition(data="d", embeddings=emb, total_tokens=1)
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = AsyncMock(side_effect=[[emb], [emb]])
+        model.token_count = MagicMock(return_value=1)
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        tp_inst = AsyncMock(return_value=[partition])
+        index = MagicMock()
+        index.search = MagicMock(
+            return_value=(np.array([[0.1]]), np.array([[0]]))
+        )
+        index.add = MagicMock()
+
+        with (
+            patch.object(memory_cmds, "get_input", return_value="text"),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                memory_cmds, "TextPartitioner", return_value=tp_inst
+            ) as tp_patch,
+            patch.object(memory_cmds, "IndexFlatL2", return_value=index),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_embeddings(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        tp_patch.assert_called_once_with(
+            model,
+            self.logger,
+            max_tokens=self.args.partition_max_tokens,
+            window_size=self.args.partition_window,
+            overlap_size=self.args.partition_overlap,
+        )
+        self.console.print.assert_any_call(
+            self.theme.memory_partitions.return_value
+        )
+
+    async def test_embeddings_search_skips_empty_match(self):
+        self.args.search = ["q"]
+        self.args.compare = None
+        index = MagicMock()
+        index.search = MagicMock(
+            return_value=(np.array([[0.1]]), np.array([[1]]))
+        )
+        index.add = MagicMock()
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = AsyncMock(side_effect=[np.array([1.0]), [np.array([0.5])]])
+        model.token_count = MagicMock(return_value=1)
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        with (
+            patch.object(memory_cmds, "get_input", return_value="text"),
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds, "IndexFlatL2", return_value=index),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_embeddings(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        # search result skipped -> only embeddings output printed
         self.assertEqual(
             [c.args[0] for c in self.console.print.call_args_list],
             ["emb", "search"],

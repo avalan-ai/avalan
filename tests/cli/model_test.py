@@ -120,7 +120,10 @@ class CliModelTestCase(TestCase):
         model = SimpleNamespace(config="cfg", tokenizer_config="tok_cfg")
         self.hub.can_access.return_value = True
         self.hub.model.return_value = "hub_model"
-        with patch.object(model_cmds, "ModelManager", return_value=manager):
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(model_cmds, "get_model_settings", return_value={}),
+        ):
             model_cmds.model_display(
                 args,
                 self.console,
@@ -148,6 +151,66 @@ class CliModelTestCase(TestCase):
         )
         self.console.print.assert_called()
 
+    def test_model_display_loads_model(self):
+        args = Namespace(
+            model="id", skip_hub_access_check=False, summary=False, load=True
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        engine_uri = SimpleNamespace(is_local=False)
+        manager.parse_uri.return_value = engine_uri
+        lm = MagicMock()
+        lm.config = "cfg"
+        lm.tokenizer_config = "tok"
+        lm.is_runnable.return_value = True
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+        self.hub.can_access.return_value = True
+        self.hub.model.return_value = "hub_model"
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(model_cmds, "get_model_settings", return_value={}),
+        ):
+            model_cmds.model_display(
+                args,
+                self.console,
+                self.theme,
+                self.hub,
+                self.logger,
+                load=True,
+            )
+
+        manager.load.assert_called_once()
+        self.console.print.assert_called()
+
+    def test_model_install_secret_override(self):
+        args = Namespace(model="m")
+        engine_uri = SimpleNamespace(
+            vendor="openai", password="pw", user="secret"
+        )
+        secrets = MagicMock()
+        secrets.read.return_value = "tok"
+        with (
+            patch.object(
+                model_cmds.ModelManager, "parse_uri", return_value=engine_uri
+            ),
+            patch.object(
+                model_cmds, "KeyringSecrets", return_value=secrets
+            ) as ks,
+            patch.object(model_cmds.Prompt, "ask", return_value="new") as ask,
+            patch.object(model_cmds, "cache_download"),
+            patch.object(model_cmds, "confirm", return_value=True) as confirm,
+        ):
+            model_cmds.model_install(args, self.console, self.theme, self.hub)
+
+        ks.assert_called_once_with()
+        confirm.assert_called_once()
+        ask.assert_called_once_with("ask-pw")
+        secrets.write.assert_called_once_with("pw", "new")
+
 
 class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_no_stats(self):
@@ -174,6 +237,152 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             refresh_per_second=2,
         )
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
+
+    async def test_token_generation_no_stats_with_event(self):
+        async def gen():
+            yield model_cmds.Event(
+                type=model_cmds.EventType.TOOL_EXECUTE, payload={}
+            )
+            yield "t"
+
+        args = Namespace()
+        console = MagicMock()
+        await model_cmds.token_generation(
+            args=args,
+            console=console,
+            theme=MagicMock(),
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=MagicMock(),
+            input_string="i",
+            response=gen(),
+            display_tokens=0,
+            dtokens_pick=0,
+            with_stats=False,
+            tool_events_limit=2,
+            refresh_per_second=2,
+        )
+        console.print.assert_called_once_with("t", end="")
+
+    async def test_token_generation_timing_pause(self):
+        token = model_cmds.Token(id=0, token="a")
+
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                async def g():
+                    for _ in range(2):
+                        yield token
+
+                return g()
+
+        args = Namespace(
+            display_time_to_n_token=1,
+            display_pause=1,
+            start_thinking=False,
+            display_probabilities=True,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+
+        async def fake_tokens(*p, **kw):
+            yield (token, "frame1")
+            yield (None, "frame2")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        lm = SimpleNamespace(model_id="m", tokenizer_config=None)
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=Resp(),
+                display_tokens=1,
+                dtokens_pick=1,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+        theme.tokens.assert_called_once()
+        live.update.assert_any_call("frame1")
+        live.update.assert_any_call("frame2")
+
+    async def test_token_generation_ttnt_metric(self):
+        token = model_cmds.Token(id=0, token="a")
+
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                async def g():
+                    yield token
+
+                return g()
+
+        args = Namespace(
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+
+        async def fake_tokens(*p, **kw):
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        lm = SimpleNamespace(model_id="m", tokenizer_config=None)
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+        theme.tokens.assert_called_once()
+        live.update.assert_called_once_with("frame")
 
     async def test_token_generation_with_stats(self):
         token = model_cmds.Token(id=0, token="a", probability=0.4)
@@ -670,6 +879,78 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         tg_kwargs = tg_patch.await_args.kwargs
         self.assertEqual(tg_kwargs["input_string"], "hi")
         self.assertEqual(tg_kwargs["response"], "resp")
+
+    async def test_run_remote_model(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=False)
+        lm = AsyncMock(return_value="resp")
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri.return_value = engine_uri
+        manager.load.return_value = load_cm
+
+        with (
+            patch.object(
+                model_cmds, "ModelManager", return_value=manager
+            ) as mm_patch,
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={"engine_uri": engine_uri},
+            ) as gms_patch,
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(
+            args, hub, logger, engine_uri, is_sentence_transformer=False
+        )
+        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        lm.assert_awaited_once()
+        tg_patch.assert_awaited_once()
 
 
 class CliModelSearchTestCase(IsolatedAsyncioTestCase):
