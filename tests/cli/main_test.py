@@ -7,6 +7,7 @@ from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.cli.__main__ import CLI, HuggingfaceHub
+from avalan.cli import CommandAbortException
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
@@ -248,3 +249,163 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 await self.cli._main(args, theme, console, hub)
                 self.assertTrue(fn.called)
                 fn.reset_mock()
+
+
+class CliMainLoginTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        from logging import getLogger
+
+        self.logger = getLogger("cli-login-test")
+        with patch.object(sys, "argv", ["prog"]):
+            self.cli = CLI(self.logger)
+
+    async def test_main_login_and_logger_replace(self):
+        args = Namespace(
+            command="cache",
+            cache_command="list",
+            verbose=1,
+            quiet=False,
+            login=True,
+            hf_token="tok",
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.welcome.return_value = "welcome"
+        console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=True),
+            patch("avalan.cli.__main__.find_spec", return_value=True),
+            patch("avalan.cli.__main__.logger_replace") as lr,
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch("avalan.cli.__main__.cache_list") as cache_list,
+        ):
+            await self.cli._main(args, theme, console, hub, suggest_login=True)
+        lr.assert_any_call(self.cli._logger, ["sentence_transformers"])
+        lr.assert_any_call(self.cli._logger, ["httpx"])
+        hub.login.assert_called_once()
+        hub.user.assert_called_once()
+        cache_list.assert_called_once()
+        console.print.assert_any_call("welcome")
+
+
+class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        from logging import getLogger
+
+        self.logger = getLogger("cli-additional-test")
+        with patch.object(sys, "argv", ["prog"]):
+            self.cli = CLI(self.logger)
+
+    def test_add_tool_settings_arguments(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class Settings:
+            flag: bool = False
+            count: int = 0
+            ratio: float = 0.0
+            name: str = ""
+
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="x", settings_cls=Settings
+        )
+        args = parser.parse_args(
+            [
+                "--tool-x-flag",
+                "--tool-x-count",
+                "5",
+                "--tool-x-ratio",
+                "0.5",
+                "--tool-x-name",
+                "Bob",
+            ]
+        )
+        self.assertTrue(args.tool_x_flag)
+        self.assertEqual(args.tool_x_count, 5)
+        self.assertEqual(args.tool_x_ratio, 0.5)
+        self.assertEqual(args.tool_x_name, "Bob")
+
+    async def test_call_prompts_for_token_and_handles_exception(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "agent",
+                    "run",
+                    "--engine-uri",
+                    "e",
+                    "--role",
+                    "r",
+                    "--run-chat-x",
+                ],
+            ),
+            patch(
+                "avalan.cli.__main__.translation",
+                side_effect=FileNotFoundError(),
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=True),
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("builtins.open", side_effect=OSError()),
+            patch(
+                "avalan.cli.__main__.Prompt.ask", return_value="tok"
+            ) as ask_patch,
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch.object(CLI, "_help"),
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+        ):
+            await self.cli()
+        ask_patch.assert_called_once()
+        main_mock.assert_awaited_once()
+        self.assertTrue(hasattr(self.cli._parser.parse_args([]), "help_full"))
+
+    async def test_call_handles_abort_exception(self):
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=SimpleNamespace(
+                    gettext=lambda s: s, ngettext=lambda s, p, n: s
+                ),
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch(
+                "avalan.cli.__main__.Console", return_value=MagicMock()
+            ) as console_patch,
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch.object(
+                CLI, "_main", AsyncMock(side_effect=CommandAbortException)
+            ),
+        ):
+            await self.cli()
+        console_patch.return_value.print.assert_called()
+
+
+class CliMainFunctionTestCase(TestCase):
+    def test_main_invokes_run(self):
+        with (
+            patch("avalan.cli.__main__.run_in_loop") as run,
+            patch("avalan.cli.__main__.CLI") as cli,
+        ):
+            from avalan.cli.__main__ import main
+
+            main()
+        run.assert_called_once()
+        cli.assert_called_once()

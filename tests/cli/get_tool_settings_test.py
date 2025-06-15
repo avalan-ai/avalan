@@ -53,3 +53,13 @@ class GetToolSettingsTestCase(unittest.TestCase):
         )
         self.assertEqual(settings.engine, "chromium")
         self.assertTrue(settings.debug)
+
+    def test_prefix_fallback_to_field_name(self):
+        cfg = {"engine": "chromium"}
+        settings = agent_cmds._tool_settings_from_mapping(
+            cfg,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
+            open_files=False,
+        )
+        self.assertEqual(settings.engine, "chromium")

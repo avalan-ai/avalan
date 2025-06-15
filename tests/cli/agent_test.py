@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from argparse import Namespace
 from rich.syntax import Syntax
 from avalan.cli.commands import agent as agent_cmds
+from avalan.event import Event, EventType
 from avalan.memory.permanent import VectorFunction
 
 
@@ -707,6 +708,143 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bs.search)
         self.assertEqual(bs.search_context, 5)
 
+    async def test_run_start_session_and_print_recent(self):
+        self.args.session = None
+        self.orch.memory.has_recent_message = True
+        self.orch.memory.recent_message.is_empty = False
+        self.orch.memory.recent_message.data = ["m"]
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+        self.orch.memory.start_session.assert_awaited_once()
+        self.console.print.assert_any_call("agent_panel")
+        self.console.print.assert_any_call("recent_panel")
 
-if __name__ == "__main__":
-    unittest.main()
+    async def test_run_quiet_prints_output(self):
+        self.args.quiet = True
+        output = AsyncMock()
+        output.to_str = AsyncMock(return_value="out")
+        self.orch.return_value = output
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+        tg_patch.assert_not_called()
+        output.to_str.assert_awaited_once()
+        self.console.print.assert_any_call("out")
+
+    async def test_run_conversation_prints_blank(self):
+        self.args.conversation = True
+        self.orch.return_value = MagicMock(
+            spec=agent_cmds.OrchestratorResponse
+        )
+        self.orch.return_value.to_str = AsyncMock(return_value="x")
+        with (
+            patch.object(agent_cmds, "get_input", side_effect=["hi", None]),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+        self.console.print.assert_any_call("")
+
+    async def test_event_listener_counts_events(self):
+        captured = {}
+
+        def add_listener(fn):
+            captured["fn"] = fn
+
+        self.orch.event_manager.add_listener.side_effect = add_listener
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+        ev = Event(type=EventType.START, payload={})
+        self.assertIn("fn", captured)
+        stats = captured["fn"].__closure__[0].cell_contents
+        self.assertEqual(stats.total_triggers, 0)
+        await captured["fn"](ev)
+        self.assertEqual(stats.total_triggers, 1)
+
+
+class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_init_returns_when_no_role(self):
+        args = Namespace(
+            name="A",
+            role=None,
+            task=None,
+            instructions=None,
+            memory_recent=None,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=True,
+            tool=None,
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=False),
+            patch.object(agent_cmds, "get_input", return_value=""),
+            patch.object(agent_cmds.Prompt, "ask", return_value="A"),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+        console.print.assert_not_called()
