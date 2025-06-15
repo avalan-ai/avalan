@@ -29,6 +29,30 @@ def run(name: str, stars: int):
         with self.assertRaises(NameError):
             await self.tool("open('f', 'w')", context=ToolCallContext())
 
+    async def test_exec_tuple_args(self):
+        result = await self.tool(
+            """
+def run(a: str, *, b: int):
+    return f"{a}-{b}"
+            """,
+            ("x",),
+            {"b": 2},
+            context=ToolCallContext(),
+        )
+        self.assertEqual(result, "x-2")
+
+    async def test_exec_tuple_dict_args(self):
+        result = await self.tool(
+            """
+def run(*, x: int):
+    return x * 2
+            """,
+            {"x": 3},
+            {},
+            context=ToolCallContext(),
+        )
+        self.assertEqual(result, "6")
+
 
 if __name__ == "__main__":
     main()
