@@ -7,6 +7,7 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
+from logging import Logger
 from datetime import datetime, timezone
 from json import dumps
 from pgvector.psycopg import Vector
@@ -19,6 +20,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         cls,
         dsn: str,
         *args,
+        logger: Logger,
         pool_minimum: int = 1,
         pool_maximum: int = 10,
         pool_open: bool = True,
@@ -26,6 +28,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
     ):
         memory = cls(
             dsn=dsn,
+            logger=logger,
             pool_minimum=pool_minimum,
             pool_maximum=pool_maximum,
             **kwargs,

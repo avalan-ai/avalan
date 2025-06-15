@@ -282,6 +282,7 @@ class OrchestratorLoader:
             agent_id=settings.agent_id,
             participant_id=participant_id,
             text_partitioner=text_partitioner,
+            logger=logger,
             with_permanent_message_memory=settings.memory_permanent_message,
             with_recent_message_memory=settings.memory_recent,
         )
@@ -292,7 +293,9 @@ class OrchestratorLoader:
                 namespace,
                 settings.agent_id,
             )
-            store = await PgsqlRawMemory.create_instance(dsn=dsn)
+            store = await PgsqlRawMemory.create_instance(
+                dsn=dsn, logger=logger
+            )
             memory.add_permanent_memory(namespace, store)
 
         logger.debug(

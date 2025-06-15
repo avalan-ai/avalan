@@ -162,8 +162,9 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
         with patch.object(
             PgsqlMessageMemory, "open", AsyncMock()
         ) as open_patch:
+            logger = MagicMock()
             memory = await PgsqlMessageMemory.create_instance(
-                dsn="dsn", pool_minimum=1, pool_maximum=2
+                dsn="dsn", pool_minimum=1, pool_maximum=2, logger=logger
             )
             self.assertIsInstance(memory, PgsqlMessageMemory)
             open_patch.assert_awaited_once()
@@ -172,7 +173,7 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
             PgsqlMessageMemory, "open", AsyncMock()
         ) as open_patch:
             memory = await PgsqlMessageMemory.create_instance(
-                dsn="dsn", pool_open=False
+                dsn="dsn", pool_open=False, logger=logger
             )
             self.assertIsInstance(memory, PgsqlMessageMemory)
             open_patch.assert_not_awaited()
@@ -180,7 +181,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_create_session(self):
         pool_mock, connection_mock, cursor_mock = self.mock_query({})
         memory = await PgsqlMessageMemory.create_instance_from_pool(
-            pool=pool_mock
+            pool=pool_mock,
+            logger=MagicMock(),
         )
         agent_id = uuid4()
         participant_id = uuid4()
@@ -219,7 +221,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_append_with_partitions(self):
         pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()
         memory = await PgsqlMessageMemory.create_instance_from_pool(
-            pool=pool_mock
+            pool=pool_mock,
+            logger=MagicMock(),
         )
         session_id = uuid4()
         memory._session_id = session_id
@@ -299,7 +302,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_append_with_partitions_without_session(self):
         pool_mock, connection_mock, cursor_mock, _ = self.mock_insert()
         memory = await PgsqlMessageMemory.create_instance_from_pool(
-            pool=pool_mock
+            pool=pool_mock,
+            logger=MagicMock(),
         )
         agent_id = uuid4()
 
@@ -376,7 +380,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 )
 
                 memory = await PgsqlMessageMemory.create_instance_from_pool(
-                    pool=pool_mock
+                    pool=pool_mock,
+                    logger=MagicMock(),
                 )
 
                 result = await memory.continue_session_and_get_id(
@@ -436,7 +441,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 )
 
                 memory = await PgsqlMessageMemory.create_instance_from_pool(
-                    pool=pool_mock
+                    pool=pool_mock,
+                    logger=MagicMock(),
                 )
 
                 result = await memory.get_recent_messages(
@@ -526,7 +532,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 )
 
                 memory = await PgsqlMessageMemory.create_instance_from_pool(
-                    pool=pool_mock
+                    pool=pool_mock,
+                    logger=MagicMock(),
                 )
 
                 search_function = str(function)
@@ -653,7 +660,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     fetch_all=True,
                 )
                 memory = await PgsqlMessageMemory.create_instance_from_pool(
-                    pool=pool_mock
+                    pool=pool_mock,
+                    logger=MagicMock(),
                 )
                 search_partitions = [
                     TextPartition(data="", total_tokens=1, embeddings=rand(3))
@@ -758,7 +766,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 )
 
                 memory_store = await PgsqlRawMemory.create_instance_from_pool(
-                    pool=pool_mock
+                    pool=pool_mock,
+                    logger=MagicMock(),
                 )
 
                 search_function = str(function)

@@ -6,6 +6,7 @@ from ..memory.permanent import (
     PermanentMemory,
     VectorFunction,
 )
+from logging import Logger
 from typing import Any
 from uuid import UUID
 
@@ -25,6 +26,7 @@ class MemoryManager:
         agent_id: UUID,
         participant_id: UUID,
         text_partitioner: TextPartitioner,
+        logger: Logger,
         with_permanent_message_memory: str | None = None,
         with_recent_message_memory: bool = True,
     ):
@@ -33,7 +35,8 @@ class MemoryManager:
             from .permanent.pgsql.message import PgsqlMessageMemory
 
             permanent_memory = await PgsqlMessageMemory.create_instance(
-                dsn=with_permanent_message_memory
+                dsn=with_permanent_message_memory,
+                logger=logger,
             )
         recent_memory = (
             RecentMessageMemory() if with_recent_message_memory else None

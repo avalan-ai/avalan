@@ -12,16 +12,17 @@ from uuid import uuid4, UUID
 
 class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_create_instance(self):
+        logger = MagicMock()
         with patch.object(PgsqlRawMemory, "open", AsyncMock()) as open_patch:
             memory = await PgsqlRawMemory.create_instance(
-                dsn="dsn", pool_minimum=1, pool_maximum=2
+                dsn="dsn", pool_minimum=1, pool_maximum=2, logger=logger
             )
             self.assertIsInstance(memory, PgsqlRawMemory)
             open_patch.assert_awaited_once()
 
         with patch.object(PgsqlRawMemory, "open", AsyncMock()) as open_patch:
             memory = await PgsqlRawMemory.create_instance(
-                dsn="dsn", pool_open=False
+                dsn="dsn", pool_open=False, logger=logger
             )
             self.assertIsInstance(memory, PgsqlRawMemory)
             open_patch.assert_not_awaited()
@@ -29,7 +30,8 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_append_with_partitions(self):
         pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()
         memory_store = await PgsqlRawMemory.create_instance_from_pool(
-            pool=pool_mock
+            pool=pool_mock,
+            logger=MagicMock(),
         )
 
         base_memory = Memory(

@@ -9,6 +9,7 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
+from logging import Logger
 from datetime import datetime, timezone
 from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
@@ -22,6 +23,7 @@ class PgsqlMessageMemory(
         cls,
         dsn: str,
         *args,
+        logger: Logger,
         pool_minimum: int = 1,
         pool_maximum: int = 10,
         pool_open: bool = True,
@@ -30,6 +32,7 @@ class PgsqlMessageMemory(
         memory = cls(
             dsn=dsn,
             composite_types=["message_author_type"],
+            logger=logger,
             pool_minimum=pool_minimum,
             pool_maximum=pool_maximum,
             **kwargs,
