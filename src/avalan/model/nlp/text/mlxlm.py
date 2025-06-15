@@ -16,15 +16,16 @@ from typing import AsyncGenerator
 
 class MlxLmStream(TextGenerationVendorStream):
     """Async wrapper around a synchronous token generator."""
-
+    _SENTINEL = object()
+    
     def __init__(self, generator):
         super().__init__(generator)
         self._iterator = generator
 
     async def __anext__(self) -> str:
-        try:
-            chunk = await to_thread(next, self._iterator)
-        except StopIteration:
+        sentinel = type(self)._SENTINEL
+        chunk = await to_thread(next, self._iterator, sentinel)
+        if chunk is sentinel:
             raise StopAsyncIteration
         return chunk
 
