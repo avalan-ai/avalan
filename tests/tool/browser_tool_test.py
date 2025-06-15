@@ -159,3 +159,53 @@ class BrowserToolCallDebugTestCase(IsolatedAsyncioTestCase):
         tool = BrowserTool(settings, MagicMock())
         result = await tool("http://t", context=ToolCallContext())
         self.assertEqual(result, "debug")
+
+
+class BrowserToolReadTestCase(IsolatedAsyncioTestCase):
+    async def test_read_launches_browser_and_page(self):
+        settings = BrowserToolSettings()
+        page = MagicMock()
+        page.goto = AsyncMock(
+            return_value=MagicMock(
+                headers={"content-type": "text/html; charset=utf-8"}
+            )
+        )
+        page.content = AsyncMock(return_value="<html>hi</html>")
+        page.close = AsyncMock()
+
+        browser = MagicMock()
+        browser.new_page = AsyncMock(return_value=page)
+        browser.close = AsyncMock()
+
+        browser_type = MagicMock()
+        browser_type.launch = AsyncMock(return_value=browser)
+
+        client = MagicMock()
+        client.firefox = browser_type
+
+        tool = BrowserTool(settings, client)
+        tool._md.convert_stream = MagicMock(
+            return_value=types.SimpleNamespace(text_content="parsed")
+        )
+
+        content = await tool._read("http://t")
+
+        browser_type.launch.assert_awaited_once()
+        browser.new_page.assert_awaited_once()
+        page.goto.assert_awaited_once_with("http://t")
+        page.content.assert_awaited_once()
+        self.assertEqual(content, "parsed")
+
+    async def test_aexit_closes_resources(self):
+        tool = BrowserTool(BrowserToolSettings(), MagicMock())
+        tool._page = AsyncMock()
+        tool._browser = AsyncMock()
+        with patch(
+            "avalan.tool.browser.Tool.__aexit__",
+            AsyncMock(return_value=True),
+        ) as base_exit:
+            result = await tool.__aexit__(None, None, None)
+        tool._page.close.assert_awaited_once()
+        tool._browser.close.assert_awaited_once()
+        base_exit.assert_awaited_once_with(None, None, None)
+        self.assertTrue(result)
