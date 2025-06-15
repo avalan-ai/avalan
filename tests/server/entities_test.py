@@ -37,7 +37,7 @@ class ChatEntitiesTestCase(TestCase):
             choices=[choice],
             usage=usage,
         )
-        data = resp.dict()
+        data = resp.model_dump()
         self.assertEqual(data["choices"][0]["message"]["content"], "ok")
-        json_str = resp.json()
+        json_str = resp.model_dump_json()
         self.assertIn('"chat.completion"', json_str)
