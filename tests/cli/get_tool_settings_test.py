@@ -1,5 +1,8 @@
+import io
 import unittest
 from argparse import Namespace
+from tempfile import NamedTemporaryFile
+
 from avalan.cli.commands import agent as agent_cmds
 from avalan.tool.browser import BrowserToolSettings
 
@@ -32,3 +35,21 @@ class GetToolSettingsTestCase(unittest.TestCase):
             args, prefix="browser", settings_cls=BrowserToolSettings
         )
         self.assertIsNone(settings)
+
+    def test_debug_source_opened(self):
+        with NamedTemporaryFile("w+") as tmp:
+            args = Namespace(tool_browser_debug_source=tmp.name)
+            settings = agent_cmds.get_tool_settings(
+                args, prefix="browser", settings_cls=BrowserToolSettings
+            )
+            self.assertIsInstance(settings.debug_source, io.TextIOBase)
+            self.assertFalse(settings.debug_source.closed)
+            settings.debug_source.close()
+
+    def test_from_dict_mapping(self):
+        cfg = {"engine": "chromium", "debug": True}
+        settings = agent_cmds._tool_settings_from_mapping(
+            cfg, settings_cls=BrowserToolSettings, open_files=False
+        )
+        self.assertEqual(settings.engine, "chromium")
+        self.assertTrue(settings.debug)

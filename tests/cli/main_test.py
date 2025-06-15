@@ -1,7 +1,8 @@
 import sys
-from argparse import ArgumentParser, _SubParsersAction
+from argparse import ArgumentParser, Namespace, _SubParsersAction
 from types import SimpleNamespace
 from pathlib import Path
+from contextlib import ExitStack
 from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -120,3 +121,130 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         output = records_console.export_text()
         for prog in _collect_progs(self.cli._parser):
             self.assertIn(prog, output)
+
+
+class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        from logging import getLogger
+
+        self.logger = getLogger("cli-dispatch-test")
+        with patch.object(sys, "argv", ["prog"]):
+            self.cli = CLI(self.logger)
+
+    async def test_main_dispatch(self):
+        args_base = Namespace(
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token="tok",
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("avalan.cli.__main__.has_input", return_value=True)
+            )
+            stack.enter_context(
+                patch("avalan.cli.__main__.Confirm.ask", return_value=False)
+            )
+            stack.enter_context(
+                patch("avalan.cli.__main__.find_spec", return_value=None)
+            )
+            stack.enter_context(patch("avalan.cli.__main__.logger_replace"))
+            stack.enter_context(patch("avalan.cli.__main__.filterwarnings"))
+            run_mock = stack.enter_context(
+                patch("avalan.cli.__main__.agent_run", AsyncMock())
+            )
+            msg_mock = stack.enter_context(
+                patch("avalan.cli.__main__.agent_message_search", AsyncMock())
+            )
+            serve_mock = stack.enter_context(
+                patch("avalan.cli.__main__.agent_serve", AsyncMock())
+            )
+            init_mock = stack.enter_context(
+                patch("avalan.cli.__main__.agent_init", AsyncMock())
+            )
+            cache_del = stack.enter_context(
+                patch("avalan.cli.__main__.cache_delete")
+            )
+            cache_down = stack.enter_context(
+                patch("avalan.cli.__main__.cache_download")
+            )
+            cache_list = stack.enter_context(
+                patch("avalan.cli.__main__.cache_list")
+            )
+            mem_doc = stack.enter_context(
+                patch("avalan.cli.__main__.memory_document_index", AsyncMock())
+            )
+            mem_search = stack.enter_context(
+                patch("avalan.cli.__main__.memory_search", AsyncMock())
+            )
+            mem_emb = stack.enter_context(
+                patch("avalan.cli.__main__.memory_embeddings", AsyncMock())
+            )
+            model_disp = stack.enter_context(
+                patch("avalan.cli.__main__.model_display")
+            )
+            model_install = stack.enter_context(
+                patch("avalan.cli.__main__.model_install")
+            )
+            model_run = stack.enter_context(
+                patch("avalan.cli.__main__.model_run", AsyncMock())
+            )
+            model_search = stack.enter_context(
+                patch("avalan.cli.__main__.model_search", AsyncMock())
+            )
+            model_uninstall = stack.enter_context(
+                patch("avalan.cli.__main__.model_uninstall")
+            )
+            deploy_run_mock = stack.enter_context(
+                patch("avalan.cli.__main__.deploy_run", AsyncMock())
+            )
+            tokenize_mock = stack.enter_context(
+                patch("avalan.cli.__main__.tokenize", AsyncMock())
+            )
+            scenarios = [
+                ("agent", "run", run_mock),
+                ("agent", "message", msg_mock),
+                ("agent", "serve", serve_mock),
+                ("agent", "init", init_mock),
+                ("cache", "delete", cache_del),
+                ("cache", "download", cache_down),
+                ("cache", "list", cache_list),
+                ("memory", "document", mem_doc),
+                ("memory", "search", mem_search),
+                ("memory", "embeddings", mem_emb),
+                ("model", "display", model_disp),
+                ("model", "install", model_install),
+                ("model", "run", model_run),
+                ("model", "search", model_search),
+                ("model", "uninstall", model_uninstall),
+                ("deploy", "run", deploy_run_mock),
+                ("tokenizer", None, tokenize_mock),
+            ]
+            for cmd, subcmd, fn in scenarios:
+                args = Namespace(**vars(args_base))
+                args.command = cmd
+                if cmd == "agent":
+                    if subcmd == "message":
+                        args.agent_command = "message"
+                        args.agent_message_command = "search"
+                    else:
+                        args.agent_command = subcmd
+                elif cmd == "cache":
+                    args.cache_command = subcmd
+                elif cmd == "memory":
+                    if subcmd == "document":
+                        args.memory_command = "document"
+                        args.memory_document_command = "index"
+                    else:
+                        args.memory_command = subcmd
+                elif cmd == "model":
+                    args.model_command = subcmd
+                elif cmd == "deploy":
+                    args.deploy_command = subcmd
+                await self.cli._main(args, theme, console, hub)
+                self.assertTrue(fn.called)
+                fn.reset_mock()

@@ -269,6 +269,9 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             search_k=1,
             sort=None,
             partition=False,
+            partition_max_tokens=10,
+            partition_window=5,
+            partition_overlap=2,
             no_repl=False,
             quiet=False,
             display_partitions=1,
@@ -281,6 +284,7 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
         self.theme.memory_embeddings.return_value = "emb"
         self.theme.memory_embeddings_comparison.return_value = "cmp"
         self.theme.memory_embeddings_search.return_value = "search"
+        self.theme.memory_partitions.return_value = "parts"
         self.hub = MagicMock()
         self.logger = MagicMock()
 
@@ -396,6 +400,47 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             [c.args[0] for c in self.console.print.call_args_list],
             ["emb", "search"],
+        )
+
+    async def test_embeddings_with_partitioner_display(self):
+        self.args.compare = None
+        self.args.partition = True
+        emb = np.array([1.0])
+        partition = TextPartition(data="d", embeddings=emb, total_tokens=1)
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = AsyncMock(return_value=emb)
+        model.token_count = MagicMock(return_value=1)
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+        tp_inst = AsyncMock(return_value=[partition])
+        with (
+            patch.object(memory_cmds, "get_input", return_value="text") as gi,
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                memory_cmds, "TextPartitioner", return_value=tp_inst
+            ) as tp,
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_embeddings(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        gi.assert_called_once()
+        tp.assert_called_once_with(
+            model,
+            self.logger,
+            max_tokens=self.args.partition_max_tokens,
+            window_size=self.args.partition_window,
+            overlap_size=self.args.partition_overlap,
+        )
+        tp_inst.assert_awaited_once_with("text")
+        self.console.print.assert_called_once_with(
+            self.theme.memory_partitions.return_value
         )
 
 
