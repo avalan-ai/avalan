@@ -22,6 +22,7 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
             agent_id=agent_id,
             participant_id=participant_id,
             text_partitioner=tp,
+            logger=MagicMock(),
         )
 
         self.assertIsInstance(manager.recent_message, RecentMessageMemory)
@@ -46,13 +47,17 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
             with patch.dict(
                 "sys.modules", {"avalan.memory.permanent.pgsql.message": dummy}
             ):
+                logger = MagicMock()
                 manager = await MemoryManager.create_instance(
                     agent_id=agent_id,
                     participant_id=participant_id,
                     text_partitioner=tp,
+                    logger=logger,
                     with_permanent_message_memory="dsn",
                 )
-            PgsqlDummy.create_instance.assert_awaited_once_with(dsn="dsn")
+            PgsqlDummy.create_instance.assert_awaited_once_with(
+                dsn="dsn", logger=logger
+            )
 
         self.assertIs(manager.permanent_message, pmemory)
         self.assertIsInstance(manager.recent_message, RecentMessageMemory)

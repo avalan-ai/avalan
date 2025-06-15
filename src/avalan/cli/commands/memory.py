@@ -116,7 +116,9 @@ async def memory_document_index(
                         )
                     )
 
-            memory_store = await PgsqlRawMemory.create_instance(dsn=dsn)
+            memory_store = await PgsqlRawMemory.create_instance(
+                dsn=dsn, logger=logger
+            )
             await memory_store.append_with_partitions(
                 namespace,
                 participant_id,
@@ -414,7 +416,9 @@ async def memory_search(
             )
             search_partitions = await partitioner(input_string)
 
-            memory_store = await PgsqlRawMemory.create_instance(dsn=dsn)
+            memory_store = await PgsqlRawMemory.create_instance(
+                dsn=dsn, logger=logger
+            )
             memories = await memory_store.search_memories(
                 search_partitions=search_partitions,
                 participant_id=participant_id,

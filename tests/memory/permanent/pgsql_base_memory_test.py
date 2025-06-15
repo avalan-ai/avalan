@@ -52,7 +52,7 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
 
     async def test_open_and_search(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         await memory.open()
         pool.open.assert_awaited_once()
         with self.assertRaises(NotImplementedError):
@@ -60,7 +60,7 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
 
     async def test_fetch_one_found(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         with patch.object(
             memory, "_try_fetch_one", AsyncMock(return_value=DummyEntity(1))
         ) as patch_try:
@@ -70,7 +70,7 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
 
     async def test_fetch_one_not_found(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         with patch.object(
             memory, "_try_fetch_one", AsyncMock(return_value=None)
         ):
@@ -80,26 +80,26 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_has_one(self):
         for expected, record in [(True, {"v": 1}), (False, None)]:
             pool, _, cursor = self.mock_query(record)
-            memory = DummyBaseMemory(pool)
+            memory = DummyBaseMemory(pool, logger=MagicMock())
             result = await memory._has_one("q", (1,))
             cursor.execute.assert_awaited_once_with("q", (1,))
             self.assertEqual(result, expected)
 
     async def test_try_fetch_one(self):
         pool, _, cursor = self.mock_query({"value": 10})
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         result = await memory._try_fetch_one(DummyEntity, "q", (1,))
         cursor.execute.assert_awaited_once_with("q", (1,))
         self.assertEqual(result, DummyEntity(value=10))
 
         pool, _, cursor = self.mock_query(None)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         result = await memory._try_fetch_one(DummyEntity, "q", (1,))
         self.assertIsNone(result)
 
     async def test_update_and_fetch_one_and_field(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         with patch.object(
             memory,
             "_update_and_fetch_row",
@@ -118,18 +118,18 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
 
     async def test_update_and_fetch_row_and_update(self):
         pool, conn, cursor = self.mock_query({"a": 1})
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         row = await memory._update_and_fetch_row("q", (1,))
         cursor.execute.assert_awaited_once_with("q", (1,))
         self.assertEqual(row, {"a": 1})
 
         pool, conn, cursor = self.mock_query(None)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         with self.assertRaises(RecordNotSavedException):
             await memory._update_and_fetch_row("q", (1,))
 
         pool, conn, cursor = self.mock_query(None)
-        memory = DummyBaseMemory(pool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
         await memory._update("u", (3,))
         cursor.execute.assert_awaited_once_with("u", (3,))
 
@@ -146,6 +146,7 @@ class PgsqlMemoryTestCase(IsolatedAsyncioTestCase):
                 dsn="user@host/db",
                 pool_minimum=1,
                 pool_maximum=2,
+                logger=MagicMock(),
             )
         pool_cls.assert_called_once()
         called_kwargs = pool_cls.call_args.kwargs
@@ -157,7 +158,7 @@ class PgsqlMemoryTestCase(IsolatedAsyncioTestCase):
 
     async def test_configure_connection(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
-        memory = DummyPgsqlMemory(dsn=None, pool=pool)
+        memory = DummyPgsqlMemory(dsn=None, pool=pool, logger=MagicMock())
         memory._composite_types = ["ctype"]
         connection = AsyncMock(spec=AsyncConnection)
         type_info = MagicMock()

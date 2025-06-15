@@ -115,7 +115,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             overlap_size=self.args.partition_overlap,
         )
         tp_inst.assert_awaited_once_with("content")
-        mem_patch.assert_awaited_once_with(dsn=self.args.dsn)
+        mem_patch.assert_awaited_once_with(
+            dsn=self.args.dsn, logger=self.logger
+        )
         memory_store.append_with_partitions.assert_awaited_once_with(
             self.args.namespace,
             UUID(self.args.participant),
@@ -192,7 +194,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             overlap_size=self.args.partition_overlap,
         )
         tp_inst.assert_awaited_once_with("content")
-        mem_patch.assert_awaited_once_with(dsn=self.args.dsn)
+        mem_patch.assert_awaited_once_with(
+            dsn=self.args.dsn, logger=self.logger
+        )
         memory_store.append_with_partitions.assert_awaited_once_with(
             self.args.namespace,
             UUID(self.args.participant),
@@ -310,7 +314,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             self.args.encoding,
             self.args.partition_max_tokens,
         )
-        mem_patch.assert_awaited_once_with(dsn=self.args.dsn)
+        mem_patch.assert_awaited_once_with(
+            dsn=self.args.dsn, logger=self.logger
+        )
         call = memory_store.append_with_partitions.await_args
         self.assertEqual(call.kwargs["memory_type"], MemoryType.CODE)
         self.assertEqual(len(call.kwargs["partitions"]), 1)
@@ -658,7 +664,9 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
             overlap_size=self.args.partition_overlap,
         )
         tp_inst.assert_awaited_once_with("query")
-        mem_patch.assert_awaited_once_with(dsn=self.args.dsn)
+        mem_patch.assert_awaited_once_with(
+            dsn=self.args.dsn, logger=self.logger
+        )
         memory_store.search_memories.assert_awaited_once_with(
             search_partitions=[partition],
             participant_id=UUID(self.args.participant),

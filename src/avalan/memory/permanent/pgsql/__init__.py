@@ -6,9 +6,11 @@ from ....memory.permanent import (
     RecordNotFoundException,
     RecordNotSavedException,
 )
+from logging import Logger
+from time import perf_counter
 from pgvector.psycopg import register_vector_async
 from psycopg_pool import AsyncConnectionPool
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, AsyncCursor
 from psycopg.rows import dict_row
 from psycopg.types import TypeInfo
 from typing import TypeVar
@@ -18,9 +20,11 @@ T = TypeVar("T")
 
 class BasePgsqlMemory(MemoryStore[T]):
     _database: AsyncConnection
+    _logger: Logger
 
-    def __init__(self, database: AsyncConnectionPool):
+    def __init__(self, database: AsyncConnectionPool, logger: Logger):
         self._database = database
+        self._logger = logger
 
     async def open(self) -> None:
         await self._database.open()
@@ -28,12 +32,22 @@ class BasePgsqlMemory(MemoryStore[T]):
     async def search(self, query: str) -> list[T] | None:
         raise NotImplementedError()
 
+    async def _execute(
+        self, cursor: AsyncCursor, query: str, parameters: tuple | None
+    ) -> None:
+        self._logger.debug("Executing query: %s with %s", query, parameters)
+        start = perf_counter()
+        await cursor.execute(query, parameters)
+        self._logger.debug(
+            "Query finished in %.3f seconds", perf_counter() - start
+        )
+
     async def _fetch_all(
         self, entity: type[T], query: str, parameters: tuple
     ) -> list[T]:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
+                await self._execute(cursor, query, parameters)
                 results = await cursor.fetchall()
                 await cursor.close()
                 return (
@@ -55,7 +69,7 @@ class BasePgsqlMemory(MemoryStore[T]):
     ) -> str | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
+                await self._execute(cursor, query, parameters)
                 result = await cursor.fetchone()
                 await cursor.close()
                 row = dict(result) if result is not None else None
@@ -65,7 +79,7 @@ class BasePgsqlMemory(MemoryStore[T]):
     async def _has_one(self, query: str, parameters: tuple) -> bool:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
+                await self._execute(cursor, query, parameters)
                 result = await cursor.fetchone()
                 await cursor.close()
                 return result is not None
@@ -75,7 +89,7 @@ class BasePgsqlMemory(MemoryStore[T]):
     ) -> T | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
+                await self._execute(cursor, query, parameters)
                 result = await cursor.fetchone()
                 await cursor.close()
                 return entity(**dict(result)) if result is not None else None
@@ -97,7 +111,7 @@ class BasePgsqlMemory(MemoryStore[T]):
     ) -> dict:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
+                await self._execute(cursor, query, parameters)
                 result = await cursor.fetchone()
                 await cursor.close()
                 if result is None:
@@ -107,7 +121,7 @@ class BasePgsqlMemory(MemoryStore[T]):
     async def _update(self, query: str, parameters: tuple) -> None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
+                await self._execute(cursor, query, parameters)
                 await cursor.close()
 
 
@@ -118,10 +132,11 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
     async def create_instance_from_pool(
         cls,
         pool: AsyncConnectionPool,
-        *args,
+        *,
+        logger: Logger,
         **kwargs,
     ):
-        memory = cls(dsn=None, pool=pool, **kwargs)
+        memory = cls(dsn=None, pool=pool, logger=logger, **kwargs)
         return memory
 
     def __init__(
@@ -132,6 +147,7 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         composite_types: list[str] | None = None,
         pool_minimum: int | None = None,
         pool_maximum: int | None = None,
+        logger: Logger,
         **kwargs,
     ):
         assert pool or (
@@ -143,7 +159,7 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         )
 
         if pool:
-            super().__init__(database=pool, **kwargs)
+            super().__init__(database=pool, logger=logger, **kwargs)
         else:
             self._composite_types = composite_types
 
@@ -157,7 +173,7 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
                 configure=self._configure_connection,
                 open=False,
             )
-            super().__init__(database=database, **kwargs)
+            super().__init__(database=database, logger=logger, **kwargs)
 
     async def _configure_connection(self, connection: AsyncConnection):
         connection.row_factory = dict_row
