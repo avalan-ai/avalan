@@ -70,7 +70,7 @@ async def create_chat_completion(
                     model=request.model,
                     choices=[choice],
                 )
-                yield f"data: {chunk.json()}\n\n"  # SSE data event
+                yield f"data: {chunk.model_dump_json()}\n\n"  # SSE data event
             yield "data: [DONE]\n\n"  # end of stream
 
         return StreamingResponse(
