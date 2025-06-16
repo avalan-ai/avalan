@@ -18,6 +18,7 @@ class MemoryManager:
     _permanent_memories: dict[str, PermanentMemory]
     _recent_message_memory: RecentMessageMemory | None = None
     _text_partitioner: TextPartitioner
+    _logger: Logger
 
     @classmethod
     async def create_instance(
@@ -48,6 +49,7 @@ class MemoryManager:
             permanent_message_memory=permanent_memory,
             recent_message_memory=recent_memory,
             text_partitioner=text_partitioner,
+            logger=logger,
         )
         return manager
 
@@ -59,9 +61,11 @@ class MemoryManager:
         permanent_message_memory: PermanentMessageMemory | None,
         recent_message_memory: RecentMessageMemory | None,
         text_partitioner: TextPartitioner,
+        logger: Logger,
         permanent_memories: dict[str, PermanentMemory] | None = None,
     ):
         assert agent_id and participant_id
+        self._logger = logger
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._text_partitioner = text_partitioner
@@ -126,6 +130,8 @@ class MemoryManager:
             and engine_message.message.content
         )
 
+        self._logger.debug("Appending message")
+
         if self._permanent_message_memory:
             partitions = await self._text_partitioner(
                 engine_message.message.content
@@ -137,6 +143,8 @@ class MemoryManager:
         if self._recent_message_memory:
             self._recent_message_memory.append(engine_message)
 
+        self._logger.debug("Message appended")
+
     async def continue_session(
         self,
         session_id: UUID,
@@ -144,6 +152,7 @@ class MemoryManager:
         load_recent_messages: bool = True,
         load_recent_messages_limit: int | None = None,
     ) -> None:
+        self._logger.debug("Continuing session %s", session_id)
         if self._permanent_message_memory:
             await self._permanent_message_memory.continue_session(
                 agent_id=self._agent_id,
@@ -167,7 +176,10 @@ class MemoryManager:
             for message in messages:
                 self._recent_message_memory.append(message)
 
+        self._logger.debug("Session %s continued", session_id)
+
     async def start_session(self) -> None:
+        self._logger.debug("Starting session")
         if self._permanent_message_memory:
             await self._permanent_message_memory.reset_session(
                 agent_id=self._agent_id, participant_id=self._participant_id
@@ -175,6 +187,8 @@ class MemoryManager:
 
         if self._recent_message_memory:
             self._recent_message_memory.reset()
+
+        self._logger.debug("Session started")
 
     async def search_messages(
         self,
