@@ -36,7 +36,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         manager = EventManager()
         evt = Event(type=EventType.START)
         await manager.trigger(evt)
-        gen = manager.listen()
+        gen = manager.listen(stop_signal=None)
         self.assertIs(await gen.__anext__(), evt)
 
         async def get_next():
@@ -47,6 +47,22 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         evt2 = Event(type=EventType.END)
         await manager.trigger(evt2)
         self.assertIs(await task, evt2)
+
+    async def test_listen_stop_signal(self):
+        manager = EventManager()
+        stop = asyncio.Event()
+        events: list[Event] = []
+
+        async def iterate():
+            async for event in manager.listen(stop_signal=stop, timeout=0.01):
+                events.append(event)
+
+        task = asyncio.create_task(iterate())
+        await asyncio.sleep(0.02)
+        self.assertFalse(task.done())
+        stop.set()
+        await task
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

@@ -754,3 +754,46 @@ class FancyThemeMoreTests(unittest.TestCase):
         self.assertEqual(FancyTheme._percentage(0.5), "50%")
         self.assertEqual(FancyTheme._percentage(0.123), "12.3%")
         self.assertEqual(FancyTheme._percentage(1), "100%")
+
+
+class FancyThemeEventsTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.theme = FancyTheme(
+            lambda s: s, lambda s, p, n: s if n == 1 else p
+        )
+
+    def test_no_events(self):
+        self.assertIsNone(self.theme.events([]))
+        self.assertIsNone(self.theme.events([], events_limit=0))
+
+    def test_single_event(self):
+        event = Event(type=EventType.START)
+        panel = self.theme.events([event])
+        self.assertEqual(panel.height, 4)
+        self.assertIn("EventType.START", str(panel.renderable))
+
+        panel = self.theme.events([event], events_limit=1)
+        self.assertEqual(panel.height, 3)
+        self.assertIn("EventType.START", str(panel.renderable))
+
+    def test_multiple_events_with_limit(self):
+        e1 = Event(type=EventType.START)
+        e2 = Event(type=EventType.END)
+
+        panel = self.theme.events([e1, e2])
+        text = str(panel.renderable)
+        self.assertEqual(panel.height, 4)
+        self.assertIn("EventType.START", text)
+        self.assertIn("EventType.END", text)
+
+        panel = self.theme.events([e1, e2], events_limit=1)
+        text = str(panel.renderable)
+        self.assertEqual(panel.height, 3)
+        self.assertNotIn("EventType.START", text)
+        self.assertIn("EventType.END", text)
+
+        panel = self.theme.events([e1, e2], events_limit=2)
+        text = str(panel.renderable)
+        self.assertEqual(panel.height, 4)
+        self.assertIn("EventType.START", text)
+        self.assertIn("EventType.END", text)

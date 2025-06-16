@@ -553,6 +553,32 @@ class FancyTheme(Theme):
             )
         )
 
+    def events(
+        self,
+        events: list[Event],
+        *,
+        events_limit: int | None = None,
+    ) -> RenderableType:
+        _ = self._
+
+        event_log = self._events_log(
+            events=events, events_limit=events_limit, only_tools=False
+        )
+        panel = (
+            Panel(
+                _j("\n", event_log),
+                title=_("Events"),
+                title_align="left",
+                height=2 + (events_limit or 2),
+                padding=(0, 0, 0, 1),
+                expand=True,
+                box=box.SQUARE,
+            )
+            if event_log
+            else None
+        )
+        return panel
+
     def logging_in(self, domain: str) -> str:
         _ = self._
         return _("Logging in to {domain}...").format(domain=domain)
@@ -1715,72 +1741,9 @@ class FancyTheme(Theme):
             else None
         )
 
-        tool_event_log: list[str] | None = _lf(
-            [
-                (
-                    _(
-                        "Executed tool {tool} call #{call_id} with"
-                        " {total_arguments} arguments: {arguments}. Got result"
-                        ' "{result}" in {ellapsed_with_unit}.'
-                    ).format(
-                        tool="[gray78]"
-                        + event.payload["result"].call.name
-                        + "[/gray78]",
-                        ellapsed_with_unit="[gray78]"
-                        + naturaldelta(
-                            event.ellapsed, minimum_unit="microseconds"
-                        )
-                        + "[/gray78]",
-                        call_id="[gray78]"
-                        + str(event.payload["result"].call.id)[:8]
-                        + "[/gray78]",
-                        total_arguments=len(
-                            event.payload["result"].call.arguments or []
-                        ),
-                        arguments="[gray78]"
-                        + (
-                            s
-                            if len(
-                                s := str(
-                                    event.payload["result"].call.arguments
-                                )
-                            )
-                            <= 50
-                            else s[:47] + "..."
-                        )
-                        + "[/gray78]",
-                        result="[spring_green3]"
-                        + event.payload["result"].result
-                        + "[/spring_green3]",
-                    )
-                    if event.type == EventType.TOOL_RESULT
-                    and event.payload["result"]
-                    else (
-                        _n(
-                            "Executing {total_calls} tool: {calls}",
-                            "Executing {total_calls} tools: {calls}",
-                            len(event.payload),
-                        ).format(
-                            total_calls=len(event.payload),
-                            calls="[gray78]"
-                            + "[/gray78], [gray78]".join(
-                                [call.name for call in event.payload]
-                            )
-                            + "[/gray78]",
-                        )
-                        if event.type == EventType.TOOL_PROCESS
-                        else None
-                    )
-                )
-                for event in tool_events
-            ]
-            if tool_events and tool_events_limit is None or tool_events_limit
-            else None
+        tool_event_log = self._events_log(
+            events=tool_events, events_limit=tool_events_limit, only_tools=True
         )
-
-        if tool_event_log and tool_events_limit:
-            tool_event_log = tool_event_log[-tool_events_limit:]
-
         tools_panel = (
             Panel(
                 _j("\n", tool_event_log),
@@ -2043,6 +2006,83 @@ class FancyTheme(Theme):
             if yield_next_frame:
                 dtokens_selected_last_index_yielded = current_selected_index
                 _l("Will continue to yield next frame")
+
+    def _events_log(
+        self,
+        events: list[Event],
+        *,
+        events_limit: int | None,
+        only_tools: bool,
+    ) -> list[str] | None:
+        _, _n = self._, self._n
+        if not events or events_limit == 0:
+            return None
+
+        event_log: list[str] | None = _lf(
+            [
+                (
+                    _(
+                        "Executed tool {tool} call #{call_id} with"
+                        " {total_arguments} arguments: {arguments}. Got result"
+                        ' "{result}" in {ellapsed_with_unit}.'
+                    ).format(
+                        tool="[gray78]"
+                        + event.payload["result"].call.name
+                        + "[/gray78]",
+                        ellapsed_with_unit="[gray78]"
+                        + naturaldelta(
+                            event.ellapsed, minimum_unit="microseconds"
+                        )
+                        + "[/gray78]",
+                        call_id="[gray78]"
+                        + str(event.payload["result"].call.id)[:8]
+                        + "[/gray78]",
+                        total_arguments=len(
+                            event.payload["result"].call.arguments or []
+                        ),
+                        arguments="[gray78]"
+                        + (
+                            s
+                            if len(
+                                s := str(
+                                    event.payload["result"].call.arguments
+                                )
+                            )
+                            <= 50
+                            else s[:47] + "..."
+                        )
+                        + "[/gray78]",
+                        result="[spring_green3]"
+                        + event.payload["result"].result
+                        + "[/spring_green3]",
+                    )
+                    if event.type == EventType.TOOL_RESULT
+                    and event.payload["result"]
+                    else (
+                        _n(
+                            "Executing {total_calls} tool: {calls}",
+                            "Executing {total_calls} tools: {calls}",
+                            len(event.payload),
+                        ).format(
+                            total_calls=len(event.payload),
+                            calls="[gray78]"
+                            + "[/gray78], [gray78]".join(
+                                [call.name for call in event.payload]
+                            )
+                            + "[/gray78]",
+                        )
+                        if event.type == EventType.TOOL_PROCESS
+                        else event.__repr__() if not only_tools else None
+                    )
+                )
+                for event in events
+            ]
+        )
+
+        if event_log and events_limit:
+            event_log = event_log[-events_limit:]
+
+        return event_log
 
     def _tokens_table(
         self,

@@ -1,5 +1,5 @@
 from ..event import Event, EventType
-from asyncio import Queue
+from asyncio import Event as EventSignal, Queue, TimeoutError, wait_for
 from collections import defaultdict, deque
 from inspect import iscoroutine
 from typing import Awaitable, Callable, Iterable
@@ -39,7 +39,11 @@ class EventManager:
             if iscoroutine(result):
                 await result
 
-    async def listen(self):
+    async def listen(self, stop_signal: EventSignal, timeout: float = 0.2):
         while True:
-            evt = await self._queue.get()
-            yield evt
+            try:
+                evt = await wait_for(self._queue.get(), timeout=timeout)
+                yield evt
+            except TimeoutError:
+                if stop_signal.is_set() and self._queue.empty():
+                    break

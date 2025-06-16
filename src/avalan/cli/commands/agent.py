@@ -126,6 +126,7 @@ def get_orchestrator_settings(
         sentence_model_window_size=args.memory_engine_window,
         json_config=None,
         tools=tools if tools is not None else args.tool or [],
+        log_events=True,
     )
 
 

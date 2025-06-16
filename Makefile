@@ -16,7 +16,7 @@ lint:
 
 test:
 	poetry sync --extras test
-	poetry run pytest --verbose -s
+	poetry run pytest --verbose
 
 test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))

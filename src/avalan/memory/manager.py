@@ -138,7 +138,7 @@ class MemoryManager:
             and engine_message.message.content
         )
 
-        self._logger.debug("Appending message")
+        self._logger.debug("<Memory> Appending message")
 
         if self._permanent_message_memory:
             start = perf_counter()
@@ -171,7 +171,7 @@ class MemoryManager:
         if self._recent_message_memory:
             self._recent_message_memory.append(engine_message)
 
-        self._logger.debug("Message appended")
+        self._logger.debug("<Memory> Message appended")
 
     async def continue_session(
         self,

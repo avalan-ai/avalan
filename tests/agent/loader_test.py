@@ -670,6 +670,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             sentence_model_overlap_size=125,
             sentence_model_window_size=250,
             json_config=None,
+            log_events=True,
         )
 
         with (
@@ -728,6 +729,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             sentence_model_overlap_size=125,
             sentence_model_window_size=250,
             json_config=None,
+            log_events=True,
         )
 
         cases = [
@@ -847,6 +849,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             sentence_model_overlap_size=125,
             sentence_model_window_size=250,
             json_config={"value": {"type": "string", "description": "d"}},
+            log_events=True,
         )
 
         with (
