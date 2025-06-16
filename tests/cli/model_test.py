@@ -1,8 +1,11 @@
 from avalan.cli.commands import model as model_cmds
 from avalan.cli.commands import get_model_settings
+from avalan.event.manager import EventManager
+from avalan.event import Event, EventType
 from types import SimpleNamespace
 from argparse import Namespace
 from unittest.mock import MagicMock, AsyncMock, patch, call
+import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
 
 
@@ -1012,6 +1015,96 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
         # Final update includes access results
         self.assertIn(("m1-True", "m2-False"), updates)
         self.assertEqual(live.update.call_count, 2)
+
+
+class CliModelInternalTestCase(IsolatedAsyncioTestCase):
+    async def test_event_stream_updates_and_stops(self):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        layout = {"events": MagicMock()}
+        theme = MagicMock()
+        theme.events.side_effect = [None, "panel"]
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+
+        task = asyncio.create_task(
+            model_cmds._event_stream(
+                live, layout, orchestrator, theme, stop_signal=stop_signal
+            )
+        )
+        await orchestrator.event_manager.trigger(Event(type=EventType.START))
+        await orchestrator.event_manager.trigger(Event(type=EventType.END))
+        await asyncio.sleep(0)
+        stop_signal.set()
+        await task
+
+        layout["events"].update.assert_called_with("panel")
+        self.assertEqual(theme.events.call_count, 2)
+        live.refresh.assert_called()
+
+    async def test_token_stream_extra_frames_and_stop(self):
+        async def token_gen():
+            yield model_cmds.Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                return token_gen()
+
+        async def fake_frames(*_, **__):
+            yield (model_cmds.Token(id=1, token="A"), "frame1")
+            yield (None, "frame2")
+            yield (None, "frame3")
+
+        args = Namespace(
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=True,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        layout = {"main": MagicMock()}
+        live = MagicMock()
+        logger = MagicMock()
+        stop_signal = asyncio.Event()
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        lm = SimpleNamespace(
+            model_id="m", tokenizer_config=None, input_token_count=lambda s: 1
+        )
+
+        await model_cmds._token_stream(
+            live=live,
+            layout=layout,
+            args=args,
+            console=console,
+            theme=theme,
+            logger=logger,
+            orchestrator=None,
+            event_stats=None,
+            lm=lm,
+            input_string="hi",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=1,
+            refresh_per_second=2,
+            stop_signal=stop_signal,
+            tool_events_limit=None,
+            with_stats=True,
+        )
+
+        self.assertTrue(stop_signal.is_set())
+        layout["main"].update.assert_any_call("frame1")
+        layout["main"].update.assert_any_call("frame2")
+        layout["main"].update.assert_any_call("frame3")
+        live.refresh.assert_called()
+        theme.tokens.assert_called_once()
 
 
 if __name__ == "__main__":
