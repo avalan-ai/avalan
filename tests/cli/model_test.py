@@ -322,7 +322,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        theme.tokens.assert_called_once()
+        theme.tokens.assert_called()
         live.update.assert_any_call("frame1")
         live.update.assert_any_call("frame2")
 

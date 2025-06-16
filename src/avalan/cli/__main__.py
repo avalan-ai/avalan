@@ -1228,6 +1228,7 @@ class CLI:
 
         access_token = args.hf_token
         requires_token = self._needs_hf_token(args)
+
         if requires_token:
             if not access_token:
                 prompt_kwargs = {}
@@ -1239,10 +1240,9 @@ class CLI:
                 access_token = Prompt.ask(
                     theme.ask_access_token(), **prompt_kwargs
                 )
+            assert access_token
         else:
             access_token = access_token or "anonymous"
-
-        assert access_token
 
         hub = HuggingfaceHub(access_token, args.cache_dir, self._logger)
 
