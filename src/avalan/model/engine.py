@@ -181,9 +181,9 @@ class Engine(ABC):
         ):
             transformers_logging.set_verbosity_error()
             _l(
-                "Changed transformers logging level from "
-                f"{self._transformers_logging_level} to "
-                f"{self._transformers_logging_logger.level}"
+                "Changed transformers logging level from %s to %s",
+                self._transformers_logging_level,
+                self._transformers_logging_logger.level,
             )
         return self
 
@@ -203,8 +203,8 @@ class Engine(ABC):
                 self._transformers_logging_level
             )
             _l(
-                "Restored transformers logging level to "
-                f"{self._transformers_logging_level}"
+                "Restored transformers logging level to %s",
+                self._transformers_logging_level,
             )
         return self._exit_stack.__exit__(exc_type, exc_value, traceback)
 
@@ -230,7 +230,10 @@ class Engine(ABC):
             disable_progress_bar()
 
         if load_tokenizer and self._model_id:
-            _l(f"Loading tokenizer {tokenizer_name_or_path or self._model_id}")
+            _l(
+                "Loading tokenizer %s",
+                tokenizer_name_or_path or self._model_id,
+            )
             self._tokenizer = self._load_tokenizer_with_tokens(
                 tokenizer_name_or_path or self._model_id, use_fast=True
             )
@@ -240,16 +243,16 @@ class Engine(ABC):
                 "Unexpected pretrained tokenizer type: "
                 + f"{type(self._tokenizer)}"
             )
-            _l(f"Loaded tokenizer {self._tokenizer.name_or_path}")
+            _l("Loaded tokenizer %s", self._tokenizer.name_or_path)
 
             self._loaded_tokenizer = True
 
         is_sentence_transformer = False
         if self._settings.auto_load_model:
             _l(
-                "Loading pretrained model "
-                f"{self._model_id or str(self._model)} from "
-                f"cache {self._settings.cache_dir}"
+                "Loading pretrained model %s from cache %s",
+                self._model_id or str(self._model),
+                self._settings.cache_dir,
             )
             self._model = self._load_model()
 
@@ -279,12 +282,13 @@ class Engine(ABC):
             ), f"Unexpected pretrained model type: {type(self._model)}"
 
             _l(
-                f"Loaded pretrained model {self._model_id} from "
-                f"cache {self._settings.cache_dir}"
+                "Loaded pretrained model %s from cache %s",
+                self._model_id,
+                self._settings.cache_dir,
             )
 
             if self._settings.enable_eval:
-                _l(f"Setting model {self._model_id} in eval mode")
+                _l("Setting model %s in eval mode", self._model_id)
                 self._model.eval()
 
             if self._tokenizer and (
@@ -292,13 +296,15 @@ class Engine(ABC):
             ):
                 total_tokens = len(self._tokenizer)
                 _l(
-                    f"Resizing embedding matrix to {total_tokens} tokens "
-                    f"for model {self._model_id}"
+                    "Resizing embedding matrix to %s tokens for model %s",
+                    total_tokens,
+                    self._model_id,
                 )
                 self._model.resize_token_embeddings(total_tokens)
                 _l(
-                    f"Resized embedding matrix to {total_tokens} tokens "
-                    f"for model {self._model_id}"
+                    "Resized embedding matrix to %s tokens for model %s",
+                    total_tokens,
+                    self._model_id,
                 )
 
             self._loaded_model = True
@@ -457,5 +463,5 @@ class Engine(ABC):
             return virtual_memory().total
         return virtual_memory().total
 
-    def _log(self, message: str) -> None:
-        self._logger.debug("<%s> %s", self._model_id, message)
+    def _log(self, message: str, *args: object) -> None:
+        self._logger.debug("<%s> " + message, self._model_id, *args)
