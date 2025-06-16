@@ -412,6 +412,7 @@ class OrchestratorSettings:
     sentence_model_window_size: int
     json_config: dict | None
     tools: list[str]
+    log_events: bool
 
 
 @dataclass(frozen=True, kw_only=True)

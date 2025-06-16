@@ -156,6 +156,15 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    async def events(
+        self,
+        events: list[Event],
+        *,
+        events_limit: int | None = None,
+    ) -> RenderableType:
+        raise NotImplementedError()
+
+    @abstractmethod
     def logging_in(self, domain: str) -> str:
         raise NotImplementedError()
 

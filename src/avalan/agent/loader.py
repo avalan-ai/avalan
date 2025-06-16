@@ -24,6 +24,7 @@ from logging import Logger
 from os import access, R_OK
 from os.path import exists
 from tomllib import load
+from types import FunctionType
 from uuid import UUID, uuid4
 
 
@@ -45,12 +46,14 @@ class OrchestratorLoader:
         stack: AsyncExitStack,
         disable_memory: bool = False,
     ) -> Orchestrator:
+        _l = cls._log_wrapper(logger)
+
         if not exists(path):
             raise FileNotFoundError(path)
         elif not access(path, R_OK):
             raise PermissionError(path)
 
-        logger.debug("Loading agent from %s", path)
+        _l("Loading agent from %s", path)
 
         with open(path, "rb") as file:
             config = load(file)
@@ -204,6 +207,7 @@ class OrchestratorLoader:
                 json_config=(
                     config.get("json") if isinstance(config, dict) else None
                 ),
+                log_events=True,
             )
 
             tool_config = config.get("tool", {}).get("browser", {}).get("open")
@@ -239,13 +243,15 @@ class OrchestratorLoader:
         stack: AsyncExitStack,
         browser_settings: BrowserToolSettings | None = None,
     ) -> Orchestrator:
+        _l = cls._log_wrapper(logger)
+
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)
             if settings.sentence_model_engine_config
             else TransformerEngineSettings()
         )
 
-        logger.debug(
+        _l(
             "Loading sentence transformer model %s for agent %s",
             settings.sentence_model_id,
             settings.agent_id,
@@ -258,7 +264,7 @@ class OrchestratorLoader:
         )
         sentence_model = stack.enter_context(sentence_model)
 
-        logger.debug(
+        _l(
             "Loading text partitioner for model %s for agent %s with settings"
             " (%s, %s, %s)",
             settings.sentence_model_id,
@@ -276,12 +282,15 @@ class OrchestratorLoader:
             window_size=settings.sentence_model_window_size,
         )
 
-        logger.debug("Loading memory manager for agent %s", settings.agent_id)
+        _l("Loading event manager")
 
         event_manager = EventManager()
-        event_manager.add_listener(
-            lambda e: logger.debug("Event %s: %s", e.type, e.payload)
-        )
+        if settings.log_events:
+            event_manager.add_listener(
+                lambda e: _l("%s", e.payload, inner_type=f"Event {e.type}")
+            )
+
+        _l("Loading memory manager for agent %s", settings.agent_id)
 
         memory = await MemoryManager.create_instance(
             agent_id=settings.agent_id,
@@ -294,7 +303,7 @@ class OrchestratorLoader:
         )
 
         for namespace, dsn in (settings.permanent_memory or {}).items():
-            logger.debug(
+            _l(
                 "Loading permanent memory %s for agent %s",
                 namespace,
                 settings.agent_id,
@@ -304,7 +313,7 @@ class OrchestratorLoader:
             )
             memory.add_permanent_memory(namespace, store)
 
-        logger.debug(
+        _l(
             "Loading tool manager for agent %s with partitioner and a sentence"
             " model %s with settings (%s, %s, %s)",
             settings.agent_id,
@@ -332,7 +341,7 @@ class OrchestratorLoader:
         )
         tool = await stack.enter_async_context(tool)
 
-        logger.debug(
+        _l(
             "Creating orchestrator %s #%s",
             settings.orchestrator_type,
             settings.agent_id,
@@ -448,3 +457,16 @@ class OrchestratorLoader:
             template_vars=template_vars,
         )
         return agent
+
+    @staticmethod
+    def _log_wrapper(logger: Logger) -> FunctionType:
+        return lambda message, *args, inner_type=None, **kwargs: logger.debug(
+            (
+                f"<{inner_type} @ OrchestratorLoader> "
+                if inner_type
+                else "<OrchestratorLoader> "
+            )
+            + message,
+            *args,
+            **kwargs,
+        )

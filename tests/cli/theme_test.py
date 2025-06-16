@@ -1,10 +1,10 @@
+from avalan.cli.theme import Theme
+from avalan.entities import Model
+from avalan.event import Event
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
 import numpy as np
-
-from avalan.cli.theme import Theme
-from avalan.entities import Model
 
 
 class DummyTheme(Theme):
@@ -54,6 +54,14 @@ class DummyTheme(Theme):
         raise NotImplementedError()
 
     def download_finished(self, model_id: str, path: str):
+        raise NotImplementedError()
+
+    def events(
+        self,
+        events: list[Event],
+        *,
+        events_limit: int | None = None,
+    ):
         raise NotImplementedError()
 
     def logging_in(self, domain: str) -> str:

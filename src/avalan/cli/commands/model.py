@@ -1,5 +1,5 @@
 from argparse import Namespace
-from asyncio import as_completed, create_task, gather, sleep, to_thread
+from asyncio import as_completed, create_task, gather, sleep, to_thread, Event as EventSignal
 from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType
 from ...cli import get_input, confirm
@@ -17,6 +17,7 @@ from . import get_model_settings
 from rich.prompt import Prompt
 from logging import Logger
 from rich.console import Console, Group, RenderableType
+from rich.layout import Layout
 from rich.live import Live
 from rich.padding import Padding
 from rich.spinner import Spinner
@@ -333,6 +334,98 @@ async def token_generation(
 
     # From here on, display includes stats and may include token probabilities
 
+    if not orchestrator:
+        with Live(refresh_per_second=refresh_per_second) as live:
+            await _token_stream(
+                live,
+                None,
+                args,
+                console,
+                theme,
+                logger,
+                orchestrator,
+                event_stats,
+                lm,
+                input_string,
+                response,
+                display_tokens=display_tokens,
+                dtokens_pick=dtokens_pick,
+                refresh_per_second=refresh_per_second,
+                stop_signal=None,
+                tool_events_limit=tool_events_limit,
+                with_stats=with_stats,
+            )
+        return
+
+    layout = Layout()
+    layout.split_column(
+        Layout(name="events"),
+        Layout(name="main"),
+    )
+    layout["events"].size = 4
+
+    stop_signal = EventSignal()
+
+    with Live(layout, refresh_per_second=refresh_per_second) as live:
+        await gather(
+            _event_stream(live, layout, orchestrator, theme, stop_signal=stop_signal),
+            _token_stream(
+                live,
+                layout,
+                args,
+                console,
+                theme,
+                logger,
+                orchestrator,
+                event_stats,
+                lm,
+                input_string,
+                response,
+                display_tokens=display_tokens,
+                dtokens_pick=dtokens_pick,
+                refresh_per_second=refresh_per_second,
+                stop_signal=stop_signal,
+                tool_events_limit=tool_events_limit,
+                with_stats=with_stats,
+            ),
+        )
+
+
+async def _event_stream(
+    live: Live, layout: Layout, orchestrator: Orchestrator, theme: Theme, *, stop_signal: EventSignal
+) -> None:
+    event_manager = orchestrator.event_manager
+    if not event_manager:
+        return
+
+    async for _ in event_manager.listen(stop_signal=stop_signal):
+        events_renderable = theme.events(event_manager.history, events_limit=2)
+        if not events_renderable:
+            continue
+        layout["events"].update(events_renderable)
+        live.refresh()
+
+
+async def _token_stream(
+    live: Live,
+    layout: Layout | None,
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+    logger: Logger,
+    orchestrator: Orchestrator | None,
+    event_stats: EventStats | None,
+    lm: TextGenerationModel,
+    input_string: str,
+    response: TextGenerationResponse,
+    *,
+    display_tokens: int,
+    dtokens_pick: int,
+    refresh_per_second: int,
+    stop_signal: EventSignal | None,
+    tool_events_limit: int | None,
+    with_stats: bool = True,
+):
     display_time_to_n_token = args.display_time_to_n_token or 256
     display_pause = (
         args.display_pause
@@ -352,170 +445,181 @@ async def token_generation(
         100 if display_pause > 0 and display_tokens > 0 else 0
     )
 
-    with Live(refresh_per_second=refresh_per_second) as live:
-        start = perf_counter()
-        input_token_count = (
-            response.input_token_count
-            if response.input_token_count
-            else (
-                orchestrator.input_token_count
-                if orchestrator
-                else lm.input_token_count(input_string)
-            )
+    start = perf_counter()
+    input_token_count = (
+        response.input_token_count
+        if response.input_token_count
+        else (
+            orchestrator.input_token_count
+            if orchestrator
+            else lm.input_token_count(input_string)
         )
-        ttft: float | None = None
-        ttnt: float | None = None
-        token_frame_list: list[tuple[Token | None, RenderableType]] = None
-        last_current_dtoken: Token | None = None
-        tool_running_spinner: Spinner | None = None
+    )
+    ttft: float | None = None
+    ttnt: float | None = None
+    token_frame_list: list[tuple[Token | None, RenderableType]] = None
+    last_current_dtoken: Token | None = None
+    tool_running_spinner: Spinner | None = None
 
-        async for token in response:
-            if isinstance(token, Event):
-                event = token
-                tool_events.append(event)
-                if event.type == EventType.TOOL_MODEL_RESPONSE:
-                    tokens = []
-                    text_tokens = []
-                    inner_response = event.payload["response"]
-                    assert isinstance(inner_response, TextGenerationResponse)
-                    if inner_response.input_token_count:
-                        input_token_count = inner_response.input_token_count
-                elif event.type == EventType.TOOL_RESULT:
-                    tool_event_results.append(event)
-                else:
-                    tool_event_calls.append(event)
-
+    async for token in response:
+        if isinstance(token, Event):
+            event = token
+            tool_events.append(event)
+            if event.type == EventType.TOOL_MODEL_RESPONSE:
+                tokens = []
+                text_tokens = []
+                inner_response = event.payload["response"]
+                assert isinstance(inner_response, TextGenerationResponse)
+                if inner_response.input_token_count:
+                    input_token_count = inner_response.input_token_count
+            elif event.type == EventType.TOOL_RESULT:
+                tool_event_results.append(event)
             else:
-                text_token = token.token if isinstance(token, Token) else token
-                text_tokens.append(text_token)
+                tool_event_calls.append(event)
 
-            tool_running_spinner = None
-            if tool_event_calls or tool_event_results:
-                tool_calling_names = [
-                    c.name
-                    for e in tool_event_calls
-                    for c in e.payload
-                    if c.id
-                    not in {
-                        r.payload["call"].id
-                        for r in tool_event_results
-                        if r.type == EventType.TOOL_RESULT
-                        and "call" in r.payload
-                    }
-                ]
+        else:
+            text_token = token.token if isinstance(token, Token) else token
+            text_tokens.append(text_token)
 
-                tool_running_spinner = (
-                    Spinner(
-                        theme.get_spinner("tool_running"),
-                        text="[cyan]"
-                        + theme._n(
-                            "Running tool {tool_names}...",
-                            "Running tools {tool_names}...",
-                            len(tool_calling_names),
-                        ).format(tool_names=", ".join(tool_calling_names))
-                        + "[/cyan]",
-                        style="cyan",
-                        speed=1.0,
-                    )
-                    if tool_calling_names
-                    else None
-                )
-
-            total_tokens = total_tokens + 1
-            ellapsed = perf_counter() - start
-            if ttft is None:
-                ttft = ellapsed
-            if ttnt is None and total_tokens >= display_time_to_n_token:
-                ttnt = ellapsed
-
-            if display_tokens and isinstance(token, Token):
-                tokens.append(token)
-
-            token_frames_promise = theme.tokens(
-                lm.model_id,
-                lm.tokenizer_config.tokens if lm.tokenizer_config else None,
-                (
-                    lm.tokenizer_config.special_tokens
-                    if lm.tokenizer_config
-                    else None
-                ),
-                display_tokens,
-                args.display_probabilities if dtokens_pick > 0 else False,
-                dtokens_pick,
-                # Which tokens to mark as interesting
-                lambda dtoken: (
-                    (
-                        dtoken.probability < args.display_probabilities_maximum
-                        or len(
-                            [
-                                t
-                                for t in dtoken.tokens
-                                if t.id != dtoken.id
-                                and t.probability
-                                >= args.display_probabilities_sample_minimum
-                            ]
-                        )
-                        > 0
-                    )
-                    if display_tokens
-                    and args.display_probabilities
-                    and args.display_probabilities_maximum > 0
-                    and args.display_probabilities_maximum > 0
-                    else None
-                ),
-                text_tokens,
-                tokens or None,
-                input_token_count,
-                total_tokens,
-                tool_events,
-                tool_event_calls,
-                tool_event_results,
-                tool_running_spinner,
-                ttft,
-                ttnt,
-                ellapsed,
-                console.width,
-                logger,
-                event_stats,
-                tool_events_limit=tool_events_limit,
-                height=6,
-                maximum_frames=1,
-                start_thinking=start_thinking,
-            )
-
-            token_frame_list = [
-                token_frame async for token_frame in token_frames_promise
+        tool_running_spinner = None
+        if tool_event_calls or tool_event_results:
+            tool_calling_names = [
+                c.name
+                for e in tool_event_calls
+                for c in e.payload
+                if c.id
+                not in {
+                    r.payload["call"].id
+                    for r in tool_event_results
+                    if r.type == EventType.TOOL_RESULT and "call" in r.payload
+                }
             ]
 
-            # We prioritize a single selected dtoken at a time, it being
-            # the leftmost  selected which is also guaranteed by setting
-            # minimum_frames=1 when calling theme.tokens()
-            token_frames = [token_frame_list[0]]
+            tool_running_spinner = (
+                Spinner(
+                    theme.get_spinner("tool_running"),
+                    text="[cyan]"
+                    + theme._n(
+                        "Running tool {tool_names}...",
+                        "Running tools {tool_names}...",
+                        len(tool_calling_names),
+                    ).format(tool_names=", ".join(tool_calling_names))
+                    + "[/cyan]",
+                    style="cyan",
+                    speed=1.0,
+                )
+                if tool_calling_names
+                else None
+            )
 
-            for current_dtoken, frame in token_frames:
-                live.update(frame)
-                if current_dtoken and current_dtoken != last_current_dtoken:
-                    last_current_dtoken = current_dtoken
-                    if display_pause > 0:
-                        await sleep(display_pause / 1000)
-                    elif frame_minimum_pause_ms > 0:
-                        await sleep(frame_minimum_pause_ms / 1000)
-                elif (
-                    dtokens_pick > 0
-                    and not args.display_probabilities
-                    and display_pause > 0
-                ):
-                    await sleep(display_pause / 1000)
+        total_tokens = total_tokens + 1
+        ellapsed = perf_counter() - start
+        if ttft is None:
+            ttft = ellapsed
+        if ttnt is None and total_tokens >= display_time_to_n_token:
+            ttnt = ellapsed
 
-        if (
-            dtokens_pick > 0
-            and args.display_probabilities
-            and token_frame_list
-            and len(token_frame_list) > 0
-        ):
-            for current_dtoken, frame in token_frame_list[1:]:
+        if display_tokens and isinstance(token, Token):
+            tokens.append(token)
+
+        token_frames_promise = theme.tokens(
+            lm.model_id,
+            lm.tokenizer_config.tokens if lm.tokenizer_config else None,
+            (
+                lm.tokenizer_config.special_tokens
+                if lm.tokenizer_config
+                else None
+            ),
+            display_tokens,
+            args.display_probabilities if dtokens_pick > 0 else False,
+            dtokens_pick,
+            # Which tokens to mark as interesting
+            lambda dtoken: (
+                (
+                    dtoken.probability < args.display_probabilities_maximum
+                    or len(
+                        [
+                            t
+                            for t in dtoken.tokens
+                            if t.id != dtoken.id
+                            and t.probability
+                            >= args.display_probabilities_sample_minimum
+                        ]
+                    )
+                    > 0
+                )
+                if display_tokens
+                and args.display_probabilities
+                and args.display_probabilities_maximum > 0
+                and args.display_probabilities_maximum > 0
+                else None
+            ),
+            text_tokens,
+            tokens or None,
+            input_token_count,
+            total_tokens,
+            tool_events,
+            tool_event_calls,
+            tool_event_results,
+            tool_running_spinner,
+            ttft,
+            ttnt,
+            ellapsed,
+            console.width,
+            logger,
+            event_stats,
+            tool_events_limit=tool_events_limit,
+            height=6,
+            maximum_frames=1,
+            start_thinking=start_thinking,
+        )
+
+        token_frame_list = [
+            token_frame async for token_frame in token_frames_promise
+        ]
+
+        # We prioritize a single selected dtoken at a time, it being
+        # the leftmost  selected which is also guaranteed by setting
+        # minimum_frames=1 when calling theme.tokens()
+        token_frames = [token_frame_list[0]]
+
+        for current_dtoken, frame in token_frames:
+            if layout:
+                layout["main"].update(frame)
+                live.refresh()
+            else:
                 live.update(frame)
-                if current_dtoken and display_pause > 0:
+
+            if current_dtoken and current_dtoken != last_current_dtoken:
+                last_current_dtoken = current_dtoken
+                if display_pause > 0:
                     await sleep(display_pause / 1000)
                 elif frame_minimum_pause_ms > 0:
                     await sleep(frame_minimum_pause_ms / 1000)
+            elif (
+                dtokens_pick > 0
+                and not args.display_probabilities
+                and display_pause > 0
+            ):
+                await sleep(display_pause / 1000)
+
+    if (
+        dtokens_pick > 0
+        and args.display_probabilities
+        and token_frame_list
+        and len(token_frame_list) > 0
+    ):
+        for current_dtoken, frame in token_frame_list[1:]:
+            if layout:
+                layout["main"].update(frame)
+                live.refresh()
+            else:
+                live.update(frame)
+
+            if current_dtoken and display_pause > 0:
+                await sleep(display_pause / 1000)
+            elif frame_minimum_pause_ms > 0:
+                await sleep(frame_minimum_pause_ms / 1000)
+
+    if stop_signal:
+        stop_signal.set()

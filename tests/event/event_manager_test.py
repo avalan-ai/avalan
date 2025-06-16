@@ -36,7 +36,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         manager = EventManager()
         evt = Event(type=EventType.START)
         await manager.trigger(evt)
-        gen = manager.listen()
+        gen = manager.listen(stop_signal=None)
         self.assertIs(await gen.__anext__(), evt)
 
         async def get_next():

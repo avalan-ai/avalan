@@ -501,7 +501,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         # Response provides count, orchestrator should be ignored
         response = Resp([token], count=5)
-        orchestrator = SimpleNamespace(input_token_count=7)
+        orchestrator = SimpleNamespace(input_token_count=7, event_manager=None)
 
         live = MagicMock()
         live.__enter__.return_value = live

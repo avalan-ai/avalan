@@ -16,8 +16,9 @@ from typing import AsyncGenerator
 
 class MlxLmStream(TextGenerationVendorStream):
     """Async wrapper around a synchronous token generator."""
+
     _SENTINEL = object()
-    
+
     def __init__(self, generator):
         super().__init__(generator)
         self._iterator = generator
