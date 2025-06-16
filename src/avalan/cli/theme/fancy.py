@@ -2015,6 +2015,9 @@ class FancyTheme(Theme):
         only_tools: bool,
     ) -> list[str] | None:
         _, _n = self._, self._n
+        if not events or events_limit == 0:
+            return None
+
         event_log: list[str] | None = _lf(
             [
                 (
@@ -2074,8 +2077,6 @@ class FancyTheme(Theme):
                 )
                 for event in events
             ]
-            if events and events_limit is None or events_limit
-            else None
         )
 
         if event_log and events_limit:
