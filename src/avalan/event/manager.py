@@ -39,13 +39,10 @@ class EventManager:
             if iscoroutine(result):
                 await result
 
-    async def listen(self, stop_signal: EventSignal, timeout: float=0.2):
+    async def listen(self, stop_signal: EventSignal, timeout: float = 0.2):
         while True:
             try:
-                evt = await wait_for(
-                    self._queue.get(),
-                    timeout=timeout
-                )
+                evt = await wait_for(self._queue.get(), timeout=timeout)
                 yield evt
             except TimeoutError:
                 if stop_signal.is_set() and self._queue.empty():

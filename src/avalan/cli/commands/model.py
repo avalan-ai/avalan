@@ -1,5 +1,12 @@
 from argparse import Namespace
-from asyncio import as_completed, create_task, gather, sleep, to_thread, Event as EventSignal
+from asyncio import (
+    as_completed,
+    create_task,
+    gather,
+    sleep,
+    to_thread,
+    Event as EventSignal,
+)
 from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType
 from ...cli import get_input, confirm
@@ -368,7 +375,9 @@ async def token_generation(
 
     with Live(layout, refresh_per_second=refresh_per_second) as live:
         await gather(
-            _event_stream(live, layout, orchestrator, theme, stop_signal=stop_signal),
+            _event_stream(
+                live, layout, orchestrator, theme, stop_signal=stop_signal
+            ),
             _token_stream(
                 live,
                 layout,
@@ -392,7 +401,12 @@ async def token_generation(
 
 
 async def _event_stream(
-    live: Live, layout: Layout, orchestrator: Orchestrator, theme: Theme, *, stop_signal: EventSignal
+    live: Live,
+    layout: Layout,
+    orchestrator: Orchestrator,
+    theme: Theme,
+    *,
+    stop_signal: EventSignal,
 ) -> None:
     event_manager = orchestrator.event_manager
     if not event_manager:
