@@ -18,17 +18,19 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
         agent_id = uuid4()
         participant_id = uuid4()
 
+        logger = MagicMock()
         manager = await MemoryManager.create_instance(
             agent_id=agent_id,
             participant_id=participant_id,
             text_partitioner=tp,
-            logger=MagicMock(),
+            logger=logger,
         )
 
         self.assertIsInstance(manager.recent_message, RecentMessageMemory)
         self.assertIsNone(manager.permanent_message)
         self.assertTrue(manager.has_recent_message)
         self.assertFalse(manager.has_permanent_message)
+        self.assertIs(manager._logger, logger)
 
     async def test_create_instance_with_permanent(self):
         tp = AsyncMock()
@@ -63,6 +65,7 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(manager.recent_message, RecentMessageMemory)
         self.assertTrue(manager.has_recent_message)
         self.assertTrue(manager.has_permanent_message)
+        self.assertIs(manager._logger, logger)
 
 
 class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
@@ -76,6 +79,7 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=self.pm,
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         self.permanent = AsyncMock()
 
@@ -160,6 +164,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=None,
             text_partitioner=tp,
+            logger=MagicMock(),
         )
         self.assertFalse(manager.has_recent_message)
         self.assertFalse(manager.has_permanent_message)
@@ -173,6 +178,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=RecentMessageMemory(),
             text_partitioner=tp,
+            logger=MagicMock(),
             permanent_memories={"code": pmem},
         )
         self.assertTrue(manager.has_recent_message)
@@ -185,6 +191,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=RecentMessageMemory(),
             text_partitioner=tp,
+            logger=MagicMock(),
             permanent_memories={"code": pmem, "docs": pmem2},
         )
         self.assertEqual(len(manager._permanent_memories), 2)
@@ -206,6 +213,7 @@ class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=rm,
             text_partitioner=tp,
+            logger=MagicMock(),
         )
         self.assertEqual(manager.recent_messages, [msg])
         manager = MemoryManager(
@@ -214,6 +222,7 @@ class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=None,
             text_partitioner=tp,
+            logger=MagicMock(),
         )
         self.assertIsNone(manager.recent_messages)
 
@@ -237,6 +246,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=self.pm,
             recent_message_memory=None,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         await manager.append_message(msg)
         self.tp.assert_awaited_once()
@@ -250,6 +260,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         await manager.append_message(msg)
         self.tp.assert_not_called()
@@ -262,6 +273,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=None,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         await manager.append_message(msg)
         self.tp.assert_not_called()
@@ -283,6 +295,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=self.pm,
             recent_message_memory=None,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         await manager.continue_session(session_id)
         self.pm.continue_session.assert_awaited()
@@ -298,6 +311,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         await manager.continue_session(session_id)
         self.pm.continue_session.assert_not_awaited()
@@ -313,6 +327,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=None,
             text_partitioner=self.tp,
+            logger=MagicMock(),
         )
         await manager.continue_session(session_id)
         await manager.start_session()
@@ -326,6 +341,7 @@ class MemoryManagerContextTestCase(IsolatedAsyncioTestCase):
             permanent_message_memory=None,
             recent_message_memory=None,
             text_partitioner=AsyncMock(),
+            logger=MagicMock(),
         )
         self.assertIsNone(manager.__exit__(None, None, None))
 
