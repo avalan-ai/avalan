@@ -278,6 +278,11 @@ class OrchestratorLoader:
 
         logger.debug("Loading memory manager for agent %s", settings.agent_id)
 
+        event_manager = EventManager()
+        event_manager.add_listener(
+            lambda e: logger.debug("Event %s: %s", e.type, e.payload)
+        )
+
         memory = await MemoryManager.create_instance(
             agent_id=settings.agent_id,
             participant_id=participant_id,
@@ -285,6 +290,7 @@ class OrchestratorLoader:
             logger=logger,
             with_permanent_message_memory=settings.memory_permanent_message,
             with_recent_message_memory=settings.memory_recent,
+            event_manager=event_manager,
         )
 
         for namespace, dsn in (settings.permanent_memory or {}).items():
@@ -325,11 +331,6 @@ class OrchestratorLoader:
             settings=ToolManagerSettings(),
         )
         tool = await stack.enter_async_context(tool)
-
-        event_manager = EventManager()
-        event_manager.add_listener(
-            lambda e: logger.debug("Event %s: %s", e.type, e.payload)
-        )
 
         logger.debug(
             "Creating orchestrator %s #%s",

@@ -1,5 +1,7 @@
 from avalan.entities import EngineMessage, Message, MessageRole
 from avalan.memory.manager import MemoryManager
+from avalan.event.manager import EventManager
+from avalan.event import EventType
 from avalan.memory import RecentMessageMemory
 from avalan.memory.permanent import (
     PermanentMessageMemory,
@@ -24,6 +26,7 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
             participant_id=participant_id,
             text_partitioner=tp,
             logger=logger,
+            event_manager=MagicMock(spec=EventManager),
         )
 
         self.assertIsInstance(manager.recent_message, RecentMessageMemory)
@@ -56,6 +59,7 @@ class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):
                     text_partitioner=tp,
                     logger=logger,
                     with_permanent_message_memory="dsn",
+                    event_manager=MagicMock(spec=EventManager),
                 )
             PgsqlDummy.create_instance.assert_awaited_once_with(
                 dsn="dsn", logger=logger
@@ -73,6 +77,8 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         self.tp = AsyncMock()
         self.pm = AsyncMock(spec=PermanentMessageMemory)
         self.rm = RecentMessageMemory()
+        self.event_manager = MagicMock()
+        self.event_manager.trigger = AsyncMock()
         self.manager = MemoryManager(
             agent_id=uuid4(),
             participant_id=uuid4(),
@@ -80,6 +86,7 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=self.event_manager,
         )
         self.permanent = AsyncMock()
 
@@ -165,6 +172,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         self.assertFalse(manager.has_recent_message)
         self.assertFalse(manager.has_permanent_message)
@@ -180,6 +188,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             text_partitioner=tp,
             logger=MagicMock(),
             permanent_memories={"code": pmem},
+            event_manager=MagicMock(spec=EventManager),
         )
         self.assertTrue(manager.has_recent_message)
         self.assertIn("code", manager._permanent_memories)
@@ -193,6 +202,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             text_partitioner=tp,
             logger=MagicMock(),
             permanent_memories={"code": pmem, "docs": pmem2},
+            event_manager=MagicMock(spec=EventManager),
         )
         self.assertEqual(len(manager._permanent_memories), 2)
 
@@ -214,6 +224,7 @@ class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=rm,
             text_partitioner=tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         self.assertEqual(manager.recent_messages, [msg])
         manager = MemoryManager(
@@ -223,6 +234,7 @@ class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         self.assertIsNone(manager.recent_messages)
 
@@ -247,6 +259,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         await manager.append_message(msg)
         self.tp.assert_awaited_once()
@@ -261,6 +274,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         await manager.append_message(msg)
         self.tp.assert_not_called()
@@ -274,6 +288,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         await manager.append_message(msg)
         self.tp.assert_not_called()
@@ -296,6 +311,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         await manager.continue_session(session_id)
         self.pm.continue_session.assert_awaited()
@@ -312,6 +328,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=self.rm,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         await manager.continue_session(session_id)
         self.pm.continue_session.assert_not_awaited()
@@ -328,6 +345,7 @@ class MemoryManagerMethodsTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=self.tp,
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         await manager.continue_session(session_id)
         await manager.start_session()
@@ -342,8 +360,92 @@ class MemoryManagerContextTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=None,
             text_partitioner=AsyncMock(),
             logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
         )
         self.assertIsNone(manager.__exit__(None, None, None))
+
+
+class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tp = AsyncMock()
+        self.pm = AsyncMock(spec=PermanentMessageMemory)
+        self.rm = RecentMessageMemory()
+        self.event_manager = MagicMock(spec=EventManager)
+        self.event_manager.trigger = AsyncMock()
+        self.manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=self.pm,
+            recent_message_memory=self.rm,
+            text_partitioner=self.tp,
+            logger=MagicMock(),
+            event_manager=self.event_manager,
+        )
+
+    async def test_append_message_triggers_events(self):
+        msg = EngineMessage(
+            agent_id=self.manager._agent_id,
+            model_id="m",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+
+        await self.manager.append_message(msg)
+
+        called_types = [
+            c.args[0].type for c in self.event_manager.trigger.await_args_list
+        ]
+        self.assertIn(EventType.MEMORY_PERMANENT_MESSAGE_ADD, called_types)
+        self.assertIn(EventType.MEMORY_PERMANENT_MESSAGE_ADDED, called_types)
+        self.assertTrue(
+            any(
+                c.args[0].type == EventType.MEMORY_PERMANENT_MESSAGE_ADDED
+                and c.args[0].ellapsed is not None
+                for c in self.event_manager.trigger.await_args_list
+            )
+        )
+
+    async def test_continue_session_triggers_events(self):
+        session_id = uuid4()
+        await self.manager.continue_session(session_id)
+
+        called_types = [
+            c.args[0].type for c in self.event_manager.trigger.await_args_list
+        ]
+        self.assertIn(
+            EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUE, called_types
+        )
+        self.assertIn(
+            EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUED, called_types
+        )
+        self.assertTrue(
+            any(
+                c.args[0].type
+                == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUED
+                and c.args[0].ellapsed is not None
+                for c in self.event_manager.trigger.await_args_list
+            )
+        )
+
+    async def test_start_session_triggers_events(self):
+        await self.manager.start_session()
+
+        called_types = [
+            c.args[0].type for c in self.event_manager.trigger.await_args_list
+        ]
+        self.assertIn(
+            EventType.MEMORY_PERMANENT_MESSAGE_SESSION_START, called_types
+        )
+        self.assertIn(
+            EventType.MEMORY_PERMANENT_MESSAGE_SESSION_STARTED, called_types
+        )
+        self.assertTrue(
+            any(
+                c.args[0].type
+                == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_STARTED
+                and c.args[0].ellapsed is not None
+                for c in self.event_manager.trigger.await_args_list
+            )
+        )
 
 
 if __name__ == "__main__":

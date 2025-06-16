@@ -17,6 +17,20 @@ class EventType(StrEnum):
     CALL_PREPARE_AFTER = "call_prepare_after"
     MEMORY_APPEND_BEFORE = "memory_append_before"
     MEMORY_APPEND_AFTER = "memory_append_after"
+    MEMORY_PERMANENT_MESSAGE_ADD = "memory_permanent_message_add"
+    MEMORY_PERMANENT_MESSAGE_ADDED = "memory_permanent_message_added"
+    MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUE = (
+        "memory_permanent_message_session_continue"
+    )
+    MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUED = (
+        "memory_permanent_message_session_continued"
+    )
+    MEMORY_PERMANENT_MESSAGE_SESSION_START = (
+        "memory_permanent_message_session_start"
+    )
+    MEMORY_PERMANENT_MESSAGE_SESSION_STARTED = (
+        "memory_permanent_message_session_started"
+    )
     MODEL_EXECUTE_BEFORE = "model_execute_before"
     MODEL_EXECUTE_AFTER = "model_execute_after"
     INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"

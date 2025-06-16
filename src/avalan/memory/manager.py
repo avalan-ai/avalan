@@ -1,4 +1,6 @@
 from ..entities import EngineMessage
+from ..event import Event, EventType
+from ..event.manager import EventManager
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import (
@@ -6,6 +8,7 @@ from ..memory.permanent import (
     PermanentMemory,
     VectorFunction,
 )
+from time import perf_counter
 from logging import Logger
 from typing import Any
 from uuid import UUID
@@ -19,6 +22,7 @@ class MemoryManager:
     _recent_message_memory: RecentMessageMemory | None = None
     _text_partitioner: TextPartitioner
     _logger: Logger
+    _event_manager: EventManager | None = None
 
     @classmethod
     async def create_instance(
@@ -30,6 +34,7 @@ class MemoryManager:
         logger: Logger,
         with_permanent_message_memory: str | None = None,
         with_recent_message_memory: bool = True,
+        event_manager: EventManager | None = None,
     ):
         permanent_memory: PermanentMessageMemory | None = None
         if with_permanent_message_memory:
@@ -50,6 +55,7 @@ class MemoryManager:
             recent_message_memory=recent_memory,
             text_partitioner=text_partitioner,
             logger=logger,
+            event_manager=event_manager,
         )
         return manager
 
@@ -62,6 +68,7 @@ class MemoryManager:
         recent_message_memory: RecentMessageMemory | None,
         text_partitioner: TextPartitioner,
         logger: Logger,
+        event_manager: EventManager | None = None,
         permanent_memories: dict[str, PermanentMemory] | None = None,
     ):
         assert agent_id and participant_id
@@ -70,6 +77,7 @@ class MemoryManager:
         self._participant_id = participant_id
         self._text_partitioner = text_partitioner
         self._permanent_memories = {}
+        self._event_manager = event_manager
         if permanent_message_memory:
             self.add_permanent_message_memory(permanent_message_memory)
         if recent_message_memory:
@@ -133,12 +141,32 @@ class MemoryManager:
         self._logger.debug("Appending message")
 
         if self._permanent_message_memory:
+            start = perf_counter()
+            if self._event_manager:
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.MEMORY_PERMANENT_MESSAGE_ADD,
+                        payload={"message": engine_message},
+                        started=start,
+                    )
+                )
             partitions = await self._text_partitioner(
                 engine_message.message.content
             )
             await self._permanent_message_memory.append_with_partitions(
                 engine_message, partitions=partitions
             )
+            if self._event_manager:
+                end = perf_counter()
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.MEMORY_PERMANENT_MESSAGE_ADDED,
+                        payload={"message": engine_message},
+                        started=start,
+                        finished=end,
+                        ellapsed=end - start,
+                    )
+                )
 
         if self._recent_message_memory:
             self._recent_message_memory.append(engine_message)
@@ -154,6 +182,15 @@ class MemoryManager:
     ) -> None:
         self._logger.debug("Continuing session %s", session_id)
         if self._permanent_message_memory:
+            start = perf_counter()
+            if self._event_manager:
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUE,
+                        payload={"session_id": session_id},
+                        started=start,
+                    )
+                )
             await self._permanent_message_memory.continue_session(
                 agent_id=self._agent_id,
                 participant_id=self._participant_id,
@@ -177,10 +214,30 @@ class MemoryManager:
                 self._recent_message_memory.append(message)
 
         self._logger.debug("Session %s continued", session_id)
+        if self._permanent_message_memory and self._event_manager:
+            end = perf_counter()
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUED,
+                    payload={"session_id": session_id},
+                    started=start,
+                    finished=end,
+                    ellapsed=end - start,
+                )
+            )
 
     async def start_session(self) -> None:
         self._logger.debug("Starting session")
         if self._permanent_message_memory:
+            start = perf_counter()
+            if self._event_manager:
+                await self._event_manager.trigger(
+                    Event(
+                        type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_START,
+                        payload={},
+                        started=start,
+                    )
+                )
             await self._permanent_message_memory.reset_session(
                 agent_id=self._agent_id, participant_id=self._participant_id
             )
@@ -189,6 +246,19 @@ class MemoryManager:
             self._recent_message_memory.reset()
 
         self._logger.debug("Session started")
+        if self._permanent_message_memory and self._event_manager:
+            end = perf_counter()
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_STARTED,
+                    payload={
+                        "session_id": self._permanent_message_memory.session_id
+                    },
+                    started=start,
+                    finished=end,
+                    ellapsed=end - start,
+                )
+            )
 
     async def search_messages(
         self,
