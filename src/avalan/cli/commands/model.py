@@ -66,7 +66,7 @@ def model_display(
                 is_sentence_transformer=is_sentence_transformer,
             )
             with manager.load(**model_settings) as lm:
-                logger.debug(f"Loaded model {lm.config.__repr__()}")
+                logger.debug("Loaded model %s", lm.config.__repr__())
                 is_runnable = lm.is_runnable(getattr(args, "device", None))
                 console.print(
                     Padding(
@@ -157,7 +157,7 @@ async def model_run(
                 )
 
         with manager.load(**model_settings) as lm:
-            logger.debug(f"Loaded model {lm.config.__repr__()}")
+            logger.debug("Loaded model %s", lm.config.__repr__())
 
             input_string = get_input(
                 console,

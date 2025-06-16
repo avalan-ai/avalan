@@ -22,11 +22,11 @@ def agents_server(
     from starlette.requests import Request
     from uvicorn import Config, Server
 
-    logger.debug(f"Creating {name} server")
+    logger.debug("Creating %s server", name)
     app = FastAPI(title=name, version=version)
     app.state.orchestrator = orchestrators[0]
 
-    logger.debug(f"Adding routes to {name} server")
+    logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)
 
     logger.debug("Creating MCP server with SSE")
@@ -76,7 +76,7 @@ def agents_server(
     app.mount(f"{prefix_mcp}/messages/", app=sse.handle_post_message)
     app.include_router(mcp_router, prefix=prefix_mcp)
 
-    logger.debug(f"Starting {name} server at {host}:{port}")
+    logger.debug("Starting %s server at %s:%d", name, host, port)
     config = Config(app, host=host, port=port, reload=reload)
     server = Server(config)
     logger_replace(

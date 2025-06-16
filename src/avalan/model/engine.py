@@ -458,4 +458,4 @@ class Engine(ABC):
         return virtual_memory().total
 
     def _log(self, message: str) -> None:
-        self._logger.debug(f"<{self._model_id}> {message}")
+        self._logger.debug("<%s> %s", self._model_id, message)

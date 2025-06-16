@@ -56,7 +56,7 @@ async def memory_document_index(
         )
 
         with manager.load(**model_settings) as stm:
-            logger.debug(f"Loaded model {stm.config.__repr__()}")
+            logger.debug("Loaded model %s", stm.config.__repr__())
 
             model_display(
                 args, console, theme, hub, logger, model=stm, summary=True
@@ -171,7 +171,7 @@ async def memory_embeddings(
     )
     with ModelManager(hub, logger) as manager:
         with manager.load(**model_settings) as stm:
-            logger.debug(f"Loaded model {stm.config.__repr__()}")
+            logger.debug("Loaded model %s", stm.config.__repr__())
 
             model_display(
                 args, console, theme, hub, logger, model=stm, summary=True
@@ -401,7 +401,7 @@ async def memory_search(
 
     with ModelManager(hub, logger) as manager:
         with manager.load(**model_settings) as stm:
-            logger.debug(f"Loaded model {stm.config.__repr__()}")
+            logger.debug("Loaded model %s", stm.config.__repr__())
 
             model_display(
                 args, console, theme, hub, logger, model=stm, summary=True
