@@ -473,7 +473,7 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
         manager = MagicMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        model = AsyncMock(side_effect=[[emb], [emb]])
+        model = AsyncMock(side_effect=[emb, emb])
         model.token_count = MagicMock(return_value=1)
         load_cm = MagicMock()
         load_cm.__enter__.return_value = model

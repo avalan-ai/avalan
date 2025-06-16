@@ -210,14 +210,9 @@ async def memory_embeddings(
 
             embeddings = await stm(input_strings)
 
-            if compare_strings:
-                input_string_embeddings = embeddings[0]
-            elif isinstance(embeddings, list):
-                input_string_embeddings = embeddings[0]
-            elif hasattr(embeddings, "ndim") and embeddings.ndim > 1:
-                input_string_embeddings = embeddings[0]
-            else:
-                input_string_embeddings = embeddings
+            input_string_embeddings = (
+                embeddings[0] if compare_strings else embeddings
+            )
             total_tokens = stm.token_count(input_string)
 
             # Subject string

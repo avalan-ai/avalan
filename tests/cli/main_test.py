@@ -346,6 +346,8 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                     "--role",
                     "r",
                     "--run-chat-x",
+                    "--hf-token",
+                    ""
                 ],
             ),
             patch(

@@ -431,69 +431,6 @@ async def token_generation(
             if display_tokens and isinstance(token, Token):
                 tokens.append(token)
 
-            if dtokens_pick == 0:
-                token_frames_promise = theme.tokens(
-                    lm.model_id,
-                    (
-                        lm.tokenizer_config.tokens
-                        if lm.tokenizer_config
-                        else None
-                    ),
-                    (
-                        lm.tokenizer_config.special_tokens
-                        if lm.tokenizer_config
-                        else None
-                    ),
-                    display_tokens,
-                    False,
-                    dtokens_pick,
-                    lambda dtoken: None,
-                    text_tokens,
-                    tokens or None,
-                    input_token_count,
-                    total_tokens,
-                    tool_events,
-                    tool_event_calls,
-                    tool_event_results,
-                    tool_running_spinner,
-                    ttft,
-                    ttnt,
-                    ellapsed,
-                    console.width,
-                    logger,
-                    event_stats,
-                    tool_events_limit=tool_events_limit,
-                    height=6,
-                    maximum_frames=1,
-                    start_thinking=start_thinking,
-                )
-
-                token_frame_list = [
-                    token_frame async for token_frame in token_frames_promise
-                ]
-
-                token_frames = [token_frame_list[0]]
-
-                for current_dtoken, frame in token_frames:
-                    live.update(frame)
-                    if (
-                        current_dtoken
-                        and current_dtoken != last_current_dtoken
-                    ):
-                        last_current_dtoken = current_dtoken
-                        if display_pause > 0:
-                            await sleep(display_pause / 1000)
-                        elif frame_minimum_pause_ms > 0:
-                            await sleep(frame_minimum_pause_ms / 1000)
-                    elif (
-                        dtokens_pick > 0
-                        and not args.display_probabilities
-                        and display_pause > 0
-                    ):
-                        await sleep(display_pause / 1000)
-
-        if dtokens_pick > 0:
-            ellapsed = perf_counter() - start
             token_frames_promise = theme.tokens(
                 lm.model_id,
                 lm.tokenizer_config.tokens if lm.tokenizer_config else None,
@@ -503,8 +440,9 @@ async def token_generation(
                     else None
                 ),
                 display_tokens,
-                args.display_probabilities,
+                args.display_probabilities if dtokens_pick > 0 else False,
                 dtokens_pick,
+                # Which tokens to mark as interesting
                 lambda dtoken: (
                     (
                         dtoken.probability < args.display_probabilities_maximum
@@ -519,7 +457,8 @@ async def token_generation(
                         )
                         > 0
                     )
-                    if args.display_probabilities
+                    if display_tokens
+                    and args.display_probabilities
                     and args.display_probabilities_maximum > 0
                     and args.display_probabilities_maximum > 0
                     else None
@@ -548,23 +487,35 @@ async def token_generation(
                 token_frame async for token_frame in token_frames_promise
             ]
 
+            # We prioritize a single selected dtoken at a time, it being
+            # the leftmost  selected which is also guaranteed by setting
+            # minimum_frames=1 when calling theme.tokens()
             token_frames = [token_frame_list[0]]
 
             for current_dtoken, frame in token_frames:
+                live.update(frame)
+                if current_dtoken and current_dtoken != last_current_dtoken:
+                    last_current_dtoken = current_dtoken
+                    if display_pause > 0:
+                        await sleep(display_pause / 1000)
+                    elif frame_minimum_pause_ms > 0:
+                        await sleep(frame_minimum_pause_ms / 1000)
+                elif (
+                    dtokens_pick > 0
+                    and not args.display_probabilities
+                    and display_pause > 0
+                ):
+                    await sleep(display_pause / 1000)
+
+        if (
+            dtokens_pick > 0
+            and args.display_probabilities
+            and token_frame_list
+            and len(token_frame_list) > 0
+        ):
+            for current_dtoken, frame in token_frame_list[1:]:
                 live.update(frame)
                 if current_dtoken and display_pause > 0:
                     await sleep(display_pause / 1000)
                 elif frame_minimum_pause_ms > 0:
                     await sleep(frame_minimum_pause_ms / 1000)
-
-            if (
-                args.display_probabilities
-                and token_frame_list
-                and len(token_frame_list) > 0
-            ):
-                for current_dtoken, frame in token_frame_list[1:]:
-                    live.update(frame)
-                    if current_dtoken and display_pause > 0:
-                        await sleep(display_pause / 1000)
-                    elif frame_minimum_pause_ms > 0:
-                        await sleep(frame_minimum_pause_ms / 1000)
