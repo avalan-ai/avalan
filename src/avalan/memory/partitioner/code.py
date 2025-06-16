@@ -72,7 +72,7 @@ class CodePartitioner:
         tree = parser.parse(input.encode(encoding), encoding=encoding)
         root_node = tree.root_node
 
-        self._logger.debug(f"Parsing {language_name} code for functions")
+        self._logger.debug("Parsing %s code for functions", language_name)
         functions = self._get_functions(namespace, root_node, encoding)
 
         if root_node.children and root_node.children[0].is_error:
@@ -85,14 +85,15 @@ class CodePartitioner:
                 f" {error_row},{error_column}"
             )
 
-        self._logger.debug(f"Partitioning {language_name} code")
+        self._logger.debug("Partitioning %s code", language_name)
         partitions = self._partition(
             input, encoding, max_chars, root_node, current_namespace=namespace
         )
         self._logger.debug(
-            f"Partitioned {language_name} into "
-            f"{len(partitions)} partitions and "
-            f"{len(functions)} functions"
+            "Partitioned %s into %d partitions and %d functions",
+            language_name,
+            len(partitions),
+            len(functions),
         )
         return partitions, functions
 

@@ -223,8 +223,9 @@ async def agent_message_search(
         ):
             if specs_path:
                 logger.debug(
-                    f"Loading agent from {specs_path} for "
-                    f"participant {participant_id}"
+                    "Loading agent from %s for participant %s",
+                    specs_path,
+                    participant_id,
                 )
 
                 orchestrator = await OrchestratorLoader.from_file(
@@ -282,9 +283,12 @@ async def agent_message_search(
             )
 
             logger.debug(
-                f'Searching for "{input_string}" across messages on '
-                f"session {session_id} between agent {agent_id} and "
-                f"participant {participant_id}"
+                'Searching for "%s" across messages on session %s between '
+                "agent %s and participant %s",
+                input_string,
+                session_id,
+                agent_id,
+                participant_id,
             )
             messages = await orchestrator.memory.search_messages(
                 search=input_string,
@@ -350,8 +354,9 @@ async def agent_run(
         ):
             if specs_path:
                 logger.debug(
-                    f"Loading agent from {specs_path} for "
-                    f"participant {participant_id}"
+                    "Loading agent from %s for participant %s",
+                    specs_path,
+                    participant_id,
                 )
 
                 orchestrator = await OrchestratorLoader.from_file(
@@ -397,13 +402,17 @@ async def agent_run(
             orchestrator = await stack.enter_async_context(orchestrator)
 
             logger.debug(
-                f"Agent loaded from {specs_path}, models "
-                f"used: {orchestrator.model_ids}, with recent message memory: "
-                f"{'yes' if orchestrator.memory.has_recent_message else 'no'},"
-                " with permanent message memory: yes, with session #"
-                + str(orchestrator.memory.permanent_message.session_id)
-                if orchestrator.memory.has_permanent_message
-                else "no"
+                "Agent loaded from %s, models used: %s, with recent message "
+                "memory: %s, with permanent message memory: %s",
+                specs_path,
+                orchestrator.model_ids,
+                "yes" if orchestrator.memory.has_recent_message else "no",
+                (
+                    "yes, with session #"
+                    + str(orchestrator.memory.permanent_message.session_id)
+                    if orchestrator.memory.has_permanent_message
+                    else "no"
+                ),
             )
 
         if not args.quiet:
@@ -473,7 +482,7 @@ async def agent_run(
                 logger.debug("Finishing session with orchestrator")
                 return
 
-            logger.debug(f'Agent about to process input "{input_string}"')
+            logger.debug('Agent about to process input "%s"', input_string)
             output = await orchestrator(
                 input_string, use_async_generator=use_async_generator
             )
@@ -531,7 +540,7 @@ async def agent_serve(
 
     async with AsyncExitStack() as stack:
         if specs_path:
-            logger.debug(f"Loading agent from {specs_path}")
+            logger.debug("Loading agent from %s", specs_path)
 
             orchestrator = await OrchestratorLoader.from_file(
                 specs_path,

@@ -45,7 +45,7 @@ async def tokenize(
         ),
         logger=logger,
     ) as lm:
-        logger.debug(f"Loaded tokenizer {lm.tokenizer_config.__repr__()}")
+        logger.debug("Loaded tokenizer %s", lm.tokenizer_config.__repr__())
         console.print(theme.tokenizer_config(lm.tokenizer_config))
 
         if args.save:
@@ -61,7 +61,7 @@ async def tokenize(
             is_quiet=args.quiet,
         )
         if input_string:
-            logger.debug(f"Loaded model {lm.config.__repr__()}")
+            logger.debug("Loaded model %s", lm.config.__repr__())
             tokens = lm.tokenize(input_string)
 
             panel = theme.tokenizer_tokens(

@@ -50,7 +50,7 @@ class OrchestratorLoader:
         elif not access(path, R_OK):
             raise PermissionError(path)
 
-        logger.debug(f"Loading agent from {path}")
+        logger.debug("Loading agent from %s", path)
 
         with open(path, "rb") as file:
             config = load(file)
@@ -328,7 +328,7 @@ class OrchestratorLoader:
 
         event_manager = EventManager()
         event_manager.add_listener(
-            lambda e: logger.debug(f"Event {e.type}: {e.payload}")
+            lambda e: logger.debug("Event %s: %s", e.type, e.payload)
         )
 
         logger.debug(

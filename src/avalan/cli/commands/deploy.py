@@ -38,33 +38,38 @@ async def deploy_run(args: Namespace, logger: Logger) -> None:
         aws = Aws(aws_cfg)
 
         cidr = aws_cfg.get("cidr", "10.0.0.0/16")
-        logger.info(f'Fetching VPC "{vpc_name}"')
+        logger.info('Fetching VPC "%s"', vpc_name)
         try:
             vpc_id = await aws.get_vpc_id(aws_cfg["vpc"])
         except DeployError:
-            logger.info(f'Creating VPC "{vpc_name}" with CIDR {cidr}')
+            logger.info('Creating VPC "%s" with CIDR %s', vpc_name, cidr)
             vpc_id = await aws.create_vpc_if_missing(vpc_name, cidr)
 
         logger.info(
-            f'Getting or creating security group "{sg_name}" on VPC "{vpc_id}"'
+            'Getting or creating security group "%s" on VPC "%s"',
+            sg_name,
+            vpc_id,
         )
         sg_id = await aws.get_security_group(sg_name, vpc_id)
 
         logger.info(
-            f"Configuring access policies for security group"
-            f' "{sg_name}" on VPC "{vpc_id}"'
+            'Configuring access policies for security group "%s" on VPC "%s"',
+            sg_name,
+            vpc_id,
         )
         await aws.configure_security_group(sg_id, port)
 
         if has_persistent_memory:
-            logger.info(f'Creating RDS on VPC "{vpc_id}"')
+            logger.info('Creating RDS on VPC "%s"', vpc_id)
             await aws.create_rds_if_missing(
                 aws_cfg["database"], aws_cfg["pgsql"], sg_id, db_storage
             )
 
         for namespace, agent_path in namespaces.items():
             logger.info(
-                f'Creating EC2 instance "{instance_name}" on VPC "{vpc_id}"'
+                'Creating EC2 instance "%s" on VPC "%s"',
+                instance_name,
+                vpc_id,
             )
             await aws.create_instance_if_missing(
                 vpc_id,
@@ -75,4 +80,6 @@ async def deploy_run(args: Namespace, logger: Logger) -> None:
                 agent_path,
                 port,
             )
-            logger.info(f"Deployed {agent_path} as {namespace} on port {port}")
+            logger.info(
+                "Deployed %s as %s on port %s", agent_path, namespace, port
+            )
