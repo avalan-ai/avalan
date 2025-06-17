@@ -105,6 +105,29 @@ class AwsTestCase(IsolatedAsyncioTestCase):
         ac.assert_any_call("ec2-client")
         ac.assert_any_call("rds-client")
 
+    async def test_init_uses_token_pair_from_settings(self):
+        self.session_patch.stop()
+        self.ac_patch.stop()
+        session = MagicMock()
+        session.client.side_effect = lambda name: f"{name}-client"
+        settings = {"zone": "r", "token_pair": "X:Y", "extra": True}
+        with (
+            patch("avalan.deploy.aws.Session", return_value=session) as ses,
+            patch(
+                "avalan.deploy.aws.AsyncClient",
+                side_effect=lambda c: f"async-{c}",
+            ) as ac,
+        ):
+            aws = Aws(settings)
+        ses.assert_called_once_with(
+            aws_access_key_id="X", aws_secret_access_key="Y", region_name="r"
+        )
+        self.assertNotIn("token_pair", settings)
+        self.assertEqual(aws._ec2, "async-ec2-client")
+        self.assertEqual(aws._rds, "async-rds-client")
+        ac.assert_any_call("ec2-client")
+        ac.assert_any_call("rds-client")
+
     async def test_get_vpc_id_found_and_missing(self):
         self.aws._ec2.describe_vpcs = AsyncMock(
             return_value={"Vpcs": [{"VpcId": "v"}]}
@@ -173,6 +196,14 @@ class AwsTestCase(IsolatedAsyncioTestCase):
         )
         self.aws._ec2.authorize_security_group_ingress.side_effect = err
         await self.aws.configure_security_group("g", 1)
+
+    async def test_configure_security_group_unexpected_error(self):
+        err = DummyClientError({"Error": {"Code": "OtherError"}}, "op")
+        self.aws._ec2.authorize_security_group_ingress = AsyncMock(
+            side_effect=err
+        )
+        with self.assertRaises(DummyClientError):
+            await self.aws.configure_security_group("g", 1)
 
     async def test_create_rds_if_missing(self):
         self.aws._rds.describe_db_instances = AsyncMock(
