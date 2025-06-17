@@ -119,6 +119,33 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(results, expected_result)
 
 
+class ToolManagerPotentialCallTestCase(TestCase):
+    def setUp(self):
+        self.manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
+
+    def test_is_potential_tool_call_true(self):
+        with patch.object(
+            self.manager._parser,
+            "is_potential_tool_call",
+            return_value=True,
+        ) as called:
+            result = self.manager.is_potential_tool_call("buf", "tok")
+            self.assertTrue(result)
+            called.assert_called_once_with("buf", "tok")
+
+    def test_is_potential_tool_call_false(self):
+        with patch.object(
+            self.manager._parser,
+            "is_potential_tool_call",
+            return_value=False,
+        ) as called:
+            result = self.manager.is_potential_tool_call("", "")
+            self.assertFalse(result)
+            called.assert_called_once_with("", "")
+
+
 class ToolManagerSchemasTestCase(TestCase):
     def test_json_schemas(self):
         calculator = CalculatorTool()
