@@ -123,6 +123,21 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         for prog in _collect_progs(self.cli._parser):
             self.assertIn(prog, output)
 
+    async def test_call_version_outputs_version_and_exits(self):
+        with (
+            patch.object(sys, "argv", ["prog", "--version"]),
+            patch("builtins.print") as print_patch,
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+            patch.object(CLI, "_help") as help_mock,
+        ):
+            await self.cli()
+
+        print_patch.assert_called_once_with(
+            f"{self.cli._name} {self.cli._version}"
+        )
+        main_mock.assert_not_called()
+        help_mock.assert_not_called()
+
 
 class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
