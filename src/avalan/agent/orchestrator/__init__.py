@@ -24,6 +24,7 @@ from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
 from logging import Logger
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -176,8 +177,33 @@ class Orchestrator:
 
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}
+        start = perf_counter()
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.ENGINE_RUN_BEFORE,
+                payload={
+                    "input": input,
+                    "specification": operation.specification,
+                },
+                started=start,
+            )
+        )
         result = await engine_agent(
             operation.specification, input, **engine_args
+        )
+        end = perf_counter()
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.ENGINE_RUN_AFTER,
+                payload={
+                    "result": result,
+                    "input": input,
+                    "specification": operation.specification,
+                },
+                started=start,
+                finished=end,
+                ellapsed=end - start,
+            )
         )
 
         self._last_engine_agent = engine_agent

@@ -12,11 +12,13 @@ from avalan.agent import (
 from avalan.entities import (
     EngineUri,
     TransformerEngineSettings,
+    Message,
 )
 from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
 from avalan.event.manager import EventManager
+from avalan.event import EventType
 from uuid import uuid4
 from json import dumps
 from dataclasses import asdict
@@ -71,6 +73,8 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
         patcher.start()
 
+        self.event_manager.trigger = AsyncMock()
+
     async def test_call_executes_operation(self):
         resp = await self.orch("hi")
         self.engine_agent.assert_awaited_once()
@@ -82,6 +86,40 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.orch.memory, self.memory)
         self.assertIs(self.orch.tool, self.tool)
         self.assertIs(self.orch.event_manager, self.event_manager)
+
+    async def test_call_triggers_events(self):
+        self.engine_agent.return_value = "ok"
+        resp = await self.orch("hi")
+        self.assertEqual(resp, "resp")
+
+        called_types = [
+            c.args[0].type for c in self.event_manager.trigger.await_args_list
+        ]
+        self.assertIn(EventType.ENGINE_RUN_BEFORE, called_types)
+        self.assertIn(EventType.ENGINE_RUN_AFTER, called_types)
+
+        before = next(
+            c.args[0]
+            for c in self.event_manager.trigger.await_args_list
+            if c.args[0].type == EventType.ENGINE_RUN_BEFORE
+        )
+        after = next(
+            c.args[0]
+            for c in self.event_manager.trigger.await_args_list
+            if c.args[0].type == EventType.ENGINE_RUN_AFTER
+        )
+
+        self.assertIsInstance(before.payload["input"], Message)
+        self.assertEqual(before.payload["input"].content, "hi")
+        self.assertIs(before.payload["specification"], self.spec)
+        self.assertIsNone(before.finished)
+        self.assertIsNone(before.ellapsed)
+
+        self.assertEqual(after.payload["result"], "ok")
+        self.assertIs(after.payload["specification"], self.spec)
+        self.assertEqual(after.started, before.started)
+        self.assertIsNotNone(after.finished)
+        self.assertIsNotNone(after.ellapsed)
 
     async def test_call_no_operation_available(self):
         self.orch._operation_step = self.orch._total_operations
