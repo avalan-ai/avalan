@@ -366,23 +366,28 @@ async def token_generation(
 
     stop_signal = EventSignal()
 
+    events_height = 6
+    tools_height = 10
+    tokens_height = console.size.height - events_height - tools_height
+
     layout = Layout()
     layout.split_column(
-        Layout(name="events"),
-        Layout(name="tools"),
-        Layout(name="main"),
+        Layout(name="tokens", size=tokens_height),
+        Layout(name="tools", size=tools_height),
+        Layout(name="events", size=events_height),
     )
-    layout["events"].size = 4
-    layout["tools"].size = 6
+    layout["tokens"].update("")
+    layout["tools"].update("")
+    layout["events"].update("")
 
     with Live(layout, refresh_per_second=refresh_per_second) as live:
         await gather(
             _event_stream(
-                live, layout, orchestrator, theme, stop_signal=stop_signal
+                live, layout, orchestrator, theme, events_height=events_height, tools_height=tools_height, stop_signal=stop_signal
             ),
             _token_stream(
                 live,
-                layout["main"],
+                layout["tokens"],
                 args,
                 console,
                 theme,
@@ -394,6 +399,7 @@ async def token_generation(
                 response,
                 display_tokens=display_tokens,
                 dtokens_pick=dtokens_pick,
+                height=tokens_height - 2,
                 refresh_per_second=refresh_per_second,
                 stop_signal=stop_signal,
                 tool_events_limit=tool_events_limit,
@@ -408,6 +414,8 @@ async def _event_stream(
     orchestrator: Orchestrator,
     theme: Theme,
     *,
+    events_height: int = 6,
+    tools_height: int = 10,
     stop_signal: EventSignal,
 ) -> None:
     event_manager = orchestrator.event_manager
@@ -418,7 +426,8 @@ async def _event_stream(
         tool_view = e.type in TOOL_TYPES
         events_renderable = theme.events(
             event_manager.history,
-            events_limit=4 if tool_view else 2,
+            events_limit=6 if tool_view else 4,
+            height=tools_height if tool_view else events_height,
             include_tokens=False,
             include_tools=tool_view,
             include_tool_detect=False,
@@ -446,6 +455,7 @@ async def _token_stream(
     *,
     display_tokens: int,
     dtokens_pick: int,
+    height: int = 12,
     refresh_per_second: int,
     stop_signal: EventSignal | None,
     tool_events_limit: int | None,
@@ -597,7 +607,8 @@ async def _token_stream(
             logger,
             event_stats,
             tool_events_limit=tool_events_limit,
-            height=6,
+            height=height,
+            limit_answer_height=True,
             maximum_frames=1,
             start_thinking=start_thinking,
         )
