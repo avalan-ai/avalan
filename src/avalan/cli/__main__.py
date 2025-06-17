@@ -188,6 +188,12 @@ class CLI:
             "--verbose", "-v", action="count", help="Set verbosity"
         )
         global_parser.add_argument(
+            "--version",
+            action="store_true",
+            help="Display this program's version, and exit",
+        )
+
+        global_parser.add_argument(
             "--weight-type",
             type=str,
             choices=get_args(WeightType),
@@ -1207,6 +1213,11 @@ class CLI:
     async def __call__(self) -> None:
         argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
         args = self._parser.parse_args(argv)
+
+        if args.version:
+            print(f"{self._name} {self._version}")
+            return
+
         for key, value in chat_opts.items():
             setattr(args, f"run_chat_{key}", value)
 
