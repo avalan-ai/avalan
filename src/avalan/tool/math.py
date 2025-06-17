@@ -21,6 +21,8 @@ class CalculatorTool(Tool):
         self.__name__ = "calculator"
 
     async def __call__(self, expression: str, context: ToolCallContext) -> str:
+        #from asyncio import sleep
+        #await sleep(5)
         result = sympify(expression, evaluate=True)
         return str(result)
 

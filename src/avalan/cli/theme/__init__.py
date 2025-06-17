@@ -156,11 +156,16 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def events(
+    def events(
         self,
         events: list[Event],
         *,
         events_limit: int | None = None,
+        include_tokens: bool = True,
+        include_tool_detect: bool = True,
+        include_tools: bool = True,
+        include_non_tools: bool = True,
+        tool_view: bool = False
     ) -> RenderableType:
         raise NotImplementedError()
 

@@ -14,7 +14,7 @@ from ...entities import (
     TokenizerConfig,
     User,
 )
-from ...event import Event, EventStats, EventType
+from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
@@ -558,21 +558,29 @@ class FancyTheme(Theme):
         events: list[Event],
         *,
         events_limit: int | None = None,
+        include_tokens: bool = True,
+        include_tool_detect: bool = True,
+        include_tools: bool = True,
+        include_non_tools: bool = True,
+        tool_view: bool = False
     ) -> RenderableType:
         _ = self._
 
         event_log = self._events_log(
-            events=events, events_limit=events_limit, only_tools=False
+            events=events, events_limit=events_limit, include_tokens=include_tokens,
+            include_tool_detect=include_tool_detect, include_tools=include_tools, include_non_tools=include_non_tools
         )
         panel = (
             Panel(
                 _j("\n", event_log),
-                title=_("Events"),
+                title=_("Tool calls") if tool_view else _("Events"),
                 title_align="left",
                 height=2 + (events_limit or 2),
                 padding=(0, 0, 0, 1),
                 expand=True,
                 box=box.SQUARE,
+                border_style="cyan" if tool_view else "gray23",
+                style="gray50 on gray15" if tool_view else "gray35 on gray3",
             )
             if event_log
             else None
@@ -1741,25 +1749,6 @@ class FancyTheme(Theme):
             else None
         )
 
-        tool_event_log = self._events_log(
-            events=tool_events, events_limit=tool_events_limit, only_tools=True
-        )
-        tools_panel = (
-            Panel(
-                _j("\n", tool_event_log),
-                title=_("Tool calls"),
-                title_align="left",
-                height=2 + (tool_events_limit or 2),
-                padding=(0, 0, 0, 1),
-                expand=True,
-                box=box.SQUARE,
-                border_style="cyan",
-                style="gray50 on gray15",
-            )
-            if tool_event_log
-            else None
-        )
-
         tool_running_panel: RenderableType | None = None
 
         if tool_running_spinner and len(tool_event_calls) != len(
@@ -1777,7 +1766,6 @@ class FancyTheme(Theme):
                     *_lf(
                         [
                             think_pannel or None,
-                            tools_panel or None,
                             tool_running_panel or None,
                             answer_panel or None,
                         ]
@@ -1985,7 +1973,6 @@ class FancyTheme(Theme):
                     *_lf(
                         [
                             think_pannel or None,
-                            tools_panel or None,
                             tool_running_panel or None,
                             answer_panel or None,
                             (
@@ -2012,7 +1999,10 @@ class FancyTheme(Theme):
         events: list[Event],
         *,
         events_limit: int | None,
-        only_tools: bool,
+        include_tokens: bool,
+        include_tool_detect: bool,
+        include_tools: bool,
+        include_non_tools: bool,
     ) -> list[str] | None:
         _, _n = self._, self._n
         if not events or events_limit == 0:
@@ -2022,8 +2012,65 @@ class FancyTheme(Theme):
             [
                 (
                     _(
+                        "Executing tool {tool} call #{call_id} with"
+                        " {total_arguments} arguments: {arguments}."
+                    ).format(
+                        tool="[gray78]"
+                        + event.payload["call"].name
+                        + "[/gray78]",
+                        call_id="[gray78]"
+                        + str(event.payload["call"].id)[:8]
+                        + "[/gray78]",
+                        total_arguments=len(
+                            event.payload["call"].arguments or []
+                        ),
+                        arguments="[gray78]"
+                        + (
+                            s
+                            if len(
+                                s := str(
+                                    event.payload["call"].arguments
+                                )
+                            )
+                            <= 50
+                            else s[:47] + "..."
+                        )
+                        + "[/gray78]",
+                    )
+                    if event.type == EventType.TOOL_EXECUTE
+                    else _n(
+                        "Running ReACT model {model_id} with {total_messages}"
+                        " message",
+                        "Running ReACT model {model_id} with {total_messages}"
+                        " messages",
+                        len(event.payload["messages"])
+                    ).format(
+                        model_id=event.payload["model_id"],
+                        total_messages=len(event.payload["messages"])
+                    )
+                    if event.type == EventType.TOOL_MODEL_RUN
+                    else _(
+                        "Got ReACT response from model {model_id}"
+                    ).format(
+                        model_id=event.payload["model_id"]
+                    )
+                    if event.type == EventType.TOOL_MODEL_RESPONSE
+                    else _n(
+                        "Executing {total_calls} tool: {calls}",
+                        "Executing {total_calls} tools: {calls}",
+                        len(event.payload),
+                    ).format(
+                        total_calls=len(event.payload),
+                        calls="[gray78]"
+                        + "[/gray78], [gray78]".join(
+                            [call.name for call in event.payload]
+                        )
+                        + "[/gray78]",
+                    )
+                    if event.type == EventType.TOOL_PROCESS
+                    else _(
                         "Executed tool {tool} call #{call_id} with"
-                        " {total_arguments} arguments: {arguments}. Got result"
+                        " {total_arguments} arguments. Got result"
                         ' "{result}" in {ellapsed_with_unit}.'
                     ).format(
                         tool="[gray78]"
@@ -2040,42 +2087,22 @@ class FancyTheme(Theme):
                         total_arguments=len(
                             event.payload["result"].call.arguments or []
                         ),
-                        arguments="[gray78]"
-                        + (
-                            s
-                            if len(
-                                s := str(
-                                    event.payload["result"].call.arguments
-                                )
-                            )
-                            <= 50
-                            else s[:47] + "..."
-                        )
-                        + "[/gray78]",
                         result="[spring_green3]"
                         + event.payload["result"].result
                         + "[/spring_green3]",
                     )
                     if event.type == EventType.TOOL_RESULT
                     and event.payload["result"]
-                    else (
-                        _n(
-                            "Executing {total_calls} tool: {calls}",
-                            "Executing {total_calls} tools: {calls}",
-                            len(event.payload),
-                        ).format(
-                            total_calls=len(event.payload),
-                            calls="[gray78]"
-                            + "[/gray78], [gray78]".join(
-                                [call.name for call in event.payload]
-                            )
-                            + "[/gray78]",
-                        )
-                        if event.type == EventType.TOOL_PROCESS
-                        else event.__repr__() if not only_tools else None
-                    )
+                    else f"<{event.type}>: {event.payload}"
+                    if event.payload
+                    else f"<{event.type}>"
                 )
                 for event in events
+                if (
+                    (include_tools and event.type in TOOL_TYPES and (event.type != EventType.TOOL_DETECT or include_tool_detect))
+                    or
+                    (include_non_tools and event.type not in TOOL_TYPES and (event.type != EventType.TOKEN_GENERATED or include_tokens))
+                )
             ]
         )
 

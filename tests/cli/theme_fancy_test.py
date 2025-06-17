@@ -770,11 +770,11 @@ class FancyThemeEventsTestCase(unittest.TestCase):
         event = Event(type=EventType.START)
         panel = self.theme.events([event])
         self.assertEqual(panel.height, 4)
-        self.assertIn("EventType.START", str(panel.renderable))
+        self.assertIn("<start>", str(panel.renderable))
 
         panel = self.theme.events([event], events_limit=1)
         self.assertEqual(panel.height, 3)
-        self.assertIn("EventType.START", str(panel.renderable))
+        self.assertIn("<start>", str(panel.renderable))
 
     def test_multiple_events_with_limit(self):
         e1 = Event(type=EventType.START)
@@ -783,17 +783,17 @@ class FancyThemeEventsTestCase(unittest.TestCase):
         panel = self.theme.events([e1, e2])
         text = str(panel.renderable)
         self.assertEqual(panel.height, 4)
-        self.assertIn("EventType.START", text)
-        self.assertIn("EventType.END", text)
+        self.assertIn("<start>", text)
+        self.assertIn("<end>", text)
 
         panel = self.theme.events([e1, e2], events_limit=1)
         text = str(panel.renderable)
         self.assertEqual(panel.height, 3)
-        self.assertNotIn("EventType.START", text)
-        self.assertIn("EventType.END", text)
+        self.assertNotIn("<start>", text)
+        self.assertIn("<end>", text)
 
         panel = self.theme.events([e1, e2], events_limit=2)
         text = str(panel.renderable)
         self.assertEqual(panel.height, 4)
-        self.assertIn("EventType.START", text)
-        self.assertIn("EventType.END", text)
+        self.assertIn("<start>", text)
+        self.assertIn("<end>", text)
