@@ -44,6 +44,15 @@ class ToolCallParser:
     def set_eos_token(self, eos_token: str) -> None:
         self._eos_token = eos_token
 
+    def is_potential_tool_call(self, buffer: str, token_str: str) -> bool:
+        """Return ``True`` if tool detection should run for ``token_str``.
+
+        This provides a fast check during streaming. If ``token_str`` is empty
+        or only whitespace, ``False`` is returned since nothing new was added
+        that could form a tool call.
+        """
+        return bool(token_str and token_str.strip())
+
     def _parse_json(self, text: str) -> tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)

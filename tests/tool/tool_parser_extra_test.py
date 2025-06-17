@@ -47,6 +47,11 @@ class ToolCallParserExtraTestCase(TestCase):
         text = '<tool_call name="calc" arguments=\'{"expr": 2,}\'/>'
         self.assertIsNone(parser(text))
 
+    def test_is_potential_tool_call(self):
+        parser = ToolCallParser()
+        self.assertFalse(parser.is_potential_tool_call("", ""))
+        self.assertTrue(parser.is_potential_tool_call("", "a"))
+
 
 if __name__ == "__main__":
     main()

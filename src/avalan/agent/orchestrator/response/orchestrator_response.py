@@ -419,18 +419,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if not self._tool_manager:
             return token
 
+        buffer_value = self._buffer.getvalue()
+        should_check = self._tool_manager.is_potential_tool_call(
+            buffer_value, token_str
+        )
         self._buffer.write(token_str)
+
+        if not should_check:
+            return token
 
         if self._event_manager:
             await self._event_manager.trigger(
                 Event(type=EventType.TOOL_DETECT)
             )
 
-        calls = (
-            self._tool_manager.get_calls(self._buffer.getvalue())
-            if self._tool_manager
-            else None
-        )
+        calls = self._tool_manager.get_calls(self._buffer.getvalue())
         if not calls:
             return token
 
