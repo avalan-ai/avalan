@@ -83,6 +83,10 @@ class ToolManager(ContextDecorator):
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
 
+    def is_potential_tool_call(self, buffer: str, token_str: str) -> bool:
+        """Proxy :meth:`ToolCallParser.is_potential_tool_call`."""
+        return self._parser.is_potential_tool_call(buffer, token_str)
+
     def get_calls(self, text: str) -> list[ToolCall] | None:
         return self._parser(text)
 

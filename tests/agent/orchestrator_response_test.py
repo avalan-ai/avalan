@@ -455,3 +455,70 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resp._tool_context.participant_id, pid)
         self.assertEqual(resp._tool_context.session_id, sid)
         self.assertEqual(resp._tool_context.calls, [])
+
+
+class OrchestratorResponsePotentialDetectionTestCase(IsolatedAsyncioTestCase):
+    async def test_skip_detection_when_not_potential(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def outer_gen():
+            yield ""
+            for ch in "call":
+                yield ch
+
+        outer_response = TextGenerationResponse(
+            lambda: outer_gen(), use_async_generator=True
+        )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.is_potential_tool_call.side_effect = lambda buf, tok: bool(tok)
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if text == "call"
+            else None
+        )
+
+        async def tool_exec(call, context: ToolCallContext):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="2",
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "r"
+
+        inner_response = TextGenerationResponse(
+            lambda: inner_gen(), use_async_generator=True
+        )
+        agent.return_value = inner_response
+
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            event_manager=event_manager,
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertEqual(tool.get_calls.call_count, 5)
+        self.assertEqual(tool.is_potential_tool_call.call_count, 6)
+        self.assertEqual(items[0], "")
+        self.assertEqual(items[-1], "r")
