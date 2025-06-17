@@ -36,6 +36,8 @@ class EventType(StrEnum):
     INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"
     INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
     TOKEN_GENERATED = "token_generated"
+    ENGINE_RUN_BEFORE = "engine_run_before"
+    ENGINE_RUN_AFTER = "engine_run_after"
 
 
 @dataclass(frozen=True, kw_only=True)
