@@ -18,6 +18,7 @@ from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
+from datetime import datetime
 from humanize import (
     clamp,
     intcomma,
@@ -25,6 +26,7 @@ from humanize import (
     naturalday,
     naturalsize,
     naturaldelta,
+    precisedelta,
 )
 from locale import format_string
 from logging import Logger
@@ -558,6 +560,7 @@ class FancyTheme(Theme):
         events: list[Event],
         *,
         events_limit: int | None = None,
+        height: int | None = None,
         include_tokens: bool = True,
         include_tool_detect: bool = True,
         include_tools: bool = True,
@@ -575,7 +578,7 @@ class FancyTheme(Theme):
                 _j("\n", event_log),
                 title=_("Tool calls") if tool_view else _("Events"),
                 title_align="left",
-                height=2 + (events_limit or 2),
+                height=height if height else (2 + (events_limit or 2)),
                 padding=(0, 0, 0, 1),
                 expand=True,
                 box=box.SQUARE,
@@ -2077,7 +2080,7 @@ class FancyTheme(Theme):
                         + event.payload["result"].call.name
                         + "[/gray78]",
                         ellapsed_with_unit="[gray78]"
-                        + naturaldelta(
+                        + precisedelta(
                             event.ellapsed, minimum_unit="microseconds"
                         )
                         + "[/gray78]",
@@ -2093,9 +2096,13 @@ class FancyTheme(Theme):
                     )
                     if event.type == EventType.TOOL_RESULT
                     and event.payload["result"]
-                    else f"<{event.type}>: {event.payload}"
+                    else f"[{precisedelta(event.ellapsed)}] <{event.type}>: {event.payload}"
+                    if event.payload and event.ellapsed
+                    else f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"
+                    if event.payload and event.started
+                    else f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"
                     if event.payload
-                    else f"<{event.type}>"
+                    else f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>"
                 )
                 for event in events
                 if (
