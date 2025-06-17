@@ -7,6 +7,7 @@ from argparse import Namespace
 from unittest.mock import MagicMock, AsyncMock, patch, call
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
+from rich.layout import Layout
 
 
 class CliModelTestCase(TestCase):
@@ -1067,7 +1068,11 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         console = MagicMock()
         console.width = 80
-        layout = {"main": MagicMock()}
+        layout = Layout()
+        layout.split_column(
+            Layout(name="main"),
+        )
+        layout["main"].update = MagicMock(name="update")
         live = MagicMock()
         logger = MagicMock()
         stop_signal = asyncio.Event()
@@ -1081,7 +1086,7 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         await model_cmds._token_stream(
             live=live,
-            layout=layout,
+            layout=layout["main"],
             args=args,
             console=console,
             theme=theme,

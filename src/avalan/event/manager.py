@@ -12,7 +12,7 @@ class EventManager:
     _queue: Queue[Event]
     _history: deque[Event]
 
-    def __init__(self, history_length: int = 20) -> None:
+    def __init__(self, history_length: int | None = None) -> None:
         self._listeners = defaultdict(list)
         self._queue = Queue()
         self._history = deque(maxlen=history_length)

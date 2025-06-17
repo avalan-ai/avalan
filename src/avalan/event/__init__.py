@@ -4,17 +4,13 @@ from typing import Any
 
 
 class EventType(StrEnum):
-    START = "start"
-    TOOL_DETECT = "tool_detect"
-    TOOL_MODEL_RUN = "tool_model_run"
-    TOOL_MODEL_RESPONSE = "tool_model_response"
-    TOOL_PROCESS = "tool_process"
-    TOOL_EXECUTE = "tool_execute"
-    TOOL_RESULT = "tool_result"
-    END = "end"
-    STREAM_END = "stream_end"
     CALL_PREPARE_BEFORE = "call_prepare_before"
     CALL_PREPARE_AFTER = "call_prepare_after"
+    END = "end"
+    ENGINE_RUN_BEFORE = "engine_run_before"
+    ENGINE_RUN_AFTER = "engine_run_after"
+    INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"
+    INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
     MEMORY_APPEND_BEFORE = "memory_append_before"
     MEMORY_APPEND_AFTER = "memory_append_after"
     MEMORY_PERMANENT_MESSAGE_ADD = "memory_permanent_message_add"
@@ -33,11 +29,18 @@ class EventType(StrEnum):
     )
     MODEL_EXECUTE_BEFORE = "model_execute_before"
     MODEL_EXECUTE_AFTER = "model_execute_after"
-    INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"
-    INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
+    START = "start"
+    STREAM_END = "stream_end"
     TOKEN_GENERATED = "token_generated"
-    ENGINE_RUN_BEFORE = "engine_run_before"
-    ENGINE_RUN_AFTER = "engine_run_after"
+    TOOL_DETECT = "tool_detect"
+    TOOL_EXECUTE = "tool_execute"
+    TOOL_MODEL_RUN = "tool_model_run"
+    TOOL_MODEL_RESPONSE = "tool_model_response"
+    TOOL_PROCESS = "tool_process"
+    TOOL_RESULT = "tool_result"
+
+
+TOOL_TYPES = {et for et in EventType if et.value.startswith("tool_")}
 
 
 @dataclass(frozen=True, kw_only=True)

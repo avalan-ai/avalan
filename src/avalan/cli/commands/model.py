@@ -8,7 +8,7 @@ from asyncio import (
     Event as EventSignal,
 )
 from ...agent.orchestrator import Orchestrator
-from ...event import Event, EventType
+from ...event import Event, EventType, TOOL_TYPES
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
 from ...entities import GenerationSettings, Model, Token, TokenDetail
@@ -364,14 +364,16 @@ async def token_generation(
             )
         return
 
+    stop_signal = EventSignal()
+
     layout = Layout()
     layout.split_column(
         Layout(name="events"),
+        Layout(name="tools"),
         Layout(name="main"),
     )
     layout["events"].size = 4
-
-    stop_signal = EventSignal()
+    layout["tools"].size = 6
 
     with Live(layout, refresh_per_second=refresh_per_second) as live:
         await gather(
@@ -380,7 +382,7 @@ async def token_generation(
             ),
             _token_stream(
                 live,
-                layout,
+                layout["main"],
                 args,
                 console,
                 theme,
@@ -412,11 +414,20 @@ async def _event_stream(
     if not event_manager:
         return
 
-    async for _ in event_manager.listen(stop_signal=stop_signal):
-        events_renderable = theme.events(event_manager.history, events_limit=2)
+    async for e in event_manager.listen(stop_signal=stop_signal):
+        tool_view = e.type in TOOL_TYPES
+        events_renderable = theme.events(
+            event_manager.history,
+            events_limit=4 if tool_view else 2,
+            include_tokens=False,
+            include_tools=tool_view,
+            include_tool_detect=False,
+            include_non_tools=not tool_view,
+            tool_view=tool_view
+        )
         if not events_renderable:
             continue
-        layout["events"].update(events_renderable)
+        layout["tools" if tool_view else "events"].update(events_renderable)
         live.refresh()
 
 
@@ -440,6 +451,9 @@ async def _token_stream(
     tool_events_limit: int | None,
     with_stats: bool = True,
 ):
+    if layout:
+        assert isinstance(layout, Layout)
+
     display_time_to_n_token = args.display_time_to_n_token or 256
     display_pause = (
         args.display_pause
@@ -599,7 +613,7 @@ async def _token_stream(
 
         for current_dtoken, frame in token_frames:
             if layout:
-                layout["main"].update(frame)
+                layout.update(frame)
                 live.refresh()
             else:
                 live.update(frame)
@@ -625,7 +639,7 @@ async def _token_stream(
     ):
         for current_dtoken, frame in token_frame_list[1:]:
             if layout:
-                layout["main"].update(frame)
+                layout.update(frame)
                 live.refresh()
             else:
                 live.update(frame)
