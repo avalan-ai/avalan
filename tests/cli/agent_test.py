@@ -816,6 +816,39 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         await captured["fn"](ev)
         self.assertEqual(stats.total_triggers, 1)
 
+    async def test_event_listener_counts_duplicate_events(self):
+        captured = {}
+
+        def add_listener(fn):
+            captured["fn"] = fn
+
+        self.orch.event_manager.add_listener.side_effect = add_listener
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+        ev = Event(type=EventType.START, payload={})
+        fn = captured["fn"]
+        self.assertEqual(fn.__closure__[0].cell_contents.total_triggers, 0)
+        await fn(ev)
+        await fn(ev)
+        stats = fn.__closure__[0].cell_contents
+        self.assertEqual(stats.total_triggers, 2)
+        self.assertEqual(stats.triggers[EventType.START], 2)
+
 
 class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_agent_init_returns_when_no_role(self):
