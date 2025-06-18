@@ -59,7 +59,7 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
 
 Check the GPU hard at work towards the bottom:
 
-![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
+![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/cli_agent_tool.gif)
 
 Here's a tool using agent that uses the `code.run` tool to execute Python
 code built by the agent, and inform the result:
