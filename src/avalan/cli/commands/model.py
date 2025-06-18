@@ -228,7 +228,7 @@ async def model_run(
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
                 with_stats=not args.quiet,
-                tool_events_limit=args.tool_events,
+                tool_events_limit=args.display_tools_events,
             )
 
 
@@ -340,7 +340,9 @@ async def token_generation(
 
     # From here on, display includes stats and may include token probabilities
 
-    if not orchestrator:
+    if not orchestrator or (
+        not args.display_events and not args.display_tools
+    ):
         with Live(refresh_per_second=refresh_per_second) as live:
             await _token_stream(
                 live,
@@ -376,6 +378,7 @@ async def token_generation(
     with Live(group, refresh_per_second=refresh_per_second) as live:
         await gather(
             _event_stream(
+                args,
                 live,
                 group,
                 events_group_index,
@@ -410,6 +413,7 @@ async def token_generation(
 
 
 async def _event_stream(
+    args: Namespace,
     live: Live,
     group: Group,
     events_group_index: int,
@@ -422,11 +426,18 @@ async def _event_stream(
     stop_signal: EventSignal,
 ) -> None:
     event_manager = orchestrator.event_manager
-    if not event_manager:
+    if not event_manager or (
+        not args.display_events and not args.display_tools
+    ):
         return
 
     async for e in event_manager.listen(stop_signal=stop_signal):
         tool_view = e.type in TOOL_TYPES
+        if (tool_view and not args.display_tools) or (
+            not tool_view and not args.display_events
+        ):
+            continue
+
         events_renderable = theme.events(
             event_manager.history,
             events_limit=6 if tool_view else 4,
