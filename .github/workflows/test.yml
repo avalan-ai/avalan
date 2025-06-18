@@ -28,3 +28,9 @@ jobs:
           fail_ci_if_error: false
           flags: unittests
           verbose: true
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.COVERALLS_TOKEN }}
+          format: cobertura
+          file: coverage.xml
