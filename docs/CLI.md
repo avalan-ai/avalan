@@ -112,7 +112,7 @@ usage: avalan [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
               [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
               [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
               [--quiet] [--revision REVISION] [--skip-hub-access-check]
-              [--verbose]
+              [--verbose] [--version]
               [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
               [--help-full]
               {agent,cache,deploy,flow,memory,model,tokenizer,train} ...
@@ -150,6 +150,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --help-full           Show help for all commands and subcommands
@@ -163,7 +164,7 @@ usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                     [--no-repl] [--quiet] [--revision REVISION]
-                    [--skip-hub-access-check] [--verbose]
+                    [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {message,run,serve,init} ...
 
@@ -200,6 +201,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -214,9 +216,8 @@ usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet]
                             [--revision REVISION] [--skip-hub-access-check]
-                            [--verbose]
-                            [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--verbose] [--version]
+                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             {search} ...
 
 Manage AI agent messages
@@ -252,6 +253,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -268,10 +270,9 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--login] [--no-repl] [--quiet]
                                    [--revision REVISION]
                                    [--skip-hub-access-check] [--verbose]
-                                   [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
-                                   --function
-{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+                                   [--version]
+                                   [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                   --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                                    --id ID [--limit LIMIT]
                                    --participant PARTICIPANT --session SESSION
                                    [--engine-uri ENGINE_URI] [--name NAME]
@@ -291,22 +292,17 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--run-top-p RUN_TOP_P] [--tool TOOL]
                                    [--tool-browser-engine TOOL_BROWSER_ENGINE]
                                    [--tool-browser-search]
-                                   [--tool-browser-search-context
-TOOL_BROWSER_SEARCH_CONTEXT]
+                                   [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
                                    [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]
                                    [--tool-browser-debug]
                                    [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
-                                   [--tool-browser-debug-source
-TOOL_BROWSER_DEBUG_SOURCE]
+                                   [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]
                                    [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]
                                    [--tool-browser-devtools]
                                    [--tool-browser-chromium-sandbox]
-                                   [--tool-browser-viewport-width
-TOOL_BROWSER_VIEWPORT_WIDTH]
-                                   [--tool-browser-viewport-height
-TOOL_BROWSER_VIEWPORT_HEIGHT]
-                                   [--tool-browser-scale-factor
-TOOL_BROWSER_SCALE_FACTOR]
+                                   [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
+                                   [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
+                                   [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]
                                    [--tool-browser-is-mobile]
                                    [--tool-browser-has-touch]
                                    [--tool-browser-java-script-enabled]
@@ -345,10 +341,10 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --function
-{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+  --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                         Vector function to use for searching
   --id ID
   --limit LIMIT         If specified, load up to these many recent messages
@@ -421,18 +417,17 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--revision REVISION]
-                        [--skip-hub-access-check] [--verbose]
+                        [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
-                        [--display-pause [DISPLAY_PAUSE]]
+                        [--display-events] [--display-pause [DISPLAY_PAUSE]]
                         [--display-probabilities]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
-                        [--display-probabilities-sample-minimum
-DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
+                        [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
-                        [--display-tokens [DISPLAY_TOKENS]]
-                        [--tool-events TOOL_EVENTS] [--conversation] [--id ID]
-                        [--no-session | --session SESSION]
-                        [--skip-load-recent-messages]
+                        [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-tools-events DISPLAY_TOOLS_EVENTS]
+                        [--conversation] [--id ID] [--no-session |
+                        --session SESSION] [--skip-load-recent-messages]
                         [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
                         [--participant PARTICIPANT] [--stats] [--sync]
                         [--tty TTY] [--engine-uri ENGINE_URI] [--name NAME]
@@ -500,8 +495,11 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
+  --display-events      If --display-events is specified and there's an
+                        orchestrator / agent involved, show the events panel.
   --display-pause [DISPLAY_PAUSE]
                         Pause (in ms.) when cycling through selected tokens as
                         defined by --display-probabilities
@@ -522,7 +520,9 @@ options:
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a
                         time
-  --tool-events TOOL_EVENTS
+  --display-tools       If --display-events is specified and there's an
+                        orchestrator / agent involved, show the events panel.
+  --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
   --conversation        Activate conversation mode with the agent
   --id ID               Use given ID as the agent ID
@@ -606,9 +606,8 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                           [--loader-class {auto,gemma3,mistral3}]
                           [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                           [--no-repl] [--quiet] [--revision REVISION]
-                          [--skip-hub-access-check] [--verbose]
-                          [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                          [--skip-hub-access-check] [--verbose] [--version]
+                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                           [--host HOST] [--port PORT]
                           [--prefix-mcp PREFIX_MCP]
                           [--prefix-openai PREFIX_OPENAI] [--reload]
@@ -678,6 +677,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --host HOST           Host (defaults to 127.0.0.1)
@@ -753,7 +753,7 @@ usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--loader-class {auto,gemma3,mistral3}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                          [--no-repl] [--quiet] [--revision REVISION]
-                         [--skip-hub-access-check] [--verbose]
+                         [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE]
                          [--task TASK] [--instructions INSTRUCTIONS]
@@ -800,6 +800,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 
@@ -849,7 +850,7 @@ usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                     [--no-repl] [--quiet] [--revision REVISION]
-                    [--skip-hub-access-check] [--verbose]
+                    [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {delete,download,list} ...
 
@@ -886,6 +887,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -899,9 +901,8 @@ usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                            [--loader-class {auto,gemma3,mistral3}]
                            [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                            [--no-repl] [--quiet] [--revision REVISION]
-                           [--skip-hub-access-check] [--verbose]
-                           [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                           [--skip-hub-access-check] [--verbose] [--version]
+                           [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                            [--delete] --model MODEL
                            [--delete-revision DELETE_REVISION]
 
@@ -935,6 +936,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --delete              Actually delete. If not provided, a dry run is
@@ -955,9 +957,8 @@ usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                              [--locales LOCALES] [--low-cpu-mem-usage]
                              [--login] [--no-repl] [--quiet]
                              [--revision REVISION] [--skip-hub-access-check]
-                             [--verbose]
-                             [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                             [--verbose] [--version]
+                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                              --model MODEL
 
 Download model data to cache
@@ -990,6 +991,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --model, -m MODEL     Model to load
@@ -1004,7 +1006,7 @@ usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--loader-class {auto,gemma3,mistral3}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                          [--no-repl] [--quiet] [--revision REVISION]
-                         [--skip-hub-access-check] [--verbose]
+                         [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          [--model MODEL] [--summary]
 
@@ -1038,6 +1040,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --model MODEL         Models to show content details on
@@ -1053,7 +1056,7 @@ usage: avalan deploy [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                      [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                      [--no-repl] [--quiet] [--revision REVISION]
-                     [--skip-hub-access-check] [--verbose]
+                     [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                      {run} ...
 
@@ -1090,6 +1093,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -1103,7 +1107,7 @@ usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--loader-class {auto,gemma3,mistral3}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                          [--no-repl] [--quiet] [--revision REVISION]
-                         [--skip-hub-access-check] [--verbose]
+                         [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          deployment
 
@@ -1140,6 +1144,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -1152,7 +1157,7 @@ usage: avalan flow [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                    [--no-repl] [--quiet] [--revision REVISION]
-                   [--skip-hub-access-check] [--verbose]
+                   [--skip-hub-access-check] [--verbose] [--version]
                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                    {run} ...
 
@@ -1189,6 +1194,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -1202,7 +1208,7 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                        [--loader-class {auto,gemma3,mistral3}]
                        [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                        [--no-repl] [--quiet] [--revision REVISION]
-                       [--skip-hub-access-check] [--verbose]
+                       [--skip-hub-access-check] [--verbose] [--version]
                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                        flow
 
@@ -1239,6 +1245,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -1251,7 +1258,7 @@ usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                      [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                      [--no-repl] [--quiet] [--revision REVISION]
-                     [--skip-hub-access-check] [--verbose]
+                     [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                      {embeddings,search,document} ...
 
@@ -1288,6 +1295,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -1303,8 +1311,8 @@ usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                                 [--login] [--no-repl] [--quiet]
                                 [--revision REVISION]
                                 [--skip-hub-access-check] [--verbose]
-                                [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                [--version]
+                                [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                                 [--base-url BASE_URL] [--load]
                                 [--special-token SPECIAL_TOKEN]
                                 [--token TOKEN] [--tokenizer TOKENIZER]
@@ -1352,6 +1360,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -1394,9 +1403,8 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet]
                             [--revision REVISION] [--skip-hub-access-check]
-                            [--verbose]
-                            [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--verbose] [--version]
+                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
                             [--tokenizer TOKENIZER] [--no-display-partitions |
@@ -1406,8 +1414,7 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--partition-overlap PARTITION_OVERLAP]
                             [--partition-window PARTITION_WINDOW] --dsn DSN
                             --participant PARTICIPANT --namespace NAMESPACE
-                            --function
-{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+                            --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                             [--limit LIMIT]
                             model
 
@@ -1444,6 +1451,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -1473,8 +1481,7 @@ options:
                         Participant ID to search
   --namespace NAMESPACE
                         Namespace to search
-  --function
-{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+  --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                         Vector function to use for searching
   --limit LIMIT         Return up to this many memories
 ```
@@ -1505,8 +1512,8 @@ usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
                                     [--login] [--no-repl] [--quiet]
                                     [--revision REVISION]
                                     [--skip-hub-access-check] [--verbose]
-                                    [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                    [--version]
+                                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                                     [--base-url BASE_URL] [--load]
                                     [--special-token SPECIAL_TOKEN]
                                     [--token TOKEN] [--tokenizer TOKENIZER]
@@ -1558,6 +1565,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -1620,9 +1628,8 @@ usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet]
                             [--revision REVISION] [--skip-hub-access-check]
-                            [--verbose]
-                            [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--verbose] [--version]
+                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
                             [--tokenizer TOKENIZER] [--sentence-transformer]
@@ -1662,6 +1669,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -1689,9 +1697,8 @@ usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet]
                             [--revision REVISION] [--skip-hub-access-check]
-                            [--verbose]
-                            [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--verbose] [--version]
+                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
                             [--tokenizer TOKENIZER]
@@ -1730,6 +1737,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -1753,19 +1761,18 @@ usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--revision REVISION]
-                        [--skip-hub-access-check] [--verbose]
+                        [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         [--base-url BASE_URL] [--load]
                         [--special-token SPECIAL_TOKEN] [--token TOKEN]
-                        [--tokenizer TOKENIZER]
+                        [--tokenizer TOKENIZER] [--display-events]
                         [--display-pause [DISPLAY_PAUSE]]
                         [--display-probabilities]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
-                        [--display-probabilities-sample-minimum
-DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
+                        [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
-                        [--display-tokens [DISPLAY_TOKENS]]
-                        [--tool-events TOOL_EVENTS]
+                        [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--attention {eager,flash_attention_2,flex_attention,sdpa}]
                         [--do-sample] [--enable-gradient-calculation]
                         [--use-cache] [--max-new-tokens MAX_NEW_TOKENS]
@@ -1810,6 +1817,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -1822,6 +1830,8 @@ options:
   --tokenizer TOKENIZER
                         Path to tokenizer to use instead of model's default,
                         only if model is loaded
+  --display-events      If --display-events is specified and there's an
+                        orchestrator / agent involved, show the events panel.
   --display-pause [DISPLAY_PAUSE]
                         Pause (in ms.) when cycling through selected tokens as
                         defined by --display-probabilities
@@ -1842,7 +1852,9 @@ options:
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a
                         time
-  --tool-events TOOL_EVENTS
+  --display-tools       If --display-events is specified and there's an
+                        orchestrator / agent involved, show the events panel.
+  --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
   --attention {eager,flash_attention_2,flex_attention,sdpa}
                         Attention implementation to use (defaults to best
@@ -1887,9 +1899,8 @@ usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                            [--loader-class {auto,gemma3,mistral3}]
                            [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                            [--no-repl] [--quiet] [--revision REVISION]
-                           [--skip-hub-access-check] [--verbose]
-                           [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                           [--skip-hub-access-check] [--verbose] [--version]
+                           [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                            [--search SEARCH] [--filter FILTER] [--limit LIMIT]
 
 Search for models
@@ -1922,6 +1933,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --search SEARCH       Search for models matching given expression
@@ -1939,9 +1951,8 @@ usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                               [--locales LOCALES] [--low-cpu-mem-usage]
                               [--login] [--no-repl] [--quiet]
                               [--revision REVISION] [--skip-hub-access-check]
-                              [--verbose]
-                              [--weight-type
-{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                              [--verbose] [--version]
+                              [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                               [--base-url BASE_URL] [--load]
                               [--special-token SPECIAL_TOKEN] [--token TOKEN]
                               [--tokenizer TOKENIZER] [--delete]
@@ -1980,6 +1991,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --base-url BASE_URL   If specified and model is a vendor model that supports
@@ -2006,7 +2018,7 @@ usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--revision REVISION]
-                        [--skip-hub-access-check] [--verbose]
+                        [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         --tokenizer TOKENIZER [--save SAVE]
                         [--special-token SPECIAL_TOKEN] [--token TOKEN]
@@ -2041,6 +2053,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
   --tokenizer, -t TOKENIZER
@@ -2060,7 +2073,7 @@ usage: avalan train [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                     [--no-repl] [--quiet] [--revision REVISION]
-                    [--skip-hub-access-check] [--verbose]
+                    [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {run} ...
 
@@ -2097,6 +2110,7 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
@@ -2110,7 +2124,7 @@ usage: avalan train run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--revision REVISION]
-                        [--skip-hub-access-check] [--verbose]
+                        [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         training
 
@@ -2147,7 +2161,9 @@ options:
   --skip-hub-access-check
                         If specified, skip hub model access check
   --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
+
 

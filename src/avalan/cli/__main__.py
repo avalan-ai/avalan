@@ -297,6 +297,14 @@ class CLI:
         # Inference options shared by commands: agent run, model run
         model_inference_display_parser = ArgumentParser(add_help=False)
         model_inference_display_parser.add_argument(
+            "--display-events",
+            action="store_true",
+            help=(
+                "If --display-events is specified and there's an orchestrator"
+                " / agent involved, show the events panel."
+            ),
+        )
+        model_inference_display_parser.add_argument(
             "--display-pause",
             type=int,
             nargs="?",
@@ -355,7 +363,15 @@ class CLI:
             help="How many tokens with full information to display at a time",
         )
         model_inference_display_parser.add_argument(
-            "--tool-events",
+            "--display-tools",
+            action="store_true",
+            help=(
+                "If --display-events is specified and there's an orchestrator"
+                " / agent involved, show the events panel."
+            ),
+        )
+        model_inference_display_parser.add_argument(
+            "--display-tools-events",
             type=int,
             default=2,
             help="How many tool events to show on tool call panel",

@@ -52,12 +52,14 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
+      --display-events \
+      --display-tools \
       --conversation
 ```
 
 Check the GPU hard at work towards the bottom:
 
-![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/agent_ephemeral_tool.gif)
+![Example use of an ephemeral tool agent with memory](https://avalan.ai/images/cli_agent_tool.gif)
 
 Here's a tool using agent that uses the `code.run` tool to execute Python
 code built by the agent, and inform the result:
@@ -71,7 +73,9 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
       --run-max-new-tokens 1024 \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-      --stats
+      --stats \
+      --display-events \
+      --display-tools
 ```
 
 With tooling, agents get real-time knowledge. Here's an 8B model looking for avalan's latest release, using a browser to do so:
@@ -79,13 +83,15 @@ With tooling, agents get real-time knowledge. Here's an 8B model looking for ava
 ```bash
 echo "What's avalan's latest release in pypi?" | \
     avalan agent run \
-        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-        --tool "browser.open" \
-        --memory-recent \
-        --run-max-new-tokens 1024 \
-        --name "Tool" \
-        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-        --stats
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --tool "browser.open" \
+      --memory-recent \
+      --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
 ```
 
 You can point an agent to specific locations for gaining knowledge:
@@ -93,18 +99,20 @@ You can point an agent to specific locations for gaining knowledge:
 ```bash
 echo "Tell me what avalan does based on the web page https://raw.githubusercontent.com/avalan-ai/avalan/refs/heads/main/README.md" | \
     avalan agent run \
-        --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-        --tool "browser.open" \
-        --memory-recent \
-        --run-max-new-tokens 1024 \
-        --name "Tool" \
-        --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-        --stats
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --tool "browser.open" \
+      --memory-recent \
+      --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
 ```
 
 ## Memories
 
-Let's initiate a chat session where we tell the agent our name. Notice the `--memory-permanent` option to specify where messages are stored, the `--id` option to uniquely identify the agent, and `--participant` option specifying a user ID:
+Let's initiate a chat session where we tell the agent our name. Notice the `--memory-permanent-message` option to specify where messages are stored, the `--id` option to uniquely identify the agent, and `--participant` option specifying a user ID:
 
 ```bash
 echo "Hi Tool, my name is Leo. Nice to meet you." \

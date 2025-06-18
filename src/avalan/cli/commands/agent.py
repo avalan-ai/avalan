@@ -510,7 +510,7 @@ async def agent_run(
                 response=output,
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
-                tool_events_limit=args.tool_events,
+                tool_events_limit=args.display_tools_events,
                 with_stats=with_stats,
             )
 
