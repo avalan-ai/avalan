@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 class DummyEngine:
     model_id = "m"
+    model_type = "t"
 
     async def __call__(self, input, **kwargs):
         return "out"

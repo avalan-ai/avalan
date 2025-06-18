@@ -218,7 +218,9 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
                 settings=GenerationSettings(use_async_generator=False),
             )
         tok_mock.assert_called_once()
-        str_mock.assert_called_once_with("p", GenerationSettings(use_async_generator=False))
+        str_mock.assert_called_once_with(
+            "p", GenerationSettings(use_async_generator=False)
+        )
         self.assertEqual(result, "out")
 
     def test_supports_sample_generation(self) -> None:

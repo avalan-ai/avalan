@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 class DummyEngine:
     def __init__(self) -> None:
         self.model_id = "m"
+        self.model_type = "t"
         self.called_with = None
         self.input_token_count = MagicMock(return_value=3)
 

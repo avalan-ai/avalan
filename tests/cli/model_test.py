@@ -7,7 +7,6 @@ from argparse import Namespace
 from unittest.mock import MagicMock, AsyncMock, patch, call
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
-from rich.layout import Layout
 
 
 class CliModelTestCase(TestCase):
@@ -1021,7 +1020,11 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
 class CliModelInternalTestCase(IsolatedAsyncioTestCase):
     async def test_event_stream_updates_and_stops(self):
         orchestrator = SimpleNamespace(event_manager=EventManager())
-        layout = {"events": MagicMock()}
+        events = MagicMock(name="events")
+        tools = MagicMock(name="tools")
+        group = SimpleNamespace(
+            renderables=[events, tools, MagicMock(name="tokens")]
+        )
         theme = MagicMock()
         theme.events.side_effect = [None, "panel"]
         live = MagicMock()
@@ -1029,7 +1032,13 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         task = asyncio.create_task(
             model_cmds._event_stream(
-                live, layout, orchestrator, theme, stop_signal=stop_signal
+                live,
+                group,
+                0,
+                1,
+                orchestrator,
+                theme,
+                stop_signal=stop_signal,
             )
         )
         await orchestrator.event_manager.trigger(Event(type=EventType.START))
@@ -1038,7 +1047,7 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         stop_signal.set()
         await task
 
-        layout["events"].update.assert_called_with("panel")
+        self.assertEqual(group.renderables[0], "panel")
         self.assertEqual(theme.events.call_count, 2)
         live.refresh.assert_called()
 
@@ -1068,14 +1077,20 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         console = MagicMock()
         console.width = 80
-        layout = Layout()
-        layout.split_column(
-            Layout(name="main"),
-        )
-        layout["main"].update = MagicMock(name="update")
         live = MagicMock()
         logger = MagicMock()
         stop_signal = asyncio.Event()
+
+        class CaptureList(list):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                self.calls: list = []
+
+            def __setitem__(self, index: int, value):
+                self.calls.append(value)
+                super().__setitem__(index, value)
+
+        group = SimpleNamespace(renderables=CaptureList([None]))
 
         theme = MagicMock()
         theme.tokens = MagicMock(side_effect=fake_frames)
@@ -1086,7 +1101,8 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         await model_cmds._token_stream(
             live=live,
-            layout=layout["main"],
+            group=group,
+            tokens_group_index=0,
             args=args,
             console=console,
             theme=theme,
@@ -1105,9 +1121,9 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(stop_signal.is_set())
-        layout["main"].update.assert_any_call("frame1")
-        layout["main"].update.assert_any_call("frame2")
-        layout["main"].update.assert_any_call("frame3")
+        self.assertIn("frame1", group.renderables.calls)
+        self.assertIn("frame2", group.renderables.calls)
+        self.assertIn("frame3", group.renderables.calls)
         live.refresh.assert_called()
         theme.tokens.assert_called_once()
 
@@ -1135,12 +1151,18 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         console = MagicMock()
         console.width = 80
-        layout = Layout()
-        layout.split_column(Layout(name="main"))
-        layout["main"].update = MagicMock(name="update")
         live = MagicMock()
         logger = MagicMock()
         stop_signal = asyncio.Event()
+
+        class CaptureList(list):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+
+            def __setitem__(self, index: int, value):
+                super().__setitem__(index, value)
+
+        group = SimpleNamespace(renderables=CaptureList([None]))
 
         theme = MagicMock()
         theme.tokens = MagicMock(side_effect=fake_frames)
@@ -1152,7 +1174,8 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         with patch("avalan.cli.commands.model.sleep", new=AsyncMock()) as slp:
             await model_cmds._token_stream(
                 live=live,
-                layout=layout["main"],
+                group=group,
+                tokens_group_index=0,
                 args=args,
                 console=console,
                 theme=theme,
@@ -1198,12 +1221,18 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         console = MagicMock()
         console.width = 80
-        layout = Layout()
-        layout.split_column(Layout(name="main"))
-        layout["main"].update = MagicMock(name="update")
         live = MagicMock()
         logger = MagicMock()
         stop_signal = asyncio.Event()
+
+        class CaptureList(list):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+
+            def __setitem__(self, index: int, value):
+                super().__setitem__(index, value)
+
+        group = SimpleNamespace(renderables=CaptureList([None]))
 
         theme = MagicMock()
         theme.tokens = MagicMock(side_effect=fake_frames)
@@ -1215,7 +1244,8 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         with patch("avalan.cli.commands.model.sleep", new=AsyncMock()) as slp:
             await model_cmds._token_stream(
                 live=live,
-                layout=layout["main"],
+                group=group,
+                tokens_group_index=0,
                 args=args,
                 console=console,
                 theme=theme,

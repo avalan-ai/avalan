@@ -24,7 +24,6 @@ from . import get_model_settings
 from rich.prompt import Prompt
 from logging import Logger
 from rich.console import Console, Group, RenderableType
-from rich.layout import Layout
 from rich.live import Live
 from rich.padding import Padding
 from rich.spinner import Spinner
@@ -346,6 +345,7 @@ async def token_generation(
             await _token_stream(
                 live,
                 None,
+                None,
                 args,
                 console,
                 theme,
@@ -365,35 +365,31 @@ async def token_generation(
         return
 
     stop_signal = EventSignal()
-
     events_height = 6
     tools_height = 10
-    tokens_height = console.size.height - events_height - tools_height
+    empty = ""
+    group = Group(empty, empty, empty)
+    events_group_index = 0
+    tools_group_index = 1
+    tokens_group_index = 2
 
-    layout = Layout()
-    layout.split_column(
-        Layout(name="tokens", size=tokens_height),
-        Layout(name="tools", size=tools_height),
-        Layout(name="events", size=events_height),
-    )
-    layout["tokens"].update("")
-    layout["tools"].update("")
-    layout["events"].update("")
-
-    with Live(layout, refresh_per_second=refresh_per_second) as live:
+    with Live(group, refresh_per_second=refresh_per_second) as live:
         await gather(
             _event_stream(
                 live,
-                layout,
+                group,
+                events_group_index,
+                tools_group_index,
                 orchestrator,
-                theme,
+                theme=theme,
                 events_height=events_height,
                 tools_height=tools_height,
                 stop_signal=stop_signal,
             ),
             _token_stream(
                 live,
-                layout["tokens"],
+                group,
+                tokens_group_index,
                 args,
                 console,
                 theme,
@@ -405,7 +401,6 @@ async def token_generation(
                 response,
                 display_tokens=display_tokens,
                 dtokens_pick=dtokens_pick,
-                height=tokens_height - 2,
                 refresh_per_second=refresh_per_second,
                 stop_signal=stop_signal,
                 tool_events_limit=tool_events_limit,
@@ -416,7 +411,9 @@ async def token_generation(
 
 async def _event_stream(
     live: Live,
-    layout: Layout,
+    group: Group,
+    events_group_index: int,
+    tools_group_index: int,
     orchestrator: Orchestrator,
     theme: Theme,
     *,
@@ -442,13 +439,17 @@ async def _event_stream(
         )
         if not events_renderable:
             continue
-        layout["tools" if tool_view else "events"].update(events_renderable)
+
+        group.renderables[
+            tools_group_index if tool_view else events_group_index
+        ] = events_renderable
         live.refresh()
 
 
 async def _token_stream(
     live: Live,
-    layout: Layout | None,
+    group: Group | None,
+    tokens_group_index: int | None,
     args: Namespace,
     console: Console,
     theme: Theme,
@@ -467,9 +468,6 @@ async def _token_stream(
     tool_events_limit: int | None,
     with_stats: bool = True,
 ):
-    if layout:
-        assert isinstance(layout, Layout)
-
     display_time_to_n_token = args.display_time_to_n_token or 256
     display_pause = (
         args.display_pause
@@ -629,8 +627,8 @@ async def _token_stream(
         token_frames = [token_frame_list[0]]
 
         for current_dtoken, frame in token_frames:
-            if layout:
-                layout.update(frame)
+            if group:
+                group.renderables[tokens_group_index] = frame
                 live.refresh()
             else:
                 live.update(frame)
@@ -657,8 +655,8 @@ async def _token_stream(
         and len(token_frame_list) > 0
     ):
         for current_dtoken, frame in token_frame_list[1:]:
-            if layout:
-                layout.update(frame)
+            if group:
+                group.renderables[tokens_group_index] = frame
                 live.refresh()
             else:
                 live.update(frame)
