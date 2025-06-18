@@ -223,6 +223,9 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             tool_browser_debug=None,
             tool_browser_search=None,
             tool_browser_search_context=None,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -286,6 +289,9 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             tool_browser_debug=None,
             tool_browser_search=None,
             tool_browser_search_context=None,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -459,6 +465,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             tool_browser_debug=None,
             tool_browser_search=None,
             tool_browser_search_context=None,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
         )
         self.console = MagicMock()
         status_cm = MagicMock()

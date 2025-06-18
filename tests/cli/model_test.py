@@ -482,6 +482,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             display_probabilities=False,
             display_probabilities_maximum=0.0,
             display_probabilities_sample_minimum=0.0,
+            display_events=False,
+            display_tools=False,
         )
 
         console = MagicMock()
@@ -718,6 +720,66 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             fifth["input_token_count"], inner_response.input_token_count
         )
 
+    async def test_token_generation_display_options_combinations(self):
+        combos = [
+            (False, False, 0),
+            (True, False, 1),
+            (False, True, 1),
+            (True, True, 1),
+        ]
+
+        for display_events, display_tools, expected_event_calls in combos:
+            args = Namespace(
+                display_time_to_n_token=None,
+                display_pause=0,
+                start_thinking=False,
+                display_probabilities=False,
+                display_probabilities_maximum=0.0,
+                display_probabilities_sample_minimum=0.0,
+                display_events=display_events,
+                display_tools=display_tools,
+            )
+
+            console = MagicMock()
+            live = MagicMock()
+            live.__enter__.return_value = live
+            live.__exit__.return_value = False
+
+            orchestrator = SimpleNamespace(event_manager=MagicMock())
+            lm = SimpleNamespace(model_id="m", tokenizer_config=None)
+
+            with (
+                patch.object(model_cmds, "Live", return_value=live),
+                patch.object(
+                    model_cmds, "_token_stream", new=AsyncMock()
+                ) as ts_patch,
+                patch.object(
+                    model_cmds, "_event_stream", new=AsyncMock()
+                ) as es_patch,
+            ):
+                await model_cmds.token_generation(
+                    args=args,
+                    console=console,
+                    theme=MagicMock(),
+                    logger=MagicMock(),
+                    orchestrator=orchestrator,
+                    event_stats=None,
+                    lm=lm,
+                    input_string="i",
+                    response=MagicMock(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    tool_events_limit=None,
+                    refresh_per_second=2,
+                    with_stats=True,
+                )
+
+            ts_patch.assert_awaited_once()
+            if expected_event_calls:
+                es_patch.assert_awaited_once()
+            else:
+                es_patch.assert_not_called()
+
 
 class CliModelRunTestCase(IsolatedAsyncioTestCase):
     async def test_returns_when_no_input(self):
@@ -818,6 +880,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             skip_special_tokens=False,
             display_tokens=0,
             tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
         )
         console = MagicMock()
         theme = MagicMock()
@@ -904,6 +969,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             skip_special_tokens=False,
             display_tokens=0,
             tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
         )
         console = MagicMock()
         theme = MagicMock()
@@ -1030,8 +1098,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         live = MagicMock()
         stop_signal = asyncio.Event()
 
+        args = Namespace(display_events=True, display_tools=True)
         task = asyncio.create_task(
             model_cmds._event_stream(
+                args,
                 live,
                 group,
                 0,
