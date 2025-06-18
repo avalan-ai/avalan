@@ -34,6 +34,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           format: cobertura
           file: coverage.xml
-          flag-name: unit test python-${{ matrix.python-version }}
+          flag-name: unit test ${{ join(matrix.*, ' - ') }}
           parallel: true
           fail-on-error: true
