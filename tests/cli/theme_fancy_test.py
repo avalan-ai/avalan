@@ -361,7 +361,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 display_probabilities=False,
                 pick=0,
                 focus_on_token_when=lambda x: True,
-                text_tokens=["<think>", "x", "</think>", "y"],
+                text_tokens=["<think>\n", "x\n", "</think>\n", "y"],
                 tokens=[t],
                 input_token_count=0,
                 total_tokens=1,
@@ -404,7 +404,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 display_probabilities=True,
                 pick=2,
                 focus_on_token_when=lambda x: True,
-                text_tokens=["<think>", "x", "</think>", "y"],
+                text_tokens=["<think>\n", "x\n", "</think>\n", "y"],
                 tokens=[dtoken],
                 input_token_count=0,
                 total_tokens=1,
@@ -426,6 +426,78 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(frame1[1].renderables)
         self.assertTrue(frame2[1].renderables)
+
+    async def test_tokens_early_return(self):
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                text_tokens=["x\n"],
+                tokens=None,
+                input_token_count=0,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                ellapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+            )
+            token, frame = await gen.__anext__()
+            with self.assertRaises(StopAsyncIteration):
+                await gen.__anext__()
+
+        self.assertIsNone(token)
+        self.assertTrue(frame.renderables)
+
+    async def test_tokens_pick_first_full_batch(self):
+        alt = Token(id=2, token="b", probability=0.5)
+        dtoken = TokenDetail(id=1, token="a", probability=0.6, tokens=[alt])
+        with (
+            patch(
+                "avalan.cli.theme.fancy._lf",
+                lambda i: list(filter(None, i or [])),
+            ),
+            patch(
+                "avalan.cli.theme.fancy._j",
+                lambda sep, items: sep.join(str(x) for x in items if x),
+            ),
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=1,
+                display_probabilities=True,
+                pick=1,
+                focus_on_token_when=lambda x: True,
+                text_tokens=["x\n"],
+                tokens=[dtoken],
+                input_token_count=0,
+                total_tokens=1,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                ellapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+                maximum_frames=1,
+            )
+            frame = await gen.__anext__()
+        self.assertTrue(frame[1].renderables)
 
 
 class FancyThemeAdditionalTestCase(unittest.TestCase):
@@ -721,6 +793,47 @@ class FancyThemeMoreTests(unittest.TestCase):
         self.assertIn("Runs on this instance", cells)
         self.assertIn("Architectures", cells)
         self.assertIn("Start of stream token", cells)
+
+    def test_fill_model_config_table_pad_token(self):
+        cfg = ModelConfig(
+            architectures=["a"],
+            attribute_map={},
+            bos_token_id=1,
+            bos_token="<s>",
+            decoder_start_token_id=None,
+            eos_token_id=2,
+            eos_token="</s>",
+            finetuning_task=None,
+            hidden_size=1,
+            hidden_sizes=None,
+            keys_to_ignore_at_inference=[],
+            loss_type="ce",
+            max_position_embeddings=10,
+            model_type="t",
+            num_attention_heads=1,
+            num_hidden_layers=1,
+            num_labels=1,
+            output_attentions=False,
+            output_hidden_states=False,
+            pad_token_id=4,
+            pad_token="<pad>",
+            prefix=None,
+            sep_token_id=None,
+            sep_token=None,
+            state_size=1,
+            task_specific_params=None,
+            torch_dtype=float,
+            vocab_size=10,
+            tokenizer_class=None,
+        )
+        table = Table(show_lines=True)
+        table.add_column()
+        table.add_column()
+        filled = self.theme._fill_model_config_table(
+            cfg, table, is_runnable=True, summary=False
+        )
+        cells = filled.columns[0]._cells
+        self.assertIn("Padding token", cells)
 
     def test_tokenizer_config_tokens(self):
         cfg = TokenizerConfig(

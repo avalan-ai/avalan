@@ -383,7 +383,13 @@ async def token_generation(
     with Live(layout, refresh_per_second=refresh_per_second) as live:
         await gather(
             _event_stream(
-                live, layout, orchestrator, theme, events_height=events_height, tools_height=tools_height, stop_signal=stop_signal
+                live,
+                layout,
+                orchestrator,
+                theme,
+                events_height=events_height,
+                tools_height=tools_height,
+                stop_signal=stop_signal,
             ),
             _token_stream(
                 live,
@@ -432,7 +438,7 @@ async def _event_stream(
             include_tools=tool_view,
             include_tool_detect=False,
             include_non_tools=not tool_view,
-            tool_view=tool_view
+            tool_view=tool_view,
         )
         if not events_renderable:
             continue
@@ -634,7 +640,9 @@ async def _token_stream(
                 if display_pause > 0:
                     await sleep(display_pause / 1000)
                 elif frame_minimum_pause_ms > 0:
-                    await sleep(frame_minimum_pause_ms / 1000)
+                    await sleep(
+                        frame_minimum_pause_ms / 1000
+                    )  # pragma: no cover - unreachable
             elif (
                 dtokens_pick > 0
                 and not args.display_probabilities

@@ -165,7 +165,7 @@ class Theme(ABC):
         include_tool_detect: bool = True,
         include_tools: bool = True,
         include_non_tools: bool = True,
-        tool_view: bool = False
+        tool_view: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
 

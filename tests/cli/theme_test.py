@@ -298,6 +298,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.agent(
                 self.theme, SimpleNamespace(), models=[], cans_access=None
             ),
+            lambda: Theme.events(self.theme, []),
             lambda: Theme.ask_access_token(self.theme),
             lambda: Theme.ask_delete_paths(self.theme),
             lambda: Theme.ask_login_to_hub(self.theme),

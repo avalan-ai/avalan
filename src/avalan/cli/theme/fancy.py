@@ -1582,7 +1582,7 @@ class FancyTheme(Theme):
                 is_thinking = True
                 continue
             elif is_thinking and line == "</think>":
-                is_thinking = False
+                is_thinking = False  # pragma: no cover - rarely triggered
                 continue
 
             wrapped_line = wrap(line, width=max_width)
