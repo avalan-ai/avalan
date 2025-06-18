@@ -3,7 +3,7 @@
 
 <p align="center">
   <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
-  <img src="https://codecov.io/gh/avalan-ai/avalan/graph/badge.svg?token=FK3PCHHWCW" alt="Code coverage" />
+  <a href="https://coveralls.io/github/avalan-ai/avalan"><img src="https://coveralls.io/repos/github/avalan-ai/avalan/badge.svg" alt="Code test coverage" /></a>
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
   <img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" />
   <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
@@ -357,6 +357,13 @@ There are more agent, NLP, multimodal, audio, and vision examples in the
 folder.
 
 # Install
+
+If you're on MacOS, you can install avalan with homebrew:
+
+```bash
+brew tap avalan-ai/avalan
+
+```
 
 Create your virtual environment and install packages:
 
