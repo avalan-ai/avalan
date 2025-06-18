@@ -51,7 +51,13 @@ class EngineAgent(ABC):
         if not self._last_prompt:
             return None
         await self._event_manager.trigger(
-            Event(type=EventType.INPUT_TOKEN_COUNT_BEFORE)
+            Event(
+                type=EventType.INPUT_TOKEN_COUNT_BEFORE,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                },
+            )
         )
         count = self._model.input_token_count(
             self._last_prompt[0], system_prompt=self._last_prompt[1]
@@ -59,7 +65,11 @@ class EngineAgent(ABC):
         await self._event_manager.trigger(
             Event(
                 type=EventType.INPUT_TOKEN_COUNT_AFTER,
-                payload={"count": count},
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "count": count,
+                },
             )
         )
         return count
@@ -85,11 +95,27 @@ class EngineAgent(ABC):
         self, specification: Specification, input: str, **kwargs
     ) -> TextGenerationResponse | str:
         await self._event_manager.trigger(
-            Event(type=EventType.CALL_PREPARE_BEFORE)
+            Event(
+                type=EventType.CALL_PREPARE_BEFORE,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "specification": specification,
+                    "input": input,
+                },
+            )
         )
         run_args = self._prepare_call(specification, input, **kwargs)
         await self._event_manager.trigger(
-            Event(type=EventType.CALL_PREPARE_AFTER)
+            Event(
+                type=EventType.CALL_PREPARE_AFTER,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "specification": specification,
+                    "input": input,
+                },
+            )
         )
         return await self._run(input, **run_args)
 
@@ -143,7 +169,11 @@ class EngineAgent(ABC):
                 await self._event_manager.trigger(
                     Event(
                         type=EventType.MEMORY_APPEND_BEFORE,
-                        payload={"message": previous_message},
+                        payload={
+                            "model_type": self._model.model_type,
+                            "model_id": self._model.model_id,
+                            "message": previous_message,
+                        },
                     )
                 )
                 await self._memory.append_message(
@@ -156,13 +186,22 @@ class EngineAgent(ABC):
                 await self._event_manager.trigger(
                     Event(
                         type=EventType.MEMORY_APPEND_AFTER,
-                        payload={"message": previous_message},
+                        payload={
+                            "model_type": self._model.model_type,
+                            "model_id": self._model.model_id,
+                            "message": previous_message,
+                        },
                     )
                 )
+
             await self._event_manager.trigger(
                 Event(
                     type=EventType.MEMORY_APPEND_BEFORE,
-                    payload={"message": new_message},
+                    payload={
+                        "model_type": self._model.model_type,
+                        "model_id": self._model.model_id,
+                        "message": new_message,
+                    },
                 )
             )
             await self._memory.append_message(
@@ -175,7 +214,11 @@ class EngineAgent(ABC):
             await self._event_manager.trigger(
                 Event(
                     type=EventType.MEMORY_APPEND_AFTER,
-                    payload={"message": new_message},
+                    payload={
+                        "model_type": self._model.model_type,
+                        "model_id": self._model.model_id,
+                        "message": new_message,
+                    },
                 )
             )
 
@@ -191,11 +234,29 @@ class EngineAgent(ABC):
             model_settings["skip_special_tokens"] = skip_special_tokens
 
         await self._event_manager.trigger(
-            Event(type=EventType.MODEL_EXECUTE_BEFORE)
+            Event(
+                type=EventType.MODEL_EXECUTE_BEFORE,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "input": input,
+                    "system_prompt": system_prompt,
+                    "settings": settings,
+                },
+            )
         )
         output = await self._model(input, **model_settings)
         await self._event_manager.trigger(
-            Event(type=EventType.MODEL_EXECUTE_AFTER)
+            Event(
+                type=EventType.MODEL_EXECUTE_AFTER,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "input": input,
+                    "system_prompt": system_prompt,
+                    "settings": settings,
+                },
+            )
         )
 
         # Update memory

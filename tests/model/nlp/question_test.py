@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock, PropertyMock
 
 
 class TruthyMagicMock(MagicMock):
-    def __bool__(self):  # pragma: no cover - bool called in assertions
+    def __bool__(self):
         return True
 
 

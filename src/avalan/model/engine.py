@@ -114,6 +114,10 @@ class Engine(ABC):
         return self._model
 
     @property
+    def model_type(self) -> str:
+        return type(self).__name__
+
+    @property
     def model_id(self) -> str | None:
         return self._model_id
 
