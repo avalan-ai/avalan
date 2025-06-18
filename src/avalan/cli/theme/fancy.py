@@ -25,7 +25,6 @@ from humanize import (
     intword,
     naturalday,
     naturalsize,
-    naturaldelta,
     precisedelta,
 )
 from locale import format_string
@@ -565,13 +564,17 @@ class FancyTheme(Theme):
         include_tool_detect: bool = True,
         include_tools: bool = True,
         include_non_tools: bool = True,
-        tool_view: bool = False
+        tool_view: bool = False,
     ) -> RenderableType:
         _ = self._
 
         event_log = self._events_log(
-            events=events, events_limit=events_limit, include_tokens=include_tokens,
-            include_tool_detect=include_tool_detect, include_tools=include_tools, include_non_tools=include_non_tools
+            events=events,
+            events_limit=events_limit,
+            include_tokens=include_tokens,
+            include_tool_detect=include_tool_detect,
+            include_tools=include_tools,
+            include_non_tools=include_non_tools,
         )
         panel = (
             Panel(
@@ -2030,85 +2033,117 @@ class FancyTheme(Theme):
                         arguments="[gray78]"
                         + (
                             s
-                            if len(
-                                s := str(
-                                    event.payload["call"].arguments
-                                )
-                            )
+                            if len(s := str(event.payload["call"].arguments))
                             <= 50
                             else s[:47] + "..."
                         )
                         + "[/gray78]",
                     )
                     if event.type == EventType.TOOL_EXECUTE
-                    else _n(
-                        "Running ReACT model {model_id} with {total_messages}"
-                        " message",
-                        "Running ReACT model {model_id} with {total_messages}"
-                        " messages",
-                        len(event.payload["messages"])
-                    ).format(
-                        model_id=event.payload["model_id"],
-                        total_messages=len(event.payload["messages"])
-                    )
-                    if event.type == EventType.TOOL_MODEL_RUN
-                    else _(
-                        "Got ReACT response from model {model_id}"
-                    ).format(
-                        model_id=event.payload["model_id"]
-                    )
-                    if event.type == EventType.TOOL_MODEL_RESPONSE
-                    else _n(
-                        "Executing {total_calls} tool: {calls}",
-                        "Executing {total_calls} tools: {calls}",
-                        len(event.payload),
-                    ).format(
-                        total_calls=len(event.payload),
-                        calls="[gray78]"
-                        + "[/gray78], [gray78]".join(
-                            [call.name for call in event.payload]
+                    else (
+                        _n(
+                            "Running ReACT model {model_id} with"
+                            " {total_messages} message",
+                            "Running ReACT model {model_id} with"
+                            " {total_messages} messages",
+                            len(event.payload["messages"]),
+                        ).format(
+                            model_id=event.payload["model_id"],
+                            total_messages=len(event.payload["messages"]),
                         )
-                        + "[/gray78]",
-                    )
-                    if event.type == EventType.TOOL_PROCESS
-                    else _(
-                        "Executed tool {tool} call #{call_id} with"
-                        " {total_arguments} arguments. Got result"
-                        ' "{result}" in {ellapsed_with_unit}.'
-                    ).format(
-                        tool="[gray78]"
-                        + event.payload["result"].call.name
-                        + "[/gray78]",
-                        ellapsed_with_unit="[gray78]"
-                        + precisedelta(
-                            event.ellapsed, minimum_unit="microseconds"
+                        if event.type == EventType.TOOL_MODEL_RUN
+                        else (
+                            _(
+                                "Got ReACT response from model {model_id}"
+                            ).format(model_id=event.payload["model_id"])
+                            if event.type == EventType.TOOL_MODEL_RESPONSE
+                            else (
+                                _n(
+                                    "Executing {total_calls} tool: {calls}",
+                                    "Executing {total_calls} tools: {calls}",
+                                    len(event.payload),
+                                ).format(
+                                    total_calls=len(event.payload),
+                                    calls="[gray78]"
+                                    + "[/gray78], [gray78]".join(
+                                        [call.name for call in event.payload]
+                                    )
+                                    + "[/gray78]",
+                                )
+                                if event.type == EventType.TOOL_PROCESS
+                                else (
+                                    _(
+                                        "Executed tool {tool} call #{call_id}"
+                                        " with {total_arguments} arguments."
+                                        ' Got result "{result}" in'
+                                        " {ellapsed_with_unit}."
+                                    ).format(
+                                        tool="[gray78]"
+                                        + event.payload["result"].call.name
+                                        + "[/gray78]",
+                                        ellapsed_with_unit="[gray78]"
+                                        + precisedelta(
+                                            event.ellapsed,
+                                            minimum_unit="microseconds",
+                                        )
+                                        + "[/gray78]",
+                                        call_id="[gray78]"
+                                        + str(event.payload["result"].call.id)[
+                                            :8
+                                        ]
+                                        + "[/gray78]",
+                                        total_arguments=len(
+                                            event.payload[
+                                                "result"
+                                            ].call.arguments
+                                            or []
+                                        ),
+                                        result="[spring_green3]"
+                                        + event.payload["result"].result
+                                        + "[/spring_green3]",
+                                    )
+                                    if event.type == EventType.TOOL_RESULT
+                                    and event.payload["result"]
+                                    else (
+                                        f"[{precisedelta(event.ellapsed)}]"
+                                        f" <{event.type}>: {event.payload}"
+                                        if event.payload and event.ellapsed
+                                        else (
+                                            f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
+                                            if event.payload and event.started
+                                            else (
+                                                f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
+                                                if event.payload
+                                                else (
+                                                    f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}]"  # noqa: E501
+                                                    f" <{event.type}>"
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
                         )
-                        + "[/gray78]",
-                        call_id="[gray78]"
-                        + str(event.payload["result"].call.id)[:8]
-                        + "[/gray78]",
-                        total_arguments=len(
-                            event.payload["result"].call.arguments or []
-                        ),
-                        result="[spring_green3]"
-                        + event.payload["result"].result
-                        + "[/spring_green3]",
-                    )
-                    if event.type == EventType.TOOL_RESULT
-                    and event.payload["result"]
-                    else f"[{precisedelta(event.ellapsed)}] <{event.type}>: {event.payload}"
-                    if event.payload and event.ellapsed
-                    else f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"
-                    if event.payload and event.started
-                    else f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"
-                    if event.payload
-                    else f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>"
+                    )  # noqa: E501
                 )
                 for event in events
                 if (
-                    (include_tools and event.type in TOOL_TYPES and (event.type != EventType.TOOL_DETECT or include_tool_detect))
-                    or
-                    (include_non_tools and event.type not in TOOL_TYPES and (event.type != EventType.TOKEN_GENERATED or include_tokens))
+                    (
+                        include_tools
+                        and event.type in TOOL_TYPES
+                        and (
+                            event.type != EventType.TOOL_DETECT
+                            or include_tool_detect
+                        )
+                    )
+                    or (
+                        include_non_tools
+                        and event.type not in TOOL_TYPES
+                        and (
+                            event.type != EventType.TOKEN_GENERATED
+                            or include_tokens
+                        )
+                    )
                 )
             ]
         )

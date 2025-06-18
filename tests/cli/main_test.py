@@ -347,6 +347,20 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(args.tool_x_ratio, 0.5)
         self.assertEqual(args.tool_x_name, "Bob")
 
+    def test_add_tool_settings_arguments_list(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class Settings:
+            names: list[str]
+
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="y", settings_cls=Settings
+        )
+        args = parser.parse_args(["--tool-y-names", "Alice"])
+        self.assertEqual(args.tool_y_names, "Alice")
+
     async def test_call_prompts_for_token_and_handles_exception(self):
         with (
             patch.object(

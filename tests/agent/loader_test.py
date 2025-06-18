@@ -46,6 +46,25 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             chmod(path, 0o644)
         await stack.aclose()
 
+    async def test_permission_error_when_access_denied(self):
+        with NamedTemporaryFile() as tmp:
+            path = tmp.name
+        stack = AsyncExitStack()
+        with (
+            patch("avalan.agent.loader.exists", return_value=True),
+            patch("avalan.agent.loader.access", return_value=False),
+        ):
+            with self.assertRaises(PermissionError):
+                await OrchestratorLoader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+        await stack.aclose()
+
     async def test_load_default_orchestrator(self):
         config = """
 [agent]
