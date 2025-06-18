@@ -59,6 +59,16 @@ class HuggingfaceHubTestCase(TestCase):
         execute()
         strategy.execute.assert_called_once()
 
+    def test_cache_delete_no_match(self):
+        scan_result = SimpleNamespace(repos=[])
+        with patch(
+            "avalan.model.hubs.huggingface.scan_cache_dir",
+            return_value=scan_result,
+        ) as scan_mock:
+            result = self.hub.cache_delete("model")
+        scan_mock.assert_called_once_with("/cache")
+        self.assertEqual(result, (None, None))
+
     def test_cache_scan(self):
         now = datetime.now().timestamp()
         files = [
@@ -174,6 +184,19 @@ class HuggingfaceHubTestCase(TestCase):
 
     def test_model_url(self):
         self.assertEqual(self.hub.model_url("m"), "https://huggingface.co/m")
+
+    def test_models(self):
+        info = SimpleNamespace(id="m")
+        self.hf_instance.list_models.return_value = [info]
+        with patch.object(HuggingfaceHub, "_model", return_value="x") as m:
+            models = list(
+                self.hub.models(filter="f", name="n", search="s", limit=1)
+            )
+        self.hf_instance.list_models.assert_called_once_with(
+            model_name="n", filter="f", search="s", limit=1, full=True
+        )
+        m.assert_called_once_with(info)
+        self.assertEqual(models, ["x"])
 
     def test_login(self):
         self.hub.login()
