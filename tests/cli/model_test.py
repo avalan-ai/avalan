@@ -1111,6 +1111,131 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         live.refresh.assert_called()
         theme.tokens.assert_called_once()
 
+    async def test_token_stream_pause_no_probabilities(self):
+        async def token_gen():
+            yield model_cmds.Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                return token_gen()
+
+        async def fake_frames(*_, **__):
+            yield (None, "frame1")
+
+        args = Namespace(
+            display_time_to_n_token=1,
+            display_pause=10,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        layout = Layout()
+        layout.split_column(Layout(name="main"))
+        layout["main"].update = MagicMock(name="update")
+        live = MagicMock()
+        logger = MagicMock()
+        stop_signal = asyncio.Event()
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        lm = SimpleNamespace(
+            model_id="m", tokenizer_config=None, input_token_count=lambda s: 1
+        )
+
+        with patch("avalan.cli.commands.model.sleep", new=AsyncMock()) as slp:
+            await model_cmds._token_stream(
+                live=live,
+                layout=layout["main"],
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="hi",
+                response=Resp(),
+                display_tokens=1,
+                dtokens_pick=1,
+                refresh_per_second=2,
+                stop_signal=stop_signal,
+                tool_events_limit=None,
+                with_stats=True,
+            )
+
+        self.assertTrue(stop_signal.is_set())
+        slp.assert_called()
+
+    async def test_token_stream_second_frames_pause(self):
+        async def token_gen():
+            yield model_cmds.Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                return token_gen()
+
+        async def fake_frames(*_, **__):
+            yield (model_cmds.Token(id=1, token="A"), "frame1")
+            yield (model_cmds.Token(id=2, token="B"), "frame2")
+
+        args = Namespace(
+            display_time_to_n_token=1,
+            display_pause=10,
+            start_thinking=False,
+            display_probabilities=True,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        layout = Layout()
+        layout.split_column(Layout(name="main"))
+        layout["main"].update = MagicMock(name="update")
+        live = MagicMock()
+        logger = MagicMock()
+        stop_signal = asyncio.Event()
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        lm = SimpleNamespace(
+            model_id="m", tokenizer_config=None, input_token_count=lambda s: 1
+        )
+
+        with patch("avalan.cli.commands.model.sleep", new=AsyncMock()) as slp:
+            await model_cmds._token_stream(
+                live=live,
+                layout=layout["main"],
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="hi",
+                response=Resp(),
+                display_tokens=1,
+                dtokens_pick=1,
+                refresh_per_second=2,
+                stop_signal=stop_signal,
+                tool_events_limit=None,
+                with_stats=True,
+            )
+
+        self.assertTrue(stop_signal.is_set())
+        slp.assert_called()
+
 
 if __name__ == "__main__":
     main()
