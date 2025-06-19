@@ -1121,6 +1121,113 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(theme.events.call_count, 2)
         live.refresh.assert_called()
 
+    async def test_event_stream_returns_when_no_event_manager_or_options(self):
+        orchestrator = SimpleNamespace(event_manager=None)
+        live = MagicMock()
+        group = SimpleNamespace(renderables=[MagicMock(), MagicMock()])
+        theme = MagicMock()
+
+        args = Namespace(display_events=True, display_tools=True)
+        await model_cmds._event_stream(
+            args,
+            live,
+            group,
+            0,
+            1,
+            orchestrator,
+            theme,
+            stop_signal=asyncio.Event(),
+        )
+
+        theme.events.assert_not_called()
+        live.refresh.assert_not_called()
+
+        orchestrator = SimpleNamespace(event_manager=MagicMock())
+        args = Namespace(display_events=False, display_tools=False)
+        await model_cmds._event_stream(
+            args,
+            live,
+            group,
+            0,
+            1,
+            orchestrator,
+            theme,
+            stop_signal=asyncio.Event(),
+        )
+        orchestrator.event_manager.listen.assert_not_called()
+        theme.events.assert_not_called()
+        live.refresh.assert_not_called()
+
+    async def test_event_stream_events_only(self):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        events = MagicMock(name="events")
+        tools = MagicMock(name="tools")
+        group = SimpleNamespace(renderables=[events, tools])
+        theme = MagicMock()
+        theme.events.return_value = "panel"
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+
+        args = Namespace(display_events=True, display_tools=False)
+        task = asyncio.create_task(
+            model_cmds._event_stream(
+                args,
+                live,
+                group,
+                0,
+                1,
+                orchestrator,
+                theme,
+                stop_signal=stop_signal,
+            )
+        )
+        await orchestrator.event_manager.trigger(Event(type=EventType.START))
+        await orchestrator.event_manager.trigger(Event(type=EventType.END))
+        await asyncio.sleep(0)
+        stop_signal.set()
+        await task
+
+        self.assertEqual(group.renderables[0], "panel")
+        self.assertEqual(theme.events.call_count, 2)
+        live.refresh.assert_called()
+
+    async def test_event_stream_tools_only(self):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        events = MagicMock(name="events")
+        tools = MagicMock(name="tools")
+        group = SimpleNamespace(renderables=[events, tools])
+        theme = MagicMock()
+        theme.events.return_value = "panel"
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+
+        args = Namespace(display_events=False, display_tools=True)
+        task = asyncio.create_task(
+            model_cmds._event_stream(
+                args,
+                live,
+                group,
+                0,
+                1,
+                orchestrator,
+                theme,
+                stop_signal=stop_signal,
+            )
+        )
+        await orchestrator.event_manager.trigger(
+            Event(type=EventType.TOOL_MODEL_RUN)
+        )
+        await orchestrator.event_manager.trigger(
+            Event(type=EventType.TOOL_RESULT)
+        )
+        await asyncio.sleep(0)
+        stop_signal.set()
+        await task
+
+        self.assertEqual(group.renderables[1], "panel")
+        self.assertEqual(theme.events.call_count, 2)
+        live.refresh.assert_called()
+
     async def test_token_stream_extra_frames_and_stop(self):
         async def token_gen():
             yield model_cmds.Token(id=1, token="A")
