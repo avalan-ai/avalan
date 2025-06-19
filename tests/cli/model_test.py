@@ -1228,6 +1228,36 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(theme.events.call_count, 2)
         live.refresh.assert_called()
 
+    async def test_event_stream_skip_unselected_tool(self):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        group = SimpleNamespace(renderables=[MagicMock(), MagicMock()])
+        theme = MagicMock()
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+
+        args = Namespace(display_events=True, display_tools=False)
+        task = asyncio.create_task(
+            model_cmds._event_stream(
+                args,
+                live,
+                group,
+                0,
+                1,
+                orchestrator,
+                theme,
+                stop_signal=stop_signal,
+            )
+        )
+        await orchestrator.event_manager.trigger(
+            Event(type=EventType.TOOL_RESULT)
+        )
+        await asyncio.sleep(0)
+        stop_signal.set()
+        await task
+
+        theme.events.assert_not_called()
+        live.refresh.assert_not_called()
+
     async def test_token_stream_extra_frames_and_stop(self):
         async def token_gen():
             yield model_cmds.Token(id=1, token="A")

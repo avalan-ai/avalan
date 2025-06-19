@@ -68,3 +68,21 @@ class NodeExtraTestCase(TestCase):
     def test_repr(self):
         node = Node("repr")
         self.assertEqual(repr(node), "<Node repr>")
+
+
+class NodeImportTestCase(TestCase):
+    def test_import_with_type_checking(self):
+        import importlib
+        import sys
+        import typing
+
+        module_name = "avalan.flow.node"
+        with self.subTest("import with TYPE_CHECKING=True"):
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+            typing.TYPE_CHECKING = True
+            try:
+                module = importlib.import_module(module_name)
+                self.assertTrue(hasattr(module, "Node"))
+            finally:
+                typing.TYPE_CHECKING = False
