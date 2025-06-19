@@ -284,6 +284,28 @@ class TextPartitionerShortTextTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(part2.total_tokens, 3)
         assert_array_equal(part2.embeddings, arange(3, 6))
 
+    async def test_call_with_leading_trailing_newlines(self):
+        model_mock = AsyncMock(spec=SentenceTransformerModel)
+        model_mock.tokenizer = MagicMock()
+        model_mock.tokenizer.encode.return_value = [1, 2]
+        model_mock.return_value = arange(2)
+
+        logger_mock = MagicMock(spec=Logger)
+        partitioner = TextPartitioner(
+            model_mock,
+            logger=logger_mock,
+            max_tokens=10,
+            overlap_size=1,
+            window_size=5,
+        )
+
+        text = "\n\nalpha beta\n\n"
+        partitions = await partitioner(text)
+
+        self.assertEqual(len(partitions), 1)
+        self.assertEqual(partitions[0].data, "alpha beta")
+        model_mock.assert_awaited_once_with("alpha beta")
+
 
 if __name__ == "__main__":
     main()
