@@ -2,7 +2,7 @@ from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from ...cli import get_input
+from ...cli import get_input, has_input
 from ...cli.commands.model import token_generation
 from ...entities import OrchestratorSettings
 from ...event import EventStats
@@ -15,7 +15,7 @@ from contextlib import AsyncExitStack
 from dataclasses import fields
 from jinja2 import Environment, FileSystemLoader
 from logging import Logger
-from os.path import dirname, join
+from os.path import dirname, join, getmtime
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
@@ -416,6 +416,10 @@ async def agent_run(
                 ),
             )
 
+        watch_spec = bool(specs_path and args.conversation and args.watch)
+        if watch_spec:
+            specs_mtime = getmtime(specs_path)
+
         if not args.quiet:
             assert orchestrator.engine_agent and orchestrator.engine.model_id
 
@@ -464,6 +468,55 @@ async def agent_run(
         input_string: str | None = None
         in_conversation = False
         while not input_string or in_conversation:
+            if watch_spec and not has_input(console):
+                new_mtime = getmtime(specs_path)
+                if new_mtime != specs_mtime:
+                    logger.debug("Reloading agent from %s", specs_path)
+                    orchestrator = await OrchestratorLoader.from_file(
+                        specs_path,
+                        agent_id=agent_id,
+                        hub=hub,
+                        logger=logger,
+                        participant_id=participant_id,
+                        stack=stack,
+                        disable_memory=args.no_session,
+                    )
+                    orchestrator.event_manager.add_listener(_event_listener)
+                    orchestrator = await stack.enter_async_context(
+                        orchestrator
+                    )
+                    if not args.quiet:
+                        is_local = not isinstance(
+                            orchestrator.engine, TextGenerationVendorModel
+                        )
+                        can_access = (
+                            args.skip_hub_access_check
+                            or not is_local
+                            or hub.can_access(orchestrator.engine.model_id)
+                        )
+                        models = [
+                            hub.model(model_id) if is_local else model_id
+                            for model_id in orchestrator.model_ids
+                        ]
+                        console.print(
+                            theme.agent(
+                                orchestrator,
+                                models=models,
+                                can_access=can_access,
+                            )
+                        )
+                    if not args.no_session:
+                        if session_id:
+                            await orchestrator.memory.continue_session(
+                                session_id=session_id,
+                                load_recent_messages=load_recent_messages,
+                                load_recent_messages_limit=load_recent_messages_limit,
+                            )
+                        else:
+                            await orchestrator.memory.start_session()
+                    specs_mtime = new_mtime
+                    in_conversation = False
+                    continue
             logger.debug(
                 "Waiting for new message to add to orchestrator's existing "
                 + str(orchestrator.memory.recent_message.size)

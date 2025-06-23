@@ -460,6 +460,15 @@ class CLI:
             help="Activate conversation mode with the agent",
         )
         agent_run_parser.add_argument(
+            "--watch",
+            action="store_true",
+            default=False,
+            help=(
+                "Reload agent when the specification file changes "
+                "(only with --conversation)"
+            ),
+        )
+        agent_run_parser.add_argument(
             "--id", type=str, help="Use given ID as the agent ID"
         )
         agent_session_group = agent_run_parser.add_mutually_exclusive_group()
