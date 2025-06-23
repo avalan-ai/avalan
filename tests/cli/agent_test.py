@@ -840,6 +840,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         second_orch.return_value = MagicMock(
             spec=agent_cmds.OrchestratorResponse
         )
+        self.dummy_stack.enter_async_context.side_effect = lambda o: o
 
         with (
             patch.object(agent_cmds, "get_input", side_effect=["hi", None]),
@@ -862,6 +863,54 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(ff.await_count, 2)
+
+    async def test_run_watch_start_session_after_reload(self):
+        self.args.conversation = True
+        self.args.watch = True
+        self.args.session = None
+        second_orch = AsyncMock()
+        second_orch.engine_agent = True
+        second_orch.engine = MagicMock(model_id="m")
+        second_orch.model_ids = ["m"]
+        second_orch.event_manager.add_listener = MagicMock()
+        second_orch.memory = MagicMock()
+        second_orch.memory.continue_session = AsyncMock()
+        second_orch.memory.start_session = AsyncMock()
+        second_orch.memory.has_recent_message = False
+        second_orch.memory.has_permanent_message = False
+        second_orch.memory.recent_message = MagicMock(is_empty=True, size=0)
+        self.orch.return_value = MagicMock(
+            spec=agent_cmds.OrchestratorResponse
+        )
+        second_orch.return_value = MagicMock(
+            spec=agent_cmds.OrchestratorResponse
+        )
+        self.dummy_stack.enter_async_context.side_effect = lambda o: o
+
+        with (
+            patch.object(agent_cmds, "get_input", side_effect=["hi", None]),
+            patch.object(agent_cmds, "has_input", return_value=False),
+            patch.object(agent_cmds, "getmtime", side_effect=[1, 1, 2, 2]),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(side_effect=[self.orch, second_orch]),
+            ) as ff,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.assertEqual(ff.await_count, 2)
+        self.orch.memory.start_session.assert_awaited_once()
+        second_orch.memory.start_session.assert_awaited_once()
+        tg.assert_awaited_once()
 
     async def test_event_listener_counts_events(self):
         captured = {}
