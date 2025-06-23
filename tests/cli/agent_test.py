@@ -744,6 +744,31 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.console.print.assert_any_call("agent_panel")
         self.console.print.assert_any_call("recent_panel")
 
+    async def test_run_start_session_without_recent_messages(self):
+        self.args.session = None
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.orch.assert_not_awaited()
+        self.orch.memory.start_session.assert_awaited_once()
+        self.orch.memory.continue_session.assert_not_awaited()
+        self.console.print.assert_called_once_with("agent_panel")
+
     async def test_run_quiet_prints_output(self):
         self.args.quiet = True
         output = AsyncMock()
