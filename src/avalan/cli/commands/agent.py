@@ -1,4 +1,5 @@
 from ...agent.loader import OrchestratorLoader
+from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
@@ -347,78 +348,68 @@ async def agent_run(
         else:
             event_stats.triggers[event.type] += 1
 
-    async with AsyncExitStack() as stack:
-        with console.status(
-            _("Loading agent..."),
-            spinner=theme.get_spinner("agent_loading"),
-            refresh_per_second=refresh_per_second,
-        ):
-            if specs_path:
-                logger.debug(
-                    "Loading agent from %s for participant %s",
-                    specs_path,
-                    participant_id,
-                )
-
-                orchestrator = await OrchestratorLoader.from_file(
-                    specs_path,
-                    agent_id=agent_id,
-                    hub=hub,
-                    logger=logger,
-                    participant_id=participant_id,
-                    stack=stack,
-                    disable_memory=args.no_session,
-                )
-            else:
-                assert args.engine_uri and args.role, (
-                    "--engine-uri and --role required when no specifications"
-                    " file"
-                )
-                assert not args.specifications_file or not args.engine_uri
-                memory_recent = (
-                    args.memory_recent
-                    if args.memory_recent is not None
-                    else not args.no_session
-                )
-                settings = get_orchestrator_settings(
-                    args,
-                    agent_id=agent_id or uuid4(),
-                    memory_recent=memory_recent,
-                    tools=args.tool,
-                )
-                logger.debug("Loading agent from inline settings")
-                browser_settings = get_tool_settings(
-                    args, prefix="browser", settings_cls=BrowserToolSettings
-                )
-                orchestrator = await OrchestratorLoader.load_from_settings(
-                    settings,
-                    hub=hub,
-                    logger=logger,
-                    participant_id=participant_id,
-                    stack=stack,
-                    browser_settings=browser_settings,
-                )
-            orchestrator.event_manager.add_listener(_event_listener)
-
-            orchestrator = await stack.enter_async_context(orchestrator)
-
+    async def _init_orchestrator() -> Orchestrator:
+        if specs_path:
             logger.debug(
-                "Agent loaded from %s, models used: %s, with recent message "
-                "memory: %s, with permanent message memory: %s",
+                "Loading agent from %s for participant %s",
                 specs_path,
-                orchestrator.model_ids,
-                "yes" if orchestrator.memory.has_recent_message else "no",
-                (
-                    "yes, with session #"
-                    + str(orchestrator.memory.permanent_message.session_id)
-                    if orchestrator.memory.has_permanent_message
-                    else "no"
-                ),
+                participant_id,
             )
 
-        watch_spec = bool(specs_path and args.conversation and args.watch)
-        if watch_spec:
-            specs_mtime = getmtime(specs_path)
+            orchestrator = await OrchestratorLoader.from_file(
+                specs_path,
+                agent_id=agent_id,
+                hub=hub,
+                logger=logger,
+                participant_id=participant_id,
+                stack=stack,
+                disable_memory=args.no_session,
+            )
+        else:
+            assert (
+                args.engine_uri and args.role
+            ), "--engine-uri and --role required when no specifications file"
+            assert not args.specifications_file or not args.engine_uri
+            memory_recent = (
+                args.memory_recent
+                if args.memory_recent is not None
+                else not args.no_session
+            )
+            settings = get_orchestrator_settings(
+                args,
+                agent_id=agent_id or uuid4(),
+                memory_recent=memory_recent,
+                tools=args.tool,
+            )
+            logger.debug("Loading agent from inline settings")
+            browser_settings = get_tool_settings(
+                args, prefix="browser", settings_cls=BrowserToolSettings
+            )
+            orchestrator = await OrchestratorLoader.load_from_settings(
+                settings,
+                hub=hub,
+                logger=logger,
+                participant_id=participant_id,
+                stack=stack,
+                browser_settings=browser_settings,
+            )
+        orchestrator.event_manager.add_listener(_event_listener)
+
+        orchestrator = await stack.enter_async_context(orchestrator)
+
+        logger.debug(
+            "Agent loaded from %s, models used: %s, with recent message "
+            "memory: %s, with permanent message memory: %s",
+            specs_path,
+            orchestrator.model_ids,
+            "yes" if orchestrator.memory.has_recent_message else "no",
+            (
+                "yes, with session #"
+                + str(orchestrator.memory.permanent_message.session_id)
+                if orchestrator.memory.has_permanent_message
+                else "no"
+            ),
+        )
 
         if not args.quiet:
             assert orchestrator.engine_agent and orchestrator.engine.model_id
@@ -465,6 +456,20 @@ async def agent_run(
                 )
             )
 
+        return orchestrator
+
+    async with AsyncExitStack() as stack:
+        with console.status(
+            _("Loading agent..."),
+            spinner=theme.get_spinner("agent_loading"),
+            refresh_per_second=refresh_per_second,
+        ):
+            orchestrator = await _init_orchestrator()
+
+        watch_spec = bool(specs_path and args.conversation and args.watch)
+        if watch_spec:
+            specs_mtime = getmtime(specs_path)
+
         input_string: str | None = None
         in_conversation = False
         while not input_string or in_conversation:
@@ -472,48 +477,7 @@ async def agent_run(
                 new_mtime = getmtime(specs_path)
                 if new_mtime != specs_mtime:
                     logger.debug("Reloading agent from %s", specs_path)
-                    orchestrator = await OrchestratorLoader.from_file(
-                        specs_path,
-                        agent_id=agent_id,
-                        hub=hub,
-                        logger=logger,
-                        participant_id=participant_id,
-                        stack=stack,
-                        disable_memory=args.no_session,
-                    )
-                    orchestrator.event_manager.add_listener(_event_listener)
-                    orchestrator = await stack.enter_async_context(
-                        orchestrator
-                    )
-                    if not args.quiet:
-                        is_local = not isinstance(
-                            orchestrator.engine, TextGenerationVendorModel
-                        )
-                        can_access = (
-                            args.skip_hub_access_check
-                            or not is_local
-                            or hub.can_access(orchestrator.engine.model_id)
-                        )
-                        models = [
-                            hub.model(model_id) if is_local else model_id
-                            for model_id in orchestrator.model_ids
-                        ]
-                        console.print(
-                            theme.agent(
-                                orchestrator,
-                                models=models,
-                                can_access=can_access,
-                            )
-                        )
-                    if not args.no_session:
-                        if session_id:
-                            await orchestrator.memory.continue_session(
-                                session_id=session_id,
-                                load_recent_messages=load_recent_messages,
-                                load_recent_messages_limit=load_recent_messages_limit,
-                            )
-                        else:
-                            await orchestrator.memory.start_session()
+                    orchestrator = await _init_orchestrator()
                     specs_mtime = new_mtime
                     in_conversation = False
                     continue
