@@ -1,12 +1,3 @@
-from argparse import Namespace
-from asyncio import (
-    as_completed,
-    create_task,
-    gather,
-    sleep,
-    to_thread,
-    Event as EventSignal,
-)
 from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType, TOOL_TYPES
 from ...cli import get_input, confirm
@@ -21,11 +12,21 @@ from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...secrets import KeyringSecrets
 from . import get_model_settings
-from rich.prompt import Prompt
+from argparse import Namespace
+from asyncio import (
+    as_completed,
+    create_task,
+    gather,
+    sleep,
+    to_thread,
+    Event as EventSignal,
+)
+from datetime import datetime, timezone
 from logging import Logger
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
+from rich.prompt import Prompt
 from rich.spinner import Spinner
 from rich.theme import Theme
 from time import perf_counter
@@ -343,13 +344,13 @@ async def token_generation(
     if not orchestrator or (
         not args.display_events and not args.display_tools
     ):
-        with Live(refresh_per_second=refresh_per_second) as live:
+        with Live(refresh_per_second=refresh_per_second, screen=args.record) as live:
             await _token_stream(
+                args,
+                console,
                 live,
                 None,
                 None,
-                args,
-                console,
                 theme,
                 logger,
                 orchestrator,
@@ -379,22 +380,23 @@ async def token_generation(
         await gather(
             _event_stream(
                 args,
+                console,
                 live,
                 group,
                 events_group_index,
                 tools_group_index,
                 orchestrator,
-                theme=theme,
+                theme,
                 events_height=events_height,
                 tools_height=tools_height,
                 stop_signal=stop_signal,
             ),
             _token_stream(
+                args,
+                console,
                 live,
                 group,
                 tokens_group_index,
-                args,
-                console,
                 theme,
                 logger,
                 orchestrator,
@@ -414,6 +416,7 @@ async def token_generation(
 
 async def _event_stream(
     args: Namespace,
+    console: Console,
     live: Live,
     group: Group,
     events_group_index: int,
@@ -451,18 +454,22 @@ async def _event_stream(
         if not events_renderable:
             continue
 
-        group.renderables[
-            tools_group_index if tool_view else events_group_index
-        ] = events_renderable
-        live.refresh()
+        _render_frame(
+            args,
+            console,
+            live,
+            events_renderable,
+            group,
+            tools_group_index if tool_view else events_group_index,
+        )
 
 
 async def _token_stream(
+    args: Namespace,
+    console: Console,
     live: Live,
     group: Group | None,
     tokens_group_index: int | None,
-    args: Namespace,
-    console: Console,
     theme: Theme,
     logger: Logger,
     orchestrator: Orchestrator | None,
@@ -477,7 +484,7 @@ async def _token_stream(
     stop_signal: EventSignal | None,
     tool_events_limit: int | None,
     with_stats: bool = True,
-):
+) -> None:
     display_time_to_n_token = args.display_time_to_n_token or 256
     display_pause = (
         args.display_pause
@@ -636,11 +643,7 @@ async def _token_stream(
         token_frames = [token_frame_list[0]]
 
         for current_dtoken, frame in token_frames:
-            if group:
-                group.renderables[tokens_group_index] = frame
-                live.refresh()
-            else:
-                live.update(frame)
+            _render_frame(args, console, live, frame, group, tokens_group_index)
 
             if current_dtoken and current_dtoken != last_current_dtoken:
                 last_current_dtoken = current_dtoken
@@ -664,11 +667,7 @@ async def _token_stream(
         and len(token_frame_list) > 0
     ):
         for current_dtoken, frame in token_frame_list[1:]:
-            if group:
-                group.renderables[tokens_group_index] = frame
-                live.refresh()
-            else:
-                live.update(frame)
+            _render_frame(args, console, live, frame, group, tokens_group_index)
 
             if current_dtoken and display_pause > 0:
                 await sleep(display_pause / 1000)
@@ -677,3 +676,25 @@ async def _token_stream(
 
     if stop_signal:
         stop_signal.set()
+
+
+def _render_frame(
+    args: Namespace,
+    console: Console,
+    live: Live,
+    frame: RenderableType,
+    group: Group | None = None,
+    group_index: int | None = None,
+) -> None:
+    if group and group_index is not None:
+        group.renderables[group_index] = frame
+        live.refresh()
+    else:
+        live.update(frame)
+
+    if args.record:
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y%m%d%H%M%S")
+        ms = now.microsecond // 1000
+        filename = f"avalan-screenshot-{ts}-{ms:03d}.svg"
+        console.save_svg(filename, clear=True)

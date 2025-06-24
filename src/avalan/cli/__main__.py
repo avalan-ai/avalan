@@ -174,6 +174,15 @@ class CLI:
             + " automatically)",
         )
         global_parser.add_argument(
+            "--record",
+            action="store_true",
+            default=False,
+            help=(
+                "If specified, the current console output will be regularly "
+                "saved to SVG files."
+            ),
+        )
+        global_parser.add_argument(
             "--revision",
             type=str,
             help="Model revision to use",
@@ -1257,7 +1266,10 @@ class CLI:
         assert self._logger is not None and isinstance(self._logger, Logger)
         theme = FancyTheme(translator.gettext, translator.ngettext)
         _ = theme._
-        console = Console(theme=Theme(styles=theme.get_styles()))
+        console = Console(
+            theme=Theme(styles=theme.get_styles()),
+            record=args.record
+        )
 
         if args.help_full:
             return self._help(console, self._parser)
