@@ -344,7 +344,9 @@ async def token_generation(
     if not orchestrator or (
         not args.display_events and not args.display_tools
     ):
-        with Live(refresh_per_second=refresh_per_second, screen=args.record) as live:
+        with Live(
+            refresh_per_second=refresh_per_second, screen=args.record
+        ) as live:
             await _token_stream(
                 args,
                 console,
@@ -376,7 +378,9 @@ async def token_generation(
     tools_group_index = 1
     tokens_group_index = 2
 
-    with Live(group, refresh_per_second=refresh_per_second) as live:
+    with Live(
+        group, refresh_per_second=refresh_per_second, screen=args.record
+    ) as live:
         await gather(
             _event_stream(
                 args,
@@ -643,7 +647,9 @@ async def _token_stream(
         token_frames = [token_frame_list[0]]
 
         for current_dtoken, frame in token_frames:
-            _render_frame(args, console, live, frame, group, tokens_group_index)
+            _render_frame(
+                args, console, live, frame, group, tokens_group_index
+            )
 
             if current_dtoken and current_dtoken != last_current_dtoken:
                 last_current_dtoken = current_dtoken
@@ -667,7 +673,9 @@ async def _token_stream(
         and len(token_frame_list) > 0
     ):
         for current_dtoken, frame in token_frame_list[1:]:
-            _render_frame(args, console, live, frame, group, tokens_group_index)
+            _render_frame(
+                args, console, live, frame, group, tokens_group_index
+            )
 
             if current_dtoken and display_pause > 0:
                 await sleep(display_pause / 1000)
