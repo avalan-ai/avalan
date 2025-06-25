@@ -96,7 +96,7 @@ avalan model run meta-llama/Meta-Llama-3-8B-Instruct --locale es
 
 ![Running the CLI in spanish](https://avalan.ai/images/spanish_translation.png)
 
-You'll need your Huggingface access token exported as `HF_ACCESS_TOKEN`.
+You'll need your Huggingface access token exported as `HF_TOKEN`.
 
 > [!TIP]
 > If you are on an Apple silicon chip, run the
@@ -111,8 +111,8 @@ usage: avalan [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
               [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
               [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
               [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
-              [--quiet] [--revision REVISION] [--skip-hub-access-check]
-              [--verbose] [--version]
+              [--quiet] [--record] [--revision REVISION]
+              [--skip-hub-access-check] [--verbose] [--version]
               [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
               [--help-full]
               {agent,cache,deploy,flow,memory,model,tokenizer,train} ...
@@ -146,6 +146,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -163,7 +165,7 @@ usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                    [--no-repl] [--quiet] [--revision REVISION]
+                    [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {message,run,serve,init} ...
@@ -197,6 +199,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -214,7 +218,7 @@ usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
-                            [--login] [--no-repl] [--quiet]
+                            [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
@@ -249,6 +253,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -267,7 +273,7 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--hf-token HF_TOKEN] [--locale LOCALE]
                                    [--loader-class {auto,gemma3,mistral3}]
                                    [--locales LOCALES] [--low-cpu-mem-usage]
-                                   [--login] [--no-repl] [--quiet]
+                                   [--login] [--no-repl] [--quiet] [--record]
                                    [--revision REVISION]
                                    [--skip-hub-access-check] [--verbose]
                                    [--version]
@@ -337,6 +343,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -416,7 +424,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                        [--no-repl] [--quiet] [--revision REVISION]
+                        [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         [--display-events] [--display-pause [DISPLAY_PAUSE]]
@@ -426,7 +434,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
-                        [--conversation] [--id ID] [--no-session |
+                        [--conversation] [--watch] [--id ID] [--no-session |
                         --session SESSION] [--skip-load-recent-messages]
                         [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
                         [--participant PARTICIPANT] [--stats] [--sync]
@@ -491,6 +499,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -525,6 +535,8 @@ options:
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
   --conversation        Activate conversation mode with the agent
+  --watch               Reload agent when the specification file changes (only
+                        with --conversation)
   --id ID               Use given ID as the agent ID
   --no-session          If specified, don't use sessions in persistent message
                         memory
@@ -605,8 +617,9 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                           [--hf-token HF_TOKEN] [--locale LOCALE]
                           [--loader-class {auto,gemma3,mistral3}]
                           [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                          [--no-repl] [--quiet] [--revision REVISION]
-                          [--skip-hub-access-check] [--verbose] [--version]
+                          [--no-repl] [--quiet] [--record]
+                          [--revision REVISION] [--skip-hub-access-check]
+                          [--verbose] [--version]
                           [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                           [--host HOST] [--port PORT]
                           [--prefix-mcp PREFIX_MCP]
@@ -673,6 +686,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -752,8 +767,9 @@ usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
                          [--loader-class {auto,gemma3,mistral3}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                         [--no-repl] [--quiet] [--revision REVISION]
-                         [--skip-hub-access-check] [--verbose] [--version]
+                         [--no-repl] [--quiet] [--record]
+                         [--revision REVISION] [--skip-hub-access-check]
+                         [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE]
                          [--task TASK] [--instructions INSTRUCTIONS]
@@ -796,6 +812,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -849,7 +867,7 @@ usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                    [--no-repl] [--quiet] [--revision REVISION]
+                    [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {delete,download,list} ...
@@ -883,6 +901,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -900,8 +920,9 @@ usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                            [--hf-token HF_TOKEN] [--locale LOCALE]
                            [--loader-class {auto,gemma3,mistral3}]
                            [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                           [--no-repl] [--quiet] [--revision REVISION]
-                           [--skip-hub-access-check] [--verbose] [--version]
+                           [--no-repl] [--quiet] [--record]
+                           [--revision REVISION] [--skip-hub-access-check]
+                           [--verbose] [--version]
                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                            [--delete] --model MODEL
                            [--delete-revision DELETE_REVISION]
@@ -932,6 +953,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -955,7 +978,7 @@ usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                              [--hf-token HF_TOKEN] [--locale LOCALE]
                              [--loader-class {auto,gemma3,mistral3}]
                              [--locales LOCALES] [--low-cpu-mem-usage]
-                             [--login] [--no-repl] [--quiet]
+                             [--login] [--no-repl] [--quiet] [--record]
                              [--revision REVISION] [--skip-hub-access-check]
                              [--verbose] [--version]
                              [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
@@ -987,6 +1010,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1005,8 +1030,9 @@ usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
                          [--loader-class {auto,gemma3,mistral3}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                         [--no-repl] [--quiet] [--revision REVISION]
-                         [--skip-hub-access-check] [--verbose] [--version]
+                         [--no-repl] [--quiet] [--record]
+                         [--revision REVISION] [--skip-hub-access-check]
+                         [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          [--model MODEL] [--summary]
 
@@ -1036,6 +1062,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1055,7 +1083,7 @@ usage: avalan deploy [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                      [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                      [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                     [--no-repl] [--quiet] [--revision REVISION]
+                     [--no-repl] [--quiet] [--record] [--revision REVISION]
                      [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                      {run} ...
@@ -1089,6 +1117,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1106,8 +1136,9 @@ usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
                          [--loader-class {auto,gemma3,mistral3}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                         [--no-repl] [--quiet] [--revision REVISION]
-                         [--skip-hub-access-check] [--verbose] [--version]
+                         [--no-repl] [--quiet] [--record]
+                         [--revision REVISION] [--skip-hub-access-check]
+                         [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          deployment
 
@@ -1140,6 +1171,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1156,7 +1189,7 @@ usage: avalan flow [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                    [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                   [--no-repl] [--quiet] [--revision REVISION]
+                   [--no-repl] [--quiet] [--record] [--revision REVISION]
                    [--skip-hub-access-check] [--verbose] [--version]
                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                    {run} ...
@@ -1190,6 +1223,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1207,7 +1242,7 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                        [--locale LOCALE]
                        [--loader-class {auto,gemma3,mistral3}]
                        [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                       [--no-repl] [--quiet] [--revision REVISION]
+                       [--no-repl] [--quiet] [--record] [--revision REVISION]
                        [--skip-hub-access-check] [--verbose] [--version]
                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                        flow
@@ -1241,6 +1276,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1257,7 +1294,7 @@ usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                      [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                      [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                     [--no-repl] [--quiet] [--revision REVISION]
+                     [--no-repl] [--quiet] [--record] [--revision REVISION]
                      [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                      {embeddings,search,document} ...
@@ -1291,6 +1328,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1308,7 +1347,7 @@ usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                                 [--hf-token HF_TOKEN] [--locale LOCALE]
                                 [--loader-class {auto,gemma3,mistral3}]
                                 [--locales LOCALES] [--low-cpu-mem-usage]
-                                [--login] [--no-repl] [--quiet]
+                                [--login] [--no-repl] [--quiet] [--record]
                                 [--revision REVISION]
                                 [--skip-hub-access-check] [--verbose]
                                 [--version]
@@ -1356,6 +1395,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1401,7 +1442,7 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
-                            [--login] [--no-repl] [--quiet]
+                            [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
@@ -1447,6 +1488,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1509,7 +1552,7 @@ usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
                                     [--hf-token HF_TOKEN] [--locale LOCALE]
                                     [--loader-class {auto,gemma3,mistral3}]
                                     [--locales LOCALES] [--low-cpu-mem-usage]
-                                    [--login] [--no-repl] [--quiet]
+                                    [--login] [--no-repl] [--quiet] [--record]
                                     [--revision REVISION]
                                     [--skip-hub-access-check] [--verbose]
                                     [--version]
@@ -1561,6 +1604,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1626,7 +1671,7 @@ usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
-                            [--login] [--no-repl] [--quiet]
+                            [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
@@ -1665,6 +1710,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1695,7 +1742,7 @@ usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
-                            [--login] [--no-repl] [--quiet]
+                            [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
@@ -1733,6 +1780,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1760,7 +1809,7 @@ usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                        [--no-repl] [--quiet] [--revision REVISION]
+                        [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         [--base-url BASE_URL] [--load]
@@ -1813,6 +1862,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1898,8 +1949,9 @@ usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                            [--hf-token HF_TOKEN] [--locale LOCALE]
                            [--loader-class {auto,gemma3,mistral3}]
                            [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                           [--no-repl] [--quiet] [--revision REVISION]
-                           [--skip-hub-access-check] [--verbose] [--version]
+                           [--no-repl] [--quiet] [--record]
+                           [--revision REVISION] [--skip-hub-access-check]
+                           [--verbose] [--version]
                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                            [--search SEARCH] [--filter FILTER] [--limit LIMIT]
 
@@ -1929,6 +1981,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -1949,7 +2003,7 @@ usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                               [--hf-token HF_TOKEN] [--locale LOCALE]
                               [--loader-class {auto,gemma3,mistral3}]
                               [--locales LOCALES] [--low-cpu-mem-usage]
-                              [--login] [--no-repl] [--quiet]
+                              [--login] [--no-repl] [--quiet] [--record]
                               [--revision REVISION] [--skip-hub-access-check]
                               [--verbose] [--version]
                               [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
@@ -1987,6 +2041,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -2017,7 +2073,7 @@ usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                        [--no-repl] [--quiet] [--revision REVISION]
+                        [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         --tokenizer TOKENIZER [--save SAVE]
@@ -2049,6 +2105,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -2072,7 +2130,7 @@ usage: avalan train [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                    [--no-repl] [--quiet] [--revision REVISION]
+                    [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {run} ...
@@ -2106,6 +2164,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -2123,7 +2183,7 @@ usage: avalan train run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                        [--no-repl] [--quiet] [--revision REVISION]
+                        [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         training
@@ -2157,6 +2217,8 @@ options:
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check

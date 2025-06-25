@@ -31,5 +31,5 @@ Start a new poetry project, specify the python version, and add avalan with
 ```bash
 mkdir avalan-test/ && cd avalan-test/
 poetry init --no-interaction --python=">=3.12,<3.14"
-poetry add "avalan[all]"
+poetry add "avalan[all]" --no-cache
 ```
