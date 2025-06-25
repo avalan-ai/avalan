@@ -1267,8 +1267,7 @@ class CLI:
         theme = FancyTheme(translator.gettext, translator.ngettext)
         _ = theme._
         console = Console(
-            theme=Theme(styles=theme.get_styles()),
-            record=args.record
+            theme=Theme(styles=theme.get_styles()), record=args.record
         )
 
         if args.help_full:
