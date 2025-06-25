@@ -115,7 +115,7 @@ class CLI:
         global_parser.add_argument(
             "--hf-token",
             type=str,
-            default=getenv("HF_ACCESS_TOKEN"),
+            default=getenv("HF_TOKEN"),
             help="Your Huggingface access token",
         )
         global_parser.add_argument(
