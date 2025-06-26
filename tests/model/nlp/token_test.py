@@ -1,4 +1,4 @@
-from avalan.entities import TransformerEngineSettings
+from avalan.entities import TransformerEngineSettings, ParallelStrategy
 from avalan.model.transformer import AutoTokenizer
 from avalan.model.engine import Engine
 from avalan.model.nlp.token import (
@@ -110,10 +110,57 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 local_files_only=False,
                 token=None,
                 device_map=Engine.get_default_device(),
+                tp_plan=None,
             )
             auto_tokenizer_mock.assert_called_once_with(
                 self.model_id, use_fast=True
             )
+
+    def test_instantiation_with_parallel(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForTokenClassification, "from_pretrained"
+            ) as auto_model_mock,
+        ):
+            tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
+            tokenizer_mock.name_or_path = self.model_id
+            tokenizer_mock.__len__.return_value = 1
+            tokenizer_mock.model_max_length = 77
+            auto_tokenizer_mock.return_value = tokenizer_mock
+
+            model_instance = MagicMock(spec=PreTrainedModel)
+            config_mock = MagicMock()
+            type(model_instance).config = PropertyMock(
+                return_value=config_mock
+            )
+            auto_model_mock.return_value = model_instance
+
+            model = TokenClassificationModel(
+                self.model_id,
+                TransformerEngineSettings(
+                    auto_load_model=True,
+                    auto_load_tokenizer=True,
+                    parallel=ParallelStrategy.COLWISE,
+                ),
+                logger=logger_mock,
+            )
+            auto_model_mock.assert_called_once_with(
+                self.model_id,
+                cache_dir=None,
+                attn_implementation=None,
+                trust_remote_code=False,
+                torch_dtype="auto",
+                state_dict=None,
+                local_files_only=False,
+                token=None,
+                device_map=Engine.get_default_device(),
+                tp_plan="colwise",
+            )
+            self.assertIs(model.model, model_instance)
 
 
 class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):

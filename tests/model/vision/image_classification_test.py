@@ -67,6 +67,7 @@ class ImageClassificationModelInstantiationTestCase(TestCase):
             model_mock.assert_called_once_with(
                 self.model_id,
                 device_map=Engine.get_default_device(),
+                tp_plan=None,
             )
 
 

@@ -29,6 +29,7 @@ from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
     DistanceType,
+    ParallelStrategy,
     TextGenerationLoaderClass,
     User,
     WeightType,
@@ -102,6 +103,12 @@ class CLI:
             default=default_device,
             help="Device to use (cpu, cuda, mps). Defaults to "
             + default_device,
+        )
+        global_parser.add_argument(
+            "--parallel",
+            type=str,
+            choices=[p.value for p in ParallelStrategy],
+            help="Tensor parallelism strategy to use",
         )
         global_parser.add_argument(
             "--disable-loading-progress-bar",

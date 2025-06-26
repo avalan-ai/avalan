@@ -80,6 +80,7 @@ class SequenceToSequenceModelInstantiationTestCase(TestCase):
                 local_files_only=False,
                 token=None,
                 device_map=Engine.get_default_device(),
+                tp_plan=None,
             )
             auto_tokenizer_mock.assert_called_once_with(
                 self.model_id,

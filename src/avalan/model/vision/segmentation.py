@@ -1,6 +1,7 @@
 from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
+from ...model.engine import Engine
 from PIL import Image
 from torch import unique
 from transformers import (
@@ -21,6 +22,7 @@ class SemanticSegmentationModel(BaseVisionModel):
         model = AutoModelForSemanticSegmentation.from_pretrained(
             self._model_id,
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         model.eval()
         return model
