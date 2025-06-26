@@ -68,6 +68,7 @@ class ObjectDetectionModelInstantiationTestCase(TestCase):
                 self.model_id,
                 revision="no_timm",
                 device_map=Engine.get_default_device(),
+                tp_plan=None,
             )
 
 

@@ -64,6 +64,7 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
                 pad_token_id=processor_instance.tokenizer.pad_token_id,
                 ctc_loss_reduction="mean",
                 device_map=Engine.get_default_device(),
+                tp_plan=None,
             )
 
 

@@ -2,6 +2,7 @@ from ...compat import override
 from ...entities import Input
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
+from ...model.engine import Engine
 from contextlib import nullcontext
 from numpy import ndarray
 from torch import inference_mode
@@ -46,6 +47,7 @@ class SentenceTransformerModel(BaseNLPModel):
                     True if self._device else self._settings.low_cpu_mem_usage
                 ),
                 "device_map": self._device,
+                "tp_plan": Engine._get_tp_plan(self._settings.parallel),
             },
             backend="torch",
             similarity_fn_name=None,

@@ -91,6 +91,7 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
                             "torch_dtype": "auto",
                             "low_cpu_mem_usage": True,
                             "device_map": Engine.get_default_device(),
+                            "tp_plan": None,
                         },
                         "backend": "torch",
                         "similarity_fn_name": None,

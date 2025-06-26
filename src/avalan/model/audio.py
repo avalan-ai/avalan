@@ -50,6 +50,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             pad_token_id=self._processor.tokenizer.pad_token_id,
             ctc_loss_reduction="mean",
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 

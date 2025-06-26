@@ -76,6 +76,20 @@ class DistanceType(StrEnum):
     PEARSON = "pearson"
 
 
+class ParallelStrategy(StrEnum):
+    COLWISE = "colwise"
+    ROWWISE = "rowwise"
+    COLWISE_REP = "colwise_rep"
+    ROWWISE_REP = "rowwise_rep"
+    LOCAL_COLWISE = "local_colwise"
+    LOCAL_ROWWISE = "local_rowwise"
+    LOCAL = "local"
+    GATHER = "gather"
+    LOCAL_PACKED_ROWWISE = "local_packed_rowwise"
+    SEQUENCE_PARALLEL = "sequence_parallel"
+    REPLICATE = "replicate"
+
+
 @dataclass(frozen=True, kw_only=True)
 class EngineSettings:
     auto_load_model: bool = True
@@ -85,6 +99,7 @@ class EngineSettings:
     device: str | None = None
     disable_loading_progress_bar: bool = True
     enable_eval: bool = True
+    parallel: ParallelStrategy | dict[str, ParallelStrategy] | None = None
     trust_remote_code: bool = False
     tokenizer_name_or_path: str | None = None
 

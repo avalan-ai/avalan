@@ -56,6 +56,15 @@ class CliInitTestCase(TestCase):
         self.assertTrue(hasattr(args, "help_full"))
 
 
+class CliParallelOptionTestCase(TestCase):
+    def test_parallel_argument(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+        args = cli._parser.parse_args(["--parallel", "colwise"])
+        self.assertEqual(args.parallel, "colwise")
+
+
 class CliCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from logging import getLogger

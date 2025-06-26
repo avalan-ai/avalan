@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from ..entities import (
     EngineSettings,
+    ParallelStrategy,
     Input,
     ModelConfig,
     SentenceTransformerModelConfig,
@@ -60,6 +61,16 @@ class Engine(ABC):
         "i64": 8,
         "ui8": 1,
     }
+
+    @staticmethod
+    def _get_tp_plan(
+        parallel: ParallelStrategy | dict[str, ParallelStrategy] | None,
+    ) -> str | dict[str, str] | None:
+        if parallel is None:
+            return None
+        if isinstance(parallel, dict):
+            return {k: v.value for k, v in parallel.items()}
+        return parallel.value
 
     def __init__(
         self,

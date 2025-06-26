@@ -1,6 +1,7 @@
 from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
+from ...model.engine import Engine
 from torch import argmax, inference_mode
 from transformers import AutoModelForTokenClassification, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
@@ -29,6 +30,7 @@ class TokenClassificationModel(BaseNLPModel):
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 

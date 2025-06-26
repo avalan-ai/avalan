@@ -13,6 +13,7 @@ from ....entities import (
 )
 from ....model import TextGenerationResponse, TextGenerationVendor
 from ....model.nlp import BaseNLPModel
+from ....model.engine import Engine
 from ....tool.manager import ToolManager
 from dataclasses import replace
 from importlib.util import find_spec
@@ -93,6 +94,7 @@ class TextGenerationModel(BaseNLPModel):
             token=self._settings.access_token,
             quantization_config=bnb_config,
             revision=self._settings.revision,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 

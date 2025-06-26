@@ -123,6 +123,7 @@ class TextGenerationModelTestCase(TestCase):
                     token=None,
                     quantization_config=None,
                     revision=None,
+                    tp_plan=None,
                 )
                 auto_tokenizer_mock.assert_called_once_with(
                     model_id, use_fast=True

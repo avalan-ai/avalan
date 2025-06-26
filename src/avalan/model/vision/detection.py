@@ -3,6 +3,7 @@ from ...entities import ImageEntity, EngineSettings
 from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.image import ImageClassificationModel
+from ...model.engine import Engine
 from logging import Logger
 from PIL import Image
 from torch import tensor
@@ -36,6 +37,7 @@ class ObjectDetectionModel(ImageClassificationModel):
             self._model_id,
             revision=self._revision,
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 

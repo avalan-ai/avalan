@@ -26,6 +26,7 @@ def get_model_settings(
         low_cpu_mem_usage=args.low_cpu_mem_usage,
         quiet=args.quiet,
         revision=args.revision,
+        parallel=args.parallel if hasattr(args, "parallel") else None,
         special_tokens=(
             args.special_token
             if args.special_token and isinstance(args.special_token, list)

@@ -44,6 +44,7 @@ class CliModelTestCase(TestCase):
             "base_url": "http://localhost:9001/v1",
             "attention": "flash",
             "device": "cpu",
+            "parallel": None,
             "disable_loading_progress_bar": True,
             "is_sentence_transformer": True,
             "loader_class": "auto",

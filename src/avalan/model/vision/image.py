@@ -9,6 +9,7 @@ from ...entities import (
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
+from ...model.engine import Engine
 from ...model.transformer import TransformerModel
 from PIL import Image
 from torch import inference_mode, Tensor
@@ -38,6 +39,7 @@ class ImageClassificationModel(BaseVisionModel):
         model = AutoModelForImageClassification.from_pretrained(
             self._model_id,
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 
@@ -67,6 +69,7 @@ class ImageToTextModel(TransformerModel):
         model = AutoModelForVision2Seq.from_pretrained(
             self._model_id,
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 
@@ -120,6 +123,7 @@ class ImageTextToTextModel(ImageToTextModel):
                 self._settings.weight_type
             ),
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
 
@@ -196,5 +200,6 @@ class VisionEncoderDecoderModel(ImageToTextModel):
         model = HFVisionEncoderDecoderModel.from_pretrained(
             self._model_id,
             device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
         return model
