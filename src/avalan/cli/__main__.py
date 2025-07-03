@@ -2,6 +2,8 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 import sys
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
+from torch.cuda import device_count, is_available
+from torch.distributed import destroy_process_group
 from .. import license, name, site, version
 from ..cli import CommandAbortException, has_input
 from ..cli.commands.agent import (
@@ -45,7 +47,8 @@ from gettext import translation
 from importlib.util import find_spec
 from locale import getlocale
 from logging import basicConfig, DEBUG, getLogger, INFO, Logger, WARNING
-from os import getenv
+from os import getenv, environ
+from subprocess import run
 from os.path import join
 from pathlib import Path
 from rich.console import Console
@@ -80,6 +83,10 @@ class CLI:
         )
 
     @staticmethod
+    def _default_parallel_count() -> int:
+        return device_count() if is_available() else 1
+
+    @staticmethod
     def _create_parser(
         default_device: str,
         cache_dir: str,
@@ -109,6 +116,15 @@ class CLI:
             type=str,
             choices=[p.value for p in ParallelStrategy],
             help="Tensor parallelism strategy to use",
+        )
+        global_parser.add_argument(
+            "--parallel-count",
+            type=int,
+            default=CLI._default_parallel_count(),
+            help=(
+                "Number of processes to launch when --parallel is used "
+                "(defaults to the number of available GPUs)"
+            ),
         )
         global_parser.add_argument(
             "--disable-loading-progress-bar",
@@ -1255,6 +1271,22 @@ class CLI:
         argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
         args = self._parser.parse_args(argv)
 
+        if args.parallel and not args.quiet:
+            args.quiet = True
+
+        if args.parallel and "LOCAL_RANK" not in environ:
+            cmd = [
+                sys.executable,
+                "-m",
+                "torch.distributed.run",
+                "--nproc-per-node",
+                str(args.parallel_count),
+                "-m",
+                "avalan.cli",
+            ] + argv
+            run(cmd, check=True)
+            return
+
         if args.version:
             print(f"{self._name} {self._version}")
             return
@@ -1305,6 +1337,8 @@ class CLI:
         except (CancelledError, KeyboardInterrupt, CommandAbortException):
             if not args.quiet:
                 console.print(theme.bye())
+        if args.parallel and "LOCAL_RANK" in environ:
+            destroy_process_group()
 
     def _help(
         self, console: Console, parser: ArgumentParser, path: list[str] = []
