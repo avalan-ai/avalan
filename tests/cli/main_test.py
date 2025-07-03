@@ -205,6 +205,30 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         main_mock.assert_awaited_once()
         destroy.assert_called_once()
 
+    async def test_call_parallel_child_ignores_destroy_assertion_error(self):
+        with (
+            patch.dict("os.environ", {"LOCAL_RANK": "0"}, clear=False),
+            patch.object(sys, "argv", ["prog", "--parallel", "colwise"]),
+            patch(
+                "avalan.cli.__main__.translation", return_value=self.translator
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch(
+                "avalan.cli.__main__.destroy_process_group",
+                side_effect=AssertionError,
+            ) as destroy,
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+        ):
+            await self.cli()
+        main_mock.assert_awaited_once()
+        destroy.assert_called_once()
+
     async def test_call_parallel_child_keeps_non_cuda_device(self):
         with (
             patch.dict("os.environ", {"LOCAL_RANK": "1"}, clear=False),
