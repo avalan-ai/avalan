@@ -1344,7 +1344,11 @@ class CLI:
             if not args.quiet:
                 console.print(theme.bye())
         if args.parallel and "LOCAL_RANK" in environ:
-            destroy_process_group()
+            try:
+                destroy_process_group()
+            except AssertionError:
+                # Process group might be dead already
+                pass
 
     def _help(
         self, console: Console, parser: ArgumentParser, path: list[str] = []
