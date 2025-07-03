@@ -77,6 +77,7 @@ class DistanceType(StrEnum):
 
 
 class ParallelStrategy(StrEnum):
+    AUTO = "auto"
     COLWISE = "colwise"
     ROWWISE = "rowwise"
     COLWISE_REP = "colwise_rep"

@@ -18,9 +18,9 @@ dependencies = [
   "packaging (==25.0)",
   "humanize (==4.12.3)",
   "rich (==14.0.0)",
-  "torch (==2.7.0)",
-  "transformers (==4.52.3)",
-  "pandas (==2.2.3)"
+  "torch (==2.7.1)",
+  "transformers (==4.53.0)",
+  "pandas (==2.3.0)"
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -48,60 +48,60 @@ agent = [
   "jinja2==3.1.6",
 ]
 audio = [
-  "torchaudio==2.7.0",
+  "torchaudio==2.7.1",
 ]
 cpu = [
-  "accelerate==1.7.0",
+  "accelerate==1.8.1",
 ]
 memory = [
   "faiss-cpu==1.11.0",
-  "markitdown[pdf]==0.1.1",
+  "markitdown[pdf]==0.1.2",
+  "markdownify==1.1.0",
   "psycopg[binary,pool]==3.2.9",
   "pgvector==0.4.1",
-  "sentence-transformers==4.1.0",
+  "sentence-transformers==5.0.0",
   "tree-sitter==0.24.0",
   "tree-sitter-python==0.23.6",
 ]
 quantization = [
-  "bitsandbytes==0.45.5",
+  "bitsandbytes==0.46.1",
 ]
 server = [
-  "pydantic==2.11.5",
-  "fastapi==0.115.12",
-  "mcp==1.9.1",
-  "uvicorn==0.34.2",
+  "pydantic==2.11.7",
+  "fastapi==0.115.14",
+  "mcp==1.10.1",
+  "uvicorn==0.35.0",
 ]
 test = [
-  "boto3==1.38.29",
+  "boto3==1.39.3",
   "faiss-cpu==1.11.0",
-  "fastapi==0.115.12",
+  "fastapi==0.115.14",
   "keyring==25.6.0",
-  "markitdown[pdf]==0.1.1",
-  "mlx-lm==0.24.1",
-  "mcp==1.9.1",
+  "markitdown[pdf]==0.1.2",
+  "markdownify==1.1.0",
+  "mlx-lm==0.25.3",
+  "mcp==1.10.1",
   "pgvector==0.4.1",
-  "pillow==11.2.1",
-  "playwright==1.52.0",
+  "pillow==11.3.0",
+  "playwright==1.53.0",
   "psycopg[binary,pool]==3.2.9",
-  "pydantic==2.11.5",
-  "pytest==8.3.5",
+  "pydantic==2.11.7",
+  "pytest==8.4.1",
   "pytest-cov==6.2.1",
   "RestrictedPython==8.0",
   "sympy==1.14.0",
   "tiktoken==0.9.0",
-  "torch==2.7.0",
-  "torchaudio==2.7.0",
-  "transformers==4.52.3",
+  "torchaudio==2.7.1",
   "tree-sitter==0.24.0",
   "tree-sitter-python==0.23.6",
 ]
 tool = [
-  "playwright==1.52.0",
+  "playwright==1.53.0",
   "RestrictedPython==8.0",
   "sympy==1.14.0",
 ]
 secrets = [
-  "boto3==1.38.29",
+  "boto3==1.39.3",
   "keyring==25.6.0",
 ]
 translation = [
@@ -110,54 +110,55 @@ translation = [
   "tiktoken==0.9.0",
 ]
 vendors = [
-  "anthropic==0.52.0",
-  "google-genai==1.16.1",
-  "openai==1.82.0",
-  "pillow==11.2.1",
+  "anthropic==0.57.1",
+  "google-genai==1.24.0",
+  "openai==1.93.0",
+  "pillow==11.3.0",
   "tiktoken==0.9.0",
 ]
 vision = [
-  "pillow==11.2.1",
-  "torchvision==0.22.0",
+  "pillow==11.3.0",
+  "torchvision==0.22.1",
 ]
 vllm = [
   "vllm[cpu]==0.1.0",
 ]
 mlx = [
-  "mlx-lm==0.24.1",
+  "mlx-lm==0.25.3",
 ]
 all = [
-  "accelerate==1.7.0",
-  "anthropic==0.52.0",
-  "boto3==1.38.29",
-  "bitsandbytes==0.45.5",
+  "accelerate==1.8.1",
+  "anthropic==0.57.1",
+  "boto3==1.39.3",
+  "bitsandbytes==0.46.1",
   "faiss-cpu==1.11.0",
-  "fastapi==0.115.12",
-  "google-genai==1.16.1",
+  "fastapi==0.115.14",
+  "google-genai==1.24.0",
   "jinja2==3.1.6",
   "keyring==25.6.0",
-  "markitdown[pdf]==0.1.1",
-  "mcp==1.9.1",
-  "mlx-lm==0.24.1",
-  "openai==1.82.0",
-  "pillow==11.2.1",
+  "markitdown[pdf]==0.1.2",
+  "markdownify==1.1.0",
+  "mcp==1.10.1",
+  "mlx-lm==0.25.3",
+  "openai==1.93.0",
+  "pillow==11.3.0",
   "protobuf==6.31.0",
   "psycopg[binary,pool]==3.2.9",
   "pgvector==0.4.1",
-  "playwright==1.52.0",
-  "pydantic==2.11.5",
-  "pytest==8.3.5",
+  "playwright==1.53.0",
+  "pydantic==2.11.7",
+  "pytest==8.4.1",
   "pytest-cov==6.2.1",
   "RestrictedPython==8.0",
-  "sentence-transformers==4.1.0",
+  "sentence-transformers==5.0.0",
   "sentencepiece==0.2.0",
   "sympy==1.14.0",
   "tiktoken==0.9.0",
-  "torchaudio==2.7.0",
-  "torchvision==0.22.0",
+  "torchaudio==2.7.1",
+  "torchvision==0.22.1",
   "tree-sitter==0.24.0",
   "tree-sitter-python==0.23.6",
-  "uvicorn==0.34.2",
+  "uvicorn==0.35.0",
 ]
 
 [tool.black]
