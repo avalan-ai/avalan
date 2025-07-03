@@ -444,7 +444,9 @@ class Engine(ABC):
                 name_or_path=self._tokenizer.name_or_path,
                 tokens=self._settings.tokens,
                 special_tokens=self._tokenizer.all_special_tokens,
-                tokenizer_model_max_length=self._tokenizer.model_max_length,
+                tokenizer_model_max_length=getattr(
+                    self._tokenizer, "model_max_length", 0
+                ),
                 fast=isinstance(self._tokenizer, PreTrainedTokenizerFast),
             )
 
