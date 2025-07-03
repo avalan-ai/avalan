@@ -64,6 +64,23 @@ class CliParallelOptionTestCase(TestCase):
         args = cli._parser.parse_args(["--parallel", "colwise"])
         self.assertEqual(args.parallel, "colwise")
 
+    def test_parallel_count_argument(self) -> None:
+        logger = MagicMock()
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch.object(CLI, "_default_parallel_count", return_value=3),
+        ):
+            cli = CLI(logger)
+        args = cli._parser.parse_args(
+            [
+                "--parallel",
+                "colwise",
+                "--parallel-count",
+                "5",
+            ]
+        )
+        self.assertEqual(args.parallel_count, 5)
+
 
 class CliCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -146,6 +163,47 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         )
         main_mock.assert_not_called()
         help_mock.assert_not_called()
+
+    async def test_call_parallel_invokes_torchrun(self):
+        with (
+            patch.object(sys, "argv", ["prog", "--parallel", "colwise"]),
+            patch(
+                "avalan.cli.__main__.translation", return_value=self.translator
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__.run") as run_patch,
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+        ):
+            await self.cli()
+        run_patch.assert_called_once()
+        main_mock.assert_not_called()
+
+    async def test_call_parallel_child_destroys_group(self):
+        with (
+            patch.dict("os.environ", {"LOCAL_RANK": "0"}, clear=False),
+            patch.object(sys, "argv", ["prog", "--parallel", "colwise"]),
+            patch(
+                "avalan.cli.__main__.translation", return_value=self.translator
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__.destroy_process_group") as destroy,
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+        ):
+            await self.cli()
+        main_mock.assert_awaited_once()
+        destroy.assert_called_once()
 
 
 class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
