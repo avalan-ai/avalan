@@ -2,7 +2,7 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 import sys
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
-from torch.cuda import device_count, is_available
+from torch.cuda import device_count, is_available, set_device
 from torch.distributed import destroy_process_group
 from .. import license, name, site, version
 from ..cli import CommandAbortException, has_input
@@ -1287,6 +1287,12 @@ class CLI:
             run(cmd, check=True)
             return
 
+        if args.parallel and "LOCAL_RANK" in environ:
+            rank = int(environ["LOCAL_RANK"])
+            if args.device.startswith("cuda") and ":" not in args.device:
+                args.device = f"cuda:{rank}"
+                set_device(rank)
+
         if args.version:
             print(f"{self._name} {self._version}")
             return
@@ -1338,7 +1344,11 @@ class CLI:
             if not args.quiet:
                 console.print(theme.bye())
         if args.parallel and "LOCAL_RANK" in environ:
-            destroy_process_group()
+            try:
+                destroy_process_group()
+            except AssertionError:
+                # Process group might be dead already
+                pass
 
     def _help(
         self, console: Console, parser: ArgumentParser, path: list[str] = []
