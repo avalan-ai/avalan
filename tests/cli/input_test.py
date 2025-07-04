@@ -1,7 +1,18 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch, call
 
-from avalan.cli import get_input, CommandAbortException, confirm, has_input
+from uuid import uuid4
+
+from rich.syntax import Syntax
+
+from avalan.cli import (
+    CommandAbortException,
+    confirm,
+    confirm_tool_call,
+    get_input,
+    has_input,
+)
+from avalan.entities import ToolCall
 
 
 class CliGetInputTestCase(TestCase):
@@ -92,3 +103,22 @@ class CliConfirmHasInputTestCase(TestCase):
     def test_has_input_false(self):
         with patch("avalan.cli.select", return_value=([], [], [])):
             self.assertFalse(has_input(MagicMock()))
+
+
+class CliConfirmToolCallTestCase(TestCase):
+    def test_confirm_tool_call(self):
+        console = MagicMock()
+        call = ToolCall(id=uuid4(), name="calc", arguments={"x": 1})
+        with patch("avalan.cli.Prompt.ask", return_value="y") as ask:
+            result = confirm_tool_call(console, call)
+
+        printed = console.print.call_args.args[0]
+        self.assertIsInstance(printed, Syntax)
+        self.assertIn('"calc"', printed.code)
+        self.assertIn('"x": 1', printed.code)
+        ask.assert_called_once_with(
+            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            choices=["y", "a", "n"],
+            default="n",
+        )
+        self.assertEqual(result, "y")
