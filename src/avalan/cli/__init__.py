@@ -2,6 +2,9 @@ from contextlib import nullcontext
 from rich.console import Console
 from rich.padding import Padding
 from rich.prompt import Confirm, Prompt
+from rich.syntax import Syntax
+from json import dumps
+from ..entities import ToolCall
 from select import select
 from sys import stdin
 
@@ -16,6 +19,21 @@ class CommandAbortException(BaseException):
 
 def confirm(console: Console, prompt: str) -> bool:
     return Confirm.ask(prompt)
+
+
+def confirm_tool_call(console: Console, call: ToolCall) -> str:
+    """Return user's decision on executing ``call``."""
+    console.print(
+        Syntax(
+            dumps({"name": call.name, "arguments": call.arguments}, indent=2),
+            "json",
+        )
+    )
+    return Prompt.ask(
+        "Execute tool call? ([y]es/[a]ll/[n]o)",
+        choices=["y", "a", "n"],
+        default="n",
+    )
 
 
 def has_input(console: Console) -> bool:

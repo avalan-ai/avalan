@@ -19,6 +19,7 @@ from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
 from avalan.tool.manager import ToolManager
 from avalan.entities import ToolCall, ToolCallResult
+from avalan.cli import CommandAbortException
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -522,3 +523,126 @@ class OrchestratorResponsePotentialDetectionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tool.is_potential_tool_call.call_count, 6)
         self.assertEqual(items[0], "")
         self.assertEqual(items[-1], "r")
+
+
+class OrchestratorResponseConfirmTestCase(IsolatedAsyncioTestCase):
+    async def test_reject_tool_call(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def outer_gen():
+            for ch in "call":
+                yield ch
+
+        outer_response = TextGenerationResponse(
+            lambda: outer_gen(), use_async_generator=True
+        )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if text == "call"
+            else None
+        )
+
+        tool.side_effect = AsyncMock()
+
+        async def inner_gen():
+            yield "r"
+
+        inner_response = TextGenerationResponse(
+            lambda: inner_gen(), use_async_generator=True
+        )
+        agent.return_value = inner_response
+
+        def confirm(_call: ToolCall) -> str:
+            return "n"
+
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            event_manager=event_manager,
+            tool_confirm=confirm,
+        )
+
+        with self.assertRaises(CommandAbortException):
+            async for _ in resp:
+                pass
+
+        tool.assert_not_awaited()
+
+    async def test_confirm_all_with_coroutine(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def outer_gen():
+            for ch in "call":
+                yield ch
+
+        outer_response = TextGenerationResponse(
+            lambda: outer_gen(), use_async_generator=True
+        )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if text == "call"
+            else None
+        )
+
+        async def tool_exec(call, context: ToolCallContext):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="2",
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "r"
+
+        inner_response = TextGenerationResponse(
+            lambda: inner_gen(), use_async_generator=True
+        )
+        agent.return_value = inner_response
+
+        async def confirm(_call: ToolCall) -> str:
+            return "a"
+
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            event_manager=event_manager,
+            tool_confirm=confirm,
+        )
+
+        self.assertFalse(resp._tool_confirm_all)
+
+        async for _ in resp:
+            pass
+
+        self.assertTrue(resp._tool_confirm_all)
+        tool.assert_awaited()

@@ -558,6 +558,11 @@ class CLI:
                 "with input piping)"
             ),
         )
+        agent_run_parser.add_argument(
+            "--tools-confirm",
+            action="store_true",
+            help="Confirm tool calls before execution",
+        )
 
         CLI._add_agent_settings_arguments(agent_run_parser)
         CLI._add_tool_settings_arguments(

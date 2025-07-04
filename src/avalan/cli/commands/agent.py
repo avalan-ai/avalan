@@ -3,9 +3,9 @@ from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from ...cli import get_input, has_input
+from ...cli import get_input, has_input, confirm_tool_call
 from ...cli.commands.model import token_generation
-from ...entities import OrchestratorSettings
+from ...entities import OrchestratorSettings, ToolCall
 from ...event import EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
@@ -340,6 +340,9 @@ async def agent_run(
 
     event_stats = EventStats()
 
+    def _confirm_call(call: ToolCall) -> str:
+        return confirm_tool_call(console, call)
+
     async def _event_listener(event):
         nonlocal event_stats
         event_stats.total_triggers += 1
@@ -396,6 +399,11 @@ async def agent_run(
         orchestrator.event_manager.add_listener(_event_listener)
 
         orchestrator = await stack.enter_async_context(orchestrator)
+
+        if args.tools_confirm:
+            assert (
+                not orchestrator.tool.is_empty
+            ), "--tools-confirm requires tools"
 
         logger.debug(
             "Agent loaded from %s, models used: %s, with recent message "
@@ -502,7 +510,9 @@ async def agent_run(
 
             logger.debug('Agent about to process input "%s"', input_string)
             output = await orchestrator(
-                input_string, use_async_generator=use_async_generator
+                input_string,
+                use_async_generator=use_async_generator,
+                tool_confirm=_confirm_call if args.tools_confirm else None,
             )
 
             if not args.quiet and not args.stats:

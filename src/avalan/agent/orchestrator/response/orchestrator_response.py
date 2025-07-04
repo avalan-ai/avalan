@@ -14,10 +14,12 @@ from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model import TextGenerationResponse
 from ....tool.manager import ToolManager
+from ....cli import CommandAbortException
 from queue import Queue
+from inspect import iscoroutine
 from io import StringIO
 from time import perf_counter
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 from uuid import UUID
 
 
@@ -56,6 +58,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         agent_id: UUID | None = None,
         participant_id: UUID | None = None,
         session_id: UUID | None = None,
+        tool_confirm: Callable[[ToolCall], str | None] | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         self._input = input
@@ -72,6 +75,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._session_id = session_id
+        self._tool_confirm = tool_confirm
+        self._tool_confirm_all = False
 
     @property
     def input_token_count(self) -> int:
@@ -130,6 +135,15 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         if not self._calls.empty():
             call = self._calls.get()
+
+            if self._tool_confirm and not self._tool_confirm_all:
+                action = self._tool_confirm(call)
+                if iscoroutine(action):
+                    action = await action
+                if action == "a":
+                    self._tool_confirm_all = True
+                elif action != "y":
+                    raise CommandAbortException()
 
             start = perf_counter()
             execute_event = Event(

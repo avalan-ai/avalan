@@ -2,7 +2,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from argparse import Namespace
+from uuid import uuid4
+
 from rich.syntax import Syntax
+
+from avalan.entities import ToolCall
 from avalan.cli.commands import agent as agent_cmds
 from avalan.event import Event, EventType
 from avalan.memory.permanent import VectorFunction
@@ -226,6 +230,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
+            tools_confirm=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -292,6 +297,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
+            tools_confirm=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -469,6 +475,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
+            tools_confirm=False,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -574,7 +581,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
 
-        self.orch.assert_awaited_once_with("hi", use_async_generator=True)
+        self.orch.assert_awaited_once_with(
+            "hi", use_async_generator=True, tool_confirm=None
+        )
         tg_patch.assert_awaited_once()
         self.orch.memory.continue_session.assert_awaited()
         self.console.print.assert_any_call("agent_panel")
@@ -633,7 +642,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
 
-        self.orch.assert_awaited_once_with("hi", use_async_generator=True)
+        self.orch.assert_awaited_once_with(
+            "hi", use_async_generator=True, tool_confirm=None
+        )
         tg_patch.assert_awaited_once()
 
         self.assertEqual(len(self.console.status.call_args_list), 1)
@@ -975,6 +986,52 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         stats = fn.__closure__[0].cell_contents
         self.assertEqual(stats.total_triggers, 2)
         self.assertEqual(stats.triggers[EventType.START], 2)
+
+    async def test_run_tools_confirm_calls_callback(self):
+        self.args.tools_confirm = True
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(*args, tool_confirm=None, **kwargs):
+            self.assertIsNotNone(tool_confirm)
+            self.callback_result = tool_confirm(call_obj)
+            return DummyOrchestratorResponse()
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(
+                agent_cmds, "confirm_tool_call", return_value="y"
+            ) as ctc,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.orch.assert_awaited_once_with(
+            "hi", use_async_generator=True, tool_confirm=unittest.mock.ANY
+        )
+        tg.assert_awaited_once()
+        ctc.assert_called_once_with(self.console, call_obj)
+        self.assertEqual(self.callback_result, "y")
 
 
 class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
