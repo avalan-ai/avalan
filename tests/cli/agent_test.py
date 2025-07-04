@@ -226,6 +226,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
+            tools_confirm=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -292,6 +293,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
+            tools_confirm=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -469,6 +471,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
+            tools_confirm=False,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -574,7 +577,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
 
-        self.orch.assert_awaited_once_with("hi", use_async_generator=True)
+        self.orch.assert_awaited_once_with(
+            "hi", use_async_generator=True, tool_confirm=None
+        )
         tg_patch.assert_awaited_once()
         self.orch.memory.continue_session.assert_awaited()
         self.console.print.assert_any_call("agent_panel")
@@ -633,7 +638,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
 
-        self.orch.assert_awaited_once_with("hi", use_async_generator=True)
+        self.orch.assert_awaited_once_with(
+            "hi", use_async_generator=True, tool_confirm=None
+        )
         tg_patch.assert_awaited_once()
 
         self.assertEqual(len(self.console.status.call_args_list), 1)

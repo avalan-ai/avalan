@@ -132,6 +132,7 @@ class Orchestrator:
         return self._event_manager
 
     async def __call__(self, input: Input, **kwargs) -> OrchestratorResponse:
+        tool_confirm = kwargs.pop("tool_confirm", None)
         if self.is_finished:
             self._operation_step = 0
 
@@ -216,6 +217,7 @@ class Orchestrator:
             engine_args,
             event_manager=self._event_manager,
             tool=self._tool,
+            tool_confirm=tool_confirm,
             agent_id=self._id,
             participant_id=self._memory.participant_id,
             session_id=(
