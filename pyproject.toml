@@ -123,6 +123,9 @@ vision = [
 vllm = [
   "vllm[cpu]==0.1.0",
 ]
+nanovllm = [
+  "nano-vllm @ git+https://github.com/GeeeekExplorer/nano-vllm",
+]
 mlx = [
   "mlx-lm==0.25.3",
 ]
