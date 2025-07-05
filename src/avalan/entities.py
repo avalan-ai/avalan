@@ -547,3 +547,39 @@ class User:
     name: str
     full_name: str | None = None
     access_token_name: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class GenericProxyConfig:
+    scheme: str
+    host: str
+    port: int
+    username: str | None = None
+    password: str | None = None
+
+    def to_dict(self) -> dict[str, str]:
+        credentials = (
+            f"{self.username}:{self.password}@"
+            if self.username and self.password
+            else ""
+        )
+        url = f"{self.scheme}://{credentials}{self.host}:{self.port}"
+        return {"http": url, "https": url}
+
+
+@dataclass(frozen=True, kw_only=True)
+class WebshareProxyConfig:
+    host: str
+    port: int
+    username: str
+    password: str
+    scheme: str = "http"
+
+    def to_generic(self) -> GenericProxyConfig:
+        return GenericProxyConfig(
+            scheme=self.scheme,
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+        )

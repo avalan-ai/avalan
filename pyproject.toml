@@ -99,6 +99,7 @@ tool = [
   "playwright==1.53.0",
   "RestrictedPython==8.0",
   "sympy==1.14.0",
+  "youtube-transcript-api==1.0.0",
 ]
 secrets = [
   "boto3==1.39.3",
@@ -159,6 +160,7 @@ all = [
   "tree-sitter==0.24.0",
   "tree-sitter-python==0.23.6",
   "uvicorn==0.35.0",
+  "youtube-transcript-api==1.0.0",
 ]
 
 [tool.black]
