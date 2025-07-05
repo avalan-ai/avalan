@@ -3,7 +3,7 @@ effortlessly build, orchestrate, and deploy intelligent
 AI agents—locally or in the cloud—across millions of models through
 an intuitive, unified SDK and CLI. With robust
 multi-backend support ([transformers](https://github.com/huggingface/transformers),
-[vLLM](https://github.com/vllm-project/vllm),
+[vLLM](https://github.com/vllm-project/vllm), [nano-vllm](https://github.com/GeeeekExplorer/nano-vllm),
 [mlx-lm](https://github.com/ml-explore/mlx-lm)), first-class
 support of multiple AI protocols (MCP, A2A), plus native
 integrations for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and

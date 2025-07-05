@@ -150,7 +150,7 @@ avalan empowers developers and enterprises to easily build, orchestrate, and dep
 intelligent AI agents—locally or in the cloud—across millions of models via a unified SDK
 and CLI, featuring multi-backend support
 ([transformers](https://github.com/huggingface/transformers),
-[vLLM](https://github.com/vllm-project/vllm),
+[vLLM](https://github.com/vllm-project/vllm), [nano-vllm](https://github.com/GeeeekExplorer/nano-vllm),
 [mlx-lm](https://github.com/ml-explore/mlx-lm)), multi-modal integration (NLP, vision,
 audio), and native adapters for platforms like OpenRouter, Ollama, OpenAI, DeepSeek, and
 Gemini. Enhanced by sophisticated memory management, advanced reasoning (including ReACT
