@@ -146,7 +146,15 @@ class MemoryManager:
                 await self._event_manager.trigger(
                     Event(
                         type=EventType.MEMORY_PERMANENT_MESSAGE_ADD,
-                        payload={"message": engine_message},
+                        payload={
+                            "message": engine_message,
+                            "participant_id": self._participant_id,
+                            "session_id": (
+                                self._permanent_message_memory.session_id
+                                if self._permanent_message_memory
+                                else None
+                            ),
+                        },
                         started=start,
                     )
                 )
@@ -161,7 +169,15 @@ class MemoryManager:
                 await self._event_manager.trigger(
                     Event(
                         type=EventType.MEMORY_PERMANENT_MESSAGE_ADDED,
-                        payload={"message": engine_message},
+                        payload={
+                            "message": engine_message,
+                            "participant_id": self._participant_id,
+                            "session_id": (
+                                self._permanent_message_memory.session_id
+                                if self._permanent_message_memory
+                                else None
+                            ),
+                        },
                         started=start,
                         finished=end,
                         ellapsed=end - start,
@@ -187,7 +203,10 @@ class MemoryManager:
                 await self._event_manager.trigger(
                     Event(
                         type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUE,
-                        payload={"session_id": session_id},
+                        payload={
+                            "session_id": session_id,
+                            "participant_id": self._participant_id,
+                        },
                         started=start,
                     )
                 )
@@ -219,7 +238,10 @@ class MemoryManager:
             await self._event_manager.trigger(
                 Event(
                     type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUED,
-                    payload={"session_id": session_id},
+                    payload={
+                        "session_id": session_id,
+                        "participant_id": self._participant_id,
+                    },
                     started=start,
                     finished=end,
                     ellapsed=end - start,
@@ -234,7 +256,7 @@ class MemoryManager:
                 await self._event_manager.trigger(
                     Event(
                         type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_START,
-                        payload={},
+                        payload={"participant_id": self._participant_id},
                         started=start,
                     )
                 )
@@ -252,7 +274,10 @@ class MemoryManager:
                 Event(
                     type=EventType.MEMORY_PERMANENT_MESSAGE_SESSION_STARTED,
                     payload={
-                        "session_id": self._permanent_message_memory.session_id
+                        "session_id": (
+                            self._permanent_message_memory.session_id
+                        ),
+                        "participant_id": self._participant_id,
                     },
                     started=start,
                     finished=end,
