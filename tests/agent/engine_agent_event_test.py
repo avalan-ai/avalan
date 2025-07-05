@@ -6,6 +6,7 @@ from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 
 class DummyEngine:
@@ -32,6 +33,8 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
         memory.recent_message = Message(role=MessageRole.USER, content="last")
         memory.recent_messages = []
         memory.append_message = AsyncMock()
+        memory.participant_id = uuid4()
+        memory.permanent_message = None
 
         tool = MagicMock(spec=ToolManager)
         event_manager = MagicMock(spec=EventManager)
@@ -60,6 +63,14 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
             any(
                 c.args[0].type == EventType.INPUT_TOKEN_COUNT_AFTER
                 and c.args[0].payload["count"] == 5
+                for c in event_manager.trigger.await_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                c.args[0].type == EventType.MEMORY_APPEND_BEFORE
+                and "participant_id" in c.args[0].payload
+                and "session_id" in c.args[0].payload
                 for c in event_manager.trigger.await_args_list
             )
         )

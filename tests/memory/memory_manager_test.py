@@ -369,6 +369,7 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tp = AsyncMock()
         self.pm = AsyncMock(spec=PermanentMessageMemory)
+        self.pm.session_id = uuid4()
         self.rm = RecentMessageMemory()
         self.event_manager = MagicMock(spec=EventManager)
         self.event_manager.trigger = AsyncMock()
@@ -403,6 +404,14 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
                 for c in self.event_manager.trigger.await_args_list
             )
         )
+        self.assertTrue(
+            any(
+                c.args[0].type == EventType.MEMORY_PERMANENT_MESSAGE_ADD
+                and c.args[0].payload.get("participant_id")
+                == self.manager.participant_id
+                for c in self.event_manager.trigger.await_args_list
+            )
+        )
 
     async def test_continue_session_triggers_events(self):
         session_id = uuid4()
@@ -425,6 +434,15 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
                 for c in self.event_manager.trigger.await_args_list
             )
         )
+        self.assertTrue(
+            any(
+                c.args[0].type
+                == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUE
+                and c.args[0].payload.get("participant_id")
+                == self.manager.participant_id
+                for c in self.event_manager.trigger.await_args_list
+            )
+        )
 
     async def test_start_session_triggers_events(self):
         await self.manager.start_session()
@@ -443,6 +461,15 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
                 c.args[0].type
                 == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_STARTED
                 and c.args[0].ellapsed is not None
+                for c in self.event_manager.trigger.await_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                c.args[0].type
+                == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_START
+                and c.args[0].payload.get("participant_id")
+                == self.manager.participant_id
                 for c in self.event_manager.trigger.await_args_list
             )
         )

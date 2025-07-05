@@ -173,6 +173,19 @@ class EngineAgent(ABC):
                             "model_type": self._model.model_type,
                             "model_id": self._model.model_id,
                             "message": previous_message,
+                            "participant_id": getattr(
+                                self._memory, "participant_id", None
+                            ),
+                            "session_id": (
+                                getattr(
+                                    self._memory, "permanent_message", None
+                                )
+                                and getattr(
+                                    self._memory.permanent_message,
+                                    "session_id",
+                                    None,
+                                )
+                            ),
                         },
                     )
                 )
@@ -190,6 +203,19 @@ class EngineAgent(ABC):
                             "model_type": self._model.model_type,
                             "model_id": self._model.model_id,
                             "message": previous_message,
+                            "participant_id": getattr(
+                                self._memory, "participant_id", None
+                            ),
+                            "session_id": (
+                                getattr(
+                                    self._memory, "permanent_message", None
+                                )
+                                and getattr(
+                                    self._memory.permanent_message,
+                                    "session_id",
+                                    None,
+                                )
+                            ),
                         },
                     )
                 )
@@ -201,6 +227,17 @@ class EngineAgent(ABC):
                         "model_type": self._model.model_type,
                         "model_id": self._model.model_id,
                         "message": new_message,
+                        "participant_id": getattr(
+                            self._memory, "participant_id", None
+                        ),
+                        "session_id": (
+                            getattr(self._memory, "permanent_message", None)
+                            and getattr(
+                                self._memory.permanent_message,
+                                "session_id",
+                                None,
+                            )
+                        ),
                     },
                 )
             )
@@ -218,6 +255,17 @@ class EngineAgent(ABC):
                         "model_type": self._model.model_type,
                         "model_id": self._model.model_id,
                         "message": new_message,
+                        "participant_id": getattr(
+                            self._memory, "participant_id", None
+                        ),
+                        "session_id": (
+                            getattr(self._memory, "permanent_message", None)
+                            and getattr(
+                                self._memory.permanent_message,
+                                "session_id",
+                                None,
+                            )
+                        ),
                     },
                 )
             )
