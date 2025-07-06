@@ -76,6 +76,9 @@ class BaseNLPModel(TransformerModel, ABC):
             "use_cache": settings.use_cache,
         }
 
+        if settings.attention_mask is not None:
+            generation_kwargs["attention_mask"] = settings.attention_mask
+
         if settings.forced_bos_token_id or settings.forced_eos_token_id:
             del generation_kwargs["bos_token_id"]
             del generation_kwargs["eos_token_id"]

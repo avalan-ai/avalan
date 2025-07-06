@@ -239,6 +239,8 @@ class GenerationSettings:
     enable_gradient_calculation: bool = False
     # Use async generator (token streaming)
     use_async_generator: bool = True
+    # Optional attention mask passed directly to ``generate``
+    attention_mask: Tensor | None = None
     # Parameters passed to tokenizer.apply_chat_template
     chat_template_settings: dict[str, object] | None = field(
         default_factory=lambda: {
