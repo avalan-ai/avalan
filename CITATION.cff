@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use avalan, please cite it as below."
+title: avalan
+version: "1.1.6"
+abstract: |
+  avalan empowers developers and enterprises to easily build, orchestrate,
+  and deploy intelligent AI agents—locally or in the cloud—across millions of
+  models via a unified SDK and CLI, featuring multi-backend and multi-modal
+  support.
+authors:
+  - family-names: Iglesias
+    given-names: Mariano
+type: software
+license: MIT
+url: https://avalan.ai
+repository: https://github.com/avalan-ai/avalan
+repository-code: https://github.com/avalan-ai/avalan
