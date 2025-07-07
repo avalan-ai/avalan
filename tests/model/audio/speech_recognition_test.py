@@ -84,7 +84,9 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             ) as inference_mode_mock,
         ):
             processor_instance = MagicMock()
-            processor_instance.return_value = MagicMock(input_values="inputs")
+            processor_call = MagicMock(input_values="inputs")
+            processor_call.to.return_value = processor_call
+            processor_instance.return_value = processor_call
             processor_instance.batch_decode.return_value = ["ok"]
             type(processor_instance.tokenizer).pad_token_id = PropertyMock(
                 return_value=1
@@ -154,7 +156,9 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
             ) as inf_mock,
         ):
             processor_instance = MagicMock()
-            processor_instance.return_value = MagicMock(input_values="inputs")
+            processor_call = MagicMock(input_values="inputs")
+            processor_call.to.return_value = processor_call
+            processor_instance.return_value = processor_call
             processor_instance.batch_decode.return_value = ["ok"]
             type(processor_instance.tokenizer).pad_token_id = PropertyMock(
                 return_value=1
