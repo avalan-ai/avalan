@@ -1,3 +1,9 @@
+#
+# EXAMPLE CALL:
+#
+# PYTHONPATH=src poetry run python docs/examples/audio_text_to_speech.py "[S1] Leo Messi (clears throat) is the greatest football player of all times! [S2] (laughs) Of course he is (applause)" example.wav
+#
+
 from asyncio import run
 from avalan.model.audio import TextToSpeechModel
 import os
