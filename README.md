@@ -192,7 +192,7 @@ streaming with your own code, as [this example shows](https://github.com/avalan-
 
 ```python
 from asyncio import run
-from avalan.model.entities import GenerationSettings
+from avalan.entities import GenerationSettings
 from avalan.model.nlp.text import TextGenerationModel
 
 async def example() -> None:
@@ -245,7 +245,7 @@ example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/seq2s
 
 ```python
 from asyncio import run
-from avalan.model.entities import GenerationSettings
+from avalan.entities import GenerationSettings
 from avalan.model.nlp.sequence import SequenceToSequenceModel
 
 async def example() -> None:
@@ -276,7 +276,7 @@ You'll need the `translation` extra installed for this to run:
 
 ```python
 from asyncio import run
-from avalan.model.entities import GenerationSettings
+from avalan.entities import GenerationSettings
 from avalan.model.nlp.sequence import TranslationModel
 
 async def example() -> None:
@@ -363,6 +363,14 @@ icdiff locale/avalan.pot <(
 There are more agent, NLP, multimodal, audio, and vision examples in the
 [docs/examples](https://github.com/avalan-ai/avalan/blob/main/docs/examples)
 folder.
+
+> [!TIP]
+> If you are working with avalan, you can run the example scripts by
+> specifying the `$PYTHONPATH` environment variable:
+>
+> ```bash
+> PYTHONPATH=src poetry run python docs/examples/text_generation.py
+> ```
 
 # Install
 

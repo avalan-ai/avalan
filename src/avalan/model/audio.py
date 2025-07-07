@@ -9,6 +9,7 @@ from torchaudio.transforms import Resample
 from transformers import (
     AutoProcessor,
     AutoModelForCTC,
+    DiaForConditionalGeneration,
     PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -72,10 +73,50 @@ class SpeechRecognitionModel(BaseAudioModel):
             audio,
             sampling_rate=sampling_rate,
             return_tensors=tensor_format,
-        )
+        ).to(self._device)
         with inference_mode():
             # shape (batch, time_steps, vocab_size)
             logits = self._model(inputs.input_values).logits
         predicted_ids = argmax(logits, dim=-1)
         transcription = self._processor.batch_decode(predicted_ids)[0]
         return transcription
+
+
+class TextToSpeechModel(BaseAudioModel):
+    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+        self._processor = AutoProcessor.from_pretrained(
+            self._model_id,
+            trust_remote_code=self._settings.trust_remote_code,
+        )
+        model = DiaForConditionalGeneration.from_pretrained(
+            self._model_id,
+            trust_remote_code=self._settings.trust_remote_code,
+            device_map=self._device,
+            tp_plan=Engine._get_tp_plan(self._settings.parallel),
+        )
+        return model
+
+    @override
+    async def __call__(
+        self,
+        texts: list[str],
+        path: str,
+        max_new_tokens: int,
+        *,
+        padding: bool = True,
+        tensor_format: Literal["pt"] = "pt",
+    ) -> str:
+        inputs = self._processor(
+            text=texts,
+            padding=padding,
+            return_tensors=tensor_format
+        ).to(self._device)
+        with inference_mode():
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens
+            )
+
+        outputs = self._processor.batch_decode(outputs)
+        self._processor.save_audio(outputs, path)
+        return path
