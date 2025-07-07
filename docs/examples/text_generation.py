@@ -1,5 +1,5 @@
 from asyncio import run
-from avalan.model.entities import GenerationSettings
+from avalan.entities import GenerationSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
 
 

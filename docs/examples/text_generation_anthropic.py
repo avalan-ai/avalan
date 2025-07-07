@@ -1,5 +1,5 @@
 from asyncio import run
-from avalan.model.entities import GenerationSettings, TransformerEngineSettings
+from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vendor.anthropic import AnthropicModel
 from os import environ
 
