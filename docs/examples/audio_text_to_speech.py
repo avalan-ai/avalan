@@ -9,7 +9,7 @@ async def example(text: str, path: str) -> None:
     with TextToSpeechModel("nari-labs/Dia-1.6B-0626") as speech:
         print(f"DONE. Generating speech for \"{text}\"", flush=True)
 
-        generated_path = await speech([text], path, max_new_tokens=256) # corresponds to around ~2s
+        generated_path = await speech([text], path, max_new_tokens=2560) # corresponds to around ~20s
         print(f"DONE. Speech generated in {generated_path}", flush=True)
 
 
