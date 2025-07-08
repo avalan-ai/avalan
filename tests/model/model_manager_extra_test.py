@@ -64,3 +64,16 @@ class ModelManagerExtraTestCase(TestCase):
             uri, get_mock.return_value, Modality.TEXT_GENERATION
         )
         self.assertEqual(result, "model")
+
+    def test_load_engine_invalid_modality(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri("ai://tok@openai/gpt-4o")
+        settings = TransformerEngineSettings()
+        with self.assertRaises(NotImplementedError):
+            manager.load_engine(uri, settings, "invalid")  # type: ignore[arg-type]
+
+    def test_load_invalid_modality(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri("ai://tok@openai/gpt-4o")
+        with self.assertRaises(NotImplementedError):
+            manager.load(uri, modality="invalid")  # type: ignore[arg-type]
