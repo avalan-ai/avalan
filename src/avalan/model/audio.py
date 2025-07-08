@@ -4,7 +4,7 @@ from ..model import TextGenerationVendor, TokenizerNotSupportedException
 from ..model.engine import Engine
 from PIL import Image
 from torch import argmax, inference_mode
-from torchaudio import load
+from torchaudio import functional, load
 from torchaudio.transforms import Resample
 from transformers import (
     AutoProcessor,
@@ -99,24 +99,61 @@ class TextToSpeechModel(BaseAudioModel):
     @override
     async def __call__(
         self,
-        texts: list[str],
+        prompt: str,
         path: str,
         max_new_tokens: int,
         *,
         padding: bool = True,
+        reference_path: str | None = None,
+        reference_text: str | None = None,
+        sampling_rate: int = 44_100,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
+        assert (not reference_path and not reference_text) or (
+            reference_path and reference_text
+        )
+
+        reference_voice = None
+        if reference_path and reference_text:
+            reference_voice, reference_sampling_rate = load(reference_path)
+            if reference_sampling_rate != sampling_rate:
+                reference_voice = functional.resample(
+                    reference_voice, reference_sampling_rate, sampling_rate
+                )
+            reference_voice = reference_voice.mean(0).numpy()
+
+        text = (
+            f"{reference_text}\n{prompt}"
+            if reference_voice is not None
+            else prompt
+        )
+
         inputs = self._processor(
-            text=texts,
+            text=text,
+            audio=reference_voice,
             padding=padding,
-            return_tensors=tensor_format
+            return_tensors=tensor_format,
+            sampling_rate=sampling_rate,
         ).to(self._device)
+
+        prompt_len = (
+            self._processor.get_audio_prompt_len(
+                inputs["decoder_attention_mask"]
+            )
+            if reference_voice is not None
+            else None
+        )
+
         with inference_mode():
             outputs = self._model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens
+                **inputs, max_new_tokens=max_new_tokens
             )
 
-        outputs = self._processor.batch_decode(outputs)
-        self._processor.save_audio(outputs, path)
+        wave = (
+            self._processor.batch_decode(outputs, audio_prompt_len=prompt_len)
+            if prompt_len and outputs.shape[1] >= prompt_len
+            else self._processor.batch_decode(outputs)
+        )
+
+        self._processor.save_audio(wave, path)
         return path
