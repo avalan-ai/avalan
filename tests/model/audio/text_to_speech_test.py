@@ -96,7 +96,231 @@ class TextToSpeechModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, "file.wav")
             processor_instance.assert_called_with(
-                text=["hi"], padding=False, return_tensors="pt"
+                text=["hi"],
+                audio=None,
+                padding=False,
+                return_tensors="pt",
+                sampling_rate=44_100,
+            )
+            call_result.to.assert_called_once_with(model._device)
+            model_instance.generate.assert_called_once_with(
+                **inputs, max_new_tokens=3
+            )
+            processor_instance.batch_decode.assert_called_once_with([2])
+            processor_instance.save_audio.assert_called_once_with(
+                ["audio"], "file.wav"
+            )
+            inf_mock.assert_called_once_with()
+
+
+class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
+    model_id = "dummy/model"
+
+    async def test_reference_validation(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch.object(
+                DiaForConditionalGeneration, "from_pretrained"
+            ) as model_mock,
+        ):
+            processor_instance = MagicMock()
+            processor_mock.return_value = processor_instance
+            model_instance = MagicMock(spec=PreTrainedModel)
+            model_mock.return_value = model_instance
+
+            settings = EngineSettings()
+            model = TextToSpeechModel(
+                self.model_id, settings, logger=logger_mock
+            )
+
+            with self.assertRaises(AssertionError):
+                await model("hi", "file.wav", 3, reference_path="voice.wav")
+
+    async def test_call_with_reference_resample(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch.object(
+                DiaForConditionalGeneration, "from_pretrained"
+            ) as model_mock,
+            patch("avalan.model.audio.load") as load_mock,
+            patch("avalan.model.audio.functional.resample") as resample_mock,
+            patch(
+                "avalan.model.audio.inference_mode", return_value=nullcontext()
+            ) as inf_mock,
+        ):
+            call_result = MagicMock()
+            inputs = {"input_ids": [1], "decoder_attention_mask": "mask"}
+            call_result.to.return_value = inputs
+            processor_instance = MagicMock(return_value=call_result)
+            processor_instance.batch_decode.return_value = ["audio"]
+            processor_instance.get_audio_prompt_len.return_value = 2
+            processor_mock.return_value = processor_instance
+
+            model_instance = MagicMock(spec=PreTrainedModel)
+            outputs = MagicMock(shape=(1, 5))
+            model_instance.generate = MagicMock(return_value=outputs)
+            model_mock.return_value = model_instance
+
+            reference_audio = MagicMock()
+            resampled_audio = MagicMock()
+            mean_mock = MagicMock()
+            resampled_audio.mean.return_value = mean_mock
+            mean_mock.numpy.return_value = "voice"
+            load_mock.return_value = (reference_audio, 22050)
+            resample_mock.return_value = resampled_audio
+
+            settings = EngineSettings()
+            model = TextToSpeechModel(
+                self.model_id, settings, logger=logger_mock
+            )
+
+            result = await model(
+                "hi",
+                "file.wav",
+                3,
+                reference_path="ref.wav",
+                reference_text="ref",
+                sampling_rate=16000,
+            )
+
+            self.assertEqual(result, "file.wav")
+            load_mock.assert_called_once_with("ref.wav")
+            resample_mock.assert_called_once_with(
+                reference_audio, 22050, 16000
+            )
+            resampled_audio.mean.assert_called_once_with(0)
+            processor_instance.assert_called_with(
+                text="ref\nhi",
+                audio="voice",
+                padding=True,
+                return_tensors="pt",
+                sampling_rate=16000,
+            )
+            call_result.to.assert_called_once_with(model._device)
+            processor_instance.get_audio_prompt_len.assert_called_once_with(
+                inputs["decoder_attention_mask"]
+            )
+            model_instance.generate.assert_called_once_with(
+                **inputs, max_new_tokens=3
+            )
+            processor_instance.batch_decode.assert_called_once_with(
+                outputs, audio_prompt_len=2
+            )
+            processor_instance.save_audio.assert_called_once_with(
+                ["audio"], "file.wav"
+            )
+            inf_mock.assert_called_once_with()
+
+    async def test_call_with_reference_no_resample(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch.object(
+                DiaForConditionalGeneration, "from_pretrained"
+            ) as model_mock,
+            patch("avalan.model.audio.load") as load_mock,
+            patch("avalan.model.audio.functional.resample") as resample_mock,
+            patch(
+                "avalan.model.audio.inference_mode", return_value=nullcontext()
+            ) as inf_mock,
+        ):
+            call_result = MagicMock()
+            inputs = {"input_ids": [1], "decoder_attention_mask": "mask"}
+            call_result.to.return_value = inputs
+            processor_instance = MagicMock(return_value=call_result)
+            processor_instance.batch_decode.return_value = ["audio"]
+            processor_instance.get_audio_prompt_len.return_value = 2
+            processor_mock.return_value = processor_instance
+
+            model_instance = MagicMock(spec=PreTrainedModel)
+            outputs = MagicMock(shape=(1, 1))
+            model_instance.generate = MagicMock(return_value=outputs)
+            model_mock.return_value = model_instance
+
+            reference_audio = MagicMock()
+            mean_mock = MagicMock()
+            reference_audio.mean.return_value = mean_mock
+            mean_mock.numpy.return_value = "voice"
+            load_mock.return_value = (reference_audio, 16000)
+
+            settings = EngineSettings()
+            model = TextToSpeechModel(
+                self.model_id, settings, logger=logger_mock
+            )
+
+            result = await model(
+                "hi",
+                "file.wav",
+                3,
+                reference_path="ref.wav",
+                reference_text="ref",
+                sampling_rate=16000,
+            )
+
+            self.assertEqual(result, "file.wav")
+            load_mock.assert_called_once_with("ref.wav")
+            resample_mock.assert_not_called()
+            reference_audio.mean.assert_called_once_with(0)
+            processor_instance.assert_called_with(
+                text="ref\nhi",
+                audio="voice",
+                padding=True,
+                return_tensors="pt",
+                sampling_rate=16000,
+            )
+            call_result.to.assert_called_once_with(model._device)
+            processor_instance.get_audio_prompt_len.assert_called_once_with(
+                inputs["decoder_attention_mask"]
+            )
+            model_instance.generate.assert_called_once_with(
+                **inputs, max_new_tokens=3
+            )
+            processor_instance.batch_decode.assert_called_once_with(outputs)
+            processor_instance.save_audio.assert_called_once_with(
+                ["audio"], "file.wav"
+            )
+            inf_mock.assert_called_once_with()
+
+    async def test_call_sampling_rate(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch.object(
+                DiaForConditionalGeneration, "from_pretrained"
+            ) as model_mock,
+            patch(
+                "avalan.model.audio.inference_mode", return_value=nullcontext()
+            ) as inf_mock,
+        ):
+            call_result = MagicMock()
+            inputs = {"input_ids": [1]}
+            call_result.to.return_value = inputs
+            processor_instance = MagicMock(return_value=call_result)
+            processor_instance.batch_decode.return_value = ["audio"]
+            processor_mock.return_value = processor_instance
+
+            model_instance = MagicMock(spec=PreTrainedModel)
+            model_instance.generate = MagicMock(return_value=[2])
+            model_mock.return_value = model_instance
+
+            settings = EngineSettings()
+            model = TextToSpeechModel(
+                self.model_id, settings, logger=logger_mock
+            )
+
+            result = await model(
+                ["hi"], "file.wav", 3, padding=False, sampling_rate=16000
+            )
+
+            self.assertEqual(result, "file.wav")
+            processor_instance.assert_called_with(
+                text=["hi"],
+                audio=None,
+                padding=False,
+                return_tensors="pt",
+                sampling_rate=16000,
             )
             call_result.to.assert_called_once_with(model._device)
             model_instance.generate.assert_called_once_with(
