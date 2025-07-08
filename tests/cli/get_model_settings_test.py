@@ -3,6 +3,7 @@ from argparse import Namespace
 from unittest.mock import MagicMock
 
 from avalan.cli.commands import get_model_settings
+from avalan.entities import Modality
 
 
 class GetModelSettingsTestCase(unittest.TestCase):
@@ -34,7 +35,7 @@ class GetModelSettingsTestCase(unittest.TestCase):
             "device": "cpu",
             "parallel": "colwise",
             "disable_loading_progress_bar": True,
-            "is_sentence_transformer": True,
+            "modality": Modality.EMBEDDING,
             "loader_class": "auto",
             "low_cpu_mem_usage": True,
             "quiet": False,
@@ -67,6 +68,6 @@ class GetModelSettingsTestCase(unittest.TestCase):
             MagicMock(),
             MagicMock(),
             engine_uri,
-            is_sentence_transformer=True,
+            modality=Modality.EMBEDDING,
         )
-        self.assertTrue(result["is_sentence_transformer"])
+        self.assertEqual(result["modality"], Modality.EMBEDDING)

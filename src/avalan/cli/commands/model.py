@@ -2,7 +2,7 @@ from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType, TOOL_TYPES
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
-from ...entities import GenerationSettings, Model, Token, TokenDetail
+from ...entities import GenerationSettings, Model, Modality, Token, TokenDetail
 from ...event import EventStats
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
@@ -39,7 +39,7 @@ def model_display(
     hub: HuggingfaceHub,
     logger: Logger,
     *vargs,
-    is_sentence_transformer: bool | None = None,
+    modality: Modality | None = None,
     load: bool | None = None,
     model: SentenceTransformerModel | TextGenerationModel | None = None,
     summary: bool | None = None,
@@ -71,7 +71,7 @@ def model_display(
                 hub,
                 logger,
                 engine_uri,
-                is_sentence_transformer=is_sentence_transformer,
+                modality=modality,
             )
             with manager.load(**model_settings) as lm:
                 logger.debug("Loaded model %s", lm.config.__repr__())
@@ -143,7 +143,7 @@ async def model_run(
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
         model_settings = get_model_settings(
-            args, hub, logger, engine_uri, is_sentence_transformer=False
+            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
 
         if not args.quiet:

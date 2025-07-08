@@ -6,6 +6,7 @@ from avalan.event import EventType
 from avalan.entities import (
     EngineUri,
     MessageRole,
+    Modality,
     TransformerEngineSettings,
 )
 from avalan.agent.orchestrator.response.orchestrator_response import (
@@ -137,7 +138,9 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         ) as orch:
             model_manager.load_engine.assert_called_once_with(
-                engine_uri, settings
+                engine_uri,
+                settings,
+                Modality.TEXT_GENERATION,
             )
             Agent.assert_called_once()
             self.assertIs(orch.engine_agent, agent_mock)

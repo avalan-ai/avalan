@@ -1,4 +1,4 @@
-from avalan.entities import EngineUri, TransformerEngineSettings
+from avalan.entities import EngineUri, Modality, TransformerEngineSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from logging import Logger
@@ -60,5 +60,7 @@ class ModelManagerExtraTestCase(TestCase):
         self.assertEqual(args["base_url"], "url")
         self.assertEqual(args["attention"], "sd")
         self.assertTrue(args["trust_remote_code"])
-        load_mock.assert_called_once_with(uri, get_mock.return_value, None)
+        load_mock.assert_called_once_with(
+            uri, get_mock.return_value, Modality.TEXT_GENERATION
+        )
         self.assertEqual(result, "model")

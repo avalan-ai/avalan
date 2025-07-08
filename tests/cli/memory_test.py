@@ -1,5 +1,5 @@
 from avalan.cli.commands import memory as memory_cmds
-from avalan.entities import DistanceType
+from avalan.entities import DistanceType, Modality
 from avalan.memory.permanent import MemoryType, VectorFunction
 from avalan.memory.partitioner.text import TextPartition
 from argparse import Namespace
@@ -105,7 +105,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             self.hub,
             self.logger,
             "engine_uri",
-            is_sentence_transformer=True,
+            modality=Modality.EMBEDDING,
         )
         tp_patch.assert_called_once_with(
             model,
@@ -388,7 +388,7 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             self.hub,
             self.logger,
             self.args.model,
-            is_sentence_transformer=True,
+            modality=Modality.EMBEDDING,
         )
         model.assert_awaited_once_with(["text", *self.args.compare])
         self.assertEqual(len(self.console.print.call_args_list), 2)

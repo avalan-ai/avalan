@@ -1,6 +1,7 @@
 from ..entities import (
     AttentionImplementation,
     EngineUri,
+    Modality,
     TextGenerationLoaderClass,
     TransformerEngineSettings,
     Vendor,
@@ -9,6 +10,14 @@ from ..entities import (
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..model.nlp.text.generation import TextGenerationModel
+from ..model.audio import SpeechRecognitionModel, TextToSpeechModel
+from ..model.vision.detection import ObjectDetectionModel
+from ..model.vision.image import (
+    ImageClassificationModel,
+    ImageTextToTextModel,
+    VisionEncoderDecoderModel,
+)
+from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
@@ -47,11 +56,11 @@ class ModelManager(ContextDecorator):
         self,
         engine_uri: EngineUri,
         settings: dict | None = None,
-        is_sentence_transformer: bool | None = None,
+        modality: Modality | None = None,
     ) -> TransformerEngineSettings:
         engine_settings_args = settings or {}
 
-        if not is_sentence_transformer and not engine_uri.is_local:
+        if modality != Modality.EMBEDDING and not engine_uri.is_local:
             token = None
             if engine_uri.password and engine_uri.user:
                 if engine_uri.user == "secret":
@@ -70,12 +79,12 @@ class ModelManager(ContextDecorator):
     def load(
         self,
         engine_uri: EngineUri,
+        modality: Modality = Modality.TEXT_GENERATION,
         *args,
         attention: AttentionImplementation | None = None,
         base_url: str | None = None,
         device: str | None = None,
         disable_loading_progress_bar: bool = False,
-        is_sentence_transformer: bool | None = None,
         loader_class: TextGenerationLoaderClass | None = "auto",
         low_cpu_mem_usage: bool = False,
         quiet: bool = False,
@@ -85,7 +94,17 @@ class ModelManager(ContextDecorator):
         tokens: list[str] | None = None,
         trust_remote_code: bool | None = None,
         weight_type: WeightType = "auto",
-    ) -> SentenceTransformerModel | TextGenerationModel:
+    ) -> (
+        SentenceTransformerModel
+        | TextGenerationModel
+        | SpeechRecognitionModel
+        | TextToSpeechModel
+        | ObjectDetectionModel
+        | ImageClassificationModel
+        | ImageTextToTextModel
+        | VisionEncoderDecoderModel
+        | SemanticSegmentationModel
+    ):
         engine_settings_args = dict(
             base_url=base_url,
             cache_dir=self._hub.cache_dir,
@@ -99,7 +118,7 @@ class ModelManager(ContextDecorator):
             tokens=tokens or None,
             weight_type=weight_type,
         )
-        if not is_sentence_transformer:
+        if modality != Modality.EMBEDDING:
             engine_settings_args.update(
                 attention=attention or None,
                 trust_remote_code=trust_remote_code or None,
@@ -108,18 +127,26 @@ class ModelManager(ContextDecorator):
         engine_settings = self.get_engine_settings(
             engine_uri,
             engine_settings_args,
-            is_sentence_transformer=is_sentence_transformer,
+            modality=modality,
         )
-        return self.load_engine(
-            engine_uri, engine_settings, is_sentence_transformer
-        )
+        return self.load_engine(engine_uri, engine_settings, modality)
 
     def load_engine(
         self,
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
-        is_sentence_transformer: bool | None = None,
-    ) -> SentenceTransformerModel | TextGenerationModel:
+        modality: Modality = Modality.TEXT_GENERATION,
+    ) -> (
+        SentenceTransformerModel
+        | TextGenerationModel
+        | SpeechRecognitionModel
+        | TextToSpeechModel
+        | ObjectDetectionModel
+        | ImageClassificationModel
+        | ImageTextToTextModel
+        | VisionEncoderDecoderModel
+        | SemanticSegmentationModel
+    ):
         assert isinstance(engine_uri, EngineUri)
         model_load_args = dict(
             model_id=engine_uri.model_id,
@@ -128,56 +155,105 @@ class ModelManager(ContextDecorator):
         )
 
         # Load local model, or lazy-import per vendor
-        if is_sentence_transformer or engine_uri.is_local:
-            model = (
-                SentenceTransformerModel(**model_load_args)
-                if is_sentence_transformer
-                else TextGenerationModel(**model_load_args)
-            )
-        elif engine_uri.vendor == "openai":
+        if engine_uri.is_local:
+            match modality:
+                case Modality.EMBEDDING:
+                    model = SentenceTransformerModel(**model_load_args)
+                case Modality.AUDIO_SPEECH_RECOGNITION:
+                    model = SpeechRecognitionModel(**model_load_args)
+                case Modality.AUDIO_TEXT_TO_SPEECH:
+                    model = TextToSpeechModel(**model_load_args)
+                case Modality.VISION_OBJECT_DETECTION:
+                    model = ObjectDetectionModel(**model_load_args)
+                case Modality.VISION_IMAGE_CLASSIFICATION:
+                    model = ImageClassificationModel(**model_load_args)
+                case Modality.VISION_IMAGE_TO_TEXT:
+                    model = ImageTextToTextModel(**model_load_args)
+                case Modality.VISION_ENCODER_DECODER:
+                    model = VisionEncoderDecoderModel(**model_load_args)
+                case Modality.VISION_SEMANTIC_SEGMENTATION:
+                    model = SemanticSegmentationModel(**model_load_args)
+                case _:
+                    model = TextGenerationModel(**model_load_args)
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "openai"
+        ):
             from ..model.nlp.text.vendor.openai import OpenAIModel
 
             model = OpenAIModel(**model_load_args)
-        elif engine_uri.vendor == "openrouter":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "openrouter"
+        ):
             from ..model.nlp.text.vendor.openrouter import OpenRouterModel
 
             model = OpenRouterModel(**model_load_args)
-        elif engine_uri.vendor == "anyscale":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "anyscale"
+        ):
             from ..model.nlp.text.vendor.anyscale import AnyScaleModel
 
             model = AnyScaleModel(**model_load_args)
-        elif engine_uri.vendor == "together":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "together"
+        ):
             from ..model.nlp.text.vendor.together import TogetherModel
 
             model = TogetherModel(**model_load_args)
-        elif engine_uri.vendor == "deepseek":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "deepseek"
+        ):
             from ..model.nlp.text.vendor.deepseek import DeepSeekModel
 
             model = DeepSeekModel(**model_load_args)
-        elif engine_uri.vendor == "deepinfra":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "deepinfra"
+        ):
             from ..model.nlp.text.vendor.deepinfra import DeepInfraModel
 
             model = DeepInfraModel(**model_load_args)
-        elif engine_uri.vendor == "groq":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "groq"
+        ):
             from ..model.nlp.text.vendor.groq import GroqModel
 
             model = GroqModel(**model_load_args)
-        elif engine_uri.vendor == "ollama":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "ollama"
+        ):
             from ..model.nlp.text.vendor.ollama import OllamaModel
 
             model = OllamaModel(**model_load_args)
-        elif engine_uri.vendor == "huggingface":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "huggingface"
+        ):
             from ..model.nlp.text.vendor.huggingface import HuggingfaceModel
 
             model = HuggingfaceModel(**model_load_args)
-        elif engine_uri.vendor == "hyperbolic":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "hyperbolic"
+        ):
             from ..model.nlp.text.vendor.hyperbolic import HyperbolicModel
 
             model = HyperbolicModel(**model_load_args)
-        elif engine_uri.vendor == "litellm":
+        elif (
+            modality == Modality.TEXT_GENERATION
+            and engine_uri.vendor == "litellm"
+        ):
             from ..model.nlp.text.vendor.litellm import LiteLLMModel
 
             model = LiteLLMModel(**model_load_args)
+        else:
+            raise NotImplementedError()
 
         self._stack.enter_context(model)
         return model
