@@ -1,4 +1,4 @@
-from avalan.entities import EngineUri, TransformerEngineSettings
+from avalan.entities import EngineUri, Modality, TransformerEngineSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from avalan.secrets import KeyringSecrets
@@ -282,7 +282,7 @@ class ManagerEngineSettingsTestCase(TestCase):
         ) as manager:
             uri = manager.parse_uri("ai://tok@openai/gpt-4o")
             settings = manager.get_engine_settings(
-                uri, is_sentence_transformer=True
+                uri, modality=Modality.EMBEDDING
             )
             self.assertIsNone(settings.access_token)
         self.secrets_mock.read.assert_not_called()
@@ -386,7 +386,11 @@ class ManagerLoadEngineTestCase(TestCase):
                             result = manager.load_engine(
                                 engine_uri,
                                 settings,
-                                is_sentence_transformer=is_sentence,
+                                (
+                                    Modality.EMBEDDING
+                                    if is_sentence
+                                    else Modality.TEXT_GENERATION
+                                ),
                             )
                             Model.assert_called_once_with(
                                 model_id=model_id,
@@ -408,7 +412,11 @@ class ManagerLoadEngineTestCase(TestCase):
                             result = manager.load_engine(
                                 engine_uri,
                                 settings,
-                                is_sentence_transformer=is_sentence,
+                                (
+                                    Modality.EMBEDDING
+                                    if is_sentence
+                                    else Modality.TEXT_GENERATION
+                                ),
                             )
 
                         Model.assert_called_once_with(

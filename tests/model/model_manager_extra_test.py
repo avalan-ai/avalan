@@ -1,4 +1,4 @@
-from avalan.entities import EngineUri, TransformerEngineSettings
+from avalan.entities import EngineUri, Modality, TransformerEngineSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from logging import Logger
@@ -60,5 +60,20 @@ class ModelManagerExtraTestCase(TestCase):
         self.assertEqual(args["base_url"], "url")
         self.assertEqual(args["attention"], "sd")
         self.assertTrue(args["trust_remote_code"])
-        load_mock.assert_called_once_with(uri, get_mock.return_value, None)
+        load_mock.assert_called_once_with(
+            uri, get_mock.return_value, Modality.TEXT_GENERATION
+        )
         self.assertEqual(result, "model")
+
+    def test_load_engine_invalid_modality(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri("ai://tok@openai/gpt-4o")
+        settings = TransformerEngineSettings()
+        with self.assertRaises(NotImplementedError):
+            manager.load_engine(uri, settings, "invalid")  # type: ignore[arg-type]
+
+    def test_load_invalid_modality(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri("ai://tok@openai/gpt-4o")
+        with self.assertRaises(NotImplementedError):
+            manager.load(uri, modality="invalid")  # type: ignore[arg-type]

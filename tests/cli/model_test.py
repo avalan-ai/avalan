@@ -1,5 +1,6 @@
-from avalan.cli.commands import model as model_cmds
 from avalan.cli.commands import get_model_settings
+from avalan.cli.commands import model as model_cmds
+from avalan.entities import Modality
 from avalan.event.manager import EventManager
 from avalan.event import Event, EventType
 from types import SimpleNamespace
@@ -46,7 +47,7 @@ class CliModelTestCase(TestCase):
             "device": "cpu",
             "parallel": None,
             "disable_loading_progress_bar": True,
-            "is_sentence_transformer": True,
+            "modality": Modality.EMBEDDING,
             "loader_class": "auto",
             "low_cpu_mem_usage": True,
             "quiet": False,
@@ -856,7 +857,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
         gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, is_sentence_transformer=False
+            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
         manager.load.assert_called_once_with(engine_uri=engine_uri)
         lm.assert_not_called()
@@ -938,7 +939,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
         gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, is_sentence_transformer=False
+            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
         manager.load.assert_called_once_with(engine_uri=engine_uri)
 
@@ -1026,7 +1027,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
         gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, is_sentence_transformer=False
+            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
         manager.load.assert_called_once_with(engine_uri=engine_uri)
         lm.assert_awaited_once()

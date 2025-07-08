@@ -19,6 +19,7 @@ from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
 from ...model.engine import Engine
 from ...model.manager import ModelManager
+from ...entities import Modality
 from ...tool.manager import ToolManager
 from contextlib import ExitStack
 from dataclasses import asdict
@@ -238,7 +239,9 @@ class Orchestrator:
                 model_ids.append(environment.engine_uri.model_id)
                 engine = (
                     self._model_manager.load_engine(
-                        environment.engine_uri, environment.settings
+                        environment.engine_uri,
+                        environment.settings,
+                        Modality.TEXT_GENERATION,
                     )
                     if environment.type == EngineType.TEXT_GENERATION
                     else None

@@ -1,4 +1,4 @@
-from ...entities import EngineUri
+from ...entities import EngineUri, Modality
 from ...model.hubs.huggingface import HuggingfaceHub
 from argparse import Namespace
 from logging import Logger
@@ -9,7 +9,7 @@ def get_model_settings(
     hub: HuggingfaceHub,
     logger: Logger,
     engine_uri: EngineUri,
-    is_sentence_transformer: bool | None = None,
+    modality: Modality | None = None,
 ) -> dict:
     """Return settings used to load a model."""
     return dict(
@@ -18,9 +18,14 @@ def get_model_settings(
         attention=args.attention if hasattr(args, "attention") else None,
         device=args.device,
         disable_loading_progress_bar=args.disable_loading_progress_bar,
-        is_sentence_transformer=is_sentence_transformer
-        or (
-            hasattr(args, "sentence_transformer") and args.sentence_transformer
+        modality=(
+            modality
+            or (
+                Modality.EMBEDDING
+                if hasattr(args, "sentence_transformer")
+                and args.sentence_transformer
+                else Modality.TEXT_GENERATION
+            )
         ),
         loader_class=args.loader_class,
         low_cpu_mem_usage=args.low_cpu_mem_usage,
