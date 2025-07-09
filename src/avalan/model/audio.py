@@ -8,8 +8,8 @@ from torchaudio import load
 from torchaudio.functional import resample
 from numpy import ndarray
 from transformers import (
-    AutoProcessor,
     AutoModelForCTC,
+    AutoProcessor,
     DiaForConditionalGeneration,
     PreTrainedModel,
     PreTrainedTokenizer,
@@ -62,6 +62,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             ctc_loss_reduction="mean",
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            ignore_mismatched_sizes=True
         )
         return model
 
