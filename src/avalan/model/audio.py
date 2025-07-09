@@ -5,11 +5,11 @@ from ..model.engine import Engine
 from PIL import Image
 from torch import argmax, inference_mode
 from torchaudio import load
-from torchaudio.transforms import Resample
+from torchaudio.functional import resample
 from numpy import ndarray
 from transformers import (
-    AutoProcessor,
     AutoModelForCTC,
+    AutoProcessor,
     DiaForConditionalGeneration,
     PreTrainedModel,
     PreTrainedTokenizer,
@@ -38,14 +38,13 @@ class BaseAudioModel(Engine, ABC):
         raise TokenizerNotSupportedException()
 
     def _resample(self, audio_source: str, sampling_rate: int) -> ndarray:
-        """Return resampled audio as a numpy array."""
-        audio_wave, original_sampling_rate = load(audio_source)
-        if original_sampling_rate != sampling_rate:
-            resampler = Resample(
-                orig_freq=original_sampling_rate, new_freq=sampling_rate
+        wave, wave_sampling_rate = load(audio_source)
+        if wave_sampling_rate != sampling_rate:
+            wave = resample(
+                wave, wave_sampling_rate, sampling_rate
             )
-            audio_wave = resampler(audio_wave)
-        return audio_wave.squeeze().numpy()
+        wave = wave.mean(0).numpy()
+        return wave
 
 
 class SpeechRecognitionModel(BaseAudioModel):
@@ -63,6 +62,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             ctc_loss_reduction="mean",
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            ignore_mismatched_sizes=True
         )
         return model
 
@@ -122,7 +122,7 @@ class TextToSpeechModel(BaseAudioModel):
         if reference_path and reference_text:
             reference_voice = self._resample(
                 reference_path, sampling_rate
-            ).mean(0)
+            )
 
         text = (
             f"{reference_text}\n{prompt}"

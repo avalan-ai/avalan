@@ -47,7 +47,7 @@ import gettext
 from gettext import translation
 from importlib.util import find_spec
 from locale import getlocale
-from logging import basicConfig, DEBUG, getLogger, INFO, Logger, WARNING
+from logging import basicConfig, DEBUG, Filter, getLogger, INFO, Logger, LogRecord, WARNING
 from os import getenv, environ
 from subprocess import run
 from os.path import join
@@ -56,6 +56,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
+from transformers.utils import logging as hf_logging
 from typing import get_args, Optional, get_origin, get_args as get_type_args
 from dataclasses import fields
 from ..tool.browser import BrowserToolSettings
@@ -1443,6 +1444,18 @@ class CLI:
             "ignore",
             message=r".*`do_sample` is set to `False`. "
             r"However, `temperature` is set.*",
+        )
+
+        class _MaskSpecEmbedFilter(Filter):
+            def filter(self, record: LogRecord) -> bool:
+                return "wav2vec2.masked_spec_embed" not in record.getMessage()
+
+        hf_logger = hf_logging.get_logger("transformers.modeling_utils")
+        hf_logger.addFilter(_MaskSpecEmbedFilter())
+
+        filterwarnings(
+            "ignore",
+            message=r".*Some weights of Wav2Vec2ForCTC were not initialized.*",
         )
 
         suggest_login = suggest_login and not has_input(console)

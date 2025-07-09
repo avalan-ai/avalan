@@ -162,9 +162,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             model_instance.generate = MagicMock(return_value=outputs)
             model_mock.return_value = model_instance
 
-            resampled_audio = MagicMock()
-            resampled_audio.mean.return_value = "voice"
-            resample_method.return_value = resampled_audio
+            resample_method.return_value = "voice"
 
             settings = EngineSettings()
             model = TextToSpeechModel(
@@ -182,7 +180,6 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, "file.wav")
             resample_method.assert_called_once_with("ref.wav", 16000)
-            resampled_audio.mean.assert_called_once_with(0)
             processor_instance.assert_called_with(
                 text="ref\nhi",
                 audio="voice",
@@ -230,9 +227,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             model_instance.generate = MagicMock(return_value=outputs)
             model_mock.return_value = model_instance
 
-            resampled_audio = MagicMock()
-            resampled_audio.mean.return_value = "voice"
-            resample_method.return_value = resampled_audio
+            resample_method.return_value = "voice"
 
             settings = EngineSettings()
             model = TextToSpeechModel(
@@ -250,7 +245,6 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, "file.wav")
             resample_method.assert_called_once_with("ref.wav", 16000)
-            resampled_audio.mean.assert_called_once_with(0)
             processor_instance.assert_called_with(
                 text="ref\nhi",
                 audio="voice",

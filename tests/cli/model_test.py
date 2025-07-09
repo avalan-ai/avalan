@@ -859,9 +859,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
-        gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
-        )
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
         manager.load.assert_called_once_with(
             engine_uri=engine_uri,
             modality=Modality.TEXT_GENERATION,
@@ -947,9 +945,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
-        gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
-        )
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
         manager.load.assert_called_once_with(
             engine_uri=engine_uri,
             modality=Modality.TEXT_GENERATION,
@@ -1041,9 +1037,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
-        gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
-        )
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
         manager.load.assert_called_once_with(
             engine_uri=engine_uri,
             modality=Modality.TEXT_GENERATION,
@@ -1142,11 +1136,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 mm_patch.assert_called_once_with(hub, logger)
                 manager.parse_uri.assert_called_once_with("id")
                 gms_patch.assert_called_once_with(
-                    args,
-                    hub,
-                    logger,
-                    engine_uri,
-                    modality=Modality.TEXT_GENERATION,
+                    args, hub, logger, engine_uri
                 )
                 manager.load.assert_called_once_with(
                     engine_uri=engine_uri,
@@ -1239,13 +1229,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
-        gms_patch.assert_called_once_with(
-            args,
-            hub,
-            logger,
-            engine_uri,
-            modality=Modality.TEXT_GENERATION,
-        )
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
         manager.load.assert_called_once_with(
             engine_uri=engine_uri,
             modality=Modality.AUDIO_SPEECH_RECOGNITION,
@@ -1325,9 +1309,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
-        gms_patch.assert_called_once_with(
-            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
-        )
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
         manager.load.assert_called_once_with(
             engine_uri=engine_uri,
             modality=Modality.EMBEDDING,
