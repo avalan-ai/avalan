@@ -845,7 +845,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds,
                 "get_model_settings",
-                return_value={"engine_uri": engine_uri},
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
             ) as gms_patch,
             patch.object(model_cmds, "get_input", return_value=None),
             patch.object(
@@ -859,7 +862,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         gms_patch.assert_called_once_with(
             args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
-        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
         lm.assert_not_called()
         tg_patch.assert_not_called()
         hub.can_access.assert_called_once_with("id")
@@ -927,7 +933,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds,
                 "get_model_settings",
-                return_value={"engine_uri": engine_uri},
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
             ) as gms_patch,
             patch.object(model_cmds, "get_input", return_value="hi"),
             patch.object(
@@ -941,7 +950,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         gms_patch.assert_called_once_with(
             args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
-        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
 
         lm.assert_awaited_once()
         call_kwargs = lm.await_args.kwargs
@@ -1015,7 +1027,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds,
                 "get_model_settings",
-                return_value={"engine_uri": engine_uri},
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
             ) as gms_patch,
             patch.object(model_cmds, "get_input", return_value="hi"),
             patch.object(
@@ -1029,7 +1044,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         gms_patch.assert_called_once_with(
             args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
-        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
         lm.assert_awaited_once()
         tg_patch.assert_awaited_once()
 

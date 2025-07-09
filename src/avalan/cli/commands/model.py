@@ -143,7 +143,11 @@ async def model_run(
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
         model_settings = get_model_settings(
-            args, hub, logger, engine_uri
+            args,
+            hub,
+            logger,
+            engine_uri,
+            modality=Modality.TEXT_GENERATION,
         )
 
         if not args.quiet:
@@ -199,7 +203,7 @@ async def model_run(
                     max_new_tokens=settings.max_new_tokens,
                     reference_path=args.audio_reference_path,
                     reference_text=args.audio_reference_text,
-                    sampling_rate=args.audio_sampling_rate
+                    sampling_rate=args.audio_sampling_rate,
                 )
                 console.print(f"Audio generated in {output}")
                 return
@@ -209,7 +213,9 @@ async def model_run(
 
                 if engine_uri.is_local:
                     stopping_criteria = (
-                        KeywordStoppingCriteria(args.stop_on_keyword, lm.tokenizer)
+                        KeywordStoppingCriteria(
+                            args.stop_on_keyword, lm.tokenizer
+                        )
                         if args.stop_on_keyword
                         else None
                     )
@@ -222,7 +228,8 @@ async def model_run(
                         ),
                         manual_sampling=display_tokens,
                         pick=dtokens_pick,
-                        skip_special_tokens=args.quiet or args.skip_special_tokens,
+                        skip_special_tokens=args.quiet
+                        or args.skip_special_tokens,
                     )
                 else:
                     output_generator = lm(
