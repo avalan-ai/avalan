@@ -65,6 +65,7 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
                 ctc_loss_reduction="mean",
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                ignore_mismatched_sizes=True
             )
 
 
