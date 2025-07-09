@@ -845,7 +845,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds,
                 "get_model_settings",
-                return_value={"engine_uri": engine_uri},
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
             ) as gms_patch,
             patch.object(model_cmds, "get_input", return_value=None),
             patch.object(
@@ -859,7 +862,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         gms_patch.assert_called_once_with(
             args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
-        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
         lm.assert_not_called()
         tg_patch.assert_not_called()
         hub.can_access.assert_called_once_with("id")
@@ -927,7 +933,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds,
                 "get_model_settings",
-                return_value={"engine_uri": engine_uri},
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
             ) as gms_patch,
             patch.object(model_cmds, "get_input", return_value="hi"),
             patch.object(
@@ -941,7 +950,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         gms_patch.assert_called_once_with(
             args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
-        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
 
         lm.assert_awaited_once()
         call_kwargs = lm.await_args.kwargs
@@ -1015,7 +1027,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds,
                 "get_model_settings",
-                return_value={"engine_uri": engine_uri},
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
             ) as gms_patch,
             patch.object(model_cmds, "get_input", return_value="hi"),
             patch.object(
@@ -1029,9 +1044,207 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         gms_patch.assert_called_once_with(
             args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
         )
-        manager.load.assert_called_once_with(engine_uri=engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
         lm.assert_awaited_once()
         tg_patch.assert_awaited_once()
+
+    async def test_run_audio_text_to_speech(self):
+        base_args = dict(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            audio_path="out.wav",
+            audio_sampling_rate=16_000,
+        )
+
+        for ref_path, ref_text in (
+            (None, None),
+            ("ref.wav", None),
+            (None, "hello"),
+            ("ref.wav", "hello"),
+        ):
+            with self.subTest(
+                reference_path=ref_path, reference_text=ref_text
+            ):
+                args = Namespace(
+                    **base_args,
+                    audio_reference_path=ref_path,
+                    audio_reference_text=ref_text,
+                )
+                console = MagicMock()
+                theme = MagicMock()
+                theme._ = lambda s: s
+                theme.icons = {"user_input": ">"}
+                theme.model.return_value = "panel"
+                hub = MagicMock()
+                hub.can_access.return_value = True
+                hub.model.return_value = "hub_model"
+                logger = MagicMock()
+
+                engine_uri = SimpleNamespace(model_id="id", is_local=True)
+                lm = AsyncMock(return_value="gen.wav")
+                lm.config = MagicMock()
+                lm.config.__repr__ = lambda self=None: "cfg"
+
+                load_cm = MagicMock()
+                load_cm.__enter__.return_value = lm
+                load_cm.__exit__.return_value = False
+
+                manager = MagicMock()
+                manager.__enter__.return_value = manager
+                manager.__exit__.return_value = False
+                manager.parse_uri.return_value = engine_uri
+                manager.load.return_value = load_cm
+
+                with (
+                    patch.object(
+                        model_cmds, "ModelManager", return_value=manager
+                    ) as mm_patch,
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.AUDIO_TEXT_TO_SPEECH,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
+
+                mm_patch.assert_called_once_with(hub, logger)
+                manager.parse_uri.assert_called_once_with("id")
+                gms_patch.assert_called_once_with(
+                    args,
+                    hub,
+                    logger,
+                    engine_uri,
+                    modality=Modality.TEXT_GENERATION,
+                )
+                manager.load.assert_called_once_with(
+                    engine_uri=engine_uri,
+                    modality=Modality.AUDIO_TEXT_TO_SPEECH,
+                )
+                lm.assert_awaited_once_with(
+                    path="out.wav",
+                    prompt="hi",
+                    max_new_tokens=1,
+                    reference_path=ref_path,
+                    reference_text=ref_text,
+                    sampling_rate=16_000,
+                )
+                tg_patch.assert_not_called()
+                self.assertEqual(
+                    console.print.call_args.args[0],
+                    "Audio generated in gen.wav",
+                )
+
+    async def test_run_invalid_modality_raises(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock()
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri.return_value = engine_uri
+        manager.load.return_value = load_cm
+
+        with (
+            patch.object(
+                model_cmds, "ModelManager", return_value=manager
+            ) as mm_patch,
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.EMBEDDING,
+                },
+            ) as gms_patch,
+            patch.object(model_cmds, "get_input", return_value="hi"),
+        ):
+            with self.assertRaises(NotImplementedError):
+                await model_cmds.model_run(
+                    args, console, theme, hub, 5, logger
+                )
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(
+            args, hub, logger, engine_uri, modality=Modality.TEXT_GENERATION
+        )
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.EMBEDDING,
+        )
+        lm.assert_not_called()
 
 
 class CliModelSearchTestCase(IsolatedAsyncioTestCase):

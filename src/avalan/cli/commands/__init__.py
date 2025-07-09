@@ -20,12 +20,14 @@ def get_model_settings(
         disable_loading_progress_bar=args.disable_loading_progress_bar,
         modality=(
             modality
+            or getattr(args, "modality", None)
             or (
                 Modality.EMBEDDING
                 if hasattr(args, "sentence_transformer")
                 and args.sentence_transformer
-                else Modality.TEXT_GENERATION
+                else None
             )
+            or Modality.TEXT_GENERATION
         ),
         loader_class=args.loader_class,
         low_cpu_mem_usage=args.low_cpu_mem_usage,

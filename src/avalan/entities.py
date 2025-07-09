@@ -21,6 +21,8 @@ ImageTextGenerationLoaderClass = Literal["gemma3", "qwen2"]
 
 TextGenerationLoaderClass = Literal["auto", "gemma3", "mistral3"]
 
+ToolValue = bool | float | int | str | None
+
 Vendor = Literal[
     "anthropic",
     "anyscale",
@@ -53,6 +55,21 @@ WeightType = Literal[
 ]
 
 
+class DistanceType(StrEnum):
+    COSINE = "cosine"
+    DOT = "dot"
+    L1 = "l1"
+    L2 = "l2"
+    PEARSON = "pearson"
+
+
+class MessageRole(StrEnum):
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+    TOOL = "tool"
+    USER = "user"
+
+
 class Modality(StrEnum):
     AUDIO_SPEECH_RECOGNITION = "audio_speech_recognition"
     AUDIO_TEXT_TO_SPEECH = "audio_text_to_speech"
@@ -63,31 +80,6 @@ class Modality(StrEnum):
     VISION_IMAGE_TO_TEXT = "vision_image_to_text"
     VISION_ENCODER_DECODER = "vision_encoder_decoder"
     VISION_SEMANTIC_SEGMENTATION = "vision_semantic_segmentation"
-
-
-ToolValue = bool | float | int | str | None
-
-
-class MessageRole(StrEnum):
-    ASSISTANT = "assistant"
-    SYSTEM = "system"
-    TOOL = "tool"
-    USER = "user"
-
-
-class ToolFormat(StrEnum):
-    JSON = "json"
-    REACT = "react"
-    BRACKET = "bracket"
-    OPENAI = "openai"
-
-
-class DistanceType(StrEnum):
-    COSINE = "cosine"
-    DOT = "dot"
-    L1 = "l1"
-    L2 = "l2"
-    PEARSON = "pearson"
 
 
 class ParallelStrategy(StrEnum):
@@ -103,6 +95,13 @@ class ParallelStrategy(StrEnum):
     LOCAL_PACKED_ROWWISE = "local_packed_rowwise"
     SEQUENCE_PARALLEL = "sequence_parallel"
     REPLICATE = "replicate"
+
+
+class ToolFormat(StrEnum):
+    JSON = "json"
+    REACT = "react"
+    BRACKET = "bracket"
+    OPENAI = "openai"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -264,6 +263,24 @@ class GenerationSettings:
             "return_dict": True,
         }
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class GenericProxyConfig:
+    scheme: str
+    host: str
+    port: int
+    username: str | None = None
+    password: str | None = None
+
+    def to_dict(self) -> dict[str, str]:
+        credentials = (
+            f"{self.username}:{self.password}@"
+            if self.username and self.password
+            else ""
+        )
+        url = f"{self.scheme}://{credentials}{self.host}:{self.port}"
+        return {"http": url, "https": url}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -580,24 +597,6 @@ class User:
     name: str
     full_name: str | None = None
     access_token_name: str | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class GenericProxyConfig:
-    scheme: str
-    host: str
-    port: int
-    username: str | None = None
-    password: str | None = None
-
-    def to_dict(self) -> dict[str, str]:
-        credentials = (
-            f"{self.username}:{self.password}@"
-            if self.username and self.password
-            else ""
-        )
-        url = f"{self.scheme}://{credentials}{self.host}:{self.port}"
-        return {"http": url, "https": url}
 
 
 @dataclass(frozen=True, kw_only=True)
