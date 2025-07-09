@@ -144,8 +144,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 DiaForConditionalGeneration, "from_pretrained"
             ) as model_mock,
-            patch("avalan.model.audio.load") as load_mock,
-            patch("avalan.model.audio.functional.resample") as resample_mock,
+            patch.object(TextToSpeechModel, "_resample") as resample_method,
             patch(
                 "avalan.model.audio.inference_mode", return_value=nullcontext()
             ) as inf_mock,
@@ -163,13 +162,9 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             model_instance.generate = MagicMock(return_value=outputs)
             model_mock.return_value = model_instance
 
-            reference_audio = MagicMock()
             resampled_audio = MagicMock()
-            mean_mock = MagicMock()
-            resampled_audio.mean.return_value = mean_mock
-            mean_mock.numpy.return_value = "voice"
-            load_mock.return_value = (reference_audio, 22050)
-            resample_mock.return_value = resampled_audio
+            resampled_audio.mean.return_value = "voice"
+            resample_method.return_value = resampled_audio
 
             settings = EngineSettings()
             model = TextToSpeechModel(
@@ -186,10 +181,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "file.wav")
-            load_mock.assert_called_once_with("ref.wav")
-            resample_mock.assert_called_once_with(
-                reference_audio, 22050, 16000
-            )
+            resample_method.assert_called_once_with("ref.wav", 16000)
             resampled_audio.mean.assert_called_once_with(0)
             processor_instance.assert_called_with(
                 text="ref\nhi",
@@ -220,8 +212,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 DiaForConditionalGeneration, "from_pretrained"
             ) as model_mock,
-            patch("avalan.model.audio.load") as load_mock,
-            patch("avalan.model.audio.functional.resample") as resample_mock,
+            patch.object(TextToSpeechModel, "_resample") as resample_method,
             patch(
                 "avalan.model.audio.inference_mode", return_value=nullcontext()
             ) as inf_mock,
@@ -239,11 +230,9 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             model_instance.generate = MagicMock(return_value=outputs)
             model_mock.return_value = model_instance
 
-            reference_audio = MagicMock()
-            mean_mock = MagicMock()
-            reference_audio.mean.return_value = mean_mock
-            mean_mock.numpy.return_value = "voice"
-            load_mock.return_value = (reference_audio, 16000)
+            resampled_audio = MagicMock()
+            resampled_audio.mean.return_value = "voice"
+            resample_method.return_value = resampled_audio
 
             settings = EngineSettings()
             model = TextToSpeechModel(
@@ -260,9 +249,8 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "file.wav")
-            load_mock.assert_called_once_with("ref.wav")
-            resample_mock.assert_not_called()
-            reference_audio.mean.assert_called_once_with(0)
+            resample_method.assert_called_once_with("ref.wav", 16000)
+            resampled_audio.mean.assert_called_once_with(0)
             processor_instance.assert_called_with(
                 text="ref\nhi",
                 audio="voice",
