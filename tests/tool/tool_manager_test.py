@@ -326,6 +326,93 @@ class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(results, expected_result)
             self.assertEqual(self.manager._parser._eos_token, "<END>")
 
+
+class ToolManagerFiltersTransformersTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        calculator = CalculatorTool()
+        self.manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+
+    async def test_filters(self):
+        def modify(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"expression": "2 + 2"},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+            settings=ToolManagerSettings(filters=[modify]),
+        )
+
+        call = ToolCall(
+            id=_uuid4(), name="calculator", arguments={"expression": "1 + 1"}
+        )
+        result_id = _uuid4()
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            result = await manager(call, context=ToolCallContext())
+
+        self.assertEqual(result.call.arguments, {"expression": "2 + 2"})
+        self.assertEqual(result.result, "4")
+
+    async def test_transformers(self):
+        def transform(_: ToolCall, __: ToolCallContext, result: str | None):
+            return f"{result}!"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+            settings=ToolManagerSettings(transformers=[transform]),
+        )
+
+        call = ToolCall(
+            id=_uuid4(), name="calculator", arguments={"expression": "1 + 1"}
+        )
+        result_id = _uuid4()
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            result = await manager(call, context=ToolCallContext())
+
+        self.assertEqual(result.result, "2!")
+
+    async def test_filters_and_transformers(self):
+        def modify(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"expression": "3 + 3"},
+                ),
+                context,
+            )
+
+        def transform(_: ToolCall, __: ToolCallContext, result: str | None):
+            return int(result) * 2
+
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+            settings=ToolManagerSettings(
+                filters=[modify], transformers=[transform]
+            ),
+        )
+
+        call = ToolCall(
+            id=_uuid4(), name="calculator", arguments={"expression": "1 + 1"}
+        )
+        result_id = _uuid4()
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            result = await manager(call, context=ToolCallContext())
+
+        self.assertEqual(result.result, 12)
+
     async def test_namespaced_tool(self):
         calculator = CalculatorTool()
         namespaced_manager = ToolManager.create_instance(
