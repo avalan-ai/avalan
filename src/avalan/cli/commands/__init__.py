@@ -12,23 +12,24 @@ def get_model_settings(
     modality: Modality | None = None,
 ) -> dict:
     """Return settings used to load a model."""
+    modality = (
+        modality
+        or getattr(args, "modality", None)
+        or (
+            Modality.EMBEDDING
+            if hasattr(args, "sentence_transformer")
+            and args.sentence_transformer
+            else None
+        )
+        or Modality.TEXT_GENERATION
+    )
     return dict(
         base_url=args.base_url if hasattr(args, "base_url") else None,
         engine_uri=engine_uri,
         attention=args.attention if hasattr(args, "attention") else None,
         device=args.device,
         disable_loading_progress_bar=args.disable_loading_progress_bar,
-        modality=(
-            modality
-            or getattr(args, "modality", None)
-            or (
-                Modality.EMBEDDING
-                if hasattr(args, "sentence_transformer")
-                and args.sentence_transformer
-                else None
-            )
-            or Modality.TEXT_GENERATION
-        ),
+        modality=modality,
         loader_class=args.loader_class,
         low_cpu_mem_usage=args.low_cpu_mem_usage,
         quiet=args.quiet,

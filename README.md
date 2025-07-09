@@ -185,6 +185,45 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
+## Modalities
+
+avalan supports text, audio and video modalities.
+
+### Audio
+
+#### Speech recognition
+
+Run a speech recognition model:
+
+```bash
+avalan model run "facebook/wav2vec2-base-960h" \
+    --modality audio_speech_recognition \
+    --audio-path oprah.wav \
+    --audio-sampling-rate 16000
+```
+
+To get the transcript for the given audio file:
+
+```text
+AND THEN I GREW UP AND HAD THE ESTEEMED HONOUR OF MEETING HER AND WASN'T
+THAT A SURPRISE HERE WAS THIS PETITE ALMOST DELICATE LADY WHO WAS THE
+PERSONIFICATION OF GRACE AND GOODNESS
+```
+
+#### Text to speech
+
+Create an audio speech from your prompt by cloning Oprah's voice, using an
+18-second clip of her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm):
+
+```bash
+echo "[S1] Leo Messi is the greatest football player of all times." | \
+    avalan model run "nari-labs/Dia-1.6B-0626" \
+            --modality audio_text_to_speech \
+            --audio-path example.wav \
+            --audio-reference-path docs/examples/oprah.wav \
+            --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
+```
+
 ## Code
 
 Through the avalan microframework, you can easily integrate real time token

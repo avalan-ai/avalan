@@ -146,8 +146,7 @@ async def model_run(
             args,
             hub,
             logger,
-            engine_uri,
-            modality=Modality.TEXT_GENERATION,
+            engine_uri
         )
 
         if not args.quiet:
@@ -168,17 +167,26 @@ async def model_run(
                     )
                 )
 
+        modality = model_settings["modality"]
+        assert modality
+
+        requires_input = modality in [
+            Modality.AUDIO_TEXT_TO_SPEECH,
+            Modality.TEXT_GENERATION
+        ]
+
         with manager.load(**model_settings) as lm:
             logger.debug("Loaded model %s", lm.config.__repr__())
 
-            input_string = get_input(
-                console,
-                _i["user_input"] + " ",
-                echo_stdin=not args.no_repl,
-                is_quiet=args.quiet,
-            )
-            if not input_string:
-                return
+            if requires_input:
+                input_string = get_input(
+                    console,
+                    _i["user_input"] + " ",
+                    echo_stdin=not args.no_repl,
+                    is_quiet=args.quiet,
+                )
+                if not input_string:
+                    return
 
             settings = GenerationSettings(
                 do_sample=args.do_sample,
@@ -191,8 +199,6 @@ async def model_run(
                 top_p=args.top_p,
                 use_cache=args.use_cache,
             )
-
-            modality = model_settings["modality"]
 
             if modality == Modality.AUDIO_TEXT_TO_SPEECH:
                 assert args.audio_path and args.audio_sampling_rate
