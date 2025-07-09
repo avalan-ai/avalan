@@ -207,6 +207,15 @@ async def model_run(
                 )
                 console.print(f"Audio generated in {output}")
                 return
+            elif modality == Modality.AUDIO_SPEECH_RECOGNITION:
+                assert args.audio_path and args.audio_sampling_rate
+
+                output = await lm(
+                    path=args.audio_path,
+                    sampling_rate=args.audio_sampling_rate,
+                )
+                console.print(output)
+                return
             elif modality == Modality.TEXT_GENERATION:
                 display_tokens = args.display_tokens or 0
                 dtokens_pick = 10 if display_tokens > 0 else 0

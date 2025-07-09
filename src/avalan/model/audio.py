@@ -69,11 +69,11 @@ class SpeechRecognitionModel(BaseAudioModel):
     @override
     async def __call__(
         self,
-        audio_source: str,
-        sampling_rate: int,
+        path: str,
+        sampling_rate: int = 16_000,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
-        audio = self._resample(audio_source, sampling_rate)
+        audio = self._resample(path, sampling_rate)
         inputs = self._processor(
             audio,
             sampling_rate=sampling_rate,
