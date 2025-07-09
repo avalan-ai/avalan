@@ -38,20 +38,23 @@ class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
             logger=MagicMock(spec=Logger),
         )
         audio_wave = MagicMock()
-        squeezed = MagicMock()
-        squeezed.numpy.return_value = "audio"
-        audio_wave.squeeze.return_value = squeezed
-        resampler = MagicMock(return_value=audio_wave)
+        mean = MagicMock()
+        mean.numpy.return_value = "audio"
+        audio_wave.mean.return_value = mean
         with (
-            patch("avalan.model.audio.load", return_value=(audio_wave, 8000)),
             patch(
-                "avalan.model.audio.Resample", return_value=resampler
-            ) as res_patch,
+                "avalan.model.audio.load", return_value=(audio_wave, 8000)
+            ) as load_patch,
+            patch(
+                "avalan.model.audio.resample", return_value=audio_wave
+            ) as resample_patch,
         ):
             result = model._resample("a.wav", 16000)
         self.assertEqual(result, "audio")
-        res_patch.assert_called_once_with(orig_freq=8000, new_freq=16000)
-        resampler.assert_called_once_with(audio_wave)
+        load_patch.assert_called_once_with("a.wav")
+        resample_patch.assert_called_once_with(audio_wave, 8000, 16000)
+        audio_wave.mean.assert_called_once_with(0)
+        mean.numpy.assert_called_once_with()
 
     def test_resample_no_change(self):
         model = DummyAudioModel(
@@ -60,13 +63,18 @@ class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
             logger=MagicMock(spec=Logger),
         )
         audio_wave = MagicMock()
-        squeezed = MagicMock()
-        squeezed.numpy.return_value = "audio"
-        audio_wave.squeeze.return_value = squeezed
+        mean = MagicMock()
+        mean.numpy.return_value = "audio"
+        audio_wave.mean.return_value = mean
         with (
-            patch("avalan.model.audio.load", return_value=(audio_wave, 16000)),
-            patch("avalan.model.audio.Resample") as res_patch,
+            patch(
+                "avalan.model.audio.load", return_value=(audio_wave, 16000)
+            ) as load_patch,
+            patch("avalan.model.audio.resample") as resample_patch,
         ):
             result = model._resample("a.wav", 16000)
         self.assertEqual(result, "audio")
-        res_patch.assert_not_called()
+        load_patch.assert_called_once_with("a.wav")
+        resample_patch.assert_not_called()
+        audio_wave.mean.assert_called_once_with(0)
+        mean.numpy.assert_called_once_with()
