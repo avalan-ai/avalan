@@ -76,8 +76,9 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
-            patch("avalan.model.audio.load") as load_mock,
-            patch("avalan.model.audio.Resample") as resample_mock,
+            patch.object(
+                SpeechRecognitionModel, "_resample"
+            ) as resample_method,
             patch("avalan.model.audio.argmax") as argmax_mock,
             patch(
                 "avalan.model.audio.inference_mode", return_value=nullcontext()
@@ -98,15 +99,7 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance.return_value = call_result
             model_mock.return_value = model_instance
 
-            audio_wave = MagicMock()
-            squeezed = MagicMock()
-            squeezed.numpy.return_value = "audio"
-            audio_wave.squeeze.return_value = squeezed
-            load_mock.return_value = (audio_wave, 8000)
-
-            resampler_instance = MagicMock()
-            resampler_instance.return_value = audio_wave
-            resample_mock.return_value = resampler_instance
+            resample_method.return_value = "audio"
 
             argmax_mock.return_value = "pred"
 
@@ -120,11 +113,7 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             result = await model("file.wav", sampling_rate=16000)
 
             self.assertEqual(result, "ok")
-            load_mock.assert_called_once_with("file.wav")
-            resample_mock.assert_called_once_with(
-                orig_freq=8000, new_freq=16000
-            )
-            resampler_instance.assert_called_once_with(audio_wave)
+            resample_method.assert_called_once_with("file.wav", 16000)
             processor_instance.assert_called_with(
                 "audio",
                 sampling_rate=16000,
@@ -148,8 +137,9 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(AutoProcessor, "from_pretrained") as processor_mock,
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
-            patch("avalan.model.audio.load") as load_mock,
-            patch("avalan.model.audio.Resample") as resample_mock,
+            patch.object(
+                SpeechRecognitionModel, "_resample"
+            ) as resample_method,
             patch("avalan.model.audio.argmax") as argmax_mock,
             patch(
                 "avalan.model.audio.inference_mode", return_value=nullcontext()
@@ -170,11 +160,7 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
             model_instance.return_value = call_result
             model_mock.return_value = model_instance
 
-            audio_wave = MagicMock()
-            squeezed = MagicMock()
-            squeezed.numpy.return_value = "audio"
-            audio_wave.squeeze.return_value = squeezed
-            load_mock.return_value = (audio_wave, 16000)
+            resample_method.return_value = "audio"
 
             argmax_mock.return_value = "pred"
 
@@ -188,8 +174,7 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
             result = await model("file.wav", sampling_rate=16000)
 
             self.assertEqual(result, "ok")
-            load_mock.assert_called_once_with("file.wav")
-            resample_mock.assert_not_called()
+            resample_method.assert_called_once_with("file.wav", 16000)
             processor_instance.assert_called_with(
                 "audio",
                 sampling_rate=16000,

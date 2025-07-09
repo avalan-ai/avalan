@@ -4,8 +4,9 @@ from ..model import TextGenerationVendor, TokenizerNotSupportedException
 from ..model.engine import Engine
 from PIL import Image
 from torch import argmax, inference_mode
-from torchaudio import functional, load
+from torchaudio import load
 from torchaudio.transforms import Resample
+from numpy import ndarray
 from transformers import (
     AutoProcessor,
     AutoModelForCTC,
@@ -36,6 +37,16 @@ class BaseAudioModel(Engine, ABC):
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         raise TokenizerNotSupportedException()
 
+    def _resample(self, audio_source: str, sampling_rate: int) -> ndarray:
+        """Return resampled audio as a numpy array."""
+        audio_wave, original_sampling_rate = load(audio_source)
+        if original_sampling_rate != sampling_rate:
+            resampler = Resample(
+                orig_freq=original_sampling_rate, new_freq=sampling_rate
+            )
+            audio_wave = resampler(audio_wave)
+        return audio_wave.squeeze().numpy()
+
 
 class SpeechRecognitionModel(BaseAudioModel):
     def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
@@ -62,13 +73,7 @@ class SpeechRecognitionModel(BaseAudioModel):
         sampling_rate: int,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
-        audio_wave, original_sampling_rate = load(audio_source)
-        if original_sampling_rate != sampling_rate:
-            resampler = Resample(
-                orig_freq=original_sampling_rate, new_freq=sampling_rate
-            )
-            audio_wave = resampler(audio_wave)
-        audio = audio_wave.squeeze().numpy()
+        audio = self._resample(audio_source, sampling_rate)
         inputs = self._processor(
             audio,
             sampling_rate=sampling_rate,
@@ -115,12 +120,9 @@ class TextToSpeechModel(BaseAudioModel):
 
         reference_voice = None
         if reference_path and reference_text:
-            reference_voice, reference_sampling_rate = load(reference_path)
-            if reference_sampling_rate != sampling_rate:
-                reference_voice = functional.resample(
-                    reference_voice, reference_sampling_rate, sampling_rate
-                )
-            reference_voice = reference_voice.mean(0).numpy()
+            reference_voice = self._resample(
+                reference_path, sampling_rate
+            ).mean(0)
 
         text = (
             f"{reference_text}\n{prompt}"
