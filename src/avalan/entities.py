@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from collections.abc import Callable
 from numpy import ndarray
 from torch import dtype, Tensor
 from typing import Literal
@@ -524,6 +525,23 @@ class ToolManagerSettings:
     tool_format: ToolFormat | None = None
     avoid_repetition: bool = False
     maximum_depth: int | None = None
+    filters: (
+        list[
+            Callable[
+                [ToolCall, ToolCallContext],
+                tuple[ToolCall, ToolCallContext] | None,
+            ]
+        ]
+        | None
+    ) = None
+    transformers: (
+        list[
+            Callable[
+                [ToolCall, ToolCallContext, ToolValue | None], ToolValue | None
+            ]
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -129,6 +129,13 @@ class ToolManager(ContextDecorator):
         if not tool:
             return None
 
+        if self._settings.filters:
+            for f in self._settings.filters:
+                modified = f(call, context)
+                if modified is not None:
+                    assert isinstance(modified, tuple) and len(modified) == 2
+                    call, context = modified
+
         is_native_tool = isinstance(tool, Tool)
 
         result = (
@@ -144,6 +151,12 @@ class ToolManager(ContextDecorator):
                 )
             )
         )
+
+        if self._settings.transformers:
+            for t in self._settings.transformers:
+                transformed = t(call, context, result)
+                if transformed is not None:
+                    result = transformed
 
         return ToolCallResult(
             id=uuid4(),
