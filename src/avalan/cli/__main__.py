@@ -31,6 +31,7 @@ from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
     DistanceType,
+    Modality,
     ParallelStrategy,
     TextGenerationLoaderClass,
     User,
@@ -918,6 +919,40 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--audio-path",
+            type=str,
+            help=(
+                "Path where to store generated audio. "
+                "Only applicable to audio modalities."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--audio-reference-path",
+            type=str,
+            help=(
+                "Path to existing audio file to use for voice cloning. "
+                "Only applicable to audio modalities."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--audio-reference-text",
+            type=str,
+            help=(
+                "Text transcript of the reference audio given in "
+                "--audio-reference-path. "
+                "Only applicable to audio modalities."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--audio-sampling-rate",
+            default=44_100,
+            type=int,
+            help=(
+                "Sampling rate to use for audio generation. "
+                "Only applicable to audio modalities."
+            ),
+        )
+        model_run_parser.add_argument(
             "--do-sample",
             default=True,
             action="store_true",
@@ -947,6 +982,12 @@ class CLI:
             default=10 * 1024,
             type=int,
             help="Maximum number of tokens to generate",
+        )
+        model_run_parser.add_argument(
+            "--modality",
+            default=Modality.TEXT_GENERATION,
+            type=str,
+            choices=[m.value for m in Modality],
         )
         model_run_parser.add_argument(
             "--min-p",
