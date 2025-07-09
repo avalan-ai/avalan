@@ -1,4 +1,4 @@
-# Codex Agent Instructions for avalan
+# Agent Instructions
 
 This repository contains the **avalan** framework, a Python project that
 orchestrates multiple models and provides a CLI for AI agents. The repository
@@ -12,7 +12,7 @@ and `pytest` for testing.
 - Code must target Python **3.11** or newer with fully strict type hints.
 - Prefer `type | None` instead of `Optional[type]` for optional values.
 - Use assertions to ensure argument validity.
-
+- Do not ignore exceptions unless instructed.
 
 ### Coding Standards
 
@@ -42,29 +42,20 @@ using the built-in collection classes directly, instead of importing `List`,
 
 Type hints encouraged throughout the codebase.
 
-Right before committing, run `make lint` to perform syntax checks and
-formatting fixes with [black](https://black.readthedocs.io/en/stable/) and
- [ruff](https://docs.astral.sh/ruff/):
+Before committing, run `make lint` to perform syntax checks and formatting
+fixes with [black](https://black.readthedocs.io/en/stable/) and
+[ruff](https://docs.astral.sh/ruff/):
 
 ```bash
 make lint
 ```
 
-## Running Tests
+## Testing
 
-Run the full test suite before every commit and add unit test coverage for all
-code additions or modifications:
-
-```bash
-poetry run pytest --verbose -s
-```
-
-Tests must pass before you commit.
-
-## Test coverage
-
-You can get information about test coverage by running the `test-coverage`
-Makefile target. If you run it without arguments:
+When adding or modifying code, make sure you add unit tests for it, aiming
+for full coverage. You can get information about test coverage by running
+the `test-coverage` target from the `Makefile`. If you run it without
+arguments:
 
 ```bash
 make test-coverage
@@ -85,12 +76,22 @@ that have less than 95% coverage on folder `src/avalan/tool`:
 make test-coverage -- -95 src/avalan/tool
 ```
 
-## Commit Messages
+## Submitting changes
+
+Run the full test suite before every commit:
+
+```bash
+poetry run pytest --verbose -s
+```
+
+Tests must pass before you commit.
+
+### Commit Messages
 
 - Keep commit messages short and descriptive (e.g. `Fix memory tests`).
 - Do not amend or rewrite previous commits.
 
-## Pull Request Message
+### Pull Request Message
 
 When you open a Pull Request, include two sections in the body:
 
