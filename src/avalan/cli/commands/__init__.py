@@ -20,7 +20,7 @@ def get_model_settings(
         disable_loading_progress_bar=args.disable_loading_progress_bar,
         modality=(
             modality
-            or args.modality
+            or getattr(args, "modality", None)
             or (
                 Modality.EMBEDDING
                 if hasattr(args, "sentence_transformer")
