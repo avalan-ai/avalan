@@ -1,4 +1,5 @@
 import sys
+import logging
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from types import SimpleNamespace
 from pathlib import Path
@@ -310,6 +311,62 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         main_mock.assert_awaited_once()
         self.assertEqual(main_mock.await_args.args[0].device, "cuda:1")
         set_device_mock.assert_not_called()
+
+    async def test_call_adds_mask_spec_embed_filter(self):
+        hf_logger = MagicMock()
+        added_filters: list = []
+
+        def capture_filter(f: logging.Filter) -> None:
+            added_filters.append(f)
+
+        hf_logger.addFilter.side_effect = capture_filter
+
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation", return_value=self.translator
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch(
+                "avalan.cli.__main__.hf_logging.get_logger",
+                return_value=hf_logger,
+            ),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+        ):
+            await self.cli()
+
+        self.assertEqual(len(added_filters), 1)
+        filt = added_filters[0]
+        ok_record = logging.LogRecord(
+            name="t",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="ok",
+            args=(),
+            exc_info=None,
+        )
+        bad_record = logging.LogRecord(
+            name="t",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="wav2vec2.masked_spec_embed warning",
+            args=(),
+            exc_info=None,
+        )
+        self.assertTrue(filt.filter(ok_record))
+        self.assertFalse(filt.filter(bad_record))
 
 
 class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
