@@ -132,6 +132,9 @@ class DummyTheme(Theme):
     def display_image_entities(self, entities):
         raise NotImplementedError()
 
+    def display_image_labels(self, labels):
+        raise NotImplementedError()
+
     async def tokens(self, *args, **kwargs):
         raise NotImplementedError()
 
@@ -345,6 +348,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.tokenizer_config(self.theme, None),
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
             lambda: Theme.display_image_entities(self.theme, []),
+            lambda: Theme.display_image_labels(self.theme, []),
             lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
         ]
 

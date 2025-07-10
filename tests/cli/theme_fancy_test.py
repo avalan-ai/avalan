@@ -768,6 +768,13 @@ class FancyThemeMoreTests(unittest.TestCase):
         self.assertEqual(table.columns[2]._cells[0], "0.00, 1.00, 2.00, 3.00")
         self.assertEqual(table.columns[2]._cells[1], "-")
 
+    def test_display_image_labels(self):
+        align = self.theme.display_image_labels(["cat", "dog"])
+        table = align.renderable
+        self.assertEqual(table.row_count, 2)
+        self.assertEqual(table.columns[0]._cells[0], "cat")
+        self.assertEqual(table.columns[0]._cells[1], "dog")
+
     def test_fill_model_config_table(self):
         cfg = ModelConfig(
             architectures=["a"],
