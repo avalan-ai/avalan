@@ -237,7 +237,10 @@ async def model_run(
                     theme.display_image_labels(output),
                 )
                 return
-            elif modality == Modality.VISION_IMAGE_TO_TEXT:
+            elif modality in {
+                Modality.VISION_IMAGE_TO_TEXT,
+                Modality.VISION_ENCODER_DECODER,
+            }:
                 assert args.path
 
                 output = await lm(
