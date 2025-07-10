@@ -972,6 +972,14 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--image-width",
+            type=int,
+            help=(
+                "Resize input image to this width before processing. "
+                "Only applicable to vision image text to text modality."
+            ),
+        )
+        model_run_parser.add_argument(
             "--do-sample",
             default=True,
             action="store_true",
