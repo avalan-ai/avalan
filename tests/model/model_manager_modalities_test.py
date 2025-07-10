@@ -19,7 +19,8 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
             Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",
             Modality.VISION_OBJECT_DETECTION: "ObjectDetectionModel",
             Modality.VISION_IMAGE_CLASSIFICATION: "ImageClassificationModel",
-            Modality.VISION_IMAGE_TO_TEXT: "ImageTextToTextModel",
+            Modality.VISION_IMAGE_TO_TEXT: "ImageToTextModel",
+            Modality.VISION_IMAGE_TEXT_TO_TEXT: "ImageTextToTextModel",
             Modality.VISION_ENCODER_DECODER: "VisionEncoderDecoderModel",
             Modality.VISION_SEMANTIC_SEGMENTATION: "SemanticSegmentationModel",
         }

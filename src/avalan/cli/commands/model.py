@@ -168,6 +168,7 @@ async def model_run(
         requires_input = modality in [
             Modality.AUDIO_TEXT_TO_SPEECH,
             Modality.TEXT_GENERATION,
+            Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
 
         with manager.load(**model_settings) as lm:
@@ -242,6 +243,18 @@ async def model_run(
                 output = await lm(
                     args.path,
                     skip_special_tokens=args.skip_special_tokens,
+                )
+                console.print(output)
+                return
+            elif modality == Modality.VISION_IMAGE_TEXT_TO_TEXT:
+                assert args.path
+
+                output = await lm(
+                    args.path,
+                    input_string,
+                    system_prompt=system_prompt,
+                    settings=settings,
+                    width=args.image_width,
                 )
                 console.print(output)
                 return

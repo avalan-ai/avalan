@@ -16,6 +16,7 @@ from ..model.vision.detection import ObjectDetectionModel
 from ..model.vision.image import (
     ImageClassificationModel,
     ImageTextToTextModel,
+    ImageToTextModel,
     VisionEncoderDecoderModel,
 )
 from ..model.vision.segmentation import SemanticSegmentationModel
@@ -171,6 +172,8 @@ class ModelManager(ContextDecorator):
                 case Modality.VISION_IMAGE_CLASSIFICATION:
                     model = ImageClassificationModel(**model_load_args)
                 case Modality.VISION_IMAGE_TO_TEXT:
+                    model = ImageToTextModel(**model_load_args)
+                case Modality.VISION_IMAGE_TEXT_TO_TEXT:
                     model = ImageTextToTextModel(**model_load_args)
                 case Modality.VISION_ENCODER_DECODER:
                     model = VisionEncoderDecoderModel(**model_load_args)
