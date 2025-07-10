@@ -129,6 +129,9 @@ class DummyTheme(Theme):
     ):
         raise NotImplementedError()
 
+    def display_image_entities(self, entities):
+        raise NotImplementedError()
+
     async def tokens(self, *args, **kwargs):
         raise NotImplementedError()
 
@@ -199,6 +202,7 @@ class ThemeAbstractMethodsTestCase(unittest.TestCase):
             lambda: self.theme.memory_search_matches("id", "ns", []),
             lambda: self.theme.tokenizer_config(None),
             lambda: self.theme.tokenizer_tokens([]),
+            lambda: self.theme.display_image_entities([]),
             lambda: self.theme.welcome("u", "n", "v", "lic", None),
         ]
         for call in methods:
@@ -340,6 +344,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.memory_search_matches(self.theme, "id", "ns", []),
             lambda: Theme.tokenizer_config(self.theme, None),
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
+            lambda: Theme.display_image_entities(self.theme, []),
             lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
         ]
 

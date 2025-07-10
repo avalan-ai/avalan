@@ -963,6 +963,15 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--vision-threshold",
+            default=0.3,
+            type=float,
+            help=(
+                "Score threshold for object detection. "
+                "Only applicable to vision modalities."
+            ),
+        )
+        model_run_parser.add_argument(
             "--do-sample",
             default=True,
             action="store_true",

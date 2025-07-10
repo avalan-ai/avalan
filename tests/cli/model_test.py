@@ -1,6 +1,6 @@
 from avalan.cli.commands import get_model_settings
 from avalan.cli.commands import model as model_cmds
-from avalan.entities import Modality
+from avalan.entities import Modality, ImageEntity
 from avalan.event.manager import EventManager
 from avalan.event import Event, EventType
 from types import SimpleNamespace
@@ -1237,6 +1237,97 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         lm.assert_awaited_once_with(path="in.wav", sampling_rate=16_000)
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "transcript")
+
+    async def test_run_vision_object_detection(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            path="img.png",
+            vision_threshold=0.5,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        theme.display_image_entities.return_value = "table"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock(
+            return_value=[
+                ImageEntity(label="lbl", score=0.9, box=[0, 1, 2, 3])
+            ]
+        )
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri.return_value = engine_uri
+        manager.load.return_value = load_cm
+
+        with (
+            patch.object(
+                model_cmds, "ModelManager", return_value=manager
+            ) as mm_patch,
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.VISION_OBJECT_DETECTION,
+                },
+            ) as gms_patch,
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.VISION_OBJECT_DETECTION,
+        )
+        lm.assert_awaited_once_with("img.png", threshold=0.5)
+        theme.display_image_entities.assert_called_once_with(lm.return_value)
+        tg_patch.assert_not_called()
+        self.assertEqual(
+            console.print.call_args.args[0],
+            theme.display_image_entities.return_value,
+        )
 
     async def test_run_invalid_modality_raises(self):
         args = Namespace(

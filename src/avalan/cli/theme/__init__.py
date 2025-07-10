@@ -13,6 +13,7 @@ from ...entities import (
     Token,
     TokenizerConfig,
     User,
+    ImageEntity,
 )
 from ...event import Event, EventStats
 from ...memory.partitioner.text import TextPartition
@@ -279,6 +280,12 @@ class Theme(ABC):
         special_tokens: list[str] | None,
         current_dtoken: Token | None = None,
         dtokens_selected: list[Token] = [],
+    ) -> RenderableType:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def display_image_entities(
+        self, entities: list[ImageEntity]
     ) -> RenderableType:
         raise NotImplementedError()
 

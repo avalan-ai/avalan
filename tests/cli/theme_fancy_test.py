@@ -25,6 +25,7 @@ from avalan.entities import (
     Token,
     TokenDetail,
     TokenizerConfig,
+    ImageEntity,
     User,
 )
 from avalan.memory.permanent import Memory, MemoryType
@@ -750,6 +751,22 @@ class FancyThemeMoreTests(unittest.TestCase):
         table = align.renderable
         headers = table.columns[0]._cells
         self.assertIn("Truncate dimension", headers)
+
+    def test_display_image_entities(self):
+        align = self.theme.display_image_entities(
+            [
+                ImageEntity(label="cat", score=0.9, box=[0.0, 1.0, 2.0, 3.0]),
+                ImageEntity(label="dog", score=None, box=None),
+            ]
+        )
+        table = align.renderable
+        self.assertEqual(table.row_count, 2)
+        self.assertEqual(table.columns[0]._cells[0], "cat")
+        self.assertEqual(table.columns[0]._cells[1], "dog")
+        self.assertEqual(table.columns[1]._cells[0], "[score]0.90[/score]")
+        self.assertEqual(table.columns[1]._cells[1], "-")
+        self.assertEqual(table.columns[2]._cells[0], "0.00, 1.00, 2.00, 3.00")
+        self.assertEqual(table.columns[2]._cells[1], "-")
 
     def test_fill_model_config_table(self):
         cfg = ModelConfig(
