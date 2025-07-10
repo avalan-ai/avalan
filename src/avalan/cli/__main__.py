@@ -47,7 +47,16 @@ import gettext
 from gettext import translation
 from importlib.util import find_spec
 from locale import getlocale
-from logging import basicConfig, DEBUG, Filter, getLogger, INFO, Logger, LogRecord, WARNING
+from logging import (
+    basicConfig,
+    DEBUG,
+    Filter,
+    getLogger,
+    INFO,
+    Logger,
+    LogRecord,
+    WARNING,
+)
 from os import getenv, environ
 from subprocess import run
 from os.path import join
@@ -920,7 +929,7 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
-            "--audio-path",
+            "--path",
             type=str,
             help=(
                 "Path where to store generated audio. "
