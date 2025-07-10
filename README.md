@@ -580,24 +580,15 @@ There are more agent, NLP, multimodal, audio, and vision examples in the
 [docs/examples](https://github.com/avalan-ai/avalan/blob/main/docs/examples)
 folder.
 
-> [!TIP]
-> If you are working with avalan, you can run the example scripts by
-> specifying the `$PYTHONPATH` environment variable:
->
-> ```bash
-> PYTHONPATH=src poetry run python docs/examples/text_generation.py
-> ```
-
 # Install
 
 On macOS you can install avalan with Homebrew:
 
 ```bash
 brew tap avalan-ai/avalan
-
 ```
 
-Create your virtual environment and install packages:
+On other environments, use poetry to install avalan:
 
 ```bash
 poetry install avalan
