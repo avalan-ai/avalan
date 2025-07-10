@@ -217,6 +217,17 @@ async def model_run(
                 )
                 console.print(output)
                 return
+            elif modality == Modality.VISION_OBJECT_DETECTION:
+                assert args.path and args.vision_threshold is not None
+
+                output = await lm(
+                    args.path,
+                    threshold=args.vision_threshold,
+                )
+                console.print(
+                    theme.display_image_entities(output),
+                )
+                return
             elif modality == Modality.TEXT_GENERATION:
                 display_tokens = args.display_tokens or 0
                 dtokens_pick = 10 if display_tokens > 0 else 0

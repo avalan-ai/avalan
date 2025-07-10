@@ -13,6 +13,7 @@ from ...entities import (
     Token,
     TokenizerConfig,
     User,
+    ImageEntity,
 )
 from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
@@ -1532,6 +1533,36 @@ class FancyTheme(Theme):
             Align(columns, align="center"),
             box=box.MINIMAL,
         )
+
+    def display_image_entities(
+        self, entities: list[ImageEntity]
+    ) -> RenderableType:
+        _ = self._
+        table = Table(
+            Column(header=_("Label"), justify="left"),
+            Column(header=_("Score"), justify="right"),
+            Column(header=_("Box"), justify="left"),
+            show_footer=False,
+            show_header=True,
+            show_edge=True,
+            show_lines=True,
+            border_style="gray58",
+        )
+
+        for entity in entities:
+            score = (
+                self._f("score", f"{entity.score:.2f}")
+                if entity.score is not None
+                else "-"
+            )
+            box = (
+                ", ".join(f"{v:.2f}" for v in entity.box)
+                if entity.box
+                else "-"
+            )
+            table.add_row(entity.label, score, box)
+
+        return Align(table, align="center")
 
     async def tokens(
         self,
