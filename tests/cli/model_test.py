@@ -1069,7 +1069,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
-            audio_path="out.wav",
+            path="out.wav",
             audio_sampling_rate=16_000,
         )
 
@@ -1180,7 +1180,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             display_events=False,
             display_tools=False,
             display_tools_events=2,
-            audio_path="in.wav",
+            path="in.wav",
             audio_sampling_rate=16_000,
         )
         console = MagicMock()

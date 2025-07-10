@@ -142,12 +142,7 @@ async def model_run(
 
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
-        model_settings = get_model_settings(
-            args,
-            hub,
-            logger,
-            engine_uri
-        )
+        model_settings = get_model_settings(args, hub, logger, engine_uri)
 
         if not args.quiet:
             if engine_uri.is_local:
@@ -172,7 +167,7 @@ async def model_run(
 
         requires_input = modality in [
             Modality.AUDIO_TEXT_TO_SPEECH,
-            Modality.TEXT_GENERATION
+            Modality.TEXT_GENERATION,
         ]
 
         with manager.load(**model_settings) as lm:
@@ -201,10 +196,10 @@ async def model_run(
             )
 
             if modality == Modality.AUDIO_TEXT_TO_SPEECH:
-                assert args.audio_path and args.audio_sampling_rate
+                assert args.path and args.audio_sampling_rate
 
                 output = await lm(
-                    path=args.audio_path,
+                    path=args.path,
                     prompt=input_string,
                     max_new_tokens=settings.max_new_tokens,
                     reference_path=args.audio_reference_path,
@@ -214,10 +209,10 @@ async def model_run(
                 console.print(f"Audio generated in {output}")
                 return
             elif modality == Modality.AUDIO_SPEECH_RECOGNITION:
-                assert args.audio_path and args.audio_sampling_rate
+                assert args.path and args.audio_sampling_rate
 
                 output = await lm(
-                    path=args.audio_path,
+                    path=args.path,
                     sampling_rate=args.audio_sampling_rate,
                 )
                 console.print(output)

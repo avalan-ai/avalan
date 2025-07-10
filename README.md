@@ -198,7 +198,7 @@ Run a speech recognition model:
 ```bash
 avalan model run "facebook/wav2vec2-base-960h" \
     --modality audio_speech_recognition \
-    --audio-path oprah.wav \
+    --path oprah.wav \
     --audio-sampling-rate 16000
 ```
 
@@ -219,7 +219,7 @@ Create an audio speech from your prompt by cloning Oprah's voice, using an
 echo "[S1] Leo Messi is the greatest football player of all times." | \
     avalan model run "nari-labs/Dia-1.6B-0626" \
             --modality audio_text_to_speech \
-            --audio-path example.wav \
+            --path example.wav \
             --audio-reference-path docs/examples/oprah.wav \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
 ```
