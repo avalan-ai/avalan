@@ -236,6 +236,15 @@ async def model_run(
                     theme.display_image_labels(output),
                 )
                 return
+            elif modality == Modality.VISION_IMAGE_TO_TEXT:
+                assert args.path
+
+                output = await lm(
+                    args.path,
+                    skip_special_tokens=args.skip_special_tokens,
+                )
+                console.print(output)
+                return
             elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
                 assert args.path
 
