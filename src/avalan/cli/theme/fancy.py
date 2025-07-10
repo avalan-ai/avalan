@@ -30,7 +30,7 @@ from humanize import (
 )
 from locale import format_string
 from logging import Logger
-from math import ceil
+from math import ceil, inf
 from numpy import ndarray
 from numpy.linalg import norm
 from os import linesep
@@ -1535,7 +1535,7 @@ class FancyTheme(Theme):
         )
 
     def display_image_entities(
-        self, entities: list[ImageEntity]
+        self, entities: list[ImageEntity], sort: bool
     ) -> RenderableType:
         _ = self._
         table = Table(
@@ -1548,6 +1548,9 @@ class FancyTheme(Theme):
             show_lines=True,
             border_style="gray58",
         )
+
+        if sort:
+            entities.sort(key=lambda e: e.score if e.score is not None else -inf, reverse=True)
 
         for entity in entities:
             score = (
@@ -1562,6 +1565,19 @@ class FancyTheme(Theme):
             )
             table.add_row(entity.label, score, box)
 
+        return Align(table, align="center")
+
+    def display_image_entity(self, entity: ImageEntity):
+        _ = self._
+        table = Table(
+            Column(header=_("Label"), justify="left"),
+            show_footer=False,
+            show_header=True,
+            show_edge=True,
+            show_lines=True,
+            border_style="gray58",
+        )
+        table.add_row(entity.label)
         return Align(table, align="center")
 
     def display_image_labels(self, labels: list[str]) -> RenderableType:

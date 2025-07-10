@@ -187,7 +187,8 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 
 ## Modalities
 
-avalan supports text, audio and video modalities.
+avalan supports text, audio and video modalities, both from the CLI or using
+the framework in code.
 
 ### Audio
 
@@ -224,7 +225,171 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
 ```
 
-## Code
+### Vision
+
+#### Image classification
+
+Hot dog or not hot dog? Use a model to classify images:
+
+```bash
+avalan model run "microsoft/resnet-50" \
+    --modality vision_image_classification \
+    --path docs/examples/cat.jpg
+```
+
+And you get what type of image you've given it:
+
+```text
+┏━━━━━━━━━━━━━━━━━━┓
+┃ Label            ┃
+┡━━━━━━━━━━━━━━━━━━┩
+│ tabby, tabby cat │
+└──────────────────┘
+```
+
+#### Image to text
+
+Get a text description of a given image:
+
+```bash
+avalan model run "salesforce/blip-image-captioning-base" \
+    --modality vision_image_to_text \
+    --path docs/examples/Example_Image_1.jpg
+```
+
+And you'll get:
+
+```text
+a sign for a gas station on the side of a building [SEP]
+```
+
+#### Image text to text
+
+Given an image, instruct an `image-text-to-text` model what to do with it:
+
+```bash
+echo "Transcribe the text on this image, keeping format" | \
+    avalan model run "ai://local/google/gemma-3-12b-it" \
+        --modality vision_image_text_to_text \
+        --path docs/examples/typewritten_partial_sheet.jpg \
+        --max-new-tokens 1024
+```
+
+And you'll get the transcription (cut for brevity):
+
+```text
+**INTRODUCCIÓN**
+
+Guillermo de Ockham (según se utiliza la grafía latina o la inglesa) es tan célebre como conocido. Su doctrina
+suele merecer las más diversas interpretaciones, y su biografía adolece tremendas oscuridades.
+```
+
+#### Object detection
+
+Given an image, get a list of objects identified in it with an accuracy
+score:
+
+```bash
+avalan model run "facebook/detr-resnet-50" \
+    --modality vision_object_detection \
+    --path docs/examples/kitchen.jpg
+```
+
+Results are sorted by accuracy, and include relevant coordinates:
+
+```text
+┏━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Label        ┃ Score ┃ Box                              ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ refrigerator │  1.00 │ 855.28, 377.27, 1035.67, 679.42  │
+├──────────────┼───────┼──────────────────────────────────┤
+│ oven         │  1.00 │ 411.62, 570.92, 651.66, 872.05   │
+├──────────────┼───────┼──────────────────────────────────┤
+│ potted plant │  0.99 │ 1345.95, 498.15, 1430.21, 603.84 │
+├──────────────┼───────┼──────────────────────────────────┤
+│ sink         │  0.96 │ 1077.43, 631.51, 1367.12, 703.23 │
+├──────────────┼───────┼──────────────────────────────────┤
+│ potted plant │  0.94 │ 179.69, 557.44, 317.14, 629.77   │
+├──────────────┼───────┼──────────────────────────────────┤
+│ vase         │  0.83 │ 1357.88, 562.67, 1399.38, 616.44 │
+├──────────────┼───────┼──────────────────────────────────┤
+│ handbag      │  0.72 │ 287.08, 544.47, 332.73, 602.24   │
+├──────────────┼───────┼──────────────────────────────────┤
+│ sink         │  0.68 │ 1079.68, 627.04, 1495.40, 714.07 │
+├──────────────┼───────┼──────────────────────────────────┤
+│ bird         │  0.38 │ 628.57, 536.31, 666.62, 574.39   │
+├──────────────┼───────┼──────────────────────────────────┤
+│ sink         │  0.35 │ 1077.98, 629.29, 1497.90, 723.95 │
+├──────────────┼───────┼──────────────────────────────────┤
+│ spoon        │  0.31 │ 646.69, 505.31, 673.04, 543.10   │
+└──────────────┴───────┴──────────────────────────────────┘
+```
+
+#### Semantic segmentation
+
+Use semantic segmentation models to classify every pixel in a given image:
+
+```bash
+avalan model run "nvidia/segformer-b0-finetuned-ade-512-512" \
+    --modality vision_semantic_segmentation \
+    --path docs/examples/kitchen.jpg
+```
+
+You'll get all annotations identified on the image:
+
+```text
+┏━━━━━━━━━━━━━━━━━━┓
+┃ Label            ┃
+┡━━━━━━━━━━━━━━━━━━┩
+│ wall             │
+├──────────────────┤
+│ floor            │
+├──────────────────┤
+│ ceiling          │
+├──────────────────┤
+│ windowpane       │
+├──────────────────┤
+│ cabinet          │
+├──────────────────┤
+│ door             │
+├──────────────────┤
+│ plant            │
+├──────────────────┤
+│ rug              │
+├──────────────────┤
+│ lamp             │
+├──────────────────┤
+│ chest of drawers │
+├──────────────────┤
+│ sink             │
+├──────────────────┤
+│ refrigerator     │
+├──────────────────┤
+│ flower           │
+├──────────────────┤
+│ stove            │
+├──────────────────┤
+│ kitchen island   │
+├──────────────────┤
+│ light            │
+├──────────────────┤
+│ chandelier       │
+├──────────────────┤
+│ oven             │
+├──────────────────┤
+│ microwave        │
+├──────────────────┤
+│ dishwasher       │
+├──────────────────┤
+│ hood             │
+├──────────────────┤
+│ vase             │
+├──────────────────┤
+│ fan              │
+└──────────────────┘
+```
+
+## Framework code
 
 Through the avalan microframework, you can easily integrate real time token
 streaming with your own code, as [this example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/text_generation.py):
@@ -425,12 +590,6 @@ Create your virtual environment and install packages:
 ```bash
 poetry install avalan
 ```
-
-> [!TIP]
-> At time of this writing, while Python 3.12 is stable and available
-> in Homebrew, sentenpiece, a package added by the extra `translation`,
-> requires Python 3.11, so you may want to force the python version when
-> creating the virtual environment: `python-3.11 -m venv .venv/`
 
 > [!TIP]
 > If you will be using avalan with a device other than `cuda`, or wish to
