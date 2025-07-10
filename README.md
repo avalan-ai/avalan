@@ -14,12 +14,13 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 **Highlights**
 
-- Multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm))
-- Multi-modal integration (NLP, vision, audio)
-- Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, and Gemini
-- Sophisticated memory management and advanced reasoning (ReACT tooling, adaptive planning)
-- Intuitive pipelines with branching, filtering, and recursive workflows
-- Comprehensive observability through metrics, event tracing, and dashboards
+- 🔌 Multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm))
+- 🌐 Multi-modal integration (NLP, vision, audio)
+- 🔗 Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, and Gemini
+- 🤖 Sophisticated memory management and advanced reasoning (ReACT tooling, adaptive planning)
+- 🔀 Intuitive pipelines with branching, filtering, and recursive workflows
+- 📊 Comprehensive observability through metrics, event tracing, and dashboards
+- 💻 Use via the CLI or integrate the Python SDK directly in your code
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
 
