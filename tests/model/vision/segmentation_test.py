@@ -12,6 +12,18 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import call, MagicMock, patch
 
 
+class DummyInputs(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+        self.to_called_with = None
+
+    def to(self, device):
+        self.to_called_with = device
+        return self
+
+
 class SemanticSegmentationModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
 
@@ -68,7 +80,7 @@ class SemanticSegmentationModelCallTestCase(IsolatedAsyncioTestCase):
             get_image_mock.return_value = image_mock
 
             processor_instance = MagicMock()
-            processor_result = {"inputs": "inputs"}
+            processor_result = DummyInputs(inputs="inputs")
             processor_instance.return_value = processor_result
             processor_mock.return_value = processor_instance
 
@@ -109,6 +121,10 @@ class SemanticSegmentationModelCallTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(model_instance.call_count, 1)
             self.assertEqual(
                 model_instance.call_args, call(**processor_result)
+            )
+            self.assertEqual(
+                processor_result.to_called_with,
+                model._device,
             )
 
             unique_mock.assert_called_once_with(mask_tensor)

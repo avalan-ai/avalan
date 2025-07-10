@@ -15,6 +15,18 @@ from unittest import TestCase, IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch, PropertyMock
 
 
+class DummyInputs(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+        self.to_called_with = None
+
+    def to(self, device):
+        self.to_called_with = device
+        return self
+
+
 class PTMWithGenerate(PreTrainedModel):
     def generate(self, *args, **kwargs):
         raise NotImplementedError
@@ -86,7 +98,7 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.model.vision.image.Image.open") as image_open_mock,
         ):
             processor_instance = MagicMock()
-            processor_instance.return_value = {"pixel_values": "t"}
+            processor_instance.return_value = DummyInputs(pixel_values="t")
             processor_mock.return_value = processor_instance
 
             model_instance = MagicMock(spec=PTMWithGenerate)
@@ -123,6 +135,10 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
             )
             model_instance.generate.assert_called_once_with(
                 **processor_instance.return_value
+            )
+            self.assertEqual(
+                processor_instance.return_value.to_called_with,
+                model._device,
             )
 
 
