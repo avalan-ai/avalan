@@ -6,7 +6,7 @@ from ...model.vision.image import ImageClassificationModel
 from ...model.engine import Engine
 from logging import Logger
 from PIL import Image
-from torch import tensor
+from torch import inference_mode, tensor
 from transformers import (
     AutoImageProcessor,
     AutoModelForObjectDetection,
@@ -50,7 +50,9 @@ class ObjectDetectionModel(ImageClassificationModel):
     ) -> list[ImageEntity]:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(images=image, return_tensors=tensor_format)
-        outputs = self._model(**inputs)
+        inputs.to(self._device)
+        with inference_mode():
+            outputs = self._model(**inputs)
         target_sizes = tensor([image.size[::-1]])
         results = self._processor.post_process_object_detection(
             outputs, target_sizes=target_sizes, threshold=threshold

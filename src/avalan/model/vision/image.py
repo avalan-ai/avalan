@@ -51,6 +51,7 @@ class ImageClassificationModel(BaseVisionModel):
     ) -> ImageEntity:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(image, return_tensors=tensor_format)
+        inputs.to(self._device)
 
         with inference_mode():
             logits = self._model(**inputs).logits
@@ -92,7 +93,9 @@ class ImageToTextModel(TransformerModel):
     ) -> str:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(images=image, return_tensors=tensor_format)
-        output_ids = self._model.generate(**inputs)
+        inputs.to(self._device)
+        with inference_mode():
+            output_ids = self._model.generate(**inputs)
         caption = self._tokenizer.decode(
             output_ids[0], skip_special_tokens=skip_special_tokens
         )
@@ -175,10 +178,11 @@ class ImageTextToTextModel(ImageToTextModel):
             padding=True,
             return_tensors=tensor_format,
         )
-        inputs = inputs.to(self._device)
-        generated_ids = self._model.generate(
-            **inputs, max_new_tokens=settings.max_new_tokens
-        )
+        inputs.to(self._device)
+        with inference_mode():
+            generated_ids = self._model.generate(
+                **inputs, max_new_tokens=settings.max_new_tokens
+            )
         generated_ids_trimmed = [
             out_ids[len(in_ids) :]
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)

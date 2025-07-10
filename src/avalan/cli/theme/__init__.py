@@ -285,8 +285,12 @@ class Theme(ABC):
 
     @abstractmethod
     def display_image_entities(
-        self, entities: list[ImageEntity]
+        self, entities: list[ImageEntity], sort: bool
     ) -> RenderableType:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def display_image_entity(self, ImageEntity) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod

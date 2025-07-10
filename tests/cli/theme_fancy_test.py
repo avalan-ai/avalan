@@ -755,18 +755,24 @@ class FancyThemeMoreTests(unittest.TestCase):
     def test_display_image_entities(self):
         align = self.theme.display_image_entities(
             [
-                ImageEntity(label="cat", score=0.9, box=[0.0, 1.0, 2.0, 3.0]),
-                ImageEntity(label="dog", score=None, box=None),
-            ]
+                ImageEntity(label="cat", score=0.5, box=[0.0, 1.0, 2.0, 3.0]),
+                ImageEntity(label="dog", score=0.9, box=None),
+            ],
+            sort=True,
         )
         table = align.renderable
         self.assertEqual(table.row_count, 2)
-        self.assertEqual(table.columns[0]._cells[0], "cat")
-        self.assertEqual(table.columns[0]._cells[1], "dog")
+        # dog should be first due to higher score
+        self.assertEqual(table.columns[0]._cells[0], "dog")
+        self.assertEqual(table.columns[0]._cells[1], "cat")
         self.assertEqual(table.columns[1]._cells[0], "[score]0.90[/score]")
-        self.assertEqual(table.columns[1]._cells[1], "-")
-        self.assertEqual(table.columns[2]._cells[0], "0.00, 1.00, 2.00, 3.00")
-        self.assertEqual(table.columns[2]._cells[1], "-")
+        self.assertEqual(table.columns[1]._cells[1], "[score]0.50[/score]")
+
+    def test_display_image_entity(self):
+        align = self.theme.display_image_entity(ImageEntity(label="cat"))
+        table = align.renderable
+        self.assertEqual(table.row_count, 1)
+        self.assertEqual(table.columns[0]._cells[0], "cat")
 
     def test_display_image_labels(self):
         align = self.theme.display_image_labels(["cat", "dog"])

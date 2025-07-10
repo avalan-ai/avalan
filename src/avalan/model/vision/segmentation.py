@@ -3,7 +3,7 @@ from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.engine import Engine
 from PIL import Image
-from torch import unique
+from torch import inference_mode, unique
 from transformers import (
     AutoImageProcessor,
     AutoModelForSemanticSegmentation,
@@ -35,7 +35,9 @@ class SemanticSegmentationModel(BaseVisionModel):
     ) -> list[str]:
         image = BaseVisionModel._get_image(image_source)
         inputs = self._processor(images=image, return_tensors=tensor_format)
-        logits = self._model(**inputs).logits
+        inputs.to(self._device)
+        with inference_mode():
+            logits = self._model(**inputs).logits
         # shape (height, width) with class indices
         mask = logits.argmax(dim=1)[0]
         labels_tensor = unique(mask)

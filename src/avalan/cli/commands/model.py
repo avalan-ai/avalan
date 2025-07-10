@@ -208,7 +208,6 @@ async def model_run(
                     sampling_rate=args.audio_sampling_rate,
                 )
                 console.print(f"Audio generated in {output}")
-                return
             elif modality == Modality.AUDIO_SPEECH_RECOGNITION:
                 assert args.path and args.audio_sampling_rate
 
@@ -217,26 +216,13 @@ async def model_run(
                     sampling_rate=args.audio_sampling_rate,
                 )
                 console.print(output)
-                return
-            elif modality == Modality.VISION_OBJECT_DETECTION:
-                assert args.path and args.vision_threshold is not None
-
-                output = await lm(
-                    args.path,
-                    threshold=args.vision_threshold,
-                )
-                console.print(
-                    theme.display_image_entities(output),
-                )
-                return
-            elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
+            elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
                 assert args.path
 
                 output = await lm(args.path)
                 console.print(
-                    theme.display_image_labels(output),
+                    theme.display_image_entity(output),
                 )
-                return
             elif modality in {
                 Modality.VISION_IMAGE_TO_TEXT,
                 Modality.VISION_ENCODER_DECODER,
@@ -248,7 +234,6 @@ async def model_run(
                     skip_special_tokens=args.skip_special_tokens,
                 )
                 console.print(output)
-                return
             elif modality == Modality.VISION_IMAGE_TEXT_TO_TEXT:
                 assert args.path
 
@@ -260,15 +245,23 @@ async def model_run(
                     width=args.image_width,
                 )
                 console.print(output)
-                return
-            elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
+            elif modality == Modality.VISION_OBJECT_DETECTION:
+                assert args.path and args.vision_threshold is not None
+
+                output = await lm(
+                    args.path,
+                    threshold=args.vision_threshold,
+                )
+                console.print(
+                    theme.display_image_entities(output, sort=True),
+                )
+            elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
                 assert args.path
 
                 output = await lm(args.path)
                 console.print(
                     theme.display_image_labels(output),
                 )
-                return
             elif modality == Modality.TEXT_GENERATION:
                 display_tokens = args.display_tokens or 0
                 dtokens_pick = 10 if display_tokens > 0 else 0
