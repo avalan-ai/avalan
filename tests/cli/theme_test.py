@@ -344,6 +344,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.memory_search_matches(self.theme, "id", "ns", []),
             lambda: Theme.tokenizer_config(self.theme, None),
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
+            lambda: Theme.display_image_entities(self.theme, []),
             lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
         ]
 
