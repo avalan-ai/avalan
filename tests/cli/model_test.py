@@ -1322,7 +1322,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             modality=Modality.VISION_OBJECT_DETECTION,
         )
         lm.assert_awaited_once_with("img.png", threshold=0.5)
-        theme.display_image_entities.assert_called_once_with(lm.return_value)
+        theme.display_image_entities.assert_called_once_with(
+            lm.return_value, sort=True
+        )
         tg_patch.assert_not_called()
         self.assertEqual(
             console.print.call_args.args[0],
@@ -1448,7 +1450,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         theme._ = lambda s: s
         theme.icons = {"user_input": ">"}
         theme.model.return_value = "panel"
-        theme.display_image_labels.return_value = "table"
+        theme.display_image_entity.return_value = "table"
         hub = MagicMock()
         hub.can_access.return_value = True
         hub.model.return_value = "hub_model"
@@ -1496,11 +1498,11 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             modality=Modality.VISION_IMAGE_CLASSIFICATION,
         )
         lm.assert_awaited_once_with("img.png")
-        theme.display_image_labels.assert_called_once_with(lm.return_value)
+        theme.display_image_entity.assert_called_once_with(lm.return_value)
         tg_patch.assert_not_called()
         self.assertEqual(
             console.print.call_args.args[0],
-            theme.display_image_labels.return_value,
+            theme.display_image_entity.return_value,
         )
 
     async def test_run_vision_image_to_text(self):

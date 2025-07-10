@@ -129,7 +129,10 @@ class DummyTheme(Theme):
     ):
         raise NotImplementedError()
 
-    def display_image_entities(self, entities):
+    def display_image_entities(self, entities, sort: bool):
+        raise NotImplementedError()
+
+    def display_image_entity(self, entity):
         raise NotImplementedError()
 
     def display_image_labels(self, labels):
@@ -205,7 +208,8 @@ class ThemeAbstractMethodsTestCase(unittest.TestCase):
             lambda: self.theme.memory_search_matches("id", "ns", []),
             lambda: self.theme.tokenizer_config(None),
             lambda: self.theme.tokenizer_tokens([]),
-            lambda: self.theme.display_image_entities([]),
+            lambda: self.theme.display_image_entities([], False),
+            lambda: self.theme.display_image_entity(None),
             lambda: self.theme.welcome("u", "n", "v", "lic", None),
         ]
         for call in methods:
@@ -347,7 +351,8 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.memory_search_matches(self.theme, "id", "ns", []),
             lambda: Theme.tokenizer_config(self.theme, None),
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
-            lambda: Theme.display_image_entities(self.theme, []),
+            lambda: Theme.display_image_entities(self.theme, [], False),
+            lambda: Theme.display_image_entity(self.theme, None),
             lambda: Theme.display_image_labels(self.theme, []),
             lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
         ]

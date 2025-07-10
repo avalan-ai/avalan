@@ -15,6 +15,18 @@ importorskip("torch", reason="torch not installed")
 importorskip("PIL", reason="Pillow not installed")
 
 
+class DummyInputs(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+        self.to_called_with = None
+
+    def to(self, device):
+        self.to_called_with = device
+        return self
+
+
 class ObjectDetectionModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
 
@@ -91,7 +103,9 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
         ):
             # mock processor
             processor_instance = MagicMock()
-            processor_instance.return_value = {"pixel_values": "inputs"}
+            processor_instance.return_value = DummyInputs(
+                pixel_values="inputs"
+            )
             score_tensor = MagicMock()
             score_tensor.item.return_value = 0.9
             label_tensor = MagicMock()
@@ -148,6 +162,10 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(model_instance.call_count, 1)
             self.assertEqual(
                 model_instance.call_args, call(**{"pixel_values": "inputs"})
+            )
+            self.assertEqual(
+                processor_instance.return_value.to_called_with,
+                model._device,
             )
 
             tensor_mock.assert_called_once_with([image_mock.size[::-1]])
