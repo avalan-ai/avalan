@@ -1564,6 +1564,20 @@ class FancyTheme(Theme):
 
         return Align(table, align="center")
 
+    def display_image_labels(self, labels: list[str]) -> RenderableType:
+        _ = self._
+        table = Table(
+            Column(header=_("Label"), justify="left"),
+            show_footer=False,
+            show_header=True,
+            show_edge=True,
+            show_lines=True,
+            border_style="gray58",
+        )
+        for label in labels:
+            table.add_row(label)
+        return Align(table, align="center")
+
     async def tokens(
         self,
         model_id: str,
