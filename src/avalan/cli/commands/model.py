@@ -199,143 +199,159 @@ async def model_run(
                 use_cache=args.use_cache,
             )
 
-            if modality == Modality.AUDIO_TEXT_TO_SPEECH:
-                assert args.path and args.audio_sampling_rate
+            match modality:
+                case Modality.AUDIO_TEXT_TO_SPEECH:
+                    assert args.path and args.audio_sampling_rate
 
-                output = await lm(
-                    path=args.path,
-                    prompt=input_string,
-                    max_new_tokens=settings.max_new_tokens,
-                    reference_path=args.audio_reference_path,
-                    reference_text=args.audio_reference_text,
-                    sampling_rate=args.audio_sampling_rate,
-                )
-                console.print(f"Audio generated in {output}")
-            elif modality == Modality.AUDIO_SPEECH_RECOGNITION:
-                assert args.path and args.audio_sampling_rate
+                    output = await lm(
+                        path=args.path,
+                        prompt=input_string,
+                        max_new_tokens=settings.max_new_tokens,
+                        reference_path=args.audio_reference_path,
+                        reference_text=args.audio_reference_text,
+                        sampling_rate=args.audio_sampling_rate,
+                    )
+                    console.print(f"Audio generated in {output}")
 
-                output = await lm(
-                    path=args.path,
-                    sampling_rate=args.audio_sampling_rate,
-                )
-                console.print(output)
-            elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
-                assert args.path
+                case Modality.AUDIO_SPEECH_RECOGNITION:
+                    assert args.path and args.audio_sampling_rate
 
-                output = await lm(args.path)
-                console.print(
-                    theme.display_image_entity(output),
-                )
-            elif modality in {
-                Modality.VISION_IMAGE_TO_TEXT,
-                Modality.VISION_ENCODER_DECODER,
-            }:
-                assert args.path
+                    output = await lm(
+                        path=args.path,
+                        sampling_rate=args.audio_sampling_rate,
+                    )
+                    console.print(output)
 
-                output = await lm(
-                    args.path,
-                    skip_special_tokens=args.skip_special_tokens,
-                )
-                console.print(output)
-            elif modality == Modality.VISION_IMAGE_TEXT_TO_TEXT:
-                assert args.path
+                case Modality.VISION_IMAGE_CLASSIFICATION:
+                    assert args.path
 
-                output = await lm(
-                    args.path,
-                    input_string,
-                    system_prompt=system_prompt,
-                    settings=settings,
-                    width=args.image_width,
-                )
-                console.print(output)
-            elif modality == Modality.VISION_OBJECT_DETECTION:
-                assert args.path and args.vision_threshold is not None
+                    output = await lm(args.path)
+                    console.print(
+                        theme.display_image_entity(output),
+                    )
 
-                output = await lm(
-                    args.path,
-                    threshold=args.vision_threshold,
-                )
-                console.print(
-                    theme.display_image_entities(output, sort=True),
-                )
-            elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
-                assert args.path
+                case (
+                    Modality.VISION_IMAGE_TO_TEXT
+                    | Modality.VISION_ENCODER_DECODER
+                ):
+                    assert args.path
 
-                output = await lm(args.path)
-                console.print(
-                    theme.display_image_labels(output),
-                )
-            elif modality == Modality.TEXT_QUESTION_ANSWERING:
-                assert input_string and args.text_context
+                    output = await lm(
+                        args.path,
+                        skip_special_tokens=args.skip_special_tokens,
+                    )
+                    console.print(output)
 
-                output = await lm(
-                    input_string,
-                    context=args.text_context,
-                    system_prompt=system_prompt,
-                )
-                console.print(output)
-            elif modality == Modality.TEXT_SEQUENCE_CLASSIFICATION:
-                assert input_string
+                case Modality.VISION_IMAGE_TEXT_TO_TEXT:
+                    assert args.path
 
-                output = await lm(input_string)
-                console.print(output)
-            elif modality == Modality.TEXT_TOKEN_CLASSIFICATION:
-                assert input_string
+                    output = await lm(
+                        args.path,
+                        input_string,
+                        system_prompt=system_prompt,
+                        settings=settings,
+                        width=args.image_width,
+                    )
+                    console.print(output)
 
-                output = await lm(
-                    input_string,
-                    system_prompt=system_prompt,
-                )
-                console.print(theme.display_token_labels([output]))
-            elif modality == Modality.TEXT_GENERATION:
-                display_tokens = args.display_tokens or 0
-                dtokens_pick = 10 if display_tokens > 0 else 0
+                case Modality.VISION_OBJECT_DETECTION:
+                    assert args.path and args.vision_threshold is not None
 
-                if engine_uri.is_local:
-                    stopping_criteria = (
-                        KeywordStoppingCriteria(
-                            args.stop_on_keyword, lm.tokenizer
+                    output = await lm(
+                        args.path,
+                        threshold=args.vision_threshold,
+                    )
+                    console.print(
+                        theme.display_image_entities(output, sort=True),
+                    )
+
+                case Modality.VISION_SEMANTIC_SEGMENTATION:
+                    assert args.path
+
+                    output = await lm(args.path)
+                    console.print(
+                        theme.display_image_labels(output),
+                    )
+
+                case Modality.TEXT_QUESTION_ANSWERING:
+                    assert input_string and args.text_context
+
+                    output = await lm(
+                        input_string,
+                        context=args.text_context,
+                        system_prompt=system_prompt,
+                    )
+                    console.print(output)
+
+                case Modality.TEXT_SEQUENCE_CLASSIFICATION:
+                    assert input_string
+
+                    output = await lm(input_string)
+                    console.print(output)
+
+                case Modality.TEXT_TOKEN_CLASSIFICATION:
+                    assert input_string
+
+                    output = await lm(
+                        input_string,
+                        system_prompt=system_prompt,
+                    )
+                    console.print(theme.display_token_labels([output]))
+
+                case Modality.TEXT_GENERATION:
+                    display_tokens = args.display_tokens or 0
+                    dtokens_pick = 10 if display_tokens > 0 else 0
+
+                    if engine_uri.is_local:
+                        stopping_criteria = (
+                            KeywordStoppingCriteria(
+                                args.stop_on_keyword, lm.tokenizer
+                            )
+                            if args.stop_on_keyword
+                            else None
                         )
-                        if args.stop_on_keyword
-                        else None
-                    )
-                    output_generator = lm(
-                        input_string,
-                        system_prompt=system_prompt,
-                        settings=settings,
-                        stopping_criterias=(
-                            [stopping_criteria] if stopping_criteria else None
-                        ),
-                        manual_sampling=display_tokens,
-                        pick=dtokens_pick,
-                        skip_special_tokens=args.quiet
-                        or args.skip_special_tokens,
-                    )
-                else:
-                    output_generator = lm(
-                        input_string,
-                        system_prompt=system_prompt,
-                        settings=settings,
+                        output_generator = lm(
+                            input_string,
+                            system_prompt=system_prompt,
+                            settings=settings,
+                            stopping_criterias=(
+                                [stopping_criteria]
+                                if stopping_criteria
+                                else None
+                            ),
+                            manual_sampling=display_tokens,
+                            pick=dtokens_pick,
+                            skip_special_tokens=args.quiet
+                            or args.skip_special_tokens,
+                        )
+                    else:
+                        output_generator = lm(
+                            input_string,
+                            system_prompt=system_prompt,
+                            settings=settings,
+                        )
+
+                    await token_generation(
+                        args=args,
+                        console=console,
+                        theme=theme,
+                        logger=logger,
+                        orchestrator=None,
+                        event_stats=None,
+                        lm=lm,
+                        input_string=input_string,
+                        refresh_per_second=refresh_per_second,
+                        response=await output_generator,
+                        dtokens_pick=dtokens_pick,
+                        display_tokens=display_tokens,
+                        with_stats=not args.quiet,
+                        tool_events_limit=args.display_tools_events,
                     )
 
-                await token_generation(
-                    args=args,
-                    console=console,
-                    theme=theme,
-                    logger=logger,
-                    orchestrator=None,
-                    event_stats=None,
-                    lm=lm,
-                    input_string=input_string,
-                    refresh_per_second=refresh_per_second,
-                    response=await output_generator,
-                    dtokens_pick=dtokens_pick,
-                    display_tokens=display_tokens,
-                    with_stats=not args.quiet,
-                    tool_events_limit=args.display_tools_events,
-                )
-            else:
-                raise NotImplementedError(f"Modality {modality} not supported")
+                case _:
+                    raise NotImplementedError(
+                        f"Modality {modality} not supported"
+                    )
 
 
 async def model_search(
