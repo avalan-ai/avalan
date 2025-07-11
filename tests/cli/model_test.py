@@ -833,11 +833,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
-        manager.__enter__.return_value = manager
-        manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
 
         with (
             patch.object(
@@ -915,18 +913,15 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         logger = MagicMock()
 
         engine_uri = SimpleNamespace(model_id="id", is_local=True)
-        lm = MagicMock()
+        lm = AsyncMock(return_value="resp")
         lm.config = MagicMock()
         lm.config.__repr__ = lambda self=None: "cfg"
-        lm.return_value = "resp"
 
         load_cm = MagicMock()
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = AsyncMock(side_effect=NotImplementedError())
-        manager.__enter__.return_value = manager
-        manager.__exit__.return_value = False
+        manager = RealModelManager(hub, logger)
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
@@ -1023,11 +1018,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
-        manager.__enter__.return_value = manager
-        manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
 
         with (
             patch.object(
@@ -1309,11 +1302,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
-        manager.__enter__.return_value = manager
-        manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
