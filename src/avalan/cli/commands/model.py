@@ -169,6 +169,7 @@ async def model_run(
             Modality.AUDIO_TEXT_TO_SPEECH,
             Modality.TEXT_GENERATION,
             Modality.TEXT_QUESTION_ANSWERING,
+            Modality.TEXT_SEQUENCE_CLASSIFICATION,
             Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
@@ -272,6 +273,11 @@ async def model_run(
                     context=args.text_context,
                     system_prompt=system_prompt,
                 )
+                console.print(output)
+            elif modality == Modality.TEXT_SEQUENCE_CLASSIFICATION:
+                assert input_string
+
+                output = await lm(input_string)
                 console.print(output)
             elif modality == Modality.TEXT_TOKEN_CLASSIFICATION:
                 assert input_string

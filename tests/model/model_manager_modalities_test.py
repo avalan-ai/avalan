@@ -15,6 +15,9 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
         modalities = {
             Modality.TEXT_GENERATION: "TextGenerationModel",
             Modality.TEXT_QUESTION_ANSWERING: "QuestionAnsweringModel",
+            Modality.TEXT_SEQUENCE_CLASSIFICATION: (
+                "SequenceClassificationModel"
+            ),
             Modality.TEXT_TOKEN_CLASSIFICATION: "TokenClassificationModel",
             Modality.EMBEDDING: "SentenceTransformerModel",
             Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
