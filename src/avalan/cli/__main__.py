@@ -1045,6 +1045,11 @@ class CLI:
             help="Use this as system prompt",
         )
         model_run_parser.add_argument(
+            "--text-context",
+            type=str,
+            help="Context string for question answering",
+        )
+        model_run_parser.add_argument(
             "--start-thinking",
             default=False,
             action="store_true",

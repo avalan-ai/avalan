@@ -161,6 +161,65 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
                 called_tensor, skip_special_tokens=True
             )
 
+    async def test_call_with_system_prompt(self):
+        logger_mock = MagicMock(spec=Logger)
+        with (
+            patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
+            patch.object(
+                AutoModelForQuestionAnswering, "from_pretrained"
+            ) as model_mock,
+            patch("avalan.model.nlp.question.argmax") as argmax_mock,
+            patch.object(
+                QuestionAnsweringModel, "_tokenize_input"
+            ) as tokenize_mock,
+        ):
+            tokenizer_instance = TruthyMagicMock(spec=PreTrainedTokenizerFast)
+            tokenizer_instance.decode.return_value = "ans"
+            type(tokenizer_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
+            type(tokenizer_instance).all_special_tokens = PropertyMock(
+                return_value=[]
+            )
+            type(tokenizer_instance).model_max_length = PropertyMock(
+                return_value=1000
+            )
+            tokenizer_mock.return_value = tokenizer_instance
+
+            outputs_instance = TruthyMagicMock()
+            model_instance = TruthyMagicMock()
+            model_instance.__class__ = PreTrainedModel
+            model_instance.return_value = outputs_instance
+            type(model_instance).config = PropertyMock(
+                return_value=MagicMock()
+            )
+            type(model_instance).name_or_path = PropertyMock(
+                return_value=self.model_id
+            )
+            model_mock.return_value = model_instance
+
+            settings = TransformerEngineSettings()
+            model = QuestionAnsweringModel(
+                self.model_id,
+                settings,
+                logger=logger_mock,
+            )
+
+            inputs = {"input_ids": tensor([[0, 1, 2, 3]])}
+            tokenize_mock.return_value = inputs
+            outputs_instance.start_logits = tensor([0.1, 0.2, 0.3, 0.4])
+            outputs_instance.end_logits = tensor([0.1, 0.2, 0.5, 0.2])
+            argmax_mock.side_effect = [2, 3]
+
+            result = await model("q", context="ctx", system_prompt="sp")
+
+            self.assertEqual(result, "ans")
+            tokenize_mock.assert_called_once_with(
+                "q",
+                system_prompt="sp",
+                context="ctx",
+            )
+
 
 if __name__ == "__main__":
     main()
