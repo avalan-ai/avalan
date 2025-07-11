@@ -18,6 +18,7 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
             Modality.TEXT_SEQUENCE_CLASSIFICATION: (
                 "SequenceClassificationModel"
             ),
+            Modality.TEXT_SEQUENCE_TO_SEQUENCE: "SequenceToSequenceModel",
             Modality.TEXT_TOKEN_CLASSIFICATION: "TokenClassificationModel",
             Modality.EMBEDDING: "SentenceTransformerModel",
             Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
@@ -57,6 +58,15 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
             with self.assertRaises(NotImplementedError):
                 manager.load_engine(
                     uri, settings, Modality.TEXT_QUESTION_ANSWERING
+                )
+
+    def test_load_engine_sequence_to_sequence_remote(self):
+        with ModelManager(self.hub, self.logger) as manager:
+            uri = manager.parse_uri("ai://openai/s2s")
+            settings = TransformerEngineSettings()
+            with self.assertRaises(NotImplementedError):
+                manager.load_engine(
+                    uri, settings, Modality.TEXT_SEQUENCE_TO_SEQUENCE
                 )
 
 

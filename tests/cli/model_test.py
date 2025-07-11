@@ -1488,6 +1488,95 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "lbl")
 
+    async def test_run_text_sequence_to_sequence(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=["stop"],
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock(return_value="summary")
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+        lm.tokenizer = MagicMock()
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri.return_value = engine_uri
+        manager.load.return_value = load_cm
+
+        with (
+            patch.object(
+                model_cmds, "ModelManager", return_value=manager
+            ) as mm_patch,
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+                },
+            ) as gms_patch,
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+        )
+        lm.assert_awaited_once()
+        kw = lm.await_args.kwargs
+        self.assertIsInstance(kw["settings"], model_cmds.GenerationSettings)
+        self.assertEqual(kw["settings"].max_new_tokens, args.max_new_tokens)
+        self.assertIsNotNone(kw["stopping_criterias"])
+        self.assertIsInstance(
+            kw["stopping_criterias"][0], model_cmds.KeywordStoppingCriteria
+        )
+        self.assertEqual(kw["stopping_criterias"][0]._keywords, ["stop"])
+        tg_patch.assert_not_called()
+        self.assertEqual(console.print.call_args.args[0], "summary")
+
     async def test_run_vision_object_detection(self):
         args = Namespace(
             model="id",
