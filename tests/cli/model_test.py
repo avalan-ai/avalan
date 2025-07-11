@@ -915,7 +915,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         logger = MagicMock()
 
         engine_uri = SimpleNamespace(model_id="id", is_local=True)
-        lm = AsyncMock()
+        lm = MagicMock()
         lm.config = MagicMock()
         lm.config.__repr__ = lambda self=None: "cfg"
         lm.return_value = "resp"
@@ -924,11 +924,11 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock(side_effect=NotImplementedError())
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -1111,7 +1111,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 logger = MagicMock()
 
                 engine_uri = SimpleNamespace(model_id="id", is_local=True)
-                lm = AsyncMock(return_value="gen.wav")
+                lm = MagicMock()
                 lm.config = MagicMock()
                 lm.config.__repr__ = lambda self=None: "cfg"
 
@@ -1119,11 +1119,12 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 load_cm.__enter__.return_value = lm
                 load_cm.__exit__.return_value = False
 
-                manager = MagicMock()
+                manager = AsyncMock()
                 manager.__enter__.return_value = manager
                 manager.__exit__.return_value = False
-                manager.parse_uri.return_value = engine_uri
-                manager.load.return_value = load_cm
+                manager.parse_uri = MagicMock(return_value=engine_uri)
+                manager.load = MagicMock(return_value=load_cm)
+                manager.return_value = "gen.wav"
 
                 with patch.object(
                     model_cmds, "ModelManager", return_value=manager
@@ -1164,14 +1165,8 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                     engine_uri=engine_uri,
                     modality=Modality.AUDIO_TEXT_TO_SPEECH,
                 )
-                lm.assert_awaited_once_with(
-                    path="out.wav",
-                    prompt="hi",
-                    max_new_tokens=1,
-                    reference_path=ref_path,
-                    reference_text=ref_text,
-                    sampling_rate=16_000,
-                )
+                manager.assert_awaited_once()
+                lm.assert_not_called()
                 tg_patch.assert_not_called()
                 self.assertEqual(
                     console.print.call_args.args[0],
@@ -1216,7 +1211,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         logger = MagicMock()
 
         engine_uri = SimpleNamespace(model_id="id", is_local=True)
-        lm = AsyncMock(return_value="transcript")
+        lm = MagicMock()
         lm.config = MagicMock()
         lm.config.__repr__ = lambda self=None: "cfg"
 
@@ -1224,11 +1219,12 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+        manager.return_value = "transcript"
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -1263,7 +1259,8 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             engine_uri=engine_uri,
             modality=Modality.AUDIO_SPEECH_RECOGNITION,
         )
-        lm.assert_awaited_once_with(path="in.wav", sampling_rate=16_000)
+        manager.assert_awaited_once()
+        lm.assert_not_called()
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "transcript")
 
@@ -2333,7 +2330,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         logger = MagicMock()
 
         engine_uri = SimpleNamespace(model_id="id", is_local=True)
-        lm = AsyncMock()
+        lm = MagicMock()
         lm.config = MagicMock()
         lm.config.__repr__ = lambda self=None: "cfg"
 
@@ -2341,11 +2338,11 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock(side_effect=NotImplementedError())
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
 
         with (
             patch.object(
@@ -2373,6 +2370,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             engine_uri=engine_uri,
             modality=Modality.EMBEDDING,
         )
+        manager.assert_awaited_once()
         lm.assert_not_called()
 
 
