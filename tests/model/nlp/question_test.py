@@ -9,6 +9,7 @@ from logging import Logger
 from torch import tensor
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 from unittest import TestCase, IsolatedAsyncioTestCase, main
+from contextlib import nullcontext
 from unittest.mock import patch, MagicMock, PropertyMock
 
 
@@ -107,6 +108,10 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 QuestionAnsweringModel, "_tokenize_input"
             ) as tokenize_mock,
+            patch(
+                "avalan.model.nlp.question.inference_mode",
+                return_value=nullcontext(),
+            ) as inference_mode_mock,
         ):
             tokenizer_instance = TruthyMagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_instance.decode.return_value = "ans"
@@ -160,6 +165,7 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
             tokenizer_instance.decode.assert_called_with(
                 called_tensor, skip_special_tokens=True
             )
+            inference_mode_mock.assert_called_once_with()
 
     async def test_call_with_system_prompt(self):
         logger_mock = MagicMock(spec=Logger)
@@ -172,6 +178,10 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 QuestionAnsweringModel, "_tokenize_input"
             ) as tokenize_mock,
+            patch(
+                "avalan.model.nlp.question.inference_mode",
+                return_value=nullcontext(),
+            ) as inference_mode_mock,
         ):
             tokenizer_instance = TruthyMagicMock(spec=PreTrainedTokenizerFast)
             tokenizer_instance.decode.return_value = "ans"
@@ -219,6 +229,7 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
                 system_prompt="sp",
                 context="ctx",
             )
+            inference_mode_mock.assert_called_once_with()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from ...entities import Input
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
-from torch import argmax
+from torch import argmax, inference_mode
 from transformers import AutoModelForQuestionAnswering, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
@@ -76,7 +76,8 @@ class QuestionAnsweringModel(BaseNLPModel):
             system_prompt=system_prompt,
             context=context,
         )
-        outputs = self._model(**inputs)
+        with inference_mode():
+            outputs = self._model(**inputs)
         start_answer_logits = outputs.start_logits
         end_answer_logits = outputs.end_logits
         start = argmax(start_answer_logits)
