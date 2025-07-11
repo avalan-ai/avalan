@@ -13,6 +13,7 @@ from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...entities import GenerationSettings  # noqa: F401
+from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...secrets import KeyringSecrets
@@ -197,12 +198,7 @@ async def model_run(
                 args,
                 input_string,
             )
-            output = await manager(
-                engine_uri,
-                modality,
-                model,
-                operation
-            )
+            output = await manager(engine_uri, modality, model, operation)
 
             if modality in {
                 Modality.AUDIO_SPEECH_RECOGNITION,
