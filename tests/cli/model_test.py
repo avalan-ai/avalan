@@ -1690,11 +1690,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -1795,11 +1802,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -1891,11 +1905,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -1985,11 +2006,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -2078,11 +2106,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -2167,11 +2202,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
@@ -2257,11 +2299,18 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__enter__.return_value = lm
         load_cm.__exit__.return_value = False
 
-        manager = MagicMock()
+        manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
-        manager.load.return_value = load_cm
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
 
         with patch.object(
             model_cmds, "ModelManager", return_value=manager
