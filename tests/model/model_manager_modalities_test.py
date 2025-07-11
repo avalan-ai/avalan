@@ -14,6 +14,7 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
     def test_load_engine_local_modalities(self):
         modalities = {
             Modality.TEXT_GENERATION: "TextGenerationModel",
+            Modality.TEXT_QUESTION_ANSWERING: "QuestionAnsweringModel",
             Modality.EMBEDDING: "SentenceTransformerModel",
             Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
             Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",

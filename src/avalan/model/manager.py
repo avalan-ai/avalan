@@ -11,6 +11,7 @@ from ..entities import (
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..model.nlp.text.generation import TextGenerationModel
+from ..model.nlp.question import QuestionAnsweringModel
 from ..model.audio import SpeechRecognitionModel, TextToSpeechModel
 from ..model.vision.detection import ObjectDetectionModel
 from ..model.vision.image import (
@@ -100,6 +101,7 @@ class ModelManager(ContextDecorator):
     ) -> (
         SentenceTransformerModel
         | TextGenerationModel
+        | QuestionAnsweringModel
         | SpeechRecognitionModel
         | TextToSpeechModel
         | ObjectDetectionModel
@@ -143,6 +145,7 @@ class ModelManager(ContextDecorator):
     ) -> (
         SentenceTransformerModel
         | TextGenerationModel
+        | QuestionAnsweringModel
         | SpeechRecognitionModel
         | TextToSpeechModel
         | ObjectDetectionModel
@@ -179,6 +182,8 @@ class ModelManager(ContextDecorator):
                     model = VisionEncoderDecoderModel(**model_load_args)
                 case Modality.VISION_SEMANTIC_SEGMENTATION:
                     model = SemanticSegmentationModel(**model_load_args)
+                case Modality.TEXT_QUESTION_ANSWERING:
+                    model = QuestionAnsweringModel(**model_load_args)
                 case _:
                     model = TextGenerationModel(**model_load_args)
         elif (

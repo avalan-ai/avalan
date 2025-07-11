@@ -56,7 +56,12 @@ class QuestionAnsweringModel(BaseNLPModel):
 
     @override
     async def __call__(
-        self, input: Input, context: str, skip_special_tokens: bool = True
+        self,
+        input: Input,
+        *,
+        context: str,
+        system_prompt: str | None = None,
+        skip_special_tokens: bool = True,
     ) -> str:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
@@ -67,7 +72,9 @@ class QuestionAnsweringModel(BaseNLPModel):
             + "needs to be loaded first"
         )
         inputs = self._tokenize_input(
-            input, system_prompt=None, context=context
+            input,
+            system_prompt=system_prompt,
+            context=context,
         )
         outputs = self._model(**inputs)
         start_answer_logits = outputs.start_logits
