@@ -76,6 +76,7 @@ class Modality(StrEnum):
     EMBEDDING = "embedding"
     TEXT_GENERATION = "text_generation"
     TEXT_QUESTION_ANSWERING = "text_question_answering"
+    TEXT_TOKEN_CLASSIFICATION = "text_token_classification"
     VISION_OBJECT_DETECTION = "vision_object_detection"
     VISION_IMAGE_CLASSIFICATION = "vision_image_classification"
     VISION_IMAGE_TO_TEXT = "vision_image_to_text"

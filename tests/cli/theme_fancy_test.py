@@ -781,6 +781,13 @@ class FancyThemeMoreTests(unittest.TestCase):
         self.assertEqual(table.columns[0]._cells[0], "cat")
         self.assertEqual(table.columns[0]._cells[1], "dog")
 
+    def test_display_token_labels(self):
+        align = self.theme.display_token_labels([{"tok": "LBL"}])
+        table = align.renderable
+        self.assertEqual(table.row_count, 1)
+        self.assertEqual(table.columns[0]._cells[0], "tok")
+        self.assertEqual(table.columns[1]._cells[0], "LBL")
+
     def test_fill_model_config_table(self):
         cfg = ModelConfig(
             architectures=["a"],

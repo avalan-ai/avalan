@@ -54,7 +54,9 @@ class TokenClassificationModel(BaseNLPModel):
         return inputs
 
     @override
-    async def __call__(self, input: str) -> dict[str, str]:
+    async def __call__(
+        self, input: str, *, system_prompt: str | None = None
+    ) -> dict[str, str]:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
             + "without a tokenizer loaded first"
@@ -63,7 +65,9 @@ class TokenClassificationModel(BaseNLPModel):
             f"Model {self._model} can't be executed, it "
             + "needs to be loaded first"
         )
-        inputs = self._tokenize_input(input, system_prompt=None, context=None)
+        inputs = self._tokenize_input(
+            input, system_prompt=system_prompt, context=None
+        )
         with inference_mode():
             outputs = self._model(**inputs)
             # logits shape (1, seq_len, num_labels)

@@ -169,6 +169,7 @@ async def model_run(
             Modality.AUDIO_TEXT_TO_SPEECH,
             Modality.TEXT_GENERATION,
             Modality.TEXT_QUESTION_ANSWERING,
+            Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
 
@@ -272,6 +273,14 @@ async def model_run(
                     system_prompt=system_prompt,
                 )
                 console.print(output)
+            elif modality == Modality.TEXT_TOKEN_CLASSIFICATION:
+                assert input_string
+
+                output = await lm(
+                    input_string,
+                    system_prompt=system_prompt,
+                )
+                console.print(theme.display_token_labels([output]))
             elif modality == Modality.TEXT_GENERATION:
                 display_tokens = args.display_tokens or 0
                 dtokens_pick = 10 if display_tokens > 0 else 0

@@ -298,6 +298,12 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def display_token_labels(
+        self, token_labels: list[dict[str, str]]
+    ) -> RenderableType:
+        raise NotImplementedError()
+
+    @abstractmethod
     async def tokens(
         self,
         model_id: str,

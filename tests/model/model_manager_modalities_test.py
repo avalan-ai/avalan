@@ -15,6 +15,7 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
         modalities = {
             Modality.TEXT_GENERATION: "TextGenerationModel",
             Modality.TEXT_QUESTION_ANSWERING: "QuestionAnsweringModel",
+            Modality.TEXT_TOKEN_CLASSIFICATION: "TokenClassificationModel",
             Modality.EMBEDDING: "SentenceTransformerModel",
             Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
             Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",
@@ -45,6 +46,15 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
                         Model.return_value
                     )
                     self.assertIs(result, Model.return_value)
+
+    def test_load_engine_question_answering_remote(self):
+        with ModelManager(self.hub, self.logger) as manager:
+            uri = manager.parse_uri("ai://openai/qa")
+            settings = TransformerEngineSettings()
+            with self.assertRaises(NotImplementedError):
+                manager.load_engine(
+                    uri, settings, Modality.TEXT_QUESTION_ANSWERING
+                )
 
 
 class ModelManagerLoadModalitiesTestCase(TestCase):
