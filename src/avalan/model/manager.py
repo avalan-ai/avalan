@@ -15,6 +15,7 @@ from ..model.nlp.question import QuestionAnsweringModel
 from ..model.nlp.sequence import (
     SequenceClassificationModel,
     SequenceToSequenceModel,
+    TranslationModel,
 )
 from ..model.nlp.token import TokenClassificationModel
 from ..model.audio import SpeechRecognitionModel, TextToSpeechModel
@@ -195,6 +196,8 @@ class ModelManager(ContextDecorator):
                     model = SequenceClassificationModel(**model_load_args)
                 case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
                     model = SequenceToSequenceModel(**model_load_args)
+                case Modality.TEXT_TRANSLATION:
+                    model = TranslationModel(**model_load_args)
                 case Modality.TEXT_TOKEN_CLASSIFICATION:
                     model = TokenClassificationModel(**model_load_args)
                 case _:

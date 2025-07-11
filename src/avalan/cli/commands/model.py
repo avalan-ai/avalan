@@ -171,6 +171,7 @@ async def model_run(
             Modality.TEXT_QUESTION_ANSWERING,
             Modality.TEXT_SEQUENCE_CLASSIFICATION,
             Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+            Modality.TEXT_TRANSLATION,
             Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
@@ -306,6 +307,28 @@ async def model_run(
                         stopping_criterias=(
                             [stopping_criteria] if stopping_criteria else None
                         ),
+                    )
+                    console.print(output)
+
+                case Modality.TEXT_TRANSLATION:
+                    assert input_string
+
+                    stopping_criteria = (
+                        KeywordStoppingCriteria(
+                            args.stop_on_keyword, lm.tokenizer
+                        )
+                        if args.stop_on_keyword
+                        else None
+                    )
+                    output = await lm(
+                        input_string,
+                        source_language=args.text_from_lang,
+                        destination_language=args.text_to_lang,
+                        settings=settings,
+                        stopping_criterias=(
+                            [stopping_criteria] if stopping_criteria else None
+                        ),
+                        skip_special_tokens=args.skip_special_tokens,
                     )
                     console.print(output)
 

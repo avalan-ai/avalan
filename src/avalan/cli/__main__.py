@@ -1050,6 +1050,16 @@ class CLI:
             help="Context string for question answering",
         )
         model_run_parser.add_argument(
+            "--text-from-lang",
+            type=str,
+            help="Source language code for text translation",
+        )
+        model_run_parser.add_argument(
+            "--text-to-lang",
+            type=str,
+            help="Destination language code for text translation",
+        )
+        model_run_parser.add_argument(
             "--start-thinking",
             default=False,
             action="store_true",

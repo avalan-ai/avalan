@@ -78,6 +78,7 @@ class Modality(StrEnum):
     TEXT_QUESTION_ANSWERING = "text_question_answering"
     TEXT_SEQUENCE_CLASSIFICATION = "text_sequence_classification"
     TEXT_SEQUENCE_TO_SEQUENCE = "text_sequence_to_sequence"
+    TEXT_TRANSLATION = "text_translation"
     TEXT_TOKEN_CLASSIFICATION = "text_token_classification"
     VISION_OBJECT_DETECTION = "vision_object_detection"
     VISION_IMAGE_CLASSIFICATION = "vision_image_classification"
