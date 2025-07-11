@@ -1,7 +1,14 @@
 from ..entities import (
     AttentionImplementation,
     EngineUri,
+    GenerationSettings,
+    Input,
     Modality,
+    Operation,
+    OperationAudioParameters,
+    OperationParameters,
+    OperationTextParameters,
+    OperationVisionParameters,
     ParallelStrategy,
     TextGenerationLoaderClass,
     TransformerEngineSettings,
@@ -28,10 +35,25 @@ from ..model.vision.image import (
 )
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
+from argparse import Namespace
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
-from typing import Any, get_args
+from typing import Any, get_args, TypeAlias
 from urllib.parse import urlparse, parse_qsl
+
+ModelType: TypeAlias = (
+    ImageClassificationModel
+    | ImageTextToTextModel
+    | ObjectDetectionModel
+    | QuestionAnsweringModel
+    | SemanticSegmentationModel
+    | SentenceTransformerModel
+    | SpeechRecognitionModel
+    | TextGenerationModel
+    | TextToSpeechModel
+    | TokenClassificationModel
+    | VisionEncoderDecoderModel
+)
 
 
 class ModelManager(ContextDecorator):
@@ -60,6 +82,155 @@ class ModelManager(ContextDecorator):
         traceback: Any | None,
     ):
         return self._stack.__exit__(exc_type, exc_value, traceback)
+
+    def __call__(self, model: ModelType, operation: Operation):
+        pass
+
+    def get_operation_from_arguments(
+        self,
+        modality: Modality,
+        args: Namespace,
+        input_string: Input | None
+    ) -> Operation:
+        settings = GenerationSettings(
+            do_sample=args.do_sample,
+            enable_gradient_calculation=args.enable_gradient_calculation,
+            max_new_tokens=args.max_new_tokens,
+            max_length=getattr(args, "text_max_length", None),
+            min_p=args.min_p,
+            num_beams=getattr(args, "text_num_beams", None),
+            repetition_penalty=args.repetition_penalty,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            use_cache=args.use_cache,
+        )
+        system_prompt = args.system or None
+
+        match modality:
+            case Modality.AUDIO_SPEECH_RECOGNITION:
+                parameters = OperationParameters(
+                    audio=OperationAudioParameters(
+                        path=args.path,
+                        sampling_rate=args.audio_sampling_rate,
+                    )
+                )
+
+            case Modality.AUDIO_TEXT_TO_SPEECH:
+                parameters = OperationParameters(
+                    audio=OperationAudioParameters(
+                        path=args.path,
+                        reference_path=args.audio_reference_path,
+                        reference_text=args.audio_reference_text,
+                        sampling_rate=args.audio_sampling_rate,
+                    )
+                )
+
+            case Modality.TEXT_QUESTION_ANSWERING:
+                parameters = OperationParameters(
+                    text=OperationTextParameters(
+                        context=args.text_context,
+                        system_prompt=system_prompt,
+                    )
+                )
+
+            case Modality.TEXT_SEQUENCE_CLASSIFICATION:
+                parameters = None
+
+            case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
+                parameters = OperationParameters(
+                    text=OperationTextParameters(
+                        stop_on_keywords=args.stop_on_keyword,
+                    )
+                )
+
+            case Modality.TEXT_TRANSLATION:
+                parameters = OperationParameters(
+                    text=OperationTextParameters(
+                        language_destination=args.text_to_lang,
+                        language_source=args.text_from_lang,
+                        stop_on_keywords=args.stop_on_keyword,
+                        skip_special_tokens=args.skip_special_tokens,
+                    )
+                )
+
+            case Modality.TEXT_TOKEN_CLASSIFICATION:
+                parameters = OperationParameters(
+                    text=OperationTextParameters(
+                        system_prompt=system_prompt,
+                    )
+                )
+
+            case Modality.TEXT_GENERATION:
+                parameters = OperationParameters(
+                    text=OperationTextParameters(
+                        manual_sampling=args.display_tokens or 0,
+                        pick_tokens=(
+                            10
+                            if args.display_tokens
+                            and args.display_tokens > 0
+                            else 0
+                        ),
+                        stop_on_keywords=args.stop_on_keyword,
+                        skip_special_tokens=args.quiet
+                        or args.skip_special_tokens,
+                        system_prompt=system_prompt,
+                    )
+                )
+
+            case Modality.VISION_IMAGE_CLASSIFICATION:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                    )
+                )
+
+            case (
+                Modality.VISION_IMAGE_TO_TEXT
+                | Modality.VISION_ENCODER_DECODER
+            ):
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        skip_special_tokens=args.skip_special_tokens,
+                    )
+                )
+
+            case Modality.VISION_IMAGE_TEXT_TO_TEXT:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        system_prompt=system_prompt,
+                        width=args.image_width,
+                    )
+                )
+
+            case Modality.VISION_OBJECT_DETECTION:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        threshold=args.image_threshold,
+                    )
+                )
+
+            case Modality.VISION_SEMANTIC_SEGMENTATION:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                    )
+                )
+
+            case _:
+                parameters = None
+
+        operation = Operation(
+            generation_settings=settings,
+            input=input_string,
+            modality=modality,
+            parameters=parameters,
+        )
+
+        return operation
 
     def get_engine_settings(
         self,
@@ -104,19 +275,7 @@ class ModelManager(ContextDecorator):
         tokens: list[str] | None = None,
         trust_remote_code: bool | None = None,
         weight_type: WeightType = "auto",
-    ) -> (
-        SentenceTransformerModel
-        | TextGenerationModel
-        | QuestionAnsweringModel
-        | TokenClassificationModel
-        | SpeechRecognitionModel
-        | TextToSpeechModel
-        | ObjectDetectionModel
-        | ImageClassificationModel
-        | ImageTextToTextModel
-        | VisionEncoderDecoderModel
-        | SemanticSegmentationModel
-    ):
+    ) -> ModelType:
         engine_settings_args = dict(
             base_url=base_url,
             cache_dir=self._hub.cache_dir,
@@ -149,19 +308,7 @@ class ModelManager(ContextDecorator):
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         modality: Modality = Modality.TEXT_GENERATION,
-    ) -> (
-        SentenceTransformerModel
-        | TextGenerationModel
-        | QuestionAnsweringModel
-        | TokenClassificationModel
-        | SpeechRecognitionModel
-        | TextToSpeechModel
-        | ObjectDetectionModel
-        | ImageClassificationModel
-        | ImageTextToTextModel
-        | VisionEncoderDecoderModel
-        | SemanticSegmentationModel
-    ):
+    ) -> ModelType:
         assert isinstance(engine_uri, EngineUri)
         model_load_args = dict(
             model_id=engine_uri.model_id,

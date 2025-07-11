@@ -963,7 +963,7 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
-            "--vision-threshold",
+            "--image-threshold",
             default=0.3,
             type=float,
             help=(
@@ -1048,6 +1048,16 @@ class CLI:
             "--text-context",
             type=str,
             help="Context string for question answering",
+        )
+        model_run_parser.add_argument(
+            "--text-max-length",
+            type=int,
+            help="The maximum length the generated tokens can have. Corresponds to the length of the input prompt + max_new_tokens",
+        )
+        model_run_parser.add_argument(
+            "--text-num-beams",
+            type=int,
+            help="Number of beams for beam search. 1 means no beam search",
         )
         model_run_parser.add_argument(
             "--text-from-lang",

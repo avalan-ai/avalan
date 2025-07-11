@@ -4,7 +4,7 @@ from enum import StrEnum
 from collections.abc import Callable
 from numpy import ndarray
 from torch import dtype, Tensor
-from typing import Literal
+from typing import Literal, TypedDict
 from uuid import UUID
 
 AttentionImplementation = Literal[
@@ -492,6 +492,49 @@ class Similarity:
     l1_distance: float
     l2_distance: float
     pearson: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class OperationAudioParameters:
+    path: str
+    reference_path: str | None = None
+    reference_text: str | None = None
+    sampling_rate: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class OperationTextParameters:
+    context: str | None = None
+    language_destination: str | None = None
+    language_source: str | None = None
+    manual_sampling: bool | None = None
+    pick_tokens: int | None = None
+    skip_special_tokens: bool | None = None
+    stop_on_keywords: list[str] | None = None
+    system_prompt: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class OperationVisionParameters:
+    path: str
+    skip_special_tokens: bool | None = None
+    system_prompt: str | None = None
+    threshold: float | None = None
+    width: int | None = None
+
+
+class OperationParameters(TypedDict, total=False):
+    audio: OperationAudioParameters | None = None
+    text: OperationTextParameters | None = None
+    vision: OperationVisionParameters | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class Operation:
+    generation_settings: GenerationSettings | None
+    input: Input | None
+    modality: Modality
+    parameters: OperationParameters
 
 
 @dataclass(frozen=True, kw_only=True)
