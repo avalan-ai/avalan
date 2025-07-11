@@ -225,6 +225,65 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             auto_model_mock.assert_called_once()
             inference_mode_mock.assert_called_once_with()
 
+    async def test_call_with_system_prompt(self):
+        logger_mock = MagicMock(spec=Logger)
+        inputs = {"input_ids": tensor([[1, 2, 3]])}
+        with (
+            patch.object(
+                AutoTokenizer, "from_pretrained"
+            ) as auto_tokenizer_mock,
+            patch.object(
+                AutoModelForTokenClassification, "from_pretrained"
+            ) as auto_model_mock,
+            patch.object(
+                TokenClassificationModel,
+                "_tokenize_input",
+                return_value=inputs,
+            ) as tokenize_mock,
+            patch("avalan.model.nlp.token.argmax") as argmax_mock,
+            patch(
+                "avalan.model.nlp.token.inference_mode",
+                return_value=nullcontext(),
+            ) as inference_mode_mock,
+        ):
+            tokenizer_mock = MagicMock(spec=PreTrainedTokenizerFast)
+            tokenizer_mock.convert_ids_to_tokens.return_value = ["a", "b", "c"]
+            tokenizer_mock.name_or_path = self.model_id
+            tokenizer_mock.__len__.return_value = 1
+            tokenizer_mock.model_max_length = 77
+            auto_tokenizer_mock.return_value = tokenizer_mock
+
+            model_instance = MagicMock(spec=PreTrainedModel)
+            type(model_instance).config = PropertyMock(
+                return_value=MagicMock(id2label={0: "A", 1: "B"})
+            )
+            model_instance.device = "cpu"
+            call_result = MagicMock(logits="logits")
+            model_instance.return_value = call_result
+            auto_model_mock.return_value = model_instance
+
+            argmax_mock.return_value = tensor([[0, 1, 0]])
+
+            model = TokenClassificationModel(
+                self.model_id,
+                TransformerEngineSettings(),
+                logger=logger_mock,
+            )
+
+            result = await model("text", system_prompt="sp")
+
+            self.assertEqual(result, {"a": "A", "b": "B", "c": "A"})
+            tokenize_mock.assert_called_once_with(
+                "text", system_prompt="sp", context=None
+            )
+            model_instance.assert_called_once()
+            tokenizer_mock.convert_ids_to_tokens.assert_called_once()
+            auto_tokenizer_mock.assert_called_once_with(
+                self.model_id, use_fast=True
+            )
+            auto_model_mock.assert_called_once()
+            inference_mode_mock.assert_called_once_with()
+
 
 if __name__ == "__main__":
     main()

@@ -1550,7 +1550,10 @@ class FancyTheme(Theme):
         )
 
         if sort:
-            entities.sort(key=lambda e: e.score if e.score is not None else -inf, reverse=True)
+            entities.sort(
+                key=lambda e: e.score if e.score is not None else -inf,
+                reverse=True,
+            )
 
         for entity in entities:
             score = (
@@ -1592,6 +1595,24 @@ class FancyTheme(Theme):
         )
         for label in labels:
             table.add_row(label)
+        return Align(table, align="center")
+
+    def display_token_labels(
+        self, token_labels: list[dict[str, str]]
+    ) -> RenderableType:
+        _ = self._
+        table = Table(
+            Column(header=_("Token"), justify="left"),
+            Column(header=_("Label"), justify="left"),
+            show_footer=False,
+            show_header=True,
+            show_edge=True,
+            show_lines=True,
+            border_style="gray58",
+        )
+        for pair in token_labels:
+            for token, label in pair.items():
+                table.add_row(token, label)
         return Align(table, align="center")
 
     async def tokens(
