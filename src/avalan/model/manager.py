@@ -12,7 +12,10 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..model.nlp.text.generation import TextGenerationModel
 from ..model.nlp.question import QuestionAnsweringModel
-from ..model.nlp.sequence import SequenceClassificationModel
+from ..model.nlp.sequence import (
+    SequenceClassificationModel,
+    SequenceToSequenceModel,
+)
 from ..model.nlp.token import TokenClassificationModel
 from ..model.audio import SpeechRecognitionModel, TextToSpeechModel
 from ..model.vision.detection import ObjectDetectionModel
@@ -190,6 +193,8 @@ class ModelManager(ContextDecorator):
                     model = QuestionAnsweringModel(**model_load_args)
                 case Modality.TEXT_SEQUENCE_CLASSIFICATION:
                     model = SequenceClassificationModel(**model_load_args)
+                case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
+                    model = SequenceToSequenceModel(**model_load_args)
                 case Modality.TEXT_TOKEN_CLASSIFICATION:
                     model = TokenClassificationModel(**model_load_args)
                 case _:

@@ -170,6 +170,7 @@ async def model_run(
             Modality.TEXT_GENERATION,
             Modality.TEXT_QUESTION_ANSWERING,
             Modality.TEXT_SEQUENCE_CLASSIFICATION,
+            Modality.TEXT_SEQUENCE_TO_SEQUENCE,
             Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
@@ -287,6 +288,25 @@ async def model_run(
                     assert input_string
 
                     output = await lm(input_string)
+                    console.print(output)
+
+                case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
+                    assert input_string
+
+                    stopping_criteria = (
+                        KeywordStoppingCriteria(
+                            args.stop_on_keyword, lm.tokenizer
+                        )
+                        if args.stop_on_keyword
+                        else None
+                    )
+                    output = await lm(
+                        input_string,
+                        settings=settings,
+                        stopping_criterias=(
+                            [stopping_criteria] if stopping_criteria else None
+                        ),
+                    )
                     console.print(output)
 
                 case Modality.TEXT_TOKEN_CLASSIFICATION:
