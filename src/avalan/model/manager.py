@@ -86,11 +86,11 @@ class ModelManager(ContextDecorator):
     def __call__(self, model: ModelType, operation: Operation):
         pass
 
+    @staticmethod
     def get_operation_from_arguments(
-        self,
         modality: Modality,
         args: Namespace,
-        input_string: Input | None
+        input_string: Input | None,
     ) -> Operation:
         settings = GenerationSettings(
             do_sample=args.do_sample,
@@ -167,8 +167,7 @@ class ModelManager(ContextDecorator):
                         manual_sampling=args.display_tokens or 0,
                         pick_tokens=(
                             10
-                            if args.display_tokens
-                            and args.display_tokens > 0
+                            if args.display_tokens and args.display_tokens > 0
                             else 0
                         ),
                         stop_on_keywords=args.stop_on_keyword,
@@ -186,8 +185,7 @@ class ModelManager(ContextDecorator):
                 )
 
             case (
-                Modality.VISION_IMAGE_TO_TEXT
-                | Modality.VISION_ENCODER_DECODER
+                Modality.VISION_IMAGE_TO_TEXT | Modality.VISION_ENCODER_DECODER
             ):
                 parameters = OperationParameters(
                     vision=OperationVisionParameters(
@@ -209,7 +207,11 @@ class ModelManager(ContextDecorator):
                 parameters = OperationParameters(
                     vision=OperationVisionParameters(
                         path=args.path,
-                        threshold=args.image_threshold,
+                        threshold=getattr(
+                            args,
+                            "vision_threshold",
+                            getattr(args, "image_threshold", None),
+                        ),
                     )
                 )
 

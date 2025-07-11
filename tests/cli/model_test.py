@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from argparse import Namespace
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch, call, ANY
+from avalan.model.manager import ModelManager as RealModelManager
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
 
@@ -843,6 +844,11 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 model_cmds, "ModelManager", return_value=manager
             ) as mm_patch,
             patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
                 model_cmds,
                 "get_model_settings",
                 return_value={
@@ -924,24 +930,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.TEXT_GENERATION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.TEXT_GENERATION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1112,26 +1125,35 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 manager.parse_uri.return_value = engine_uri
                 manager.load.return_value = load_cm
 
-                with (
-                    patch.object(
-                        model_cmds, "ModelManager", return_value=manager
-                    ) as mm_patch,
-                    patch.object(
-                        model_cmds,
-                        "get_model_settings",
-                        return_value={
-                            "engine_uri": engine_uri,
-                            "modality": Modality.AUDIO_TEXT_TO_SPEECH,
-                        },
-                    ) as gms_patch,
-                    patch.object(model_cmds, "get_input", return_value="hi"),
-                    patch.object(
-                        model_cmds, "token_generation", new_callable=AsyncMock
-                    ) as tg_patch,
-                ):
-                    await model_cmds.model_run(
-                        args, console, theme, hub, 5, logger
-                    )
+                with patch.object(
+                    model_cmds, "ModelManager", return_value=manager
+                ) as mm_patch:
+                    with patch.object(
+                        model_cmds.ModelManager,
+                        "get_operation_from_arguments",
+                        side_effect=RealModelManager.get_operation_from_arguments,
+                    ):
+                        with (
+                            patch.object(
+                                model_cmds,
+                                "get_model_settings",
+                                return_value={
+                                    "engine_uri": engine_uri,
+                                    "modality": Modality.AUDIO_TEXT_TO_SPEECH,
+                                },
+                            ) as gms_patch,
+                            patch.object(
+                                model_cmds, "get_input", return_value="hi"
+                            ),
+                            patch.object(
+                                model_cmds,
+                                "token_generation",
+                                new_callable=AsyncMock,
+                            ) as tg_patch,
+                        ):
+                            await model_cmds.model_run(
+                                args, console, theme, hub, 5, logger
+                            )
 
                 mm_patch.assert_called_once_with(hub, logger)
                 manager.parse_uri.assert_called_once_with("id")
@@ -1208,24 +1230,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.AUDIO_SPEECH_RECOGNITION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.AUDIO_SPEECH_RECOGNITION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1289,24 +1318,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.TEXT_QUESTION_ANSWERING,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.TEXT_QUESTION_ANSWERING,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1374,24 +1410,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.TEXT_TOKEN_CLASSIFICATION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.TEXT_TOKEN_CLASSIFICATION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1458,24 +1501,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.TEXT_SEQUENCE_CLASSIFICATION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.TEXT_SEQUENCE_CLASSIFICATION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1539,24 +1589,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.TEXT_SEQUENCE_TO_SEQUENCE,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1630,24 +1687,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.TEXT_TRANSLATION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.TEXT_TRANSLATION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1728,24 +1792,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.VISION_OBJECT_DETECTION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_OBJECT_DETECTION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1817,24 +1888,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.VISION_SEMANTIC_SEGMENTATION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_SEMANTIC_SEGMENTATION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1904,24 +1982,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.VISION_IMAGE_CLASSIFICATION,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_IMAGE_CLASSIFICATION,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -1990,24 +2075,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.VISION_IMAGE_TO_TEXT,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_IMAGE_TO_TEXT,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -2072,24 +2164,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.VISION_ENCODER_DECODER,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_ENCODER_DECODER,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")
@@ -2155,24 +2254,31 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
 
-        with (
-            patch.object(
-                model_cmds, "ModelManager", return_value=manager
-            ) as mm_patch,
-            patch.object(
-                model_cmds,
-                "get_model_settings",
-                return_value={
-                    "engine_uri": engine_uri,
-                    "modality": Modality.VISION_IMAGE_TEXT_TO_TEXT,
-                },
-            ) as gms_patch,
-            patch.object(model_cmds, "get_input", return_value="hi"),
-            patch.object(
-                model_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
-        ):
-            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_IMAGE_TEXT_TO_TEXT,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
         mm_patch.assert_called_once_with(hub, logger)
         manager.parse_uri.assert_called_once_with("id")

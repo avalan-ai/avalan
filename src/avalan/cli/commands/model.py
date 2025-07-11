@@ -12,6 +12,7 @@ from ...event import EventStats
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
+from ...entities import GenerationSettings  # noqa: F401
 from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
@@ -178,56 +179,78 @@ async def model_run(
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
 
-        input_string = None
-        if requires_input:
-            input_string = get_input(
-                console,
-                _i["user_input"] + " ",
-                echo_stdin=not args.no_repl,
-                is_quiet=args.quiet,
-            )
-            if not input_string:
-                return
-
-        operation = manager.get_operation_from_arguments(
-            modality,
-            args,
-            input_string
-        )
-
         with manager.load(**model_settings) as lm:
             logger.debug("Loaded model %s", lm.config.__repr__())
 
+            input_string = None
+            if requires_input:
+                input_string = get_input(
+                    console,
+                    _i["user_input"] + " ",
+                    echo_stdin=not args.no_repl,
+                    is_quiet=args.quiet,
+                )
+                if not input_string:
+                    return
+
+            operation = ModelManager.get_operation_from_arguments(
+                modality,
+                args,
+                input_string,
+            )
+
             match modality:
                 case Modality.AUDIO_SPEECH_RECOGNITION:
-                    assert operation.parameters["audio"] and operation.parameters["audio"].path and operation.parameters["audio"].sampling_rate
+                    assert (
+                        operation.parameters["audio"]
+                        and operation.parameters["audio"].path
+                        and operation.parameters["audio"].sampling_rate
+                    )
 
                     output = await lm(
                         path=operation.parameters["audio"].path,
-                        sampling_rate=operation.parameters["audio"].sampling_rate,
+                        sampling_rate=operation.parameters[
+                            "audio"
+                        ].sampling_rate,
                     )
                     console.print(output)
 
                 case Modality.AUDIO_TEXT_TO_SPEECH:
-                    assert operation.parameters["audio"] and operation.parameters["audio"].path and operation.parameters["audio"].sampling_rate
+                    assert (
+                        operation.parameters["audio"]
+                        and operation.parameters["audio"].path
+                        and operation.parameters["audio"].sampling_rate
+                    )
 
                     output = await lm(
                         path=operation.parameters["audio"].path,
                         prompt=operation.input,
                         max_new_tokens=operation.generation_settings.max_new_tokens,
-                        reference_path=operation.parameters["audio"].reference_path,
-                        reference_text=operation.parameters["audio"].reference_text,
-                        sampling_rate=operation.parameters["audio"].sampling_rate,
+                        reference_path=operation.parameters[
+                            "audio"
+                        ].reference_path,
+                        reference_text=operation.parameters[
+                            "audio"
+                        ].reference_text,
+                        sampling_rate=operation.parameters[
+                            "audio"
+                        ].sampling_rate,
                     )
                     console.print(f"Audio generated in {output}")
 
                 case Modality.TEXT_QUESTION_ANSWERING:
-                    assert operation.input and operation.parameters["text"] and operation.parameters["text"].context
+                    assert (
+                        operation.input
+                        and operation.parameters["text"]
+                        and operation.parameters["text"].context
+                    )
 
                     output = await lm(
                         operation.input,
                         context=operation.parameters["text"].context,
-                        system_prompt=operation.parameters["text"].system_prompt,
+                        system_prompt=operation.parameters[
+                            "text"
+                        ].system_prompt,
                     )
                     console.print(output)
 
@@ -243,7 +266,7 @@ async def model_run(
                     stopping_criteria = (
                         KeywordStoppingCriteria(
                             operation.parameters["text"].stop_on_keywords,
-                            lm.tokenizer
+                            lm.tokenizer,
                         )
                         if operation.parameters["text"].stop_on_keywords
                         else None
@@ -258,25 +281,36 @@ async def model_run(
                     console.print(output)
 
                 case Modality.TEXT_TRANSLATION:
-                    assert operation.input and operation.parameters["text"] and operation.parameters["text"].language_source and operation.parameters["text"].language_destination and operation.generation_settings.num_beams and operation.generation_settings.max_length
+                    assert (
+                        operation.input
+                        and operation.parameters["text"]
+                        and operation.parameters["text"].language_source
+                        and operation.parameters["text"].language_destination
+                    )
 
                     stopping_criteria = (
                         KeywordStoppingCriteria(
                             operation.parameters["text"].stop_on_keywords,
-                            lm.tokenizer
+                            lm.tokenizer,
                         )
                         if operation.parameters["text"].stop_on_keywords
                         else None
                     )
                     output = await lm(
                         operation.input,
-                        source_language=operation.parameters["text"].language_source,
-                        destination_language=operation.parameters["text"].language_destination,
+                        source_language=operation.parameters[
+                            "text"
+                        ].language_source,
+                        destination_language=operation.parameters[
+                            "text"
+                        ].language_destination,
                         settings=operation.generation_settings,
                         stopping_criterias=(
                             [stopping_criteria] if stopping_criteria else None
                         ),
-                        skip_special_tokens=operation.parameters["text"].skip_special_tokens,
+                        skip_special_tokens=operation.parameters[
+                            "text"
+                        ].skip_special_tokens,
                     )
                     console.print(output)
 
@@ -285,7 +319,9 @@ async def model_run(
 
                     output = await lm(
                         operation.input,
-                        system_prompt=operation.parameters["text"].system_prompt,
+                        system_prompt=operation.parameters[
+                            "text"
+                        ].system_prompt,
                     )
                     console.print(theme.display_token_labels([output]))
 
@@ -296,28 +332,36 @@ async def model_run(
                         stopping_criteria = (
                             KeywordStoppingCriteria(
                                 operation.parameters["text"].stop_on_keywords,
-                                lm.tokenizer
+                                lm.tokenizer,
                             )
                             if operation.parameters["text"].stop_on_keywords
                             else None
                         )
                         output_generator = lm(
                             operation.input,
-                            system_prompt=operation.parameters["text"].system_prompt,
+                            system_prompt=operation.parameters[
+                                "text"
+                            ].system_prompt,
                             settings=operation.generation_settings,
                             stopping_criterias=(
                                 [stopping_criteria]
                                 if stopping_criteria
                                 else None
                             ),
-                            manual_sampling=operation.parameters["text"].manual_sampling,
+                            manual_sampling=operation.parameters[
+                                "text"
+                            ].manual_sampling,
                             pick=operation.parameters["text"].pick_tokens,
-                            skip_special_tokens=operation.parameters["text"].skip_special_tokens
+                            skip_special_tokens=operation.parameters[
+                                "text"
+                            ].skip_special_tokens,
                         )
                     else:
                         output_generator = lm(
                             operation.input,
-                            system_prompt=operation.parameters["text"].system_prompt,
+                            system_prompt=operation.parameters[
+                                "text"
+                            ].system_prompt,
                             settings=operation.generation_settings,
                         )
 
@@ -339,7 +383,10 @@ async def model_run(
                     )
 
                 case Modality.VISION_IMAGE_CLASSIFICATION:
-                    assert operation.parameters["vision"] and operation.parameters["vision"].path
+                    assert (
+                        operation.parameters["vision"]
+                        and operation.parameters["vision"].path
+                    )
 
                     output = await lm(operation.parameters["vision"].path)
                     console.print(
@@ -350,28 +397,43 @@ async def model_run(
                     Modality.VISION_IMAGE_TO_TEXT
                     | Modality.VISION_ENCODER_DECODER
                 ):
-                    assert operation.parameters["vision"] and operation.parameters["vision"].path
+                    assert (
+                        operation.parameters["vision"]
+                        and operation.parameters["vision"].path
+                    )
 
                     output = await lm(
                         operation.parameters["vision"].path,
-                        skip_special_tokens=operation.parameters["vision"].skip_special_tokens,
+                        skip_special_tokens=operation.parameters[
+                            "vision"
+                        ].skip_special_tokens,
                     )
                     console.print(output)
 
                 case Modality.VISION_IMAGE_TEXT_TO_TEXT:
-                    assert operation.parameters["vision"] and operation.parameters["vision"].path
+                    assert (
+                        operation.parameters["vision"]
+                        and operation.parameters["vision"].path
+                    )
 
                     output = await lm(
                         operation.parameters["vision"].path,
                         operation.input,
-                        system_prompt=operation.parameters["vision"].system_prompt,
+                        system_prompt=operation.parameters[
+                            "vision"
+                        ].system_prompt,
                         settings=operation.generation_settings,
                         width=operation.parameters["vision"].width,
                     )
                     console.print(output)
 
                 case Modality.VISION_OBJECT_DETECTION:
-                    assert operation.parameters["vision"] and operation.parameters["vision"].path and operation.parameters["vision"].threshold is not None
+                    assert (
+                        operation.parameters["vision"]
+                        and operation.parameters["vision"].path
+                        and operation.parameters["vision"].threshold
+                        is not None
+                    )
 
                     output = await lm(
                         operation.parameters["vision"].path,
@@ -382,7 +444,10 @@ async def model_run(
                     )
 
                 case Modality.VISION_SEMANTIC_SEGMENTATION:
-                    assert operation.parameters["vision"] and operation.parameters["vision"].path
+                    assert (
+                        operation.parameters["vision"]
+                        and operation.parameters["vision"].path
+                    )
 
                     output = await lm(operation.parameters["vision"].path)
                     console.print(
