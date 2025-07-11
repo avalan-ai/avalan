@@ -20,8 +20,8 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🤖 Sophisticated memory management and advanced reasoning (ReACT tooling, adaptive planning.)
 - 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
 - 📊 Comprehensive observability through metrics, event tracing, and dashboards.
-- 💻 Use via the CLI or integrate the Python SDK directly in your code.
 - 🚀 Deploy your AI workflows to the cloud.
+- 💻 Use via the CLI or integrate the Python SDK directly in your code.
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
 

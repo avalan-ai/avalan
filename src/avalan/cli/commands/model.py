@@ -13,7 +13,6 @@ from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...entities import GenerationSettings  # noqa: F401
-from ...model.criteria import KeywordStoppingCriteria
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...secrets import KeyringSecrets
@@ -179,8 +178,8 @@ async def model_run(
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
 
-        with manager.load(**model_settings) as lm:
-            logger.debug("Loaded model %s", lm.config.__repr__())
+        with manager.load(**model_settings) as model:
+            logger.debug("Loaded model %s", model.config.__repr__())
 
             input_string = None
             if requires_input:
@@ -198,266 +197,60 @@ async def model_run(
                 args,
                 input_string,
             )
+            output = await manager(
+                engine_uri,
+                modality,
+                model,
+                operation
+            )
 
-            match modality:
-                case Modality.AUDIO_SPEECH_RECOGNITION:
-                    assert (
-                        operation.parameters["audio"]
-                        and operation.parameters["audio"].path
-                        and operation.parameters["audio"].sampling_rate
-                    )
+            if modality in {
+                Modality.AUDIO_SPEECH_RECOGNITION,
+                Modality.TEXT_QUESTION_ANSWERING,
+                Modality.TEXT_SEQUENCE_CLASSIFICATION,
+                Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+                Modality.TEXT_TRANSLATION,
+                Modality.VISION_IMAGE_TO_TEXT,
+                Modality.VISION_ENCODER_DECODER,
+                Modality.VISION_IMAGE_TEXT_TO_TEXT,
+            }:
+                console.print(output)
 
-                    output = await lm(
-                        path=operation.parameters["audio"].path,
-                        sampling_rate=operation.parameters[
-                            "audio"
-                        ].sampling_rate,
-                    )
-                    console.print(output)
+            elif modality == Modality.AUDIO_TEXT_TO_SPEECH:
+                console.print(f"Audio generated in {output}")
 
-                case Modality.AUDIO_TEXT_TO_SPEECH:
-                    assert (
-                        operation.parameters["audio"]
-                        and operation.parameters["audio"].path
-                        and operation.parameters["audio"].sampling_rate
-                    )
+            elif modality == Modality.TEXT_TOKEN_CLASSIFICATION:
+                console.print(theme.display_token_labels([output]))
 
-                    output = await lm(
-                        path=operation.parameters["audio"].path,
-                        prompt=operation.input,
-                        max_new_tokens=operation.generation_settings.max_new_tokens,
-                        reference_path=operation.parameters[
-                            "audio"
-                        ].reference_path,
-                        reference_text=operation.parameters[
-                            "audio"
-                        ].reference_text,
-                        sampling_rate=operation.parameters[
-                            "audio"
-                        ].sampling_rate,
-                    )
-                    console.print(f"Audio generated in {output}")
+            elif modality == Modality.TEXT_GENERATION:
+                await token_generation(
+                    args=args,
+                    console=console,
+                    theme=theme,
+                    logger=logger,
+                    orchestrator=None,
+                    event_stats=None,
+                    lm=model,
+                    input_string=operation.input,
+                    refresh_per_second=refresh_per_second,
+                    response=output,
+                    dtokens_pick=operation.parameters["text"].pick_tokens,
+                    display_tokens=args.display_tokens or 0,
+                    with_stats=not args.quiet,
+                    tool_events_limit=args.display_tools_events,
+                )
 
-                case Modality.TEXT_QUESTION_ANSWERING:
-                    assert (
-                        operation.input
-                        and operation.parameters["text"]
-                        and operation.parameters["text"].context
-                    )
+            elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
+                console.print(theme.display_image_entity(output))
 
-                    output = await lm(
-                        operation.input,
-                        context=operation.parameters["text"].context,
-                        system_prompt=operation.parameters[
-                            "text"
-                        ].system_prompt,
-                    )
-                    console.print(output)
+            elif modality == Modality.VISION_OBJECT_DETECTION:
+                console.print(theme.display_image_entities(output, sort=True))
 
-                case Modality.TEXT_SEQUENCE_CLASSIFICATION:
-                    assert operation.input
+            elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
+                console.print(theme.display_image_labels(output))
 
-                    output = await lm(operation.input)
-                    console.print(output)
-
-                case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
-                    assert operation.input and operation.parameters["text"]
-
-                    stopping_criteria = (
-                        KeywordStoppingCriteria(
-                            operation.parameters["text"].stop_on_keywords,
-                            lm.tokenizer,
-                        )
-                        if operation.parameters["text"].stop_on_keywords
-                        else None
-                    )
-                    output = await lm(
-                        operation.input,
-                        settings=operation.generation_settings,
-                        stopping_criterias=(
-                            [stopping_criteria] if stopping_criteria else None
-                        ),
-                    )
-                    console.print(output)
-
-                case Modality.TEXT_TRANSLATION:
-                    assert (
-                        operation.input
-                        and operation.parameters["text"]
-                        and operation.parameters["text"].language_source
-                        and operation.parameters["text"].language_destination
-                    )
-
-                    stopping_criteria = (
-                        KeywordStoppingCriteria(
-                            operation.parameters["text"].stop_on_keywords,
-                            lm.tokenizer,
-                        )
-                        if operation.parameters["text"].stop_on_keywords
-                        else None
-                    )
-                    output = await lm(
-                        operation.input,
-                        source_language=operation.parameters[
-                            "text"
-                        ].language_source,
-                        destination_language=operation.parameters[
-                            "text"
-                        ].language_destination,
-                        settings=operation.generation_settings,
-                        stopping_criterias=(
-                            [stopping_criteria] if stopping_criteria else None
-                        ),
-                        skip_special_tokens=operation.parameters[
-                            "text"
-                        ].skip_special_tokens,
-                    )
-                    console.print(output)
-
-                case Modality.TEXT_TOKEN_CLASSIFICATION:
-                    assert operation.input and operation.parameters["text"]
-
-                    output = await lm(
-                        operation.input,
-                        system_prompt=operation.parameters[
-                            "text"
-                        ].system_prompt,
-                    )
-                    console.print(theme.display_token_labels([output]))
-
-                case Modality.TEXT_GENERATION:
-                    assert operation.input and operation.parameters["text"]
-
-                    if engine_uri.is_local:
-                        stopping_criteria = (
-                            KeywordStoppingCriteria(
-                                operation.parameters["text"].stop_on_keywords,
-                                lm.tokenizer,
-                            )
-                            if operation.parameters["text"].stop_on_keywords
-                            else None
-                        )
-                        output_generator = lm(
-                            operation.input,
-                            system_prompt=operation.parameters[
-                                "text"
-                            ].system_prompt,
-                            settings=operation.generation_settings,
-                            stopping_criterias=(
-                                [stopping_criteria]
-                                if stopping_criteria
-                                else None
-                            ),
-                            manual_sampling=operation.parameters[
-                                "text"
-                            ].manual_sampling,
-                            pick=operation.parameters["text"].pick_tokens,
-                            skip_special_tokens=operation.parameters[
-                                "text"
-                            ].skip_special_tokens,
-                        )
-                    else:
-                        output_generator = lm(
-                            operation.input,
-                            system_prompt=operation.parameters[
-                                "text"
-                            ].system_prompt,
-                            settings=operation.generation_settings,
-                        )
-
-                    await token_generation(
-                        args=args,
-                        console=console,
-                        theme=theme,
-                        logger=logger,
-                        orchestrator=None,
-                        event_stats=None,
-                        lm=lm,
-                        input_string=operation.input,
-                        refresh_per_second=refresh_per_second,
-                        response=await output_generator,
-                        dtokens_pick=operation.parameters["text"].pick_tokens,
-                        display_tokens=args.display_tokens or 0,
-                        with_stats=not args.quiet,
-                        tool_events_limit=args.display_tools_events,
-                    )
-
-                case Modality.VISION_IMAGE_CLASSIFICATION:
-                    assert (
-                        operation.parameters["vision"]
-                        and operation.parameters["vision"].path
-                    )
-
-                    output = await lm(operation.parameters["vision"].path)
-                    console.print(
-                        theme.display_image_entity(output),
-                    )
-
-                case (
-                    Modality.VISION_IMAGE_TO_TEXT
-                    | Modality.VISION_ENCODER_DECODER
-                ):
-                    assert (
-                        operation.parameters["vision"]
-                        and operation.parameters["vision"].path
-                    )
-
-                    output = await lm(
-                        operation.parameters["vision"].path,
-                        skip_special_tokens=operation.parameters[
-                            "vision"
-                        ].skip_special_tokens,
-                    )
-                    console.print(output)
-
-                case Modality.VISION_IMAGE_TEXT_TO_TEXT:
-                    assert (
-                        operation.parameters["vision"]
-                        and operation.parameters["vision"].path
-                    )
-
-                    output = await lm(
-                        operation.parameters["vision"].path,
-                        operation.input,
-                        system_prompt=operation.parameters[
-                            "vision"
-                        ].system_prompt,
-                        settings=operation.generation_settings,
-                        width=operation.parameters["vision"].width,
-                    )
-                    console.print(output)
-
-                case Modality.VISION_OBJECT_DETECTION:
-                    assert (
-                        operation.parameters["vision"]
-                        and operation.parameters["vision"].path
-                        and operation.parameters["vision"].threshold
-                        is not None
-                    )
-
-                    output = await lm(
-                        operation.parameters["vision"].path,
-                        threshold=operation.parameters["vision"].threshold,
-                    )
-                    console.print(
-                        theme.display_image_entities(output, sort=True),
-                    )
-
-                case Modality.VISION_SEMANTIC_SEGMENTATION:
-                    assert (
-                        operation.parameters["vision"]
-                        and operation.parameters["vision"].path
-                    )
-
-                    output = await lm(operation.parameters["vision"].path)
-                    console.print(
-                        theme.display_image_labels(output),
-                    )
-
-                case _:
-                    raise NotImplementedError(
-                        f"Modality {modality} not supported"
-                    )
+            else:
+                raise NotImplementedError(f"Modality {modality} not supported")
 
 
 async def model_search(

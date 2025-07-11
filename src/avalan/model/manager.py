@@ -26,6 +26,7 @@ from ..model.nlp.sequence import (
 )
 from ..model.nlp.token import TokenClassificationModel
 from ..model.audio import SpeechRecognitionModel, TextToSpeechModel
+from ..model.criteria import KeywordStoppingCriteria
 from ..model.vision.detection import ObjectDetectionModel
 from ..model.vision.image import (
     ImageClassificationModel,
@@ -83,8 +84,222 @@ class ModelManager(ContextDecorator):
     ):
         return self._stack.__exit__(exc_type, exc_value, traceback)
 
-    def __call__(self, model: ModelType, operation: Operation):
-        pass
+    async def __call__(
+        self,
+        engine_uri: EngineUri,
+        modality: Modality,
+        model: ModelType,
+        operation: Operation
+    ):
+        stopping_criteria = (
+            KeywordStoppingCriteria(
+                operation.parameters["text"].stop_on_keywords,
+                model.tokenizer,
+            )
+            if operation.parameters and "text" in operation.parameters and operation.parameters["text"] and operation.parameters["text"].stop_on_keywords
+            else None
+        )
+
+        match modality:
+            case Modality.AUDIO_SPEECH_RECOGNITION:
+                assert (
+                    operation.parameters["audio"]
+                    and operation.parameters["audio"].path
+                    and operation.parameters["audio"].sampling_rate
+                )
+
+                return await model(
+                    path=operation.parameters["audio"].path,
+                    sampling_rate=operation.parameters[
+                        "audio"
+                    ].sampling_rate,
+                )
+
+            case Modality.AUDIO_TEXT_TO_SPEECH:
+                assert (
+                    operation.parameters["audio"]
+                    and operation.parameters["audio"].path
+                    and operation.parameters["audio"].sampling_rate
+                )
+
+                return await model(
+                    path=operation.parameters["audio"].path,
+                    prompt=operation.input,
+                    max_new_tokens=operation.generation_settings.max_new_tokens,
+                    reference_path=operation.parameters[
+                        "audio"
+                    ].reference_path,
+                    reference_text=operation.parameters[
+                        "audio"
+                    ].reference_text,
+                    sampling_rate=operation.parameters[
+                        "audio"
+                    ].sampling_rate,
+                )
+
+            case Modality.TEXT_GENERATION:
+                assert operation.input and operation.parameters["text"]
+
+                if engine_uri.is_local:
+                    return await model(
+                        operation.input,
+                        system_prompt=operation.parameters[
+                            "text"
+                        ].system_prompt,
+                        settings=operation.generation_settings,
+                        stopping_criterias=(
+                            [stopping_criteria]
+                            if stopping_criteria
+                            else None
+                        ),
+                        manual_sampling=operation.parameters[
+                            "text"
+                        ].manual_sampling,
+                        pick=operation.parameters["text"].pick_tokens,
+                        skip_special_tokens=operation.parameters[
+                            "text"
+                        ].skip_special_tokens,
+                    )
+                else:
+                    return await model(
+                        operation.input,
+                        system_prompt=operation.parameters[
+                            "text"
+                        ].system_prompt,
+                        settings=operation.generation_settings,
+                    )
+
+            case Modality.TEXT_QUESTION_ANSWERING:
+                assert (
+                    operation.input
+                    and operation.parameters["text"]
+                    and operation.parameters["text"].context
+                )
+
+                return await model(
+                    operation.input,
+                    context=operation.parameters["text"].context,
+                    system_prompt=operation.parameters[
+                        "text"
+                    ].system_prompt,
+                )
+
+            case Modality.TEXT_SEQUENCE_CLASSIFICATION:
+                assert operation.input
+
+                return await model(operation.input)
+
+            case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
+                assert operation.input and operation.parameters["text"]
+
+                return await model(
+                    operation.input,
+                    settings=operation.generation_settings,
+                    stopping_criterias=(
+                        [stopping_criteria] if stopping_criteria else None
+                    ),
+                )
+
+            case Modality.TEXT_TOKEN_CLASSIFICATION:
+                assert operation.input and operation.parameters["text"]
+
+                return await model(
+                    operation.input,
+                    system_prompt=operation.parameters[
+                        "text"
+                    ].system_prompt,
+                )
+
+            case Modality.TEXT_TRANSLATION:
+                assert (
+                    operation.input
+                    and operation.parameters["text"]
+                    and operation.parameters["text"].language_source
+                    and operation.parameters["text"].language_destination
+                )
+
+                return await model(
+                    operation.input,
+                    source_language=operation.parameters[
+                        "text"
+                    ].language_source,
+                    destination_language=operation.parameters[
+                        "text"
+                    ].language_destination,
+                    settings=operation.generation_settings,
+                    stopping_criterias=(
+                        [stopping_criteria] if stopping_criteria else None
+                    ),
+                    skip_special_tokens=operation.parameters[
+                        "text"
+                    ].skip_special_tokens,
+                )
+
+            case Modality.VISION_IMAGE_CLASSIFICATION:
+                assert (
+                    operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                )
+
+                return await model(operation.parameters["vision"].path)
+
+            case (
+                Modality.VISION_IMAGE_TO_TEXT
+                | Modality.VISION_ENCODER_DECODER
+            ):
+                assert (
+                    operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                )
+
+                return await model(
+                    operation.parameters["vision"].path,
+                    skip_special_tokens=operation.parameters[
+                        "vision"
+                    ].skip_special_tokens,
+                )
+
+            case Modality.VISION_IMAGE_TEXT_TO_TEXT:
+                assert (
+                    operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                )
+
+                return await model(
+                    operation.parameters["vision"].path,
+                    operation.input,
+                    system_prompt=operation.parameters[
+                        "vision"
+                    ].system_prompt,
+                    settings=operation.generation_settings,
+                    width=operation.parameters["vision"].width,
+                )
+
+            case Modality.VISION_OBJECT_DETECTION:
+                assert (
+                    operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                    and operation.parameters["vision"].threshold
+                    is not None
+                )
+
+                return await model(
+                    operation.parameters["vision"].path,
+                    threshold=operation.parameters["vision"].threshold,
+                )
+
+            case Modality.VISION_SEMANTIC_SEGMENTATION:
+                assert (
+                    operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                )
+
+                return await model(operation.parameters["vision"].path)
+
+            case _:
+                raise NotImplementedError(
+                    f"Modality {modality} not supported"
+                )
 
     @staticmethod
     def get_operation_from_arguments(

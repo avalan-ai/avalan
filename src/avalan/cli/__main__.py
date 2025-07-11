@@ -1057,6 +1057,7 @@ class CLI:
         model_run_parser.add_argument(
             "--text-num-beams",
             type=int,
+            default=1,
             help="Number of beams for beam search. 1 means no beam search",
         )
         model_run_parser.add_argument(
