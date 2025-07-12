@@ -255,7 +255,9 @@ class Orchestrator:
                     self._memory,
                     self._tool,
                     self._event_manager,
+                    self._model_manager,
                     self._renderer,
+                    environment.engine_uri,
                     name=self._name,
                     id=self._id,
                 )

@@ -2,16 +2,21 @@ from abc import ABC, abstractmethod
 from ..agent import Specification
 from ..entities import (
     EngineMessage,
+    EngineUri,
     GenerationSettings,
     Input,
     Message,
     MessageRole,
+    Modality,
+    Operation,
+    OperationParameters,
+    OperationTextParameters,
 )
 from ..memory.manager import MemoryManager
 from ..model import TextGenerationResponse
 from ..model.engine import Engine
-from ..model.nlp.text.vendor import TextGenerationVendorModel
 from ..tool.manager import ToolManager
+from ..model.manager import ModelManager
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from dataclasses import replace
@@ -26,6 +31,8 @@ class EngineAgent(ABC):
     _memory: MemoryManager
     _tool: ToolManager
     _event_manager: EventManager
+    _model_manager: ModelManager
+    _engine_uri: EngineUri
     _last_output: TextGenerationResponse | None = None
     _last_prompt: tuple[Input, str | None] | None = None
 
@@ -42,6 +49,10 @@ class EngineAgent(ABC):
     @property
     def engine(self) -> Engine:
         return self._model
+
+    @property
+    def engine_uri(self) -> EngineUri:
+        return self._engine_uri
 
     @property
     def output(self) -> TextGenerationResponse | None:
@@ -80,6 +91,8 @@ class EngineAgent(ABC):
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
+        model_manager: ModelManager,
+        engine_uri: EngineUri,
         *args,
         name: str | None = None,
         id: UUID | None = None,
@@ -90,6 +103,8 @@ class EngineAgent(ABC):
         self._memory = memory
         self._tool = tool
         self._event_manager = event_manager
+        self._model_manager = model_manager
+        self._engine_uri = engine_uri
 
     async def __call__(
         self, specification: Specification, input: str, **kwargs
@@ -275,11 +290,18 @@ class EngineAgent(ABC):
 
         # Have model generate output from input
 
-        model_settings = dict(
-            system_prompt=system_prompt, settings=settings, tool=self._tool
+        operation = Operation(
+            generation_settings=settings,
+            input=input,
+            modality=Modality.TEXT_GENERATION,
+            parameters=OperationParameters(
+                text=OperationTextParameters(
+                    system_prompt=system_prompt,
+                    skip_special_tokens=skip_special_tokens,
+                )
+            ),
+            requires_input=True,
         )
-        if not isinstance(self._model, TextGenerationVendorModel):
-            model_settings["skip_special_tokens"] = skip_special_tokens
 
         await self._event_manager.trigger(
             Event(
@@ -293,7 +315,12 @@ class EngineAgent(ABC):
                 },
             )
         )
-        output = await self._model(input, **model_settings)
+        output = await self._model_manager(
+            self._engine_uri,
+            operation.modality,
+            self._model,
+            operation,
+        )
         await self._event_manager.trigger(
             Event(
                 type=EventType.MODEL_EXECUTE_AFTER,

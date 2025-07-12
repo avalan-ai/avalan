@@ -1,9 +1,15 @@
 from avalan.agent.engine import EngineAgent
-from avalan.entities import Message, MessageRole, GenerationSettings
+from avalan.entities import (
+    Message,
+    MessageRole,
+    GenerationSettings,
+    EngineUri,
+)
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
+from avalan.model.manager import ModelManager
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -39,8 +45,25 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
         tool = MagicMock(spec=ToolManager)
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
-
-        agent = DummyAgent(DummyEngine(), memory, tool, event_manager)
+        model_manager = AsyncMock(spec=ModelManager)
+        model_manager.return_value = "out"
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        agent = DummyAgent(
+            DummyEngine(),
+            memory,
+            tool,
+            event_manager,
+            model_manager,
+            engine_uri,
+        )
         await agent(MagicMock(), Message(role=MessageRole.USER, content="hi"))
 
         await agent.input_token_count()

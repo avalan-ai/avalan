@@ -2,7 +2,9 @@ from ..agent import Role, Specification
 from ..agent.engine import EngineAgent
 from ..memory.manager import MemoryManager
 from ..model.engine import Engine
+from ..model.manager import ModelManager
 from ..tool.manager import ToolManager
+from ..entities import EngineUri
 from ..event.manager import EventManager
 from jinja2 import (
     Environment as TemplateEnvironment,
@@ -67,7 +69,9 @@ class TemplateEngineAgent(EngineAgent):
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
+        model_manager: ModelManager,
         renderer: Renderer,
+        engine_uri: EngineUri,
         *args,
         name: str | None = None,
         id: UUID | None = None,
@@ -77,6 +81,8 @@ class TemplateEngineAgent(EngineAgent):
             memory,
             tool,
             event_manager,
+            model_manager,
+            engine_uri,
             name=name,
             id=id,
         )
