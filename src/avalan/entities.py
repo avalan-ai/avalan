@@ -535,6 +535,7 @@ class Operation:
     input: Input | None
     modality: Modality
     parameters: OperationParameters
+    requires_input: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
