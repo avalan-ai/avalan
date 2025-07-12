@@ -4,6 +4,8 @@ from avalan.event import EventType
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
 from avalan.event.manager import EventManager
+from avalan.entities import EngineUri
+from avalan.model.manager import ModelManager
 from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, AsyncMock
 
@@ -11,12 +13,24 @@ from unittest.mock import MagicMock, AsyncMock
 class TemplateEngineAgentPrepareTestCase(TestCase):
     def setUp(self):
         self.renderer = Renderer()
+        self.model_manager = MagicMock(spec=ModelManager)
+        self.engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
         self.agent = TemplateEngineAgent(
             model=MagicMock(),
             memory=MagicMock(spec=MemoryManager),
             tool=MagicMock(spec=ToolManager),
             event_manager=MagicMock(spec=EventManager),
+            model_manager=self.model_manager,
             renderer=self.renderer,
+            engine_uri=self.engine_uri,
             name="Bob",
         )
 
@@ -86,12 +100,23 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         model = MagicMock()
 
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
         agent = TemplateEngineAgent(
             model=model,
             memory=memory,
             tool=tool,
             event_manager=event_manager,
+            model_manager=MagicMock(spec=ModelManager),
             renderer=renderer,
+            engine_uri=engine_uri,
             name="Bob",
         )
 

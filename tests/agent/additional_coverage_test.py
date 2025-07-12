@@ -53,6 +53,16 @@ class EngineAgentCoverageTestCase(unittest.IsolatedAsyncioTestCase):
             self.memory,
             self.tool,
             self.event_manager,
+            MagicMock(spec=ModelManager),
+            EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor=None,
+                model_id="m",
+                params={},
+            ),
         )
         with self.assertRaises(NotImplementedError):
             agent._prepare_call(Specification(role=None, goal=None), "hi")
@@ -63,6 +73,16 @@ class EngineAgentCoverageTestCase(unittest.IsolatedAsyncioTestCase):
             self.memory,
             self.tool,
             self.event_manager,
+            MagicMock(spec=ModelManager),
+            EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor=None,
+                model_id="m",
+                params={},
+            ),
         )
         agent._last_output = "value"
         self.assertEqual(agent.output, "value")
