@@ -2,68 +2,35 @@
 
 The CLI offers the following commands, some of them with multiple subcommands:
 
-* [agent](#agent): Run and manage AI agents.
-  * [agent run](#agent-run)
-  * [agent serve](#agent-serve)
-  * [agent message search](#agent-message-search)
-  * [agent init](#agent-init)
-  * [Usage](#usage)
-    * [avalan agent](#avalan-agent)
-    * [avalan agent message](#avalan-agent-message)
-    * [avalan agent message search](#avalan-agent-message-search)
-    * [avalan agent run](#avalan-agent-run)
-    * [avalan agent serve](#avalan-agent-serve)
-    * [avalan agent init](#avalan-agent-init)
-* [cache](#cache): Manage the local cache for model data, and download models.
-  * [cache delete](#cache-delete)
-  * [cache download](#cache-download)
-  * [cache list](#cache-list)
-  * [Usage](#usage-1)
-    * [avalan cache](#avalan-cache)
-    * [avalan cache delete](#avalan-cache-delete)
-    * [avalan cache download](#avalan-cache-download)
-    * [avalan cache list](#avalan-cache-list)
-* [deploy](#deploy)
-  * [deploy run](#deploy-run)
-* [flow](#flow): Execute flows describing multiple processing steps.
-  * [flow run](#flow-run)
-* [memory](#memory): Generate embeddings, search them and index documents.
-  * [memory embeddings](#memory-embeddings)
-  * [memory search](#memory-search)
-  * [memory document index](#memory-document-index)
-  * [Usage](#usage-2)
-    * [avalan memory](#avalan-memory)
-    * [avalan memory embeddings](#avalan-memory-embeddings)
-    * [avalan memory search](#avalan-memory-search)
-    * [avalan memory document](#avalan-memory-document)
-    * [avalan memory document index](#avalan-memory-document-index)
-* [model](#model): Search for models, install and manage them, show their information, and run them.
-  * [model display](#model-display)
-  * [model install](#model-install)
-  * [model run](#model-run)
-    * [Quiet mode](#quiet-mode)
-    * [Attention implementation](#attention-implementation)
-    * [Stopping patterns and token limitation](#stopping-patterns-and-token-limitation)
-    * [Reasoning support](#reasoning-support)
-    * [Displaying generation details](#displaying-generation-details)
-      * [Showing generation performance](#showing-generation-performance)
-      * [Probability distributions](#probability-distributions)
-  * [model search](#model-search)
-  * [model uninstall](#model-uninstall)
-  * [Usage](#usage-3)
-    * [avalan model](#avalan-model)
-    * [avalan model display](#avalan-model-display)
-    * [avalan model install](#avalan-model-install)
-    * [avalan model run](#avalan-model-run)
-    * [avalan model search](#avalan-model-search)
-    * [avalan model uninstall](#avalan-model-uninstall)
-* [tokenizer](#tokenizer): Manage tokenizers and save them to filesystem.
-  * [Adding tokens and special tokens](#adding-tokens-and-special-tokens)
-  * [Saving and loading modified tokenizers](#saving-and-loading-modified-tokenizers)
-  * [Usage](#usage-4)
-    * [avalan tokenizer](#avalan-tokenizer)
-* [train](#train)
-  * [train run](#train-run)
+* [avalan](#avalan)
+* [avalan agent](#avalan-agent)
+  * [avalan agent message](#avalan-agent-message)
+  * [avalan agent message search](#avalan-agent-message-search)
+  * [avalan agent run](#avalan-agent-run)
+  * [avalan agent serve](#avalan-agent-serve)
+  * [avalan agent init](#avalan-agent-init)
+* [avalan cache](#avalan-cache)
+  * [avalan cache delete](#avalan-cache-delete)
+  * [avalan cache download](#avalan-cache-download)
+  * [avalan cache list](#avalan-cache-list)
+* [avalan deploy](#avalan-deploy)
+  * [avalan deploy run](#avalan-deploy-run)
+* [avalan flow](#avalan-flow)
+  * [avalan flow run](#avalan-flow-run)
+* [avalan memory](#avalan-memory)
+  * [avalan memory embeddings](#avalan-memory-embeddings)
+  * [avalan memory search](#avalan-memory-search)
+  * [avalan memory document](#avalan-memory-document)
+  * [avalan memory document index](#avalan-memory-document-index)
+* [avalan model](#avalan-model)
+  * [avalan model display](#avalan-model-display)
+  * [avalan model install](#avalan-model-install)
+  * [avalan model run](#avalan-model-run)
+  * [avalan model search](#avalan-model-search)
+  * [avalan model uninstall](#avalan-model-uninstall)
+* [avalan tokenizer](#avalan-tokenizer)
+* [avalan train](#avalan-train)
+  * [avalan train run](#avalan-train-run)
 
 If you want to list all available commands and global options, run:
 
@@ -108,6 +75,10 @@ You'll need your Huggingface access token exported as `HF_TOKEN`.
 
 ```
 usage: avalan [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+              [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+              [--parallel-count PARALLEL_COUNT]
               [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
               [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
               [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
@@ -126,9 +97,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -137,7 +115,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -162,12 +140,17 @@ options:
 
 ```
 usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                    [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                    [--parallel-count PARALLEL_COUNT]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                     [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
-                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                    [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {message,run,serve,init} ...
 
 Manage AI agents
@@ -179,9 +162,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -190,7 +180,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -214,6 +204,10 @@ options:
 
 ```
 usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                            [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                            [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
@@ -221,7 +215,8 @@ usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
-                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             {search} ...
 
 Manage AI agent messages
@@ -233,9 +228,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -244,7 +246,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -269,6 +271,10 @@ options:
 ```
 usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--device DEVICE]
+                                   [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                                   [--parallel-count PARALLEL_COUNT]
                                    [--disable-loading-progress-bar]
                                    [--hf-token HF_TOKEN] [--locale LOCALE]
                                    [--loader-class {auto,gemma3,mistral3}]
@@ -277,19 +283,26 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--revision REVISION]
                                    [--skip-hub-access-check] [--verbose]
                                    [--version]
-                                   [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
-                                   --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
-                                   --id ID [--limit LIMIT]
-                                   --participant PARTICIPANT --session SESSION
+                                   [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                   --function
+                                   {cosine_distance,inner_product,l1_distance,l2
+_distance,vector_dims,vector_norms}
+                                   --id ID [--limit LIMIT] --participant
+                                   PARTICIPANT --session SESSION
                                    [--engine-uri ENGINE_URI] [--name NAME]
                                    [--role ROLE] [--task TASK]
                                    [--instructions INSTRUCTIONS]
                                    [--memory-recent] [--no-memory-recent]
-                                   [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
+                                   [--memory-permanent-message 
+MEMORY_PERMANENT_MESSAGE]
                                    [--memory-permanent MEMORY_PERMANENT]
-                                   [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
-                                   [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
-                                   [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
+                                   [--memory-engine-model-id 
+MEMORY_ENGINE_MODEL_ID]
+                                   [--memory-engine-max-tokens 
+MEMORY_ENGINE_MAX_TOKENS]
+                                   [--memory-engine-overlap 
+MEMORY_ENGINE_OVERLAP]
                                    [--memory-engine-window MEMORY_ENGINE_WINDOW]
                                    [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
                                    [--run-skip-special-tokens]
@@ -298,21 +311,29 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--run-top-p RUN_TOP_P] [--tool TOOL]
                                    [--tool-browser-engine TOOL_BROWSER_ENGINE]
                                    [--tool-browser-search]
-                                   [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
-                                   [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]
+                                   [--tool-browser-search-context 
+TOOL_BROWSER_SEARCH_CONTEXT]
+                                   [--tool-browser-search-k 
+TOOL_BROWSER_SEARCH_K]
                                    [--tool-browser-debug]
-                                   [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
-                                   [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]
-                                   [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]
+                                   [--tool-browser-debug-url 
+TOOL_BROWSER_DEBUG_URL]
+                                   [--tool-browser-debug-source 
+TOOL_BROWSER_DEBUG_SOURCE]
+                                   [--tool-browser-slowdown 
+TOOL_BROWSER_SLOWDOWN]
                                    [--tool-browser-devtools]
                                    [--tool-browser-chromium-sandbox]
-                                   [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
-                                   [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
-                                   [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]
+                                   [--tool-browser-viewport-width 
+TOOL_BROWSER_VIEWPORT_WIDTH]
+                                   [--tool-browser-viewport-height 
+TOOL_BROWSER_VIEWPORT_HEIGHT]
+                                   [--tool-browser-scale-factor 
+TOOL_BROWSER_SCALE_FACTOR]
                                    [--tool-browser-is-mobile]
                                    [--tool-browser-has-touch]
                                    [--tool-browser-java-script-enabled]
-
+                                   
 
 Search within an agent's message memory
 
@@ -323,9 +344,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -334,7 +362,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -352,7 +380,8 @@ options:
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+  --function 
+{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                         Vector function to use for searching
   --id ID
   --limit LIMIT         If specified, load up to these many recent messages
@@ -420,28 +449,37 @@ browser tool settings:
 
 ```
 usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                        [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                        [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
-                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                        [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         [--display-events] [--display-pause [DISPLAY_PAUSE]]
                         [--display-probabilities]
-                        [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
-                        [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
+                        [--display-probabilities-maximum 
+DISPLAY_PROBABILITIES_MAXIMUM]
+                        [--display-probabilities-sample-minimum 
+DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
-                        [--conversation] [--watch] [--id ID] [--no-session |
-                        --session SESSION] [--skip-load-recent-messages]
-                        [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
+                        [--conversation] [--watch] [--id ID]
+                        [--no-session | --session SESSION]
+                        [--skip-load-recent-messages]
+                        [--load-recent-messages-limit 
+LOAD_RECENT_MESSAGES_LIMIT]
                         [--participant PARTICIPANT] [--stats] [--sync]
-                        [--tty TTY] [--engine-uri ENGINE_URI] [--name NAME]
-                        [--role ROLE] [--task TASK]
-                        [--instructions INSTRUCTIONS] [--memory-recent]
-                        [--no-memory-recent]
+                        [--tty TTY] [--tools-confirm]
+                        [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE]
+                        [--task TASK] [--instructions INSTRUCTIONS]
+                        [--memory-recent] [--no-memory-recent]
                         [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                         [--memory-permanent MEMORY_PERMANENT]
                         [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
@@ -455,7 +493,8 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--tool TOOL]
                         [--tool-browser-engine TOOL_BROWSER_ENGINE]
                         [--tool-browser-search]
-                        [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
+                        [--tool-browser-search-context 
+TOOL_BROWSER_SEARCH_CONTEXT]
                         [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]
                         [--tool-browser-debug]
                         [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
@@ -463,12 +502,14 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                         [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]
                         [--tool-browser-devtools]
                         [--tool-browser-chromium-sandbox]
-                        [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
-                        [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
+                        [--tool-browser-viewport-width 
+TOOL_BROWSER_VIEWPORT_WIDTH]
+                        [--tool-browser-viewport-height 
+TOOL_BROWSER_VIEWPORT_HEIGHT]
                         [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]
                         [--tool-browser-is-mobile] [--tool-browser-has-touch]
                         [--tool-browser-java-script-enabled]
-
+                        
 
 Run an AI agent
 
@@ -479,9 +520,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -490,7 +538,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -552,6 +600,7 @@ options:
   --sync                Don't use an async generator (token streaming)
   --tty TTY             TTY stream (only applicable if combining
                         --conversation with input piping)
+  --tools-confirm       Confirm tool calls before execution
 
 inline agent settings:
   --engine-uri ENGINE_URI
@@ -613,6 +662,10 @@ browser tool settings:
 
 ```
 usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                          [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                          [--parallel-count PARALLEL_COUNT]
                           [--disable-loading-progress-bar]
                           [--hf-token HF_TOKEN] [--locale LOCALE]
                           [--loader-class {auto,gemma3,mistral3}]
@@ -620,7 +673,8 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                           [--no-repl] [--quiet] [--record]
                           [--revision REVISION] [--skip-hub-access-check]
                           [--verbose] [--version]
-                          [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                          [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                           [--host HOST] [--port PORT]
                           [--prefix-mcp PREFIX_MCP]
                           [--prefix-openai PREFIX_OPENAI] [--reload]
@@ -641,21 +695,26 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                           [--tool TOOL]
                           [--tool-browser-engine TOOL_BROWSER_ENGINE]
                           [--tool-browser-search]
-                          [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
+                          [--tool-browser-search-context 
+TOOL_BROWSER_SEARCH_CONTEXT]
                           [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]
                           [--tool-browser-debug]
                           [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
-                          [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]
+                          [--tool-browser-debug-source 
+TOOL_BROWSER_DEBUG_SOURCE]
                           [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]
                           [--tool-browser-devtools]
                           [--tool-browser-chromium-sandbox]
-                          [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
-                          [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
-                          [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]
+                          [--tool-browser-viewport-width 
+TOOL_BROWSER_VIEWPORT_WIDTH]
+                          [--tool-browser-viewport-height 
+TOOL_BROWSER_VIEWPORT_HEIGHT]
+                          [--tool-browser-scale-factor 
+TOOL_BROWSER_SCALE_FACTOR]
                           [--tool-browser-is-mobile]
                           [--tool-browser-has-touch]
                           [--tool-browser-java-script-enabled]
-
+                          
 
 Serve an AI agent as an API endpoint
 
@@ -666,9 +725,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -677,7 +743,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -763,6 +829,10 @@ browser tool settings:
 
 ```
 usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                         [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                         [--parallel-count PARALLEL_COUNT]
                          [--disable-loading-progress-bar]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
                          [--loader-class {auto,gemma3,mistral3}]
@@ -770,7 +840,8 @@ usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--no-repl] [--quiet] [--record]
                          [--revision REVISION] [--skip-hub-access-check]
                          [--verbose] [--version]
-                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                         [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE]
                          [--task TASK] [--instructions INSTRUCTIONS]
                          [--memory-recent] [--no-memory-recent]
@@ -792,9 +863,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -803,7 +881,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -864,12 +942,17 @@ inline agent settings:
 
 ```
 usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                    [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                    [--parallel-count PARALLEL_COUNT]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                     [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
-                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                    [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {delete,download,list} ...
 
 Manage models cache
@@ -881,9 +964,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -892,7 +982,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -916,6 +1006,10 @@ options:
 
 ```
 usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                           [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                           [--parallel-count PARALLEL_COUNT]
                            [--disable-loading-progress-bar]
                            [--hf-token HF_TOKEN] [--locale LOCALE]
                            [--loader-class {auto,gemma3,mistral3}]
@@ -923,7 +1017,8 @@ usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                            [--no-repl] [--quiet] [--record]
                            [--revision REVISION] [--skip-hub-access-check]
                            [--verbose] [--version]
-                           [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                           [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                            [--delete] --model MODEL
                            [--delete-revision DELETE_REVISION]
 
@@ -933,9 +1028,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -944,7 +1046,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -965,7 +1067,8 @@ options:
   --delete              Actually delete. If not provided, a dry run is
                         performed and data that would be deleted is shown, yet
                         not deleted
-  --model, -m MODEL     Model to delete
+  --model MODEL, -m MODEL
+                        Model to delete
   --delete-revision DELETE_REVISION
                         Revision to delete
 ```
@@ -974,6 +1077,10 @@ options:
 
 ```
 usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                             [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                             [--parallel-count PARALLEL_COUNT]
                              [--disable-loading-progress-bar]
                              [--hf-token HF_TOKEN] [--locale LOCALE]
                              [--loader-class {auto,gemma3,mistral3}]
@@ -981,7 +1088,8 @@ usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                              [--login] [--no-repl] [--quiet] [--record]
                              [--revision REVISION] [--skip-hub-access-check]
                              [--verbose] [--version]
-                             [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                             [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                              --model MODEL
 
 Download model data to cache
@@ -990,9 +1098,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1001,7 +1116,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1019,13 +1134,18 @@ options:
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --model, -m MODEL     Model to load
+  --model MODEL, -m MODEL
+                        Model to load
 ```
 
 ### avalan cache list
 
 ```
 usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                         [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                         [--parallel-count PARALLEL_COUNT]
                          [--disable-loading-progress-bar]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
                          [--loader-class {auto,gemma3,mistral3}]
@@ -1033,7 +1153,8 @@ usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--no-repl] [--quiet] [--record]
                          [--revision REVISION] [--skip-hub-access-check]
                          [--verbose] [--version]
-                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                         [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          [--model MODEL] [--summary]
 
 List cache contents
@@ -1042,9 +1163,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1053,7 +1181,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1080,12 +1208,17 @@ options:
 
 ```
 usage: avalan deploy [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                     [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                     [--parallel-count PARALLEL_COUNT]
                      [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                      [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                      [--no-repl] [--quiet] [--record] [--revision REVISION]
                      [--skip-hub-access-check] [--verbose] [--version]
-                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                     [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                      {run} ...
 
 Manage AI deployments
@@ -1097,9 +1230,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1108,7 +1248,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1132,6 +1272,10 @@ options:
 
 ```
 usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                         [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                         [--parallel-count PARALLEL_COUNT]
                          [--disable-loading-progress-bar]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
                          [--loader-class {auto,gemma3,mistral3}]
@@ -1139,7 +1283,8 @@ usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                          [--no-repl] [--quiet] [--record]
                          [--revision REVISION] [--skip-hub-access-check]
                          [--verbose] [--version]
-                         [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                         [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                          deployment
 
 Perform a deployment
@@ -1151,9 +1296,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1162,7 +1314,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1186,12 +1338,17 @@ options:
 
 ```
 usage: avalan flow [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                   [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                   [--parallel-count PARALLEL_COUNT]
                    [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                    [--no-repl] [--quiet] [--record] [--revision REVISION]
                    [--skip-hub-access-check] [--verbose] [--version]
-                   [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                   [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                    {run} ...
 
 Manage AI flows
@@ -1203,9 +1360,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1214,7 +1378,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1238,13 +1402,18 @@ options:
 
 ```
 usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                       [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                       [--parallel-count PARALLEL_COUNT]
                        [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                        [--locale LOCALE]
                        [--loader-class {auto,gemma3,mistral3}]
                        [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                        [--no-repl] [--quiet] [--record] [--revision REVISION]
                        [--skip-hub-access-check] [--verbose] [--version]
-                       [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                       [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                        flow
 
 Run a given flow
@@ -1256,9 +1425,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1267,7 +1443,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1291,12 +1467,17 @@ options:
 
 ```
 usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                     [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                     [--parallel-count PARALLEL_COUNT]
                      [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                      [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                      [--no-repl] [--quiet] [--record] [--revision REVISION]
                      [--skip-hub-access-check] [--verbose] [--version]
-                     [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                     [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                      {embeddings,search,document} ...
 
 Manage memory
@@ -1308,9 +1489,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1319,7 +1507,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1343,6 +1531,10 @@ options:
 
 ```
 usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                                [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                                [--parallel-count PARALLEL_COUNT]
                                 [--disable-loading-progress-bar]
                                 [--hf-token HF_TOKEN] [--locale LOCALE]
                                 [--loader-class {auto,gemma3,mistral3}]
@@ -1351,12 +1543,13 @@ usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                                 [--revision REVISION]
                                 [--skip-hub-access-check] [--verbose]
                                 [--version]
-                                [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                                 [--base-url BASE_URL] [--load]
                                 [--special-token SPECIAL_TOKEN]
                                 [--token TOKEN] [--tokenizer TOKENIZER]
-                                [--no-display-partitions |
-                                --display-partitions DISPLAY_PARTITIONS]
+                                [--no-display-partitions | --display-partitions 
+DISPLAY_PARTITIONS]
                                 [--partition]
                                 [--partition-max-tokens PARTITION_MAX_TOKENS]
                                 [--partition-overlap PARTITION_OVERLAP]
@@ -1375,9 +1568,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1386,7 +1586,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1438,6 +1638,10 @@ options:
 
 ```
 usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                            [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                            [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
@@ -1445,17 +1649,21 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
-                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
-                            [--tokenizer TOKENIZER] [--no-display-partitions |
-                            --display-partitions DISPLAY_PARTITIONS]
+                            [--tokenizer TOKENIZER]
+                            [--no-display-partitions | --display-partitions 
+DISPLAY_PARTITIONS]
                             [--partition]
                             [--partition-max-tokens PARTITION_MAX_TOKENS]
                             [--partition-overlap PARTITION_OVERLAP]
                             [--partition-window PARTITION_WINDOW] --dsn DSN
                             --participant PARTICIPANT --namespace NAMESPACE
-                            --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+                            --function
+                            {cosine_distance,inner_product,l1_distance,l2_distan
+ce,vector_dims,vector_norms}
                             [--limit LIMIT]
                             model
 
@@ -1468,9 +1676,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1479,7 +1694,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1524,7 +1739,8 @@ options:
                         Participant ID to search
   --namespace NAMESPACE
                         Namespace to search
-  --function {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+  --function 
+{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                         Vector function to use for searching
   --limit LIMIT         Return up to this many memories
 ```
@@ -1548,6 +1764,10 @@ options:
 ```
 usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
                                     [--device DEVICE]
+                                    [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                                    [--parallel-count PARALLEL_COUNT]
                                     [--disable-loading-progress-bar]
                                     [--hf-token HF_TOKEN] [--locale LOCALE]
                                     [--loader-class {auto,gemma3,mistral3}]
@@ -1556,22 +1776,24 @@ usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
                                     [--revision REVISION]
                                     [--skip-hub-access-check] [--verbose]
                                     [--version]
-                                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                                    [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                                     [--base-url BASE_URL] [--load]
                                     [--special-token SPECIAL_TOKEN]
                                     [--token TOKEN] [--tokenizer TOKENIZER]
-                                    [--no-display-partitions |
-                                    --display-partitions DISPLAY_PARTITIONS]
+                                    [--no-display-partitions | 
+--display-partitions DISPLAY_PARTITIONS]
                                     [--partition]
-                                    [--partition-max-tokens PARTITION_MAX_TOKENS]
+                                    [--partition-max-tokens 
+PARTITION_MAX_TOKENS]
                                     [--partition-overlap PARTITION_OVERLAP]
                                     [--partition-window PARTITION_WINDOW]
                                     [--partitioner {text,code}]
                                     [--language LANGUAGE]
                                     [--encoding ENCODING]
                                     [--identifier IDENTIFIER] --dsn DSN
-                                    --participant PARTICIPANT
-                                    --namespace NAMESPACE
+                                    --participant PARTICIPANT --namespace
+                                    NAMESPACE
                                     model source
 
 Add a document to the memory index
@@ -1584,9 +1806,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1595,7 +1824,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1667,6 +1896,10 @@ options:
 
 ```
 usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                            [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                            [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
@@ -1674,7 +1907,8 @@ usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
-                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
                             [--tokenizer TOKENIZER] [--sentence-transformer]
@@ -1690,9 +1924,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1701,7 +1942,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1738,6 +1979,10 @@ options:
 
 ```
 usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                            [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                            [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
                             [--loader-class {auto,gemma3,mistral3}]
@@ -1745,7 +1990,8 @@ usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
-                            [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                            [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
                             [--tokenizer TOKENIZER]
@@ -1760,9 +2006,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1771,7 +2024,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1805,30 +2058,55 @@ options:
 
 ```
 usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                        [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                        [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
-                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                        [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         [--base-url BASE_URL] [--load]
                         [--special-token SPECIAL_TOKEN] [--token TOKEN]
                         [--tokenizer TOKENIZER] [--display-events]
                         [--display-pause [DISPLAY_PAUSE]]
                         [--display-probabilities]
-                        [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
-                        [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
+                        [--display-probabilities-maximum 
+DISPLAY_PROBABILITIES_MAXIMUM]
+                        [--display-probabilities-sample-minimum 
+DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
-                        [--attention {eager,flash_attention_2,flex_attention,sdpa}]
-                        [--do-sample] [--enable-gradient-calculation]
-                        [--use-cache] [--max-new-tokens MAX_NEW_TOKENS]
+                        [--attention 
+{eager,flash_attention_2,flex_attention,sdpa}]
+                        [--path PATH]
+                        [--audio-reference-path AUDIO_REFERENCE_PATH]
+                        [--audio-reference-text AUDIO_REFERENCE_TEXT]
+                        [--audio-sampling-rate AUDIO_SAMPLING_RATE]
+                        [--image-threshold IMAGE_THRESHOLD]
+                        [--image-width IMAGE_WIDTH] [--do-sample]
+                        [--enable-gradient-calculation] [--use-cache]
+                        [--max-new-tokens MAX_NEW_TOKENS]
+                        [--modality 
+{audio_speech_recognition,audio_text_to_speech,embedding,text_generation,text_qu
+estion_answering,text_sequence_classification,text_sequence_to_sequence,text_tra
+nslation,text_token_classification,vision_object_detection,vision_image_classifi
+cation,vision_image_to_text,vision_image_text_to_text,vision_encoder_decoder,vis
+ion_semantic_segmentation}]
                         [--min-p MIN_P]
                         [--repetition-penalty REPETITION_PENALTY]
                         [--skip-special-tokens] [--system SYSTEM]
-                        [--start-thinking] [--stop_on_keyword STOP_ON_KEYWORD]
+                        [--text-context TEXT_CONTEXT]
+                        [--text-max-length TEXT_MAX_LENGTH]
+                        [--text-num-beams TEXT_NUM_BEAMS]
+                        [--text-from-lang TEXT_FROM_LANG]
+                        [--text-to-lang TEXT_TO_LANG] [--start-thinking]
+                        [--stop_on_keyword STOP_ON_KEYWORD]
                         [--temperature TEMPERATURE] [--top-k TOP_K]
                         [--top-p TOP_P] [--trust-remote-code]
                         model
@@ -1842,9 +2120,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1853,7 +2138,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1910,6 +2195,24 @@ options:
   --attention {eager,flash_attention_2,flex_attention,sdpa}
                         Attention implementation to use (defaults to best
                         available)
+  --path PATH           Path where to store generated audio. Only applicable
+                        to audio modalities.
+  --audio-reference-path AUDIO_REFERENCE_PATH
+                        Path to existing audio file to use for voice cloning.
+                        Only applicable to audio modalities.
+  --audio-reference-text AUDIO_REFERENCE_TEXT
+                        Text transcript of the reference audio given in
+                        --audio-reference-path. Only applicable to audio
+                        modalities.
+  --audio-sampling-rate AUDIO_SAMPLING_RATE
+                        Sampling rate to use for audio generation. Only
+                        applicable to audio modalities.
+  --image-threshold IMAGE_THRESHOLD
+                        Score threshold for object detection. Only applicable
+                        to vision modalities.
+  --image-width IMAGE_WIDTH
+                        Resize input image to this width before processing.
+                        Only applicable to vision image text to text modality.
   --do-sample           Tell if the token generation process should be
                         deterministic or stochastic. When enabled, it's
                         stochastic and uses probability distribution.
@@ -1919,6 +2222,12 @@ options:
                         applicable to model.
   --max-new-tokens MAX_NEW_TOKENS
                         Maximum number of tokens to generate
+  --modality 
+{audio_speech_recognition,audio_text_to_speech,embedding,text_generation,text_qu
+estion_answering,text_sequence_classification,text_sequence_to_sequence,text_tra
+nslation,text_token_classification,vision_object_detection,vision_image_classifi
+cation,vision_image_to_text,vision_image_text_to_text,vision_encoder_decoder,vis
+ion_semantic_segmentation}
   --min-p MIN_P         Minimum token probability, which will be scaled by the
                         probability of the most likely token [0, 1]
   --repetition-penalty REPETITION_PENALTY
@@ -1927,6 +2236,19 @@ options:
   --skip-special-tokens
                         If specified, skip special tokens when decoding
   --system SYSTEM       Use this as system prompt
+  --text-context TEXT_CONTEXT
+                        Context string for question answering
+  --text-max-length TEXT_MAX_LENGTH
+                        The maximum length the generated tokens can have.
+                        Corresponds to the length of the input prompt +
+                        max_new_tokens
+  --text-num-beams TEXT_NUM_BEAMS
+                        Number of beams for beam search. 1 means no beam
+                        search
+  --text-from-lang TEXT_FROM_LANG
+                        Source language code for text translation
+  --text-to-lang TEXT_TO_LANG
+                        Destination language code for text translation
   --start-thinking      If specified, assume model response starts with
                         reasoning
   --stop_on_keyword STOP_ON_KEYWORD
@@ -1945,6 +2267,10 @@ options:
 
 ```
 usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                           [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                           [--parallel-count PARALLEL_COUNT]
                            [--disable-loading-progress-bar]
                            [--hf-token HF_TOKEN] [--locale LOCALE]
                            [--loader-class {auto,gemma3,mistral3}]
@@ -1952,7 +2278,8 @@ usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                            [--no-repl] [--quiet] [--record]
                            [--revision REVISION] [--skip-hub-access-check]
                            [--verbose] [--version]
-                           [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                           [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                            [--search SEARCH] [--filter FILTER] [--limit LIMIT]
 
 Search for models
@@ -1961,9 +2288,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -1972,7 +2306,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -1999,6 +2333,10 @@ options:
 
 ```
 usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                              [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                              [--parallel-count PARALLEL_COUNT]
                               [--disable-loading-progress-bar]
                               [--hf-token HF_TOKEN] [--locale LOCALE]
                               [--loader-class {auto,gemma3,mistral3}]
@@ -2006,7 +2344,8 @@ usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
                               [--login] [--no-repl] [--quiet] [--record]
                               [--revision REVISION] [--skip-hub-access-check]
                               [--verbose] [--version]
-                              [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                              [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                               [--base-url BASE_URL] [--load]
                               [--special-token SPECIAL_TOKEN] [--token TOKEN]
                               [--tokenizer TOKENIZER] [--delete]
@@ -2021,9 +2360,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -2032,7 +2378,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -2069,13 +2415,18 @@ options:
 
 ```
 usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                        [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                        [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
-                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                        [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         --tokenizer TOKENIZER [--save SAVE]
                         [--special-token SPECIAL_TOKEN] [--token TOKEN]
 
@@ -2085,9 +2436,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -2096,7 +2454,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -2114,7 +2472,7 @@ options:
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --tokenizer, -t TOKENIZER
+  --tokenizer TOKENIZER, -t TOKENIZER
                         Tokenizer to load
   --save SAVE           Save tokenizer (useful if modified via --special-token
                         or --token) to given path, only if model is loaded
@@ -2127,12 +2485,17 @@ options:
 
 ```
 usage: avalan train [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                    [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                    [--parallel-count PARALLEL_COUNT]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                     [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
-                    [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                    [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                     {run} ...
 
 Training
@@ -2144,9 +2507,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -2155,7 +2525,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -2179,13 +2549,18 @@ options:
 
 ```
 usage: avalan train run [-h] [--cache-dir CACHE_DIR] [--device DEVICE]
+                        [--parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}]
+                        [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
                         [--loader-class {auto,gemma3,mistral3}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
-                        [--weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
+                        [--weight-type 
+{auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}]
                         training
 
 Run a given training
@@ -2197,9 +2572,16 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Path to huggingface cache hub (defaults to
-                        /Users/mariano/.cache/huggingface/hub, can also be
-                        specified with $HF_HUB_CACHE)
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel 
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,
+gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
                         If specified, the shard loading progress bar will not
                         be shown
@@ -2208,7 +2590,7 @@ options:
   --loader-class {auto,gemma3,mistral3}
                         Loader class to use (defaults to "auto")
   --locales LOCALES     Path to locale files (defaults to
-                        /Users/mariano/Code/ai/avalan/locale)
+                        /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
                         memory
   --login               Login to main hub (huggingface)
@@ -2227,5 +2609,4 @@ options:
   --weight-type {auto,bool,bf16,f16,f32,f64,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
-
 
