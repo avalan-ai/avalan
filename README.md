@@ -29,16 +29,16 @@ Take a quick look at which models you can use in [Models](#models), the tools av
 
 ## Models
 
-avalan supports text, audio and vision models from the CLI or in your own code.
-Besides running local models, it can call vendor models from OpenRouter, OpenAI,
-Ollama, DeepSeek and Gemini, working across engines such as transformers, vLLM
-and mlx-lm.
+Avalan makes text, audio, and vision models available from the CLI or in your
+own code. You can run local models or call vendor models from OpenRouter,
+OpenAI, Ollama, DeepSeek and Gemini. It works across engines such as
+transformers, vLLM and mlx-lm.
 
 ### Audio
 
 #### Speech recognition
 
-Run a speech recognition model:
+Recognize speech using a model:
 
 ```bash
 avalan model run "facebook/wav2vec2-base-960h" \
@@ -47,7 +47,7 @@ avalan model run "facebook/wav2vec2-base-960h" \
     --audio-sampling-rate 16000
 ```
 
-To get the transcript for the given audio file:
+The output is the transcript of the provided audio:
 
 ```text
 AND THEN I GREW UP AND HAD THE ESTEEMED HONOUR OF MEETING HER AND WASN'T
@@ -57,8 +57,7 @@ PERSONIFICATION OF GRACE AND GOODNESS
 
 #### Text to speech
 
-Create an audio speech from your prompt by cloning Oprah's voice, using an
-18-second clip of her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm):
+Generate speech in Oprah's voice from a prompt using an 18-second clip of her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm):
 
 ```bash
 echo "[S1] Leo Messi is the greatest football player of all times." | \
@@ -73,7 +72,7 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
 
 #### Text generation
 
-Run any locally installed model and tweak sampling settings such as `--temperature`, `--top-p`, and `--top-k`. The example below prompts the model as "Aurora" and limits the response to 100 new tokens:
+Run a locally installed model and adjust sampling settings such as `--temperature`, `--top-p`, and `--top-k`. The example below prompts as "Aurora" and limits the output to 100 tokens:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
@@ -85,7 +84,7 @@ echo "Who are you, and who is Leo Messi?" \
         --top-k 20
 ```
 
-You can also run vendor APIs just as easily. Swap in a vendor-backed [engine URI](docs/ai_uri.md) to run on an external service. The following example calls OpenAI's GPT-4o with the same sampling settings:
+Vendor APIs work the same way. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The following example calls OpenAI's GPT-4o with the same sampling settings:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
@@ -99,8 +98,7 @@ echo "Who are you, and who is Leo Messi?" \
 
 #### Question answering
 
-Use question answering models to quickly answer questions based on
-semantic context:
+Answer questions from context using a question answering model:
 
 ```bash
 echo "What sport does Leo play?" \
@@ -109,7 +107,7 @@ echo "What sport does Leo play?" \
         --text-context "Lionel Messi, known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time."
 ```
 
-The answer should come as no surprise:
+The answer comes as no surprise:
 
 ```text
 football
@@ -117,7 +115,7 @@ football
 
 #### Sequence classification
 
-Find the sentiment behind a given text:
+Determine sentiment in a piece of text:
 
 ```bash
 echo "We love Leo Messi." \
@@ -125,7 +123,7 @@ echo "We love Leo Messi." \
         --modality "text_sequence_classification"
 ```
 
-We certainly love Leo, so the sentiment is indeed positive:
+The result is positive, as expected:
 
 ```text
 POSITIVE
@@ -133,7 +131,7 @@ POSITIVE
 
 #### Sequence to sequence
 
-Get the summarization for a given text using sequence to sequence models:
+Summarize a text with a sequence-to-sequence model:
 
 ```bash
 echo "
@@ -149,7 +147,7 @@ echo "
         --modality "text_sequence_to_sequence"
 ```
 
-How's this for summarization?
+The resulting summary:
 
 ```text
 Andy Cucci is held by many as the greatest footballer of all times.
@@ -157,8 +155,7 @@ Andy Cucci is held by many as the greatest footballer of all times.
 
 #### Translation
 
-Use translation sequence to sequence models to translate text betweeen
-supported languages:
+Translate text between languages using a sequence-to-sequence model:
 
 ```bash
 echo "
@@ -174,7 +171,7 @@ echo "
         --text-max-length 512
 ```
 
-We correctly get the spanish version of the given english text:
+The Spanish version of the text:
 
 ```text
 Lionel Messi, conocido como Leo Messi, es un futbolista argentino profesional
@@ -187,7 +184,7 @@ sin precedentes durante su carrera.
 
 #### Image classification
 
-Hot dog or not hot dog? Use a model to classify images:
+Classify an image (hot dog or not):
 
 ```bash
 avalan model run "microsoft/resnet-50" \
@@ -195,7 +192,7 @@ avalan model run "microsoft/resnet-50" \
     --path docs/examples/cat.jpg
 ```
 
-And you get what type of image you've given it:
+The model identifies the image:
 
 ```text
 ┏━━━━━━━━━━━━━━━━━━┓
@@ -207,7 +204,7 @@ And you get what type of image you've given it:
 
 #### Image to text
 
-Get a text description of a given image:
+Generate a text description for an image:
 
 ```bash
 avalan model run "salesforce/blip-image-captioning-base" \
@@ -215,7 +212,7 @@ avalan model run "salesforce/blip-image-captioning-base" \
     --path docs/examples/Example_Image_1.jpg
 ```
 
-And you'll get:
+Example output:
 
 ```text
 a sign for a gas station on the side of a building [SEP]
@@ -223,7 +220,7 @@ a sign for a gas station on the side of a building [SEP]
 
 #### Image text to text
 
-Given an image, instruct an `image-text-to-text` model what to do with it:
+Provide an image and an instruction to an `image-text-to-text` model:
 
 ```bash
 echo "Transcribe the text on this image, keeping format" | \
@@ -233,7 +230,7 @@ echo "Transcribe the text on this image, keeping format" | \
         --max-new-tokens 1024
 ```
 
-And you'll get the transcription (cut for brevity):
+The transcription (truncated for brevity):
 
 ```text
 **INTRODUCCIÓN**
@@ -244,8 +241,7 @@ suele merecer las más diversas interpretaciones, y su biografía adolece tremen
 
 #### Object detection
 
-Given an image, get a list of objects identified in it with an accuracy
-score:
+Detect objects in an image and list them with accuracy scores:
 
 ```bash
 avalan model run "facebook/detr-resnet-50" \
@@ -253,7 +249,7 @@ avalan model run "facebook/detr-resnet-50" \
     --path docs/examples/kitchen.jpg
 ```
 
-Results are sorted by accuracy, and include relevant coordinates:
+Results are sorted by accuracy and include bounding boxes:
 
 ```text
 ┏━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -285,7 +281,7 @@ Results are sorted by accuracy, and include relevant coordinates:
 
 #### Semantic segmentation
 
-Use semantic segmentation models to classify every pixel in a given image:
+Classify each pixel with a semantic segmentation model:
 
 ```bash
 avalan model run "nvidia/segformer-b0-finetuned-ade-512-512" \
@@ -293,7 +289,7 @@ avalan model run "nvidia/segformer-b0-finetuned-ade-512-512" \
     --path docs/examples/kitchen.jpg
 ```
 
-You'll get all annotations identified on the image:
+The output lists each annotation:
 
 ```text
 ┏━━━━━━━━━━━━━━━━━━┓
