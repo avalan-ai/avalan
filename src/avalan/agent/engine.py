@@ -317,7 +317,7 @@ class EngineAgent(ABC):
         )
         output = await self._model_manager(
             self._engine_uri,
-            Modality.TEXT_GENERATION,
+            operation.modality,
             self._model,
             operation,
         )
