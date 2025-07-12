@@ -25,10 +25,14 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
 
-## Modalities
+Take a quick look at which models you can use in [Models](#models), the tools available to agents in [Tools](#tools), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Serving agents](#serving-agents), the [framework code](#framework-code) you can reuse, and see every CLI option in the [CLI docs](docs/CLI.md).
 
-avalan supports text, audio and vision modalities, both from the CLI or using
-the framework in code.
+## Models
+
+avalan supports text, audio and vision models from the CLI or in your own code.
+Besides running local models, it can call vendor models from OpenRouter, OpenAI,
+Ollama, DeepSeek and Gemini, working across engines such as transformers, vLLM
+and mlx-lm.
 
 ### Audio
 
