@@ -44,6 +44,12 @@ def get_model_settings(
         tokens=(
             args.token if args.token and isinstance(args.token, list) else None
         ),
+        subfolder=args.subfolder if hasattr(args, "subfolder") else None,
+        tokenizer_subfolder=(
+            args.tokenizer_subfolder
+            if hasattr(args, "tokenizer_subfolder")
+            else None
+        ),
         trust_remote_code=(
             args.trust_remote_code
             if hasattr(args, "trust_remote_code")

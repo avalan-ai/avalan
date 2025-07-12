@@ -109,7 +109,9 @@ class TransformerModel(Engine, ABC):
         self, tokenizer_name_or_path: str | None, use_fast: bool
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         return AutoTokenizer.from_pretrained(
-            tokenizer_name_or_path or self._model_id, use_fast=use_fast
+            tokenizer_name_or_path or self._model_id,
+            use_fast=use_fast,
+            subfolder=self._settings.tokenizer_subfolder,
         )
 
     def _load_tokenizer_with_tokens(

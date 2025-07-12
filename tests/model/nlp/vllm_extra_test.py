@@ -53,7 +53,9 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
                 model = VllmModel(self.model_id, settings)
 
         self.assertIs(model._model, llm_instance)
-        auto_tok.assert_called_once_with(self.model_id, use_fast=True)
+        auto_tok.assert_called_once_with(
+            self.model_id, use_fast=True, subfolder=None
+        )
         vllm_mock.LLM.assert_called_once()
 
     def test_supports_sample_generation(self):
