@@ -322,7 +322,7 @@ class Theme(ABC):
         tool_event_results: list[Event] | None,
         ttft: float,
         ttnt: float,
-        ellapsed: float,
+        elapsed: float,
         console_width: int,
         logger: Logger,
         event_stats: EventStats | None = None,

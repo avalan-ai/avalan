@@ -347,7 +347,7 @@ class OrchestratorLoader:
             settings.agent_id,
         )
 
-        model_manager = ModelManager(hub, logger)
+        model_manager = ModelManager(hub, logger, event_manager=event_manager)
         model_manager = stack.enter_context(model_manager)
 
         engine_uri = model_manager.parse_uri(settings.uri)

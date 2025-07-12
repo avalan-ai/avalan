@@ -180,7 +180,7 @@ class MemoryManager:
                         },
                         started=start,
                         finished=end,
-                        ellapsed=end - start,
+                        elapsed=end - start,
                     )
                 )
 
@@ -244,7 +244,7 @@ class MemoryManager:
                     },
                     started=start,
                     finished=end,
-                    ellapsed=end - start,
+                    elapsed=end - start,
                 )
             )
 
@@ -281,7 +281,7 @@ class MemoryManager:
                     },
                     started=start,
                     finished=end,
-                    ellapsed=end - start,
+                    elapsed=end - start,
                 )
             )
 

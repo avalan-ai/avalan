@@ -113,13 +113,13 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before.payload["input"].content, "hi")
         self.assertIs(before.payload["specification"], self.spec)
         self.assertIsNone(before.finished)
-        self.assertIsNone(before.ellapsed)
+        self.assertIsNone(before.elapsed)
 
         self.assertEqual(after.payload["result"], "ok")
         self.assertIs(after.payload["specification"], self.spec)
         self.assertEqual(after.started, before.started)
         self.assertIsNotNone(after.finished)
-        self.assertIsNotNone(after.ellapsed)
+        self.assertIsNotNone(after.elapsed)
 
     async def test_call_no_operation_available(self):
         self.orch._operation_step = self.orch._total_operations

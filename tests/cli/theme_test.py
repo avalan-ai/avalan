@@ -240,7 +240,7 @@ class ThemeAbstractMethodsTestCase(unittest.TestCase):
                 tool_event_results=None,
                 ttft=0.0,
                 ttnt=0.0,
-                ellapsed=0.0,
+                elapsed=0.0,
                 console_width=80,
                 logger=SimpleNamespace(),
             )
@@ -384,7 +384,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
                 tool_event_results=None,
                 ttft=0.0,
                 ttnt=0.0,
-                ellapsed=0.0,
+                elapsed=0.0,
                 console_width=80,
                 logger=SimpleNamespace(),
             )

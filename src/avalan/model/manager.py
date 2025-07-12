@@ -36,10 +36,13 @@ from ..model.vision.image import (
 )
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
+from ..event import Event, EventType
+from ..event.manager import EventManager
 from argparse import Namespace
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
 from typing import Any, get_args, TypeAlias
+from time import perf_counter
 from urllib.parse import urlparse, parse_qsl
 
 ModelType: TypeAlias = (
@@ -62,16 +65,19 @@ class ModelManager(ContextDecorator):
     _stack: ExitStack
     _logger: Logger
     _secrets: KeyringSecrets
+    _event_manager: EventManager | None
 
     def __init__(
         self,
         hub: HuggingfaceHub,
         logger: Logger,
         secrets: KeyringSecrets | None = None,
+        event_manager: EventManager | None = None,
     ):
         self._hub, self._logger = hub, logger
         self._stack = ExitStack()
         self._secrets = secrets or KeyringSecrets()
+        self._event_manager = event_manager
 
     def __enter__(self):
         return self
@@ -103,6 +109,22 @@ class ModelManager(ContextDecorator):
             else None
         )
 
+        start = perf_counter()
+        if self._event_manager:
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.MODEL_MANAGER_CALL_BEFORE,
+                    payload={
+                        "engine_uri": engine_uri,
+                        "modality": modality,
+                        "operation": operation,
+                    },
+                    started=start,
+                )
+            )
+
+        result: Any
+
         match modality:
             case Modality.AUDIO_SPEECH_RECOGNITION:
                 assert (
@@ -111,7 +133,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["audio"].sampling_rate
                 )
 
-                return await model(
+                result = await model(
                     path=operation.parameters["audio"].path,
                     sampling_rate=operation.parameters["audio"].sampling_rate,
                 )
@@ -123,7 +145,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["audio"].sampling_rate
                 )
 
-                return await model(
+                result = await model(
                     path=operation.parameters["audio"].path,
                     prompt=operation.input,
                     max_new_tokens=operation.generation_settings.max_new_tokens,
@@ -140,7 +162,7 @@ class ModelManager(ContextDecorator):
                 assert operation.input and operation.parameters["text"]
 
                 if engine_uri.is_local:
-                    return await model(
+                    result = await model(
                         operation.input,
                         system_prompt=operation.parameters[
                             "text"
@@ -158,7 +180,7 @@ class ModelManager(ContextDecorator):
                         ].skip_special_tokens,
                     )
                 else:
-                    return await model(
+                    result = await model(
                         operation.input,
                         system_prompt=operation.parameters[
                             "text"
@@ -173,7 +195,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["text"].context
                 )
 
-                return await model(
+                result = await model(
                     operation.input,
                     context=operation.parameters["text"].context,
                     system_prompt=operation.parameters["text"].system_prompt,
@@ -182,12 +204,12 @@ class ModelManager(ContextDecorator):
             case Modality.TEXT_SEQUENCE_CLASSIFICATION:
                 assert operation.input
 
-                return await model(operation.input)
+                result = await model(operation.input)
 
             case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
                 assert operation.input and operation.parameters["text"]
 
-                return await model(
+                result = await model(
                     operation.input,
                     settings=operation.generation_settings,
                     stopping_criterias=(
@@ -198,7 +220,7 @@ class ModelManager(ContextDecorator):
             case Modality.TEXT_TOKEN_CLASSIFICATION:
                 assert operation.input and operation.parameters["text"]
 
-                return await model(
+                result = await model(
                     operation.input,
                     system_prompt=operation.parameters["text"].system_prompt,
                 )
@@ -211,7 +233,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["text"].language_destination
                 )
 
-                return await model(
+                result = await model(
                     operation.input,
                     source_language=operation.parameters[
                         "text"
@@ -234,7 +256,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["vision"].path
                 )
 
-                return await model(operation.parameters["vision"].path)
+                result = await model(operation.parameters["vision"].path)
 
             case (
                 Modality.VISION_IMAGE_TO_TEXT | Modality.VISION_ENCODER_DECODER
@@ -244,7 +266,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["vision"].path
                 )
 
-                return await model(
+                result = await model(
                     operation.parameters["vision"].path,
                     skip_special_tokens=operation.parameters[
                         "vision"
@@ -257,7 +279,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["vision"].path
                 )
 
-                return await model(
+                result = await model(
                     operation.parameters["vision"].path,
                     operation.input,
                     system_prompt=operation.parameters["vision"].system_prompt,
@@ -272,7 +294,7 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["vision"].threshold is not None
                 )
 
-                return await model(
+                result = await model(
                     operation.parameters["vision"].path,
                     threshold=operation.parameters["vision"].threshold,
                 )
@@ -283,10 +305,29 @@ class ModelManager(ContextDecorator):
                     and operation.parameters["vision"].path
                 )
 
-                return await model(operation.parameters["vision"].path)
+                result = await model(operation.parameters["vision"].path)
 
             case _:
                 raise NotImplementedError(f"Modality {modality} not supported")
+
+        end = perf_counter()
+        if self._event_manager:
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.MODEL_MANAGER_CALL_AFTER,
+                    payload={
+                        "engine_uri": engine_uri,
+                        "modality": modality,
+                        "operation": operation,
+                        "result": result,
+                    },
+                    started=start,
+                    finished=end,
+                    elapsed=end - start,
+                )
+            )
+
+        return result
 
     @staticmethod
     def get_operation_from_arguments(

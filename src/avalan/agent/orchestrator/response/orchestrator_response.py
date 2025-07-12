@@ -177,7 +177,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 payload={"result": result},
                 started=start,
                 finished=end,
-                ellapsed=end - start,
+                elapsed=end - start,
             )
             if self._event_manager:
                 await self._event_manager.trigger(result_event)
@@ -335,7 +335,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         payload={"result": result},
                         started=start,
                         finished=end,
-                        ellapsed=end - start,
+                        elapsed=end - start,
                     )
                     await self._event_manager.trigger(result_event)
 
