@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType, TOOL_TYPES
 from ...cli import get_input, confirm
@@ -168,22 +170,14 @@ async def model_run(
                     )
                 )
 
-        requires_input = modality in [
-            Modality.AUDIO_TEXT_TO_SPEECH,
-            Modality.TEXT_GENERATION,
-            Modality.TEXT_QUESTION_ANSWERING,
-            Modality.TEXT_SEQUENCE_CLASSIFICATION,
-            Modality.TEXT_SEQUENCE_TO_SEQUENCE,
-            Modality.TEXT_TRANSLATION,
-            Modality.TEXT_TOKEN_CLASSIFICATION,
-            Modality.VISION_IMAGE_TEXT_TO_TEXT,
-        ]
+        operation = ModelManager.get_operation_from_arguments(
+            modality, args, None
+        )
 
         with manager.load(**model_settings) as model:
             logger.debug("Loaded model %s", model.config.__repr__())
 
-            input_string = None
-            if requires_input:
+            if operation.requires_input:
                 input_string = get_input(
                     console,
                     _i["user_input"] + " ",
@@ -193,11 +187,8 @@ async def model_run(
                 if not input_string:
                     return
 
-            operation = ModelManager.get_operation_from_arguments(
-                modality,
-                args,
-                input_string,
-            )
+                operation = replace(operation, input=input_string)
+
             output = await manager(engine_uri, modality, model, operation)
 
             if modality in {

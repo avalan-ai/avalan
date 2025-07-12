@@ -1,6 +1,6 @@
 from avalan.cli.commands import get_model_settings
 from avalan.cli.commands import model as model_cmds
-from avalan.entities import Modality, ImageEntity, Operation
+from avalan.entities import Modality, ImageEntity
 from avalan.event.manager import EventManager
 from avalan.event import Event, EventType
 from types import SimpleNamespace
@@ -1026,6 +1026,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds, "ModelManager", return_value=manager
             ) as mm_patch,
+            patch(
+                "avalan.cli.commands.model.ModelManager.get_operation_from_arguments",
+                new=RealModelManager.get_operation_from_arguments,
+            ),
             patch.object(
                 model_cmds,
                 "get_model_settings",
@@ -2409,6 +2413,10 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds, "ModelManager", return_value=manager
             ) as mm_patch,
+            patch(
+                "avalan.cli.commands.model.ModelManager.get_operation_from_arguments",
+                new=RealModelManager.get_operation_from_arguments,
+            ),
             patch.object(
                 model_cmds,
                 "get_model_settings",
@@ -2479,17 +2487,15 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.__exit__.return_value = False
         manager.parse_uri.return_value = engine_uri
         manager.load = MagicMock(return_value=load_cm)
-        manager.get_operation_from_arguments.return_value = Operation(
-            generation_settings=None,
-            input=None,
-            modality="bad",
-            parameters=None,
-        )
 
         with (
             patch.object(
                 model_cmds, "ModelManager", return_value=manager
             ) as mm_patch,
+            patch(
+                "avalan.cli.commands.model.ModelManager.get_operation_from_arguments",
+                new=RealModelManager.get_operation_from_arguments,
+            ),
             patch.object(
                 model_cmds,
                 "get_model_settings",

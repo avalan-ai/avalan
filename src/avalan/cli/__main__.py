@@ -1052,7 +1052,10 @@ class CLI:
         model_run_parser.add_argument(
             "--text-max-length",
             type=int,
-            help="The maximum length the generated tokens can have. Corresponds to the length of the input prompt + max_new_tokens",
+            help=(
+                "The maximum length the generated tokens can have. Corresponds"
+                " to the length of the input prompt + max_new_tokens"
+            ),
         )
         model_run_parser.add_argument(
             "--text-num-beams",

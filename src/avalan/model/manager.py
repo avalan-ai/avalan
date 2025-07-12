@@ -89,14 +89,17 @@ class ModelManager(ContextDecorator):
         engine_uri: EngineUri,
         modality: Modality,
         model: ModelType,
-        operation: Operation
+        operation: Operation,
     ):
         stopping_criteria = (
             KeywordStoppingCriteria(
                 operation.parameters["text"].stop_on_keywords,
                 model.tokenizer,
             )
-            if operation.parameters and "text" in operation.parameters and operation.parameters["text"] and operation.parameters["text"].stop_on_keywords
+            if operation.parameters
+            and "text" in operation.parameters
+            and operation.parameters["text"]
+            and operation.parameters["text"].stop_on_keywords
             else None
         )
 
@@ -110,9 +113,7 @@ class ModelManager(ContextDecorator):
 
                 return await model(
                     path=operation.parameters["audio"].path,
-                    sampling_rate=operation.parameters[
-                        "audio"
-                    ].sampling_rate,
+                    sampling_rate=operation.parameters["audio"].sampling_rate,
                 )
 
             case Modality.AUDIO_TEXT_TO_SPEECH:
@@ -132,9 +133,7 @@ class ModelManager(ContextDecorator):
                     reference_text=operation.parameters[
                         "audio"
                     ].reference_text,
-                    sampling_rate=operation.parameters[
-                        "audio"
-                    ].sampling_rate,
+                    sampling_rate=operation.parameters["audio"].sampling_rate,
                 )
 
             case Modality.TEXT_GENERATION:
@@ -148,9 +147,7 @@ class ModelManager(ContextDecorator):
                         ].system_prompt,
                         settings=operation.generation_settings,
                         stopping_criterias=(
-                            [stopping_criteria]
-                            if stopping_criteria
-                            else None
+                            [stopping_criteria] if stopping_criteria else None
                         ),
                         manual_sampling=operation.parameters[
                             "text"
@@ -179,9 +176,7 @@ class ModelManager(ContextDecorator):
                 return await model(
                     operation.input,
                     context=operation.parameters["text"].context,
-                    system_prompt=operation.parameters[
-                        "text"
-                    ].system_prompt,
+                    system_prompt=operation.parameters["text"].system_prompt,
                 )
 
             case Modality.TEXT_SEQUENCE_CLASSIFICATION:
@@ -205,9 +200,7 @@ class ModelManager(ContextDecorator):
 
                 return await model(
                     operation.input,
-                    system_prompt=operation.parameters[
-                        "text"
-                    ].system_prompt,
+                    system_prompt=operation.parameters["text"].system_prompt,
                 )
 
             case Modality.TEXT_TRANSLATION:
@@ -244,8 +237,7 @@ class ModelManager(ContextDecorator):
                 return await model(operation.parameters["vision"].path)
 
             case (
-                Modality.VISION_IMAGE_TO_TEXT
-                | Modality.VISION_ENCODER_DECODER
+                Modality.VISION_IMAGE_TO_TEXT | Modality.VISION_ENCODER_DECODER
             ):
                 assert (
                     operation.parameters["vision"]
@@ -268,9 +260,7 @@ class ModelManager(ContextDecorator):
                 return await model(
                     operation.parameters["vision"].path,
                     operation.input,
-                    system_prompt=operation.parameters[
-                        "vision"
-                    ].system_prompt,
+                    system_prompt=operation.parameters["vision"].system_prompt,
                     settings=operation.generation_settings,
                     width=operation.parameters["vision"].width,
                 )
@@ -279,8 +269,7 @@ class ModelManager(ContextDecorator):
                 assert (
                     operation.parameters["vision"]
                     and operation.parameters["vision"].path
-                    and operation.parameters["vision"].threshold
-                    is not None
+                    and operation.parameters["vision"].threshold is not None
                 )
 
                 return await model(
@@ -297,9 +286,7 @@ class ModelManager(ContextDecorator):
                 return await model(operation.parameters["vision"].path)
 
             case _:
-                raise NotImplementedError(
-                    f"Modality {modality} not supported"
-                )
+                raise NotImplementedError(f"Modality {modality} not supported")
 
     @staticmethod
     def get_operation_from_arguments(
@@ -321,6 +308,17 @@ class ModelManager(ContextDecorator):
             use_cache=args.use_cache,
         )
         system_prompt = args.system or None
+
+        requires_input = modality in {
+            Modality.AUDIO_TEXT_TO_SPEECH,
+            Modality.TEXT_GENERATION,
+            Modality.TEXT_QUESTION_ANSWERING,
+            Modality.TEXT_SEQUENCE_CLASSIFICATION,
+            Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+            Modality.TEXT_TRANSLATION,
+            Modality.TEXT_TOKEN_CLASSIFICATION,
+            Modality.VISION_IMAGE_TEXT_TO_TEXT,
+        }
 
         match modality:
             case Modality.AUDIO_SPEECH_RECOGNITION:
@@ -445,6 +443,7 @@ class ModelManager(ContextDecorator):
             input=input_string,
             modality=modality,
             parameters=parameters,
+            requires_input=requires_input,
         )
 
         return operation

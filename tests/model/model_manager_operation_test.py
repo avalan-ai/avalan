@@ -57,30 +57,36 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
 
     def test_all_modalities(self):
         cases = {
-            Modality.AUDIO_SPEECH_RECOGNITION: self._check_audio,
-            Modality.AUDIO_TEXT_TO_SPEECH: self._check_audio,
-            Modality.TEXT_QUESTION_ANSWERING: self._check_text,
-            Modality.TEXT_SEQUENCE_CLASSIFICATION: (
-                lambda op: self.assertIsNone(op.parameters)
+            Modality.AUDIO_SPEECH_RECOGNITION: (self._check_audio, False),
+            Modality.AUDIO_TEXT_TO_SPEECH: (self._check_audio, True),
+            Modality.EMBEDDING: (
+                lambda op: self.assertIsNone(op.parameters),
+                False,
             ),
-            Modality.TEXT_SEQUENCE_TO_SEQUENCE: self._check_text,
-            Modality.TEXT_TRANSLATION: self._check_text,
-            Modality.TEXT_TOKEN_CLASSIFICATION: self._check_text,
-            Modality.TEXT_GENERATION: self._check_text,
-            Modality.VISION_IMAGE_CLASSIFICATION: self._check_vision,
-            Modality.VISION_IMAGE_TO_TEXT: self._check_vision,
-            Modality.VISION_IMAGE_TEXT_TO_TEXT: self._check_vision,
-            Modality.VISION_ENCODER_DECODER: self._check_vision,
-            Modality.VISION_OBJECT_DETECTION: self._check_vision,
-            Modality.VISION_SEMANTIC_SEGMENTATION: self._check_vision,
+            Modality.TEXT_QUESTION_ANSWERING: (self._check_text, True),
+            Modality.TEXT_SEQUENCE_CLASSIFICATION: (
+                lambda op: self.assertIsNone(op.parameters),
+                True,
+            ),
+            Modality.TEXT_SEQUENCE_TO_SEQUENCE: (self._check_text, True),
+            Modality.TEXT_TRANSLATION: (self._check_text, True),
+            Modality.TEXT_TOKEN_CLASSIFICATION: (self._check_text, True),
+            Modality.TEXT_GENERATION: (self._check_text, True),
+            Modality.VISION_IMAGE_CLASSIFICATION: (self._check_vision, False),
+            Modality.VISION_IMAGE_TO_TEXT: (self._check_vision, False),
+            Modality.VISION_IMAGE_TEXT_TO_TEXT: (self._check_vision, True),
+            Modality.VISION_ENCODER_DECODER: (self._check_vision, False),
+            Modality.VISION_OBJECT_DETECTION: (self._check_vision, False),
+            Modality.VISION_SEMANTIC_SEGMENTATION: (self._check_vision, False),
         }
-        for modality, checker in cases.items():
+        for modality, (checker, expected_requires_input) in cases.items():
             with self.subTest(modality=modality):
                 op = self.manager.get_operation_from_arguments(
                     modality, self.args, "i"
                 )
                 self.assertEqual(op.modality, modality)
                 checker(op)
+                self.assertEqual(op.requires_input, expected_requires_input)
 
     def test_unknown_modality(self):
         op = self.manager.get_operation_from_arguments(
@@ -88,3 +94,4 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
         )
         self.assertEqual(op.modality, FakeModality.UNKNOWN)
         self.assertIsNone(op.parameters)
+        self.assertFalse(op.requires_input)
