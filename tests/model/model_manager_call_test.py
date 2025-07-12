@@ -1,0 +1,308 @@
+import unittest
+from unittest.mock import MagicMock
+
+from avalan.entities import (
+    EngineUri,
+    GenerationSettings,
+    Modality,
+    Operation,
+    OperationAudioParameters,
+    OperationParameters,
+    OperationTextParameters,
+    OperationVisionParameters,
+)
+from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.model.manager import ModelManager
+
+
+class DummyModel:
+    def __init__(self):
+        self.tokenizer = MagicMock()
+        self.called_with = None
+
+    async def __call__(self, *args, **kwargs):
+        self.called_with = (args, kwargs)
+        return "ok"
+
+
+class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.hub = MagicMock(spec=HuggingfaceHub)
+        self.logger = MagicMock()
+        self.manager = ModelManager(self.hub, self.logger)
+        self.engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        self.settings = GenerationSettings(max_new_tokens=1)
+
+    async def test_call_supported_modalities(self):
+        model = DummyModel()
+        cases = [
+            (
+                Modality.AUDIO_SPEECH_RECOGNITION,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.AUDIO_SPEECH_RECOGNITION,
+                    parameters=OperationParameters(
+                        audio=OperationAudioParameters(
+                            path="a.wav",
+                            sampling_rate=16000,
+                        )
+                    ),
+                ),
+                ((), {"path": "a.wav", "sampling_rate": 16000}),
+            ),
+            (
+                Modality.AUDIO_TEXT_TO_SPEECH,
+                Operation(
+                    generation_settings=self.settings,
+                    input="hi",
+                    modality=Modality.AUDIO_TEXT_TO_SPEECH,
+                    parameters=OperationParameters(
+                        audio=OperationAudioParameters(
+                            path="a.wav",
+                            sampling_rate=16000,
+                            reference_path=None,
+                            reference_text=None,
+                        )
+                    ),
+                ),
+                (
+                    (),
+                    {
+                        "path": "a.wav",
+                        "prompt": "hi",
+                        "max_new_tokens": 1,
+                        "reference_path": None,
+                        "reference_text": None,
+                        "sampling_rate": 16000,
+                    },
+                ),
+            ),
+            (
+                Modality.TEXT_GENERATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input="question",
+                    modality=Modality.TEXT_GENERATION,
+                    parameters=OperationParameters(
+                        text=OperationTextParameters(
+                            manual_sampling=False,
+                            pick_tokens=0,
+                            skip_special_tokens=False,
+                            system_prompt=None,
+                        )
+                    ),
+                ),
+                (
+                    ("question",),
+                    {
+                        "system_prompt": None,
+                        "settings": self.settings,
+                        "stopping_criterias": None,
+                        "manual_sampling": False,
+                        "pick": 0,
+                        "skip_special_tokens": False,
+                    },
+                ),
+            ),
+            (
+                Modality.TEXT_QUESTION_ANSWERING,
+                Operation(
+                    generation_settings=self.settings,
+                    input="q",
+                    modality=Modality.TEXT_QUESTION_ANSWERING,
+                    parameters=OperationParameters(
+                        text=OperationTextParameters(
+                            context="ctx",
+                            system_prompt=None,
+                        )
+                    ),
+                ),
+                (("q",), {"context": "ctx", "system_prompt": None}),
+            ),
+            (
+                Modality.TEXT_SEQUENCE_CLASSIFICATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input="txt",
+                    modality=Modality.TEXT_SEQUENCE_CLASSIFICATION,
+                    parameters=None,
+                ),
+                (("txt",), {}),
+            ),
+            (
+                Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+                Operation(
+                    generation_settings=self.settings,
+                    input="in",
+                    modality=Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+                    parameters=OperationParameters(
+                        text=OperationTextParameters(stop_on_keywords=None)
+                    ),
+                ),
+                (
+                    ("in",),
+                    {"settings": self.settings, "stopping_criterias": None},
+                ),
+            ),
+            (
+                Modality.TEXT_TOKEN_CLASSIFICATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input="tok",
+                    modality=Modality.TEXT_TOKEN_CLASSIFICATION,
+                    parameters=OperationParameters(
+                        text=OperationTextParameters(system_prompt=None)
+                    ),
+                ),
+                (("tok",), {"system_prompt": None}),
+            ),
+            (
+                Modality.TEXT_TRANSLATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input="t",
+                    modality=Modality.TEXT_TRANSLATION,
+                    parameters=OperationParameters(
+                        text=OperationTextParameters(
+                            language_source="en",
+                            language_destination="fr",
+                            stop_on_keywords=None,
+                            skip_special_tokens=False,
+                        )
+                    ),
+                ),
+                (
+                    ("t",),
+                    {
+                        "source_language": "en",
+                        "destination_language": "fr",
+                        "settings": self.settings,
+                        "stopping_criterias": None,
+                        "skip_special_tokens": False,
+                    },
+                ),
+            ),
+            (
+                Modality.VISION_IMAGE_CLASSIFICATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.VISION_IMAGE_CLASSIFICATION,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(path="img.png")
+                    ),
+                ),
+                (("img.png",), {}),
+            ),
+            (
+                Modality.VISION_IMAGE_TO_TEXT,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.VISION_IMAGE_TO_TEXT,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="img.png",
+                            skip_special_tokens=False,
+                        )
+                    ),
+                ),
+                (("img.png",), {"skip_special_tokens": False}),
+            ),
+            (
+                Modality.VISION_ENCODER_DECODER,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.VISION_ENCODER_DECODER,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="img.png",
+                            skip_special_tokens=True,
+                        )
+                    ),
+                ),
+                (("img.png",), {"skip_special_tokens": True}),
+            ),
+            (
+                Modality.VISION_IMAGE_TEXT_TO_TEXT,
+                Operation(
+                    generation_settings=self.settings,
+                    input="txt",
+                    modality=Modality.VISION_IMAGE_TEXT_TO_TEXT,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="img.png",
+                            system_prompt=None,
+                            width=256,
+                        )
+                    ),
+                ),
+                (
+                    ("img.png", "txt"),
+                    {
+                        "system_prompt": None,
+                        "settings": self.settings,
+                        "width": 256,
+                    },
+                ),
+            ),
+            (
+                Modality.VISION_OBJECT_DETECTION,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.VISION_OBJECT_DETECTION,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="img.png",
+                            threshold=0.5,
+                        )
+                    ),
+                ),
+                (("img.png",), {"threshold": 0.5}),
+            ),
+            (
+                Modality.VISION_SEMANTIC_SEGMENTATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.VISION_SEMANTIC_SEGMENTATION,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(path="img.png")
+                    ),
+                ),
+                (("img.png",), {}),
+            ),
+        ]
+
+        for modality, operation, expected in cases:
+            with self.subTest(modality=modality):
+                model.called_with = None
+                result = await self.manager(
+                    self.engine_uri, modality, model, operation
+                )
+                self.assertEqual(result, "ok")
+                self.assertEqual(model.called_with, expected)
+
+    async def test_call_unsupported_modality(self):
+        model = DummyModel()
+        operation = Operation(
+            generation_settings=None,
+            input=None,
+            modality=Modality.EMBEDDING,
+            parameters=OperationParameters(),
+        )
+        with self.assertRaises(NotImplementedError):
+            await self.manager(
+                self.engine_uri, Modality.EMBEDDING, model, operation
+            )

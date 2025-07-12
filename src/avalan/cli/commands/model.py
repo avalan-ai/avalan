@@ -2,12 +2,18 @@ from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType, TOOL_TYPES
 from ...cli import get_input, confirm
 from ...cli.commands.cache import cache_delete, cache_download
-from ...entities import GenerationSettings, Model, Modality, Token, TokenDetail
+from ...entities import (
+    Model,
+    Modality,
+    Token,
+    TokenDetail,
+)
 from ...event import EventStats
 from ...model import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
-from ...model.criteria import KeywordStoppingCriteria
+from ...entities import GenerationSettings  # noqa: F401
+from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...secrets import KeyringSecrets
@@ -138,11 +144,11 @@ async def model_run(
     assert args.model and args.device and args.max_new_tokens
     _, _i = theme._, theme.icons
 
-    system_prompt = args.system or None
-
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
         model_settings = get_model_settings(args, hub, logger, engine_uri)
+        modality = model_settings["modality"]
+        assert modality
 
         if not args.quiet:
             if engine_uri.is_local:
@@ -162,9 +168,6 @@ async def model_run(
                     )
                 )
 
-        modality = model_settings["modality"]
-        assert modality
-
         requires_input = modality in [
             Modality.AUDIO_TEXT_TO_SPEECH,
             Modality.TEXT_GENERATION,
@@ -176,9 +179,10 @@ async def model_run(
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
         ]
 
-        with manager.load(**model_settings) as lm:
-            logger.debug("Loaded model %s", lm.config.__repr__())
+        with manager.load(**model_settings) as model:
+            logger.debug("Loaded model %s", model.config.__repr__())
 
+            input_string = None
             if requires_input:
                 input_string = get_input(
                     console,
@@ -189,212 +193,60 @@ async def model_run(
                 if not input_string:
                     return
 
-            settings = GenerationSettings(
-                do_sample=args.do_sample,
-                enable_gradient_calculation=args.enable_gradient_calculation,
-                max_new_tokens=args.max_new_tokens,
-                min_p=args.min_p,
-                repetition_penalty=args.repetition_penalty,
-                temperature=args.temperature,
-                top_k=args.top_k,
-                top_p=args.top_p,
-                use_cache=args.use_cache,
+            operation = ModelManager.get_operation_from_arguments(
+                modality,
+                args,
+                input_string,
             )
+            output = await manager(engine_uri, modality, model, operation)
 
-            match modality:
-                case Modality.AUDIO_TEXT_TO_SPEECH:
-                    assert args.path and args.audio_sampling_rate
+            if modality in {
+                Modality.AUDIO_SPEECH_RECOGNITION,
+                Modality.TEXT_QUESTION_ANSWERING,
+                Modality.TEXT_SEQUENCE_CLASSIFICATION,
+                Modality.TEXT_SEQUENCE_TO_SEQUENCE,
+                Modality.TEXT_TRANSLATION,
+                Modality.VISION_IMAGE_TO_TEXT,
+                Modality.VISION_ENCODER_DECODER,
+                Modality.VISION_IMAGE_TEXT_TO_TEXT,
+            }:
+                console.print(output)
 
-                    output = await lm(
-                        path=args.path,
-                        prompt=input_string,
-                        max_new_tokens=settings.max_new_tokens,
-                        reference_path=args.audio_reference_path,
-                        reference_text=args.audio_reference_text,
-                        sampling_rate=args.audio_sampling_rate,
-                    )
-                    console.print(f"Audio generated in {output}")
+            elif modality == Modality.AUDIO_TEXT_TO_SPEECH:
+                console.print(f"Audio generated in {output}")
 
-                case Modality.AUDIO_SPEECH_RECOGNITION:
-                    assert args.path and args.audio_sampling_rate
+            elif modality == Modality.TEXT_TOKEN_CLASSIFICATION:
+                console.print(theme.display_token_labels([output]))
 
-                    output = await lm(
-                        path=args.path,
-                        sampling_rate=args.audio_sampling_rate,
-                    )
-                    console.print(output)
+            elif modality == Modality.TEXT_GENERATION:
+                await token_generation(
+                    args=args,
+                    console=console,
+                    theme=theme,
+                    logger=logger,
+                    orchestrator=None,
+                    event_stats=None,
+                    lm=model,
+                    input_string=operation.input,
+                    refresh_per_second=refresh_per_second,
+                    response=output,
+                    dtokens_pick=operation.parameters["text"].pick_tokens,
+                    display_tokens=args.display_tokens or 0,
+                    with_stats=not args.quiet,
+                    tool_events_limit=args.display_tools_events,
+                )
 
-                case Modality.VISION_IMAGE_CLASSIFICATION:
-                    assert args.path
+            elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
+                console.print(theme.display_image_entity(output))
 
-                    output = await lm(args.path)
-                    console.print(
-                        theme.display_image_entity(output),
-                    )
+            elif modality == Modality.VISION_OBJECT_DETECTION:
+                console.print(theme.display_image_entities(output, sort=True))
 
-                case (
-                    Modality.VISION_IMAGE_TO_TEXT
-                    | Modality.VISION_ENCODER_DECODER
-                ):
-                    assert args.path
+            elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
+                console.print(theme.display_image_labels(output))
 
-                    output = await lm(
-                        args.path,
-                        skip_special_tokens=args.skip_special_tokens,
-                    )
-                    console.print(output)
-
-                case Modality.VISION_IMAGE_TEXT_TO_TEXT:
-                    assert args.path
-
-                    output = await lm(
-                        args.path,
-                        input_string,
-                        system_prompt=system_prompt,
-                        settings=settings,
-                        width=args.image_width,
-                    )
-                    console.print(output)
-
-                case Modality.VISION_OBJECT_DETECTION:
-                    assert args.path and args.vision_threshold is not None
-
-                    output = await lm(
-                        args.path,
-                        threshold=args.vision_threshold,
-                    )
-                    console.print(
-                        theme.display_image_entities(output, sort=True),
-                    )
-
-                case Modality.VISION_SEMANTIC_SEGMENTATION:
-                    assert args.path
-
-                    output = await lm(args.path)
-                    console.print(
-                        theme.display_image_labels(output),
-                    )
-
-                case Modality.TEXT_QUESTION_ANSWERING:
-                    assert input_string and args.text_context
-
-                    output = await lm(
-                        input_string,
-                        context=args.text_context,
-                        system_prompt=system_prompt,
-                    )
-                    console.print(output)
-
-                case Modality.TEXT_SEQUENCE_CLASSIFICATION:
-                    assert input_string
-
-                    output = await lm(input_string)
-                    console.print(output)
-
-                case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
-                    assert input_string
-
-                    stopping_criteria = (
-                        KeywordStoppingCriteria(
-                            args.stop_on_keyword, lm.tokenizer
-                        )
-                        if args.stop_on_keyword
-                        else None
-                    )
-                    output = await lm(
-                        input_string,
-                        settings=settings,
-                        stopping_criterias=(
-                            [stopping_criteria] if stopping_criteria else None
-                        ),
-                    )
-                    console.print(output)
-
-                case Modality.TEXT_TRANSLATION:
-                    assert input_string
-
-                    stopping_criteria = (
-                        KeywordStoppingCriteria(
-                            args.stop_on_keyword, lm.tokenizer
-                        )
-                        if args.stop_on_keyword
-                        else None
-                    )
-                    output = await lm(
-                        input_string,
-                        source_language=args.text_from_lang,
-                        destination_language=args.text_to_lang,
-                        settings=settings,
-                        stopping_criterias=(
-                            [stopping_criteria] if stopping_criteria else None
-                        ),
-                        skip_special_tokens=args.skip_special_tokens,
-                    )
-                    console.print(output)
-
-                case Modality.TEXT_TOKEN_CLASSIFICATION:
-                    assert input_string
-
-                    output = await lm(
-                        input_string,
-                        system_prompt=system_prompt,
-                    )
-                    console.print(theme.display_token_labels([output]))
-
-                case Modality.TEXT_GENERATION:
-                    display_tokens = args.display_tokens or 0
-                    dtokens_pick = 10 if display_tokens > 0 else 0
-
-                    if engine_uri.is_local:
-                        stopping_criteria = (
-                            KeywordStoppingCriteria(
-                                args.stop_on_keyword, lm.tokenizer
-                            )
-                            if args.stop_on_keyword
-                            else None
-                        )
-                        output_generator = lm(
-                            input_string,
-                            system_prompt=system_prompt,
-                            settings=settings,
-                            stopping_criterias=(
-                                [stopping_criteria]
-                                if stopping_criteria
-                                else None
-                            ),
-                            manual_sampling=display_tokens,
-                            pick=dtokens_pick,
-                            skip_special_tokens=args.quiet
-                            or args.skip_special_tokens,
-                        )
-                    else:
-                        output_generator = lm(
-                            input_string,
-                            system_prompt=system_prompt,
-                            settings=settings,
-                        )
-
-                    await token_generation(
-                        args=args,
-                        console=console,
-                        theme=theme,
-                        logger=logger,
-                        orchestrator=None,
-                        event_stats=None,
-                        lm=lm,
-                        input_string=input_string,
-                        refresh_per_second=refresh_per_second,
-                        response=await output_generator,
-                        dtokens_pick=dtokens_pick,
-                        display_tokens=display_tokens,
-                        with_stats=not args.quiet,
-                        tool_events_limit=args.display_tools_events,
-                    )
-
-                case _:
-                    raise NotImplementedError(
-                        f"Modality {modality} not supported"
-                    )
+            else:
+                raise NotImplementedError(f"Modality {modality} not supported")
 
 
 async def model_search(

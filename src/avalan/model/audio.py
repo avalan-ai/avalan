@@ -40,9 +40,7 @@ class BaseAudioModel(Engine, ABC):
     def _resample(self, audio_source: str, sampling_rate: int) -> ndarray:
         wave, wave_sampling_rate = load(audio_source)
         if wave_sampling_rate != sampling_rate:
-            wave = resample(
-                wave, wave_sampling_rate, sampling_rate
-            )
+            wave = resample(wave, wave_sampling_rate, sampling_rate)
         wave = wave.mean(0).numpy()
         return wave
 
@@ -62,7 +60,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             ctc_loss_reduction="mean",
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            ignore_mismatched_sizes=True
+            ignore_mismatched_sizes=True,
         )
         return model
 
@@ -120,9 +118,7 @@ class TextToSpeechModel(BaseAudioModel):
 
         reference_voice = None
         if reference_path and reference_text:
-            reference_voice = self._resample(
-                reference_path, sampling_rate
-            )
+            reference_voice = self._resample(reference_path, sampling_rate)
 
         text = (
             f"{reference_text}\n{prompt}"
