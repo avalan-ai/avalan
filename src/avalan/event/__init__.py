@@ -29,6 +29,8 @@ class EventType(StrEnum):
     )
     MODEL_EXECUTE_BEFORE = "model_execute_before"
     MODEL_EXECUTE_AFTER = "model_execute_after"
+    MODEL_MANAGER_CALL_BEFORE = "model_manager_call_before"
+    MODEL_MANAGER_CALL_AFTER = "model_manager_call_after"
     START = "start"
     STREAM_END = "stream_end"
     TOKEN_GENERATED = "token_generated"
@@ -49,7 +51,7 @@ class Event:
     payload: dict[str, Any] | None = None
     started: float | None = None
     finished: float | None = None
-    ellapsed: float | None = None
+    elapsed: float | None = None
 
 
 class EventStats:

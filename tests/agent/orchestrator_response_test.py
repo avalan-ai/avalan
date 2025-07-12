@@ -288,12 +288,12 @@ class OrchestratorResponseToolCallTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(execute_event.started)
         self.assertIsNone(execute_event.finished)
-        self.assertIsNone(execute_event.ellapsed)
+        self.assertIsNone(execute_event.elapsed)
         self.assertEqual(result_event.started, execute_event.started)
         self.assertIsNotNone(result_event.finished)
         self.assertAlmostEqual(
             result_event.finished - result_event.started,
-            result_event.ellapsed,
+            result_event.elapsed,
             places=2,
         )
 

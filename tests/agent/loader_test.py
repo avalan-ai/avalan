@@ -140,7 +140,9 @@ uri = \"ai://local/model\"
 
                 self.assertEqual(result, "orch")
                 orch_patch.assert_called_once()
-                model_patch.assert_called_once_with(hub, logger)
+                model_patch.assert_called_once_with(
+                    hub, logger, event_manager=event_manager
+                )
                 mm_patch.assert_awaited_once()
                 bts = bts_patch.call_args.kwargs["settings"]
                 self.assertIsInstance(bts, BrowserToolSettings)
@@ -726,7 +728,9 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, "orch")
             orch_patch.assert_called_once()
-            model_patch.assert_called_once_with(hub, logger)
+            model_patch.assert_called_once_with(
+                hub, logger, event_manager=event_manager
+            )
             mm_patch.assert_awaited_once()
         await stack.aclose()
 

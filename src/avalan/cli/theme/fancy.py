@@ -1634,7 +1634,7 @@ class FancyTheme(Theme):
         tool_running_spinner: Spinner | None,
         ttft: float,
         ttnt: float,
-        ellapsed: float,
+        elapsed: float,
         console_width: int,
         logger: Logger,
         event_stats: EventStats | None = None,
@@ -1746,7 +1746,7 @@ class FancyTheme(Theme):
                     _f(
                         "tokens_rate",
                         _("{tokens_rate} t/s").format(
-                            tokens_rate=f"{total_tokens / ellapsed:.2f}"
+                            tokens_rate=f"{total_tokens / elapsed:.2f}"
                         ),
                     ),
                     (
@@ -2158,14 +2158,14 @@ class FancyTheme(Theme):
                                         "Executed tool {tool} call #{call_id}"
                                         " with {total_arguments} arguments."
                                         ' Got result "{result}" in'
-                                        " {ellapsed_with_unit}."
+                                        " {elapsed_with_unit}."
                                     ).format(
                                         tool="[gray78]"
                                         + event.payload["result"].call.name
                                         + "[/gray78]",
-                                        ellapsed_with_unit="[gray78]"
+                                        elapsed_with_unit="[gray78]"
                                         + precisedelta(
-                                            event.ellapsed,
+                                            event.elapsed,
                                             minimum_unit="microseconds",
                                         )
                                         + "[/gray78]",
@@ -2187,9 +2187,9 @@ class FancyTheme(Theme):
                                     if event.type == EventType.TOOL_RESULT
                                     and event.payload["result"]
                                     else (
-                                        f"[{precisedelta(event.ellapsed)}]"
+                                        f"[{precisedelta(event.elapsed)}]"
                                         f" <{event.type}>: {event.payload}"
-                                        if event.payload and event.ellapsed
+                                        if event.payload and event.elapsed
                                         else (
                                             f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
                                             if event.payload and event.started

@@ -583,11 +583,11 @@ async def _token_stream(
             )
 
         total_tokens = total_tokens + 1
-        ellapsed = perf_counter() - start
+        elapsed = perf_counter() - start
         if ttft is None:
-            ttft = ellapsed
+            ttft = elapsed
         if ttnt is None and total_tokens >= display_time_to_n_token:
-            ttnt = ellapsed
+            ttnt = elapsed
 
         if display_tokens and isinstance(token, Token):
             tokens.append(token)
@@ -634,7 +634,7 @@ async def _token_stream(
             tool_running_spinner,
             ttft,
             ttnt,
-            ellapsed,
+            elapsed,
             console.width,
             logger,
             event_stats,

@@ -204,7 +204,7 @@ class Orchestrator:
                 },
                 started=start,
                 finished=end,
-                ellapsed=end - start,
+                elapsed=end - start,
             )
         )
 

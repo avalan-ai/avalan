@@ -400,7 +400,7 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(
             any(
                 c.args[0].type == EventType.MEMORY_PERMANENT_MESSAGE_ADDED
-                and c.args[0].ellapsed is not None
+                and c.args[0].elapsed is not None
                 for c in self.event_manager.trigger.await_args_list
             )
         )
@@ -430,7 +430,7 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
             any(
                 c.args[0].type
                 == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_CONTINUED
-                and c.args[0].ellapsed is not None
+                and c.args[0].elapsed is not None
                 for c in self.event_manager.trigger.await_args_list
             )
         )
@@ -460,7 +460,7 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
             any(
                 c.args[0].type
                 == EventType.MEMORY_PERMANENT_MESSAGE_SESSION_STARTED
-                and c.args[0].ellapsed is not None
+                and c.args[0].elapsed is not None
                 for c in self.event_manager.trigger.await_args_list
             )
         )
