@@ -122,6 +122,8 @@ class EngineSettings:
     parallel: ParallelStrategy | dict[str, ParallelStrategy] | None = None
     trust_remote_code: bool = False
     tokenizer_name_or_path: str | None = None
+    subfolder: str | None = None
+    tokenizer_subfolder: str | None = None
 
 
 @dataclass(kw_only=True, frozen=True)

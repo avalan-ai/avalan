@@ -22,6 +22,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         model = AutoModelForQuestionAnswering.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
+            subfolder=self._settings.subfolder,
             attn_implementation=self._settings.attention,
             trust_remote_code=self._settings.trust_remote_code,
             torch_dtype=BaseNLPModel._get_weight_type(

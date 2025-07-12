@@ -79,6 +79,7 @@ class QuestionAnsweringModelInstantiationTestCase(TestCase):
             model_mock.assert_called_once_with(
                 self.model_id,
                 cache_dir=None,
+                subfolder=None,
                 attn_implementation=None,
                 trust_remote_code=False,
                 torch_dtype="auto",
@@ -91,6 +92,7 @@ class QuestionAnsweringModelInstantiationTestCase(TestCase):
             tokenizer_mock.assert_called_once_with(
                 self.model_id,
                 use_fast=True,
+                subfolder=None,
             )
 
 

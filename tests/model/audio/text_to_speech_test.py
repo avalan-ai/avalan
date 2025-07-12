@@ -53,12 +53,14 @@ class TextToSpeechModelInstantiationTestCase(TestCase):
             processor_mock.assert_called_once_with(
                 self.model_id,
                 trust_remote_code=False,
+                subfolder=None,
             )
             model_mock.assert_called_once_with(
                 self.model_id,
                 trust_remote_code=False,
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                subfolder=None,
             )
 
 

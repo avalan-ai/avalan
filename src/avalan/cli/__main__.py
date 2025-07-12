@@ -115,6 +115,18 @@ class CLI:
             ),
         )
         global_parser.add_argument(
+            "--subfolder",
+            type=str,
+            help="Subfolder inside model repository to load the model from",
+        )
+        global_parser.add_argument(
+            "--tokenizer-subfolder",
+            type=str,
+            help=(
+                "Subfolder inside model repository to load the tokenizer from"
+            ),
+        )
+        global_parser.add_argument(
             "--device",
             type=str,
             required=False,

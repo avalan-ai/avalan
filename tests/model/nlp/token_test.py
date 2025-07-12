@@ -64,7 +64,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
             )
             self.assertIsInstance(model, TokenClassificationModel)
             auto_tokenizer_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, use_fast=True, subfolder=None
             )
             auto_model_mock.assert_not_called()
 
@@ -103,6 +103,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
             auto_model_mock.assert_called_once_with(
                 self.model_id,
                 cache_dir=None,
+                subfolder=None,
                 attn_implementation=None,
                 trust_remote_code=False,
                 torch_dtype="auto",
@@ -113,7 +114,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 tp_plan=None,
             )
             auto_tokenizer_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, use_fast=True, subfolder=None
             )
 
     def test_instantiation_with_parallel(self):
@@ -151,6 +152,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
             auto_model_mock.assert_called_once_with(
                 self.model_id,
                 cache_dir=None,
+                subfolder=None,
                 attn_implementation=None,
                 trust_remote_code=False,
                 torch_dtype="auto",
@@ -220,7 +222,7 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance.assert_called_once()
             tokenizer_mock.convert_ids_to_tokens.assert_called_once()
             auto_tokenizer_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, use_fast=True, subfolder=None
             )
             auto_model_mock.assert_called_once()
             inference_mode_mock.assert_called_once_with()
@@ -279,7 +281,7 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
             model_instance.assert_called_once()
             tokenizer_mock.convert_ids_to_tokens.assert_called_once()
             auto_tokenizer_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, use_fast=True, subfolder=None
             )
             auto_model_mock.assert_called_once()
             inference_mode_mock.assert_called_once_with()

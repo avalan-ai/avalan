@@ -23,6 +23,8 @@ class GetModelSettingsTestCase(unittest.TestCase):
             special_token=["<s>"],
             tokenizer="tok",
             token=["t"],
+            subfolder="model_sub",
+            tokenizer_subfolder="tok_sub",
             trust_remote_code=True,
             weight_type="fp16",
         )
@@ -43,6 +45,8 @@ class GetModelSettingsTestCase(unittest.TestCase):
             "special_tokens": ["<s>"],
             "tokenizer": "tok",
             "tokens": ["t"],
+            "subfolder": "model_sub",
+            "tokenizer_subfolder": "tok_sub",
             "trust_remote_code": True,
             "weight_type": "fp16",
         }

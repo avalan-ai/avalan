@@ -78,7 +78,7 @@ class ImageToTextModelInstantiationTestCase(TestCase):
             )
             model_instance.eval.assert_called_once()
             tokenizer_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, use_fast=True, subfolder=None
             )
 
 

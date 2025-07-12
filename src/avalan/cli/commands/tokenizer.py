@@ -25,6 +25,8 @@ async def tokenize(
         settings=TransformerEngineSettings(
             device=args.device,
             cache_dir=hub.cache_dir,
+            subfolder=getattr(args, "subfolder", None),
+            tokenizer_subfolder=getattr(args, "tokenizer_subfolder", None),
             tokenizer_name_or_path=tokenizer_name_or_path,
             tokens=(
                 args.token
