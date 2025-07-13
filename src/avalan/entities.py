@@ -589,6 +589,22 @@ class ToolCallResult(ToolCall):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolFilter:
+    func: Callable[
+        [ToolCall, ToolCallContext], tuple[ToolCall, ToolCallContext] | None
+    ]
+    namespace: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolTransformer:
+    func: Callable[
+        [ToolCall, ToolCallContext, ToolValue | None], ToolValue | None
+    ]
+    namespace: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class ToolManagerSettings:
     eos_token: str | None = None
     tool_format: ToolFormat | None = None
@@ -600,6 +616,7 @@ class ToolManagerSettings:
                 [ToolCall, ToolCallContext],
                 tuple[ToolCall, ToolCallContext] | None,
             ]
+            | ToolFilter
         ]
         | None
     ) = None
@@ -608,6 +625,7 @@ class ToolManagerSettings:
             Callable[
                 [ToolCall, ToolCallContext, ToolValue | None], ToolValue | None
             ]
+            | ToolTransformer
         ]
         | None
     ) = None

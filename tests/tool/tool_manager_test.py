@@ -3,6 +3,8 @@ from avalan.entities import (
     ToolCallContext,
     ToolCallResult,
     ToolManagerSettings,
+    ToolFilter,
+    ToolTransformer,
 )
 from avalan.tool import ToolSet
 from avalan.tool.math import CalculatorTool
@@ -451,6 +453,80 @@ class ToolManagerFiltersTransformersTestCase(IsolatedAsyncioTestCase):
                 result="3",
             )
             self.assertEqual(results, expected_result)
+
+    async def test_filter_scoped_to_namespace(self):
+        def modify(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"expression": "2 + 2"},
+                ),
+                context,
+            )
+
+        math_set = ToolSet(namespace="math", tools=[CalculatorTool()])
+        other_set = ToolSet(namespace="other", tools=[CalculatorTool()])
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator", "other.calculator"],
+            available_toolsets=[math_set, other_set],
+            settings=ToolManagerSettings(
+                filters=[ToolFilter(func=modify, namespace="math")]
+            ),
+        )
+
+        call_math = ToolCall(
+            id=_uuid4(), name="math.calculator", arguments={"expression": "1"}
+        )
+        call_other = ToolCall(
+            id=_uuid4(), name="other.calculator", arguments={"expression": "1"}
+        )
+        with patch(
+            "avalan.tool.manager.uuid4",
+            side_effect=[_uuid4(), _uuid4()],
+        ):
+            res_math = await manager(call_math, context=ToolCallContext())
+            res_other = await manager(call_other, context=ToolCallContext())
+
+        self.assertEqual(res_math.call.arguments, {"expression": "2 + 2"})
+        self.assertEqual(res_math.result, "4")
+        self.assertEqual(res_other.call.arguments, {"expression": "1"})
+        self.assertEqual(res_other.result, "1")
+
+    async def test_transformer_scoped_to_full_namespace(self):
+        def transform(_: ToolCall, __: ToolCallContext, result: str | None):
+            return f"{result}!"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator", "calculator"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()]),
+                ToolSet(tools=[CalculatorTool()]),
+            ],
+            settings=ToolManagerSettings(
+                transformers=[
+                    ToolTransformer(
+                        func=transform, namespace="math.calculator"
+                    )
+                ]
+            ),
+        )
+
+        call_math = ToolCall(
+            id=_uuid4(), name="math.calculator", arguments={"expression": "1"}
+        )
+        call_plain = ToolCall(
+            id=_uuid4(), name="calculator", arguments={"expression": "1"}
+        )
+        with patch(
+            "avalan.tool.manager.uuid4",
+            side_effect=[_uuid4(), _uuid4()],
+        ):
+            res_math = await manager(call_math, context=ToolCallContext())
+            res_plain = await manager(call_plain, context=ToolCallContext())
+
+        self.assertEqual(res_math.result, "1!")
+        self.assertEqual(res_plain.result, "1")
 
 
 if __name__ == "__main__":

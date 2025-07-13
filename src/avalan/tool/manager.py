@@ -5,6 +5,8 @@ from ..entities import (
     ToolCallContext,
     ToolCallResult,
     ToolManagerSettings,
+    ToolFilter,
+    ToolTransformer,
 )
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
@@ -16,6 +18,12 @@ class ToolManager(ContextDecorator):
     _stack: AsyncExitStack
     _tools: dict[str, Callable] | None = None
     _toolsets: Sequence[ToolSet] | None = None
+
+    @staticmethod
+    def _matches_namespace(tool_name: str, namespace: str | None) -> bool:
+        if not namespace:
+            return True
+        return tool_name == namespace or tool_name.startswith(f"{namespace}.")
 
     @classmethod
     def create_instance(
@@ -131,7 +139,14 @@ class ToolManager(ContextDecorator):
 
         if self._settings.filters:
             for f in self._settings.filters:
-                modified = f(call, context)
+                namespace = None
+                func = f
+                if isinstance(f, ToolFilter):
+                    func = f.func
+                    namespace = f.namespace
+                if not self._matches_namespace(call.name, namespace):
+                    continue
+                modified = func(call, context)
                 if modified is not None:
                     assert isinstance(modified, tuple) and len(modified) == 2
                     call, context = modified
@@ -154,7 +169,14 @@ class ToolManager(ContextDecorator):
 
         if self._settings.transformers:
             for t in self._settings.transformers:
-                transformed = t(call, context, result)
+                namespace = None
+                func = t
+                if isinstance(t, ToolTransformer):
+                    func = t.func
+                    namespace = t.namespace
+                if not self._matches_namespace(call.name, namespace):
+                    continue
+                transformed = func(call, context, result)
                 if transformed is not None:
                     result = transformed
 
