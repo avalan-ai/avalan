@@ -28,7 +28,7 @@ jobs:
 
       - name: Generate lockfile
         run: |
-          poetry lock --no-update --no-ansi --no-interaction
+          poetry lock --no-ansi --no-interaction
 
       - name: Commit updated lockfile
         uses: EndBug/add-and-commit@v9
