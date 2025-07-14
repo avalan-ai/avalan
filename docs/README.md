@@ -6,7 +6,7 @@ multi-backend support ([transformers](https://github.com/huggingface/transformer
 [vLLM](https://github.com/vllm-project/vllm),
 [mlx-lm](https://github.com/ml-explore/mlx-lm)), first-class
 support of multiple AI protocols (MCP, A2A), plus native
-integrations for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and
+integrations for OpenRouter, Ollama, OpenAI, LiteLLM, DeepSeek, Gemini, and
 beyond, avalan enables you to select the optimal  engine
 tailored specifically to each use case.
 

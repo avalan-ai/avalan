@@ -343,12 +343,6 @@ class OpenAIVendorsTestCase(TestCase):
             "HyperbolicModel",
             "https://api.hyperbolic.ai/v1",
         ),
-        (
-            "avalan.model.nlp.text.vendor.litellm",
-            "LiteLLMClient",
-            "LiteLLMModel",
-            "http://localhost:4000",
-        ),
     ]
 
     def setUp(self):
@@ -385,6 +379,83 @@ class OpenAIVendorsTestCase(TestCase):
                     loaded = model._load_model()
                 ClientMock.assert_called_once_with(base_url="b", api_key="t")
                 self.assertIs(loaded, ClientMock.return_value)
+
+
+class LiteLLMTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        stub = types.ModuleType("litellm")
+        stub.acompletion = AsyncMock()
+        self.patch = patch.dict(sys.modules, {"litellm": stub})
+        self.patch.start()
+        self.mod = importlib.import_module(
+            "avalan.model.nlp.text.vendor.litellm"
+        )
+        importlib.reload(self.mod)
+        self.stub = stub
+
+    def tearDown(self):
+        self.patch.stop()
+
+    async def test_call_and_model(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        stream_obj = AsyncIter([{"choices": [{"delta": {"content": "s"}}]}])
+        self.stub.acompletion = AsyncMock(return_value=stream_obj)
+        with patch.object(self.mod, "LiteLLMStream") as StreamMock:
+            result = await client("m", msgs, use_async_generator=True)
+        self.stub.acompletion.assert_awaited_once()
+        StreamMock.assert_called_once_with(stream_obj)
+        self.assertIs(result, StreamMock.return_value)
+
+        resp = {"choices": [{"message": {"content": "r"}}]}
+        self.stub.acompletion = AsyncMock(return_value=resp)
+        gen = await client("m", msgs, use_async_generator=False)
+        out = [t async for t in gen]
+        self.assertEqual(out, ["r"])
+
+        stream = self.mod.LiteLLMStream(
+            AsyncIter([{"choices": [{"delta": {"content": "x"}}]}])
+        )
+        self.assertEqual(await stream.__anext__(), "x")
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+        with patch.object(self.mod, "LiteLLMClient") as ClientMock:
+            settings = TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+                access_token="t",
+                base_url="u",
+            )
+            model = self.mod.LiteLLMModel("m", settings)
+            loaded = model._load_model()
+        ClientMock.assert_called_once_with(api_key="t", base_url="u")
+        self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_streaming_object_chunk(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        chunk = SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="s"))]
+        )
+        stream_obj = AsyncIter([chunk])
+        self.stub.acompletion = AsyncMock(return_value=stream_obj)
+        result = await client("m", msgs, use_async_generator=True)
+        self.stub.acompletion.assert_awaited_once()
+        self.assertEqual(await result.__anext__(), "s")
+        with self.assertRaises(StopAsyncIteration):
+            await result.__anext__()
+
+    async def test_no_stream_object_response(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="r"))]
+        )
+        self.stub.acompletion = AsyncMock(return_value=resp)
+        gen = await client("m", msgs, use_async_generator=False)
+        out = [t async for t in gen]
+        self.assertEqual(out, ["r"])
 
 
 if __name__ == "__main__":

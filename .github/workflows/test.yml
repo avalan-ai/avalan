@@ -9,16 +9,39 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up python
+        id: setup-python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: Install poetry
-        run: pip install poetry
-      - name: Install poetry test dependencies
-        run: poetry sync --extras "test"
-      - name: Install pytest coverage analyzer
-        run: poetry run pip install pytest-cov
+      - name: Load cached Poetry installation
+        id: cached-poetry
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-0 
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          virtualenvs-path: .venv
+          installer-parallel: true
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+      - name: Install dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction --no-root --extras "test"
+      - name: Install project into venv
+        run: poetry run pip install -e .
       - name: Run tests with coverage analysis
         run: poetry run pytest --cov=src/ --cov-report=xml
       - name: Upload coverage to Coveralls

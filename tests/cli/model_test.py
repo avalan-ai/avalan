@@ -2487,7 +2487,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager = AsyncMock()
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
-        manager.parse_uri.return_value = engine_uri
+        manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
         with (
