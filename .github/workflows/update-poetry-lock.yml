@@ -2,9 +2,6 @@ name: Update poetry.lock
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "pyproject.toml"
 
 jobs:
   lockfile:
