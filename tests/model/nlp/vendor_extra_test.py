@@ -432,6 +432,31 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         ClientMock.assert_called_once_with(api_key="t", base_url="u")
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_streaming_object_chunk(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        chunk = SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="s"))]
+        )
+        stream_obj = AsyncIter([chunk])
+        self.stub.acompletion = AsyncMock(return_value=stream_obj)
+        result = await client("m", msgs, use_async_generator=True)
+        self.stub.acompletion.assert_awaited_once()
+        self.assertEqual(await result.__anext__(), "s")
+        with self.assertRaises(StopAsyncIteration):
+            await result.__anext__()
+
+    async def test_no_stream_object_response(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="r"))]
+        )
+        self.stub.acompletion = AsyncMock(return_value=resp)
+        gen = await client("m", msgs, use_async_generator=False)
+        out = [t async for t in gen]
+        self.assertEqual(out, ["r"])
+
 
 if __name__ == "__main__":
     from unittest import main
