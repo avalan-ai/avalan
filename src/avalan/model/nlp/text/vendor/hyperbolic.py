@@ -1,4 +1,5 @@
 from .....model import TextGenerationVendor
+from diffusers import DiffusionPipeline
 from .openai import OpenAIClient, OpenAIModel
 from transformers import PreTrainedModel
 
@@ -12,7 +13,9 @@ class HyperbolicClient(OpenAIClient):
 
 
 class HyperbolicModel(OpenAIModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.access_token
         return HyperbolicClient(
             base_url=self._settings.base_url,

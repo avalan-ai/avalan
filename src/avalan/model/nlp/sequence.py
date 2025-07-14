@@ -3,6 +3,7 @@ from ...entities import GenerationSettings, Input
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
+from diffusers import DiffusionPipeline
 from dataclasses import replace
 from torch import argmax, inference_mode, softmax, Tensor
 from transformers import (
@@ -24,7 +25,9 @@ class SequenceClassificationModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return False
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         model = AutoModelForSequenceClassification.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
@@ -90,7 +93,9 @@ class SequenceToSequenceModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return False
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         model = AutoModelForSeq2SeqLM.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,

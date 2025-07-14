@@ -43,7 +43,9 @@ class Engine(ABC):
     _loaded_model: bool = False
     _loaded_tokenizer: bool = False
     _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
-    _model: PreTrainedModel | TextGenerationVendor | None = None
+    _model: (
+        PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None
+    ) = None
     _config: ModelConfig | SentenceTransformerModelConfig | None = None
     _tokenizer_config: TokenizerConfig | None = None
     _parameter_types: set[str] | None = None
@@ -122,7 +124,9 @@ class Engine(ABC):
         return self._config
 
     @property
-    def model(self) -> PreTrainedModel | TextGenerationVendor | None:
+    def model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None:
         return self._model
 
     @property
@@ -156,7 +160,9 @@ class Engine(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         raise NotImplementedError()
 
     def is_runnable(self, device: str | None = None) -> bool | None:
@@ -359,10 +365,14 @@ class Engine(ABC):
                     bos_token_id=getattr(mc, "bos_token_id", None),
                     bos_token=(
                         self._tokenizer.decode(mc.bos_token_id)
-                        if self._tokenizer and hasattr(mc, "bos_token_id") and mc.bos_token_id
+                        if self._tokenizer
+                        and hasattr(mc, "bos_token_id")
+                        and mc.bos_token_id
                         else None
                     ),
-                    decoder_start_token_id=getattr(mc, "decoder_start_token_id", None),
+                    decoder_start_token_id=getattr(
+                        mc, "decoder_start_token_id", None
+                    ),
                     eos_token_id=getattr(mc, "eos_token_id", None),
                     eos_token=(
                         self._tokenizer.decode(mc.eos_token_id)
@@ -404,7 +414,9 @@ class Engine(ABC):
                     ),
                     num_labels=getattr(mc, "num_labels", None),
                     output_attentions=getattr(mc, "output_attentions", None),
-                    output_hidden_states=getattr(mc, "output_hidden_states", None),
+                    output_hidden_states=getattr(
+                        mc, "output_hidden_states", None
+                    ),
                     pad_token_id=getattr(mc, "pad_token_id", None),
                     pad_token=(
                         self._tokenizer.decode(mc.pad_token_id)
@@ -420,11 +432,18 @@ class Engine(ABC):
                     ),
                     state_size=(
                         len(self._model.state_dict().keys())
-                        if hasattr(self._model, "state_dict") and self._model.state_dict
+                        if hasattr(self._model, "state_dict")
+                        and self._model.state_dict
                         else 0
                     ),
-                    task_specific_params=getattr(mc, "task_specific_params", None),
-                    torch_dtype=str(mc.torch_dtype) if hasattr(mc, "torch_dtype") else None,
+                    task_specific_params=getattr(
+                        mc, "task_specific_params", None
+                    ),
+                    torch_dtype=(
+                        str(mc.torch_dtype)
+                        if hasattr(mc, "torch_dtype")
+                        else None
+                    ),
                     vocab_size=(
                         mc.vocab_size if hasattr(mc, "vocab_size") else None
                     ),

@@ -663,6 +663,7 @@ class TransformerEngineSettings(EngineSettings):
     state_dict: dict[str, Tensor] = None
     tokens: list[str] | None = None
     weight_type: WeightType = "auto"
+    refiner_model_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

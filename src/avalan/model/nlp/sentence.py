@@ -3,6 +3,7 @@ from ...entities import Input
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
+from diffusers import DiffusionPipeline
 from contextlib import nullcontext
 from numpy import ndarray
 from torch import inference_mode
@@ -28,7 +29,9 @@ class SentenceTransformerModel(BaseNLPModel):
         token_ids = self.tokenizer.encode(input, add_special_tokens=False)
         return len(token_ids)
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         from sentence_transformers import SentenceTransformer
 
         model = SentenceTransformer(

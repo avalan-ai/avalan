@@ -1,4 +1,5 @@
 from .....model import TextGenerationVendor
+from diffusers import DiffusionPipeline
 from .....model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
 from transformers import PreTrainedModel
 
@@ -19,7 +20,9 @@ class OpenRouterClient(OpenAIClient):
 
 
 class OpenRouterModel(OpenAIModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.access_token
         return OpenRouterClient(
             base_url=self._settings.base_url,

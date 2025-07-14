@@ -6,6 +6,7 @@ from .....entities import (
     TokenDetail,
 )
 from .....model import TextGenerationVendor, TextGenerationVendorStream
+from diffusers import DiffusionPipeline
 from . import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from huggingface_hub import AsyncInferenceClient
@@ -62,7 +63,9 @@ class HuggingfaceClient(TextGenerationVendor):
 
 
 class HuggingfaceModel(TextGenerationVendorModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.access_token
         return HuggingfaceClient(
             api_key=self._settings.access_token,

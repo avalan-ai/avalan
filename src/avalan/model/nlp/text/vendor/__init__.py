@@ -5,6 +5,7 @@ from .....entities import (
     TransformerEngineSettings,
 )
 from .....model import TextGenerationResponse, TextGenerationVendor
+from diffusers import DiffusionPipeline
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from dataclasses import replace
@@ -34,7 +35,9 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         super().__init__(model_id, settings, logger)
 
     @abstractmethod
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         raise NotImplementedError()
 
     @property

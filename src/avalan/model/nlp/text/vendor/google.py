@@ -3,6 +3,7 @@ from google.genai.types import GenerateContentResponse
 from .....compat import override
 from .....entities import GenerationSettings, Message, Token, TokenDetail
 from .....model import TextGenerationVendor, TextGenerationVendorStream
+from diffusers import DiffusionPipeline
 from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from transformers import PreTrainedModel
@@ -55,6 +56,8 @@ class GoogleClient(TextGenerationVendor):
 
 
 class GoogleModel(TextGenerationVendorModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.access_token
         return GoogleClient(api_key=self._settings.access_token)
