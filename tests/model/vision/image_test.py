@@ -142,5 +142,18 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
             )
 
 
+class ImageToTextModelTokenizeInputTestCase(TestCase):
+    def test_tokenize_input_not_implemented(self) -> None:
+        model = ImageToTextModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=MagicMock(spec=Logger),
+        )
+        with self.assertRaises(NotImplementedError):
+            model._tokenize_input("in")
+
+
 if __name__ == "__main__":
     main()

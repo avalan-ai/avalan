@@ -74,7 +74,6 @@ class BasePgsqlMemory(MemoryStore[T]):
                 await cursor.close()
                 row = dict(result) if result is not None else None
                 return row[field] if row else None
-        return None
 
     async def _has_one(self, query: str, parameters: tuple) -> bool:
         async with self._database.connection() as connection:

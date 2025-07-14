@@ -97,6 +97,19 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
         result = await memory._try_fetch_one(DummyEntity, "q", (1,))
         self.assertIsNone(result)
 
+    async def test_fetch_field(self):
+        pool, _, cursor = self.mock_query({"f": "v"})
+        memory = DummyBaseMemory(pool, logger=MagicMock())
+        result = await memory._fetch_field("f", "q", (1,))
+        cursor.execute.assert_awaited_once_with("q", (1,))
+        self.assertEqual(result, "v")
+
+        pool, _, cursor = self.mock_query(None)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
+        result = await memory._fetch_field("f", "q", (2,))
+        cursor.execute.assert_awaited_once_with("q", (2,))
+        self.assertIsNone(result)
+
     async def test_update_and_fetch_one_and_field(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
         memory = DummyBaseMemory(pool, logger=MagicMock())
