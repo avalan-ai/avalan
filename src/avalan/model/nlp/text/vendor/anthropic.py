@@ -8,6 +8,7 @@ from .....entities import (
     TokenDetail,
 )
 from .....model import TextGenerationVendor, TextGenerationVendorStream
+from diffusers import DiffusionPipeline
 from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from transformers import PreTrainedModel
@@ -77,7 +78,9 @@ class AnthropicClient(TextGenerationVendor):
 
 
 class AnthropicModel(TextGenerationVendorModel):
-    def _load_model(self) -> TextGenerationVendor | PreTrainedModel:
+    def _load_model(
+        self,
+    ) -> TextGenerationVendor | PreTrainedModel | DiffusionPipeline:
         assert self._settings.access_token
         return AnthropicClient(
             api_key=self._settings.access_token,

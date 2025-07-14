@@ -10,6 +10,7 @@ from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
 from ...model.engine import Engine
+from diffusers import DiffusionPipeline
 from ...model.transformer import TransformerModel
 from PIL import Image
 from torch import inference_mode, Tensor
@@ -30,7 +31,9 @@ from typing import Literal
 
 # model predicts one of the 1000 ImageNet classes
 class ImageClassificationModel(BaseVisionModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
@@ -61,7 +64,9 @@ class ImageClassificationModel(BaseVisionModel):
 
 
 class ImageToTextModel(TransformerModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48
@@ -109,7 +114,9 @@ class ImageTextToTextModel(ImageToTextModel):
         "gemma3": Gemma3ForConditionalGeneration,
     }
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert (
             self._settings.loader_class in self._loaders
         ), f"Unrecognized loader {self._settings.loader_class}"
@@ -196,7 +203,9 @@ class ImageTextToTextModel(ImageToTextModel):
 
 
 class VisionEncoderDecoderModel(ImageToTextModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             use_fast=True,

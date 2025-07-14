@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from ..compat import override
 from ..model import TextGenerationVendor, TokenizerNotSupportedException
 from ..model.engine import Engine
+from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import argmax, inference_mode
 from torchaudio import load
@@ -46,7 +47,9 @@ class BaseAudioModel(Engine, ABC):
 
 
 class SpeechRecognitionModel(BaseAudioModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
@@ -88,7 +91,9 @@ class SpeechRecognitionModel(BaseAudioModel):
 
 
 class TextToSpeechModel(BaseAudioModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,

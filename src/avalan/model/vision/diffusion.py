@@ -1,5 +1,5 @@
 from ...compat import override
-from ...entities import EngineSettings, Input
+from ...entities import Input, TransformerEngineSettings
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.transformer import TransformerModel
@@ -23,16 +23,18 @@ class TextToImageDiffusionModel(TransformerModel):
     def __init__(
         self,
         model_id: str,
-        refiner_model_id: str,
-        settings: EngineSettings | None = None,
+        settings: TransformerEngineSettings | None = None,
         logger: Logger | None = None,
     ):
-        self._refiner_model_id = refiner_model_id
+        settings = settings or TransformerEngineSettings()
+        assert settings.refiner_model_id
+        self._refiner_model_id = settings.refiner_model_id
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
 
-
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         dtype = BaseNLPModel._get_weight_type(self._settings.weight_type)
         dtype_variant = self._settings.weight_type
 
@@ -40,7 +42,7 @@ class TextToImageDiffusionModel(TransformerModel):
             self._model_id,
             torch_dtype=dtype,
             variant=dtype_variant,
-            use_safetensors=True
+            use_safetensors=True,
         )
         base.to(self._device)
 
@@ -85,11 +87,46 @@ class TextToImageDiffusionModel(TransformerModel):
         prompt: str,
         path: str,
         *,
-        color_model: Literal["RGB"] = "RGB",
+        color_model: Literal[
+            "1",
+            "L",
+            "LA",
+            "P",
+            "PA",
+            "RGB",
+            "RGBA",
+            "RGBX",
+            "CMYK",
+            "YCbCr",
+            "LAB",
+            "HSV",
+            "I",
+            "F",
+        ] = "RGB",
         high_noise_frac: float = 0.8,
-        image_format: Literal["JPEG"] = "JPEG",
+        image_format: Literal[
+            "BMP",
+            "DDS",
+            "EPS",
+            "GIF",
+            "ICNS",
+            "ICO",
+            "IM",
+            "JPEG",
+            "JPEG2000",
+            "MSP",
+            "PCX",
+            "PNG",
+            "PPM",
+            "SGI",
+            "SPI",
+            "TGA",
+            "TIFF",
+            "WEBP",
+            "XBM",
+        ] = "JPEG",
         n_steps: int = 40,
-        output_type: Literal["latent"] = "latent"
+        output_type: Literal["latent"] = "latent",
     ) -> str:
         assert prompt and path
 

@@ -6,6 +6,7 @@ from .....entities import (
     TokenDetail,
 )
 from .....model import TextGenerationVendor, TextGenerationVendorStream
+from diffusers import DiffusionPipeline
 from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
 from openai import AsyncOpenAI, AsyncStream
@@ -49,7 +50,9 @@ class OpenAIClient(TextGenerationVendor):
 
 
 class OpenAIModel(TextGenerationVendorModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.base_url or self._settings.access_token
         return OpenAIClient(
             base_url=self._settings.base_url,

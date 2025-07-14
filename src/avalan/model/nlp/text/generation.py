@@ -14,6 +14,7 @@ from ....entities import (
 from ....model import TextGenerationResponse, TextGenerationVendor
 from ....model.nlp import BaseNLPModel
 from ....model.engine import Engine
+from diffusers import DiffusionPipeline
 from ....tool.manager import ToolManager
 from dataclasses import replace
 from importlib.util import find_spec
@@ -58,7 +59,9 @@ class TextGenerationModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return True
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert (
             self._settings.loader_class in self._loaders
         ), f"Unrecognized loader {self._settings.loader_class}"
