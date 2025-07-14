@@ -109,7 +109,7 @@ class BaseNLPModel(TransformerModel, ABC):
                 if weight_type == "bf16"
                 else (
                     float16
-                    if weight_type == "f16"
+                    if weight_type == "f16" or weight_type == "fp16"
                     else (
                         float32
                         if weight_type == "f32"
