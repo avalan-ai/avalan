@@ -1,4 +1,4 @@
-name: Update Poetry .lock file
+name: Update poetry.lock
 
 on:
   workflow_dispatch:
@@ -11,26 +11,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-python@v5
+      - name: Set up python
+        id: setup-python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-          cache: poetry
-
-      - uses: snok/install-poetry@v1
+          python-version: '3.x'
+      - name: Load cached Poetry installation
+        id: cached-poetry
+        uses: actions/cache@v4
         with:
-          version: "2.1.3"
-
-      - name: Generate .lock file
+          path: ~/.local
+          key: poetry-0 
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          virtualenvs-path: .venv
+          installer-parallel: true
+      - name: Generate poetry.lock
         run: |
           poetry lock --no-ansi --no-interaction
-
-      - name: Commit updated . lock
+      - name: Commit updated poetry.lock
         uses: EndBug/add-and-commit@v9
         with:
           add: "poetry.lock"
@@ -38,7 +45,6 @@ jobs:
           message: "CI: Regenerate poetry.lock"
           push: true
         id: commit
-
       - name: Summary
         if: steps.commit.outputs.committed == 'false'
         run: echo "poetry.lock already up‑to‑date — nothing to commit."
