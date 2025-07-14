@@ -40,9 +40,7 @@ jobs:
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry install --no-interaction --no-root --extras "test"
-      - name: Install pytest coverage analyzer
-        run: poetry run pip install pytest-cov
-      - name: Install project into virtual environment
+      - name: Install project into venv
         run: poetry run pip install -e .
       - name: Run tests with coverage analysis
         run: poetry run pytest --cov=src/ --cov-report=xml
