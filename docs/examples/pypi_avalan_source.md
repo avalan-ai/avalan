@@ -152,7 +152,7 @@ and CLI, featuring multi-backend support
 ([transformers](https://github.com/huggingface/transformers),
 [vLLM](https://github.com/vllm-project/vllm),
 [mlx-lm](https://github.com/ml-explore/mlx-lm)), multi-modal integration (NLP, vision,
-audio), and native adapters for platforms like OpenRouter, Ollama, OpenAI, DeepSeek, and
+audio), and native adapters for platforms like OpenRouter, Ollama, OpenAI, LiteLLM, DeepSeek, and
 Gemini. Enhanced by sophisticated memory management, advanced reasoning (including ReACT
 tooling and adaptive planning), and intuitive pipelines with branching, filtering, and
 recursive workflows, avalan ensures agents continuously learn and adapt. Comprehensive

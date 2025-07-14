@@ -16,7 +16,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 - 🔌 Multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
 - 🌐 Multi-modal integration (NLP, vision, audio.)
-- 🔗 Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, and Gemini.
+- 🔗 Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and LiteLLM.
 - 🤖 Sophisticated memory management and advanced reasoning (ReACT tooling, adaptive planning.)
 - 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
 - 📊 Comprehensive observability through metrics, event tracing, and dashboards.
@@ -31,7 +31,7 @@ Take a quick look at which models you can use in [Models](#models), the tools av
 
 Avalan makes text, audio, and vision models available from the CLI or in your
 own code. You can run local models or call vendor models from OpenRouter,
-OpenAI, Ollama, DeepSeek and Gemini. It works across engines such as
+OpenAI, LiteLLM, Ollama, DeepSeek and Gemini. It works across engines such as
 transformers, vLLM and mlx-lm.
 
 ### Audio
