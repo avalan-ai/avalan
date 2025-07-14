@@ -1,0 +1,45 @@
+name: Update Poetry lockfile
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "pyproject.toml"
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: poetry
+
+      - uses: snok/install-poetry@v1
+        with:
+          version: "1.8.5"
+
+      - name: Generate lockfile
+        run: |
+          poetry lock --no-update --no-ansi --no-interaction
+
+      - name: Commit updated lockfile
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: "poetry.lock"
+          default_author: github_actions
+          message: "CI: Regenerate poetry.lock"
+          push: true
+        id: commit
+
+      - name: Summary
+        if: steps.commit.outputs.committed == 'false'
+        run: echo "poetry.lock already up‑to‑date — nothing to commit."
+
