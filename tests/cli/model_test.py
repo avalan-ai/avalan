@@ -2284,7 +2284,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             display_tools_events=2,
             path="img.png",
             vision_threshold=0.5,
-            image_width=42,
+            vision_width=42,
         )
         console = MagicMock()
         theme = MagicMock()
