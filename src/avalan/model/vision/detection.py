@@ -4,6 +4,7 @@ from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.image import ImageClassificationModel
 from ...model.engine import Engine
+from diffusers import DiffusionPipeline
 from logging import Logger
 from PIL import Image
 from torch import inference_mode, tensor
@@ -26,7 +27,9 @@ class ObjectDetectionModel(ImageClassificationModel):
         self._revision = revision
         super().__init__(model_id, settings, logger=logger)
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             revision=self._revision,

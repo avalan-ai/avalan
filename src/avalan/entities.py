@@ -47,6 +47,8 @@ WeightType = Literal[
     "f16",
     "f32",
     "f64",
+    "fp16",
+    "fp32",
     "i8",
     "i16",
     "i32",
@@ -83,6 +85,7 @@ class Modality(StrEnum):
     VISION_OBJECT_DETECTION = "vision_object_detection"
     VISION_IMAGE_CLASSIFICATION = "vision_image_classification"
     VISION_IMAGE_TO_TEXT = "vision_image_to_text"
+    VISION_IMAGE_TEXT_TO_IMAGE = "vision_image_text_to_image"
     VISION_IMAGE_TEXT_TO_TEXT = "vision_image_text_to_text"
     VISION_ENCODER_DECODER = "vision_encoder_decoder"
     VISION_SEMANTIC_SEGMENTATION = "vision_semantic_segmentation"
@@ -413,7 +416,7 @@ class ModelConfig:
     # Maximum input sequence length
     max_position_embeddings: int | None
     # An identifier for the model type
-    model_type: str
+    model_type: str | None
     # The number of attention heads used in the multi-head attention layers
     # of the model
     num_attention_heads: int | None
@@ -660,6 +663,7 @@ class TransformerEngineSettings(EngineSettings):
     state_dict: dict[str, Tensor] = None
     tokens: list[str] | None = None
     weight_type: WeightType = "auto"
+    refiner_model_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

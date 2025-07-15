@@ -19,10 +19,27 @@ from torch import (
 )
 from transformers import AsyncTextIteratorStreamer
 from transformers.generation import StoppingCriteria
-from typing import Literal
+from typing import Final, Literal
 
 
 class BaseNLPModel(TransformerModel, ABC):
+    _WEIGHTS: Final[dict[str, Literal["auto"] | dtype]] = {
+        "bool": tbool,
+        "bf16": bfloat16,
+        "f16": float16,
+        "fp16": float16,
+        "f32": float32,
+        "fp32": float32,
+        "f64": float64,
+        "fp64": float64,
+        "i8": int8,
+        "i16": int16,
+        "i32": int32,
+        "i64": int64,
+        "ui8": uint8,
+        "auto": "auto",
+    }
+    
     def _generate_output(
         self,
         inputs: dict[str, Tensor] | Tensor,
@@ -101,50 +118,4 @@ class BaseNLPModel(TransformerModel, ABC):
 
     @staticmethod
     def _get_weight_type(weight_type: WeightType) -> Literal["auto"] | dtype:
-        wtype = (
-            tbool
-            if weight_type == "bool"
-            else (
-                bfloat16
-                if weight_type == "bf16"
-                else (
-                    float16
-                    if weight_type == "f16"
-                    else (
-                        float32
-                        if weight_type == "f32"
-                        else (
-                            float64
-                            if weight_type == "f64"
-                            else (
-                                int8
-                                if weight_type == "i8"
-                                else (
-                                    int16
-                                    if weight_type == "i16"
-                                    else (
-                                        int32
-                                        if weight_type == "i32"
-                                        else (
-                                            int64
-                                            if weight_type == "i64"
-                                            else (
-                                                uint8
-                                                if weight_type == "ui8"
-                                                else (
-                                                    weight_type
-                                                    if weight_type == "auto"
-                                                    else "auto"
-                                                )
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-        assert wtype
-        return wtype
+        return BaseNLPModel._WEIGHTS.get(weight_type, "auto")

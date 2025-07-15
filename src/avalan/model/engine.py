@@ -15,6 +15,7 @@ from ..model import (
     TokenizerNotSupportedException,
 )
 from contextlib import ExitStack
+from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
 from torch import cuda
@@ -42,7 +43,9 @@ class Engine(ABC):
     _loaded_model: bool = False
     _loaded_tokenizer: bool = False
     _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
-    _model: PreTrainedModel | TextGenerationVendor | None = None
+    _model: (
+        PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None
+    ) = None
     _config: ModelConfig | SentenceTransformerModelConfig | None = None
     _tokenizer_config: TokenizerConfig | None = None
     _parameter_types: set[str] | None = None
@@ -121,7 +124,9 @@ class Engine(ABC):
         return self._config
 
     @property
-    def model(self) -> PreTrainedModel | None:
+    def model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None:
         return self._model
 
     @property
@@ -155,7 +160,9 @@ class Engine(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         raise NotImplementedError()
 
     def is_runnable(self, device: str | None = None) -> bool | None:
@@ -292,6 +299,7 @@ class Engine(ABC):
             assert (
                 isinstance(self._model, PreTrainedModel)
                 or isinstance(self._model, TextGenerationVendor)
+                or isinstance(self._model, DiffusionPipeline)
                 or is_mlx
                 or is_sentence_transformer
             ), f"Unexpected pretrained model type: {type(self._model)}"
@@ -352,22 +360,26 @@ class Engine(ABC):
 
             if mc:
                 config = ModelConfig(
-                    architectures=mc.architectures,
-                    attribute_map=mc.attribute_map,
-                    bos_token_id=mc.bos_token_id,
+                    architectures=getattr(mc, "architectures", None),
+                    attribute_map=getattr(mc, "attribute_map", None),
+                    bos_token_id=getattr(mc, "bos_token_id", None),
                     bos_token=(
                         self._tokenizer.decode(mc.bos_token_id)
-                        if self._tokenizer and mc.bos_token_id
+                        if self._tokenizer
+                        and hasattr(mc, "bos_token_id")
+                        and mc.bos_token_id
                         else None
                     ),
-                    decoder_start_token_id=mc.decoder_start_token_id,
-                    eos_token_id=mc.eos_token_id,
+                    decoder_start_token_id=getattr(
+                        mc, "decoder_start_token_id", None
+                    ),
+                    eos_token_id=getattr(mc, "eos_token_id", None),
                     eos_token=(
                         self._tokenizer.decode(mc.eos_token_id)
                         if self._tokenizer and mc.eos_token_id
                         else None
                     ),
-                    finetuning_task=mc.finetuning_task,
+                    finetuning_task=getattr(mc, "finetuning_task", None),
                     hidden_size=(
                         mc.hidden_size if hasattr(mc, "hidden_size") else None
                     ),
@@ -389,7 +401,7 @@ class Engine(ABC):
                         if hasattr(mc, "max_position_embeddings")
                         else None
                     ),
-                    model_type=mc.model_type,
+                    model_type=getattr(mc, "model_type", None),
                     num_attention_heads=(
                         mc.num_attention_heads
                         if hasattr(mc, "num_attention_heads")
@@ -400,17 +412,19 @@ class Engine(ABC):
                         if hasattr(mc, "num_hidden_layers")
                         else None
                     ),
-                    num_labels=mc.num_labels,
-                    output_attentions=mc.output_attentions,
-                    output_hidden_states=mc.output_hidden_states,
-                    pad_token_id=mc.pad_token_id,
+                    num_labels=getattr(mc, "num_labels", None),
+                    output_attentions=getattr(mc, "output_attentions", None),
+                    output_hidden_states=getattr(
+                        mc, "output_hidden_states", None
+                    ),
+                    pad_token_id=getattr(mc, "pad_token_id", None),
                     pad_token=(
                         self._tokenizer.decode(mc.pad_token_id)
                         if self._tokenizer and mc.pad_token_id
                         else None
                     ),
-                    prefix=mc.prefix,
-                    sep_token_id=mc.sep_token_id,
+                    prefix=getattr(mc, "prefix", None),
+                    sep_token_id=getattr(mc, "sep_token_id", None),
                     sep_token=(
                         self._tokenizer.decode(mc.sep_token_id)
                         if self._tokenizer and mc.sep_token_id
@@ -418,15 +432,22 @@ class Engine(ABC):
                     ),
                     state_size=(
                         len(self._model.state_dict().keys())
-                        if self._model.state_dict
+                        if hasattr(self._model, "state_dict")
+                        and self._model.state_dict
                         else 0
                     ),
-                    task_specific_params=mc.task_specific_params,
-                    torch_dtype=str(mc.torch_dtype),
+                    task_specific_params=getattr(
+                        mc, "task_specific_params", None
+                    ),
+                    torch_dtype=(
+                        str(mc.torch_dtype)
+                        if hasattr(mc, "torch_dtype")
+                        else None
+                    ),
                     vocab_size=(
                         mc.vocab_size if hasattr(mc, "vocab_size") else None
                     ),
-                    tokenizer_class=mc.tokenizer_class,
+                    tokenizer_class=getattr(mc, "tokenizer_class", None),
                 )
 
             if is_sentence_transformer and config:

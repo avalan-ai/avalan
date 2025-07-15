@@ -3,6 +3,7 @@ from ...entities import Input
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
+from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
 from transformers import AutoModelForQuestionAnswering, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
@@ -18,7 +19,9 @@ class QuestionAnsweringModel(BaseNLPModel):
     def supports_token_streaming(self) -> bool:
         return False
 
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         model = AutoModelForQuestionAnswering.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,

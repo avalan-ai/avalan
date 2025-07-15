@@ -2,6 +2,7 @@ from ...compat import override
 from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.engine import Engine
+from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode, unique
 from transformers import (
@@ -13,7 +14,9 @@ from typing import Literal
 
 
 class SemanticSegmentationModel(BaseVisionModel):
-    def _load_model(self) -> PreTrainedModel | TextGenerationVendor:
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             # default behavior in transformers v4.48

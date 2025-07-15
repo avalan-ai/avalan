@@ -821,6 +821,42 @@ files = [
 ]
 
 [[package]]
+name = "diffusers"
+version = "0.34.0"
+description = "State-of-the-art diffusion in PyTorch and JAX."
+optional = true
+python-versions = ">=3.8.0"
+groups = ["main"]
+markers = "extra == \"test\" or extra == \"vision\" or extra == \"all\""
+files = [
+    {file = "diffusers-0.34.0-py3-none-any.whl", hash = "sha256:b0f642cd57756357bad5d23fe95b61f2e6e30321c93f1302cca6d832a01e6d33"},
+    {file = "diffusers-0.34.0.tar.gz", hash = "sha256:25d84e779781fb8a78de22ea0f732aac32b619c65548a04e520d0b55e29a54e7"},
+]
+
+[package.dependencies]
+filelock = "*"
+huggingface-hub = ">=0.27.0"
+importlib_metadata = "*"
+numpy = "*"
+Pillow = "*"
+regex = "!=2019.12.17"
+requests = "*"
+safetensors = ">=0.3.1"
+
+[package.extras]
+bitsandbytes = ["accelerate (>=0.31.0)", "bitsandbytes (>=0.43.3)"]
+dev = ["GitPython (<3.1.19)", "Jinja2", "Jinja2", "accelerate (>=0.31.0)", "accelerate (>=0.31.0)", "compel (==0.1.8)", "datasets", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "peft (>=0.15.0)", "phonemizer", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.9.10)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "tiktoken (>=0.7.0)", "torch (>=1.4)", "torchvision", "transformers (>=4.41.2)", "urllib3 (<=2.0.0)"]
+docs = ["hf-doc-builder (>=0.3.0)"]
+flax = ["flax (>=0.4.1)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)"]
+gguf = ["accelerate (>=0.31.0)", "gguf (>=0.10.0)"]
+optimum-quanto = ["accelerate (>=0.31.0)", "optimum_quanto (>=0.2.6)"]
+quality = ["hf-doc-builder (>=0.3.0)", "isort (>=5.5.4)", "ruff (==0.9.10)", "urllib3 (<=2.0.0)"]
+test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "phonemizer", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tiktoken (>=0.7.0)", "torchvision", "transformers (>=4.41.2)"]
+torch = ["accelerate (>=0.31.0)", "torch (>=1.4)"]
+torchao = ["accelerate (>=0.31.0)", "torchao (>=0.7.0)"]
+training = ["Jinja2", "accelerate (>=0.31.0)", "datasets", "peft (>=0.15.0)", "protobuf (>=3.20.3,<4)", "tensorboard"]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 description = "Distro - an OS platform information API"
@@ -1304,14 +1340,14 @@ files = [
 
 [[package]]
 name = "huggingface-hub"
-version = "0.32.0"
+version = "0.33.4"
 description = "Client library to download and publish models, datasets and other repos on the huggingface.co hub"
 optional = false
 python-versions = ">=3.8.0"
 groups = ["main"]
 files = [
-    {file = "huggingface_hub-0.32.0-py3-none-any.whl", hash = "sha256:e56e94109649ce6ebdb59b4e393ee3543ec0eca2eab4f41b269e1d885c88d08c"},
-    {file = "huggingface_hub-0.32.0.tar.gz", hash = "sha256:dd66c9365ea43049ec9b939bdcdb21a0051e1bd70026fc50304e4fb1bb6a15ba"},
+    {file = "huggingface_hub-0.33.4-py3-none-any.whl", hash = "sha256:09f9f4e7ca62547c70f8b82767eefadd2667f4e116acba2e3e62a5a81815a7bb"},
+    {file = "huggingface_hub-0.33.4.tar.gz", hash = "sha256:6af13478deae120e765bfd92adad0ae1aec1ad8c439b46f23058ad5956cbca0a"},
 ]
 
 [package.dependencies]
@@ -1394,7 +1430,7 @@ description = "Read metadata from Python packages"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"vendors\" or extra == \"all\" or python_version == \"3.11\" and (extra == \"test\" or extra == \"secrets\" or extra == \"all\" or extra == \"vendors\")"
+markers = "extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"test\" or extra == \"secrets\" or extra == \"all\" or extra == \"vendors\" or extra == \"vision\")"
 files = [
     {file = "importlib_metadata-8.0.0-py3-none-any.whl", hash = "sha256:15584cf2b1bf449d98ff8a6ff1abef57bf20f3ac6454f431736cd3e660921b2f"},
     {file = "importlib_metadata-8.0.0.tar.gz", hash = "sha256:188bd24e4c346d3f0a933f275c2fec67050326a856b9a359881d7c2a697e8812"},
@@ -5330,7 +5366,7 @@ description = "Backport of pathlib-compatible object wrapper for zip files"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"vendors\" or extra == \"all\" or python_version == \"3.11\" and (extra == \"test\" or extra == \"secrets\" or extra == \"all\" or extra == \"vendors\")"
+markers = "extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"test\" or extra == \"secrets\" or extra == \"all\" or extra == \"vendors\" or extra == \"vision\")"
 files = [
     {file = "zipp-3.21.0-py3-none-any.whl", hash = "sha256:ac1bbe05fd2991f160ebce24ffbac5f6d11d83dc90891255885223d42b3cd931"},
     {file = "zipp-3.21.0.tar.gz", hash = "sha256:2c9958f6430a2040341a52eb608ed6dd93ef4392e02ffe219417c1b28b5dd1f4"},
@@ -5346,7 +5382,7 @@ type = ["pytest-mypy"]
 
 [extras]
 agent = ["jinja2"]
-all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "faiss-cpu", "fastapi", "google-genai", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
+all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "diffusers", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
 audio = ["soundfile", "torchaudio"]
 cpu = ["accelerate"]
 memory = ["faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
@@ -5354,14 +5390,14 @@ mlx = ["mlx-lm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
-test = ["RestrictedPython", "boto3", "faiss-cpu", "fastapi", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
+test = ["RestrictedPython", "boto3", "diffusers", "faiss-cpu", "fastapi", "huggingface-hub", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
 tool = ["RestrictedPython", "playwright", "sympy", "youtube-transcript-api"]
 translation = ["protobuf", "sentencepiece", "tiktoken"]
 vendors = ["anthropic", "google-genai", "litellm", "openai", "pillow", "tiktoken"]
-vision = ["pillow", "torchvision"]
+vision = ["diffusers", "pillow", "torchvision"]
 vllm = ["vllm"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.11,<3.14"
-content-hash = "928b1b0c60f366433123901ebbc69a7da10f4d321cfbd755502519b1fad8686e"
+content-hash = "6d644fa28b231ced54c7f30e08c0cdec77cea7040ed8e2a87fb002e507b7efb0"
