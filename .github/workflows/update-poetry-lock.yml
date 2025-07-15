@@ -19,20 +19,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v5
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
-
       - name: Configure Git
         run: |
           git config --local user.name  "poetry‑lock bot"
           git config --local user.email "poetry-lock[bot]@users.noreply.github.com"
-          if gpg --list-secret-keys &>/dev/null; then
-            git config --local commit.gpgsign true
-            git config --local user.signingkey $(gpg --list-secret-keys --with-colons | awk -F: '/^sec/ {print $5; exit}')
-          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -58,9 +48,10 @@ jobs:
 
       - name: Create or update Pull Request
         id: cpr
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          sign-commits: true
           commit-message: 'Update poetry.lock'
           branch: workflow/update-poetry-lock
           title: 'Update poetry.lock'
