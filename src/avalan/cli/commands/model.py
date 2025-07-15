@@ -236,6 +236,9 @@ async def model_run(
             elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
                 console.print(theme.display_image_labels(output))
 
+            elif modality == Modality.VISION_TEXT_TO_IMAGE:
+                console.print(output)
+
             else:
                 raise NotImplementedError(f"Modality {modality} not supported")
 

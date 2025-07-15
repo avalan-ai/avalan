@@ -1,5 +1,6 @@
 from avalan.entities import TransformerEngineSettings
 from avalan.model.vision.diffusion import TextToImageDiffusionModel
+from avalan.entities import VisionColorModel, VisionImageFormat
 from avalan.model.nlp import BaseNLPModel
 from avalan.model.engine import Engine
 from diffusers import DiffusionPipeline
@@ -109,8 +110,8 @@ class TextToImageDiffusionModelCallTestCase(IsolatedAsyncioTestCase):
             result = await model(
                 "prompt",
                 "out.jpg",
-                color_model="CMYK",
-                image_format="PNG",
+                color_model=VisionColorModel.CMYK,
+                image_format=VisionImageFormat.PNG,
                 n_steps=10,
             )
 

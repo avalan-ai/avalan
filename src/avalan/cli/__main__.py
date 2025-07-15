@@ -33,6 +33,8 @@ from ..entities import (
     DistanceType,
     Modality,
     ParallelStrategy,
+    VisionColorModel,
+    VisionImageFormat,
     TextGenerationLoaderClass,
     User,
     WeightType,
@@ -991,6 +993,46 @@ class CLI:
             help=(
                 "Resize input image to this width before processing. "
                 "Only applicable to vision image text to text modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-color-model",
+            default=VisionColorModel.RGB,
+            type=str,
+            choices=[m.value for m in VisionColorModel],
+            help=(
+                "Color model for image generation. "
+                "Only applicable to vision text to image modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-image-format",
+            default=VisionImageFormat.JPEG,
+            type=str,
+            choices=[f.value for f in VisionImageFormat],
+            help=(
+                "Image format to save generated image. "
+                "Only applicable to vision text to image modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-high-noise-frac",
+            dest="vision_high_noise_frac",
+            default=0.8,
+            type=float,
+            help=(
+                "High noise fraction for diffusion. "
+                "Only applicable to vision text to image modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-steps",
+            dest="vision_steps",
+            default=40,
+            type=int,
+            help=(
+                "Number of inference steps for diffusion. "
+                "Only applicable to vision text to image modality."
             ),
         )
         model_run_parser.add_argument(

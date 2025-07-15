@@ -34,6 +34,7 @@ from ..model.vision.image import (
     ImageToTextModel,
     VisionEncoderDecoderModel,
 )
+from ..model.vision.diffusion import TextToImageDiffusionModel
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
 from ..event import Event, EventType
@@ -299,6 +300,29 @@ class ModelManager(ContextDecorator):
                     threshold=operation.parameters["vision"].threshold,
                 )
 
+            case Modality.VISION_TEXT_TO_IMAGE:
+                assert (
+                    operation.input
+                    and operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                    and operation.parameters["vision"].color_model
+                    and operation.parameters["vision"].high_noise_frac
+                    is not None
+                    and operation.parameters["vision"].image_format
+                    and operation.parameters["vision"].n_steps is not None
+                )
+
+                result = await model(
+                    operation.input,
+                    operation.parameters["vision"].path,
+                    color_model=operation.parameters["vision"].color_model,
+                    high_noise_frac=operation.parameters[
+                        "vision"
+                    ].high_noise_frac,
+                    image_format=operation.parameters["vision"].image_format,
+                    n_steps=operation.parameters["vision"].n_steps,
+                )
+
             case Modality.VISION_SEMANTIC_SEGMENTATION:
                 assert (
                     operation.parameters["vision"]
@@ -359,6 +383,7 @@ class ModelManager(ContextDecorator):
             Modality.TEXT_TRANSLATION,
             Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
+            Modality.VISION_TEXT_TO_IMAGE,
         }
 
         match modality:
@@ -470,6 +495,17 @@ class ModelManager(ContextDecorator):
                             "vision_threshold",
                             getattr(args, "image_threshold", None),
                         ),
+                    )
+                )
+
+            case Modality.VISION_TEXT_TO_IMAGE:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        color_model=args.vision_color_model,
+                        high_noise_frac=args.vision_high_noise_frac,
+                        image_format=args.vision_image_format,
+                        n_steps=args.vision_steps,
                     )
                 )
 
@@ -596,6 +632,8 @@ class ModelManager(ContextDecorator):
                     model = ImageTextToTextModel(**model_load_args)
                 case Modality.VISION_ENCODER_DECODER:
                     model = VisionEncoderDecoderModel(**model_load_args)
+                case Modality.VISION_TEXT_TO_IMAGE:
+                    model = TextToImageDiffusionModel(**model_load_args)
                 case Modality.VISION_SEMANTIC_SEGMENTATION:
                     model = SemanticSegmentationModel(**model_load_args)
                 case Modality.TEXT_QUESTION_ANSWERING:

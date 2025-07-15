@@ -272,6 +272,32 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                 (("img.png",), {"threshold": 0.5}),
             ),
             (
+                Modality.VISION_TEXT_TO_IMAGE,
+                Operation(
+                    generation_settings=self.settings,
+                    input="txt",
+                    modality=Modality.VISION_TEXT_TO_IMAGE,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="out.png",
+                            color_model="RGB",
+                            high_noise_frac=0.9,
+                            image_format="PNG",
+                            n_steps=10,
+                        )
+                    ),
+                ),
+                (
+                    ("txt", "out.png"),
+                    {
+                        "color_model": "RGB",
+                        "high_noise_frac": 0.9,
+                        "image_format": "PNG",
+                        "n_steps": 10,
+                    },
+                ),
+            ),
+            (
                 Modality.VISION_SEMANTIC_SEGMENTATION,
                 Operation(
                     generation_settings=self.settings,
