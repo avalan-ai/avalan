@@ -30,10 +30,10 @@ class TextToImageDiffusionModelInstantiationTestCase(TestCase):
             ),
             patch.object(Engine, "get_default_device", return_value="cpu"),
         ):
-            base_instance = MagicMock()
+            base_instance = MagicMock(spec=DiffusionPipeline)
             base_instance.text_encoder_2 = "te2"
             base_instance.vae = "vae"
-            refiner_instance = MagicMock()
+            refiner_instance = MagicMock(spec=DiffusionPipeline)
             pipeline_mock.side_effect = [base_instance, refiner_instance]
 
             settings = TransformerEngineSettings(
@@ -88,15 +88,13 @@ class TextToImageDiffusionModelCallTestCase(IsolatedAsyncioTestCase):
                 return_value=nullcontext(),
             ) as inf_mock,
         ):
-            base_instance = MagicMock()
+            base_instance = MagicMock(spec=DiffusionPipeline)
             base_instance.text_encoder_2 = "te2"
             base_instance.vae = "vae"
-            base_instance.__call__.return_value = MagicMock(images="latent")
+            base_instance.return_value = MagicMock(images="latent")
             refiner_image = MagicMock()
-            refiner_instance = MagicMock()
-            refiner_instance.__call__.return_value = MagicMock(
-                images=[refiner_image]
-            )
+            refiner_instance = MagicMock(spec=DiffusionPipeline)
+            refiner_instance.return_value = MagicMock(images=[refiner_image])
             pipeline_mock.side_effect = [base_instance, refiner_instance]
 
             settings = TransformerEngineSettings(
@@ -117,13 +115,13 @@ class TextToImageDiffusionModelCallTestCase(IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "out.jpg")
-            base_instance.__call__.assert_called_once_with(
+            base_instance.assert_called_once_with(
                 prompt="prompt",
                 num_inference_steps=10,
                 denoising_end=0.8,
                 output_type="latent",
             )
-            refiner_instance.__call__.assert_called_once_with(
+            refiner_instance.assert_called_once_with(
                 prompt="prompt",
                 num_inference_steps=10,
                 denoising_start=0.8,
