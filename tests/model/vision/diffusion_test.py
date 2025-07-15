@@ -132,5 +132,31 @@ class TextToImageDiffusionModelCallTestCase(IsolatedAsyncioTestCase):
             inf_mock.assert_called_once_with()
 
 
+class TextToImageDiffusionModelBaseMethodsTestCase(TestCase):
+    def test_load_tokenizer_not_implemented(self) -> None:
+        settings = TransformerEngineSettings(
+            auto_load_model=False,
+            auto_load_tokenizer=False,
+            refiner_model_id="ref",
+        )
+        with patch.object(Engine, "get_default_device", return_value="cpu"):
+            model = TextToImageDiffusionModel("id", settings)
+
+        with self.assertRaises(NotImplementedError):
+            model._load_tokenizer(None, True)
+
+    def test_tokenize_input_not_implemented(self) -> None:
+        settings = TransformerEngineSettings(
+            auto_load_model=False,
+            auto_load_tokenizer=False,
+            refiner_model_id="ref",
+        )
+        with patch.object(Engine, "get_default_device", return_value="cpu"):
+            model = TextToImageDiffusionModel("id", settings)
+
+        with self.assertRaises(NotImplementedError):
+            model._tokenize_input("in")
+
+
 if __name__ == "__main__":
     main()
