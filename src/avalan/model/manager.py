@@ -453,7 +453,11 @@ class ModelManager(ContextDecorator):
                     vision=OperationVisionParameters(
                         path=args.path,
                         system_prompt=system_prompt,
-                        width=args.image_width,
+                        width=getattr(
+                            args,
+                            "vision_width",
+                            getattr(args, "image_width", None),
+                        ),
                     )
                 )
 

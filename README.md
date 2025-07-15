@@ -227,6 +227,7 @@ echo "Transcribe the text on this image, keeping format" | \
     avalan model run "ai://local/google/gemma-3-12b-it" \
         --modality vision_image_text_to_text \
         --path docs/examples/typewritten_partial_sheet.jpg \
+        --vision-width 512 \
         --max-new-tokens 1024
 ```
 
@@ -246,7 +247,8 @@ Detect objects in an image and list them with accuracy scores:
 ```bash
 avalan model run "facebook/detr-resnet-50" \
     --modality vision_object_detection \
-    --path docs/examples/kitchen.jpg
+    --path docs/examples/kitchen.jpg \
+    --vision-threshold 0.3
 ```
 
 Results are sorted by accuracy and include bounding boxes:

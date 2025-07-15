@@ -975,7 +975,8 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
-            "--image-threshold",
+            "--vision-threshold",
+            dest="vision_threshold",
             default=0.3,
             type=float,
             help=(
@@ -984,7 +985,8 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
-            "--image-width",
+            "--vision-width",
+            dest="vision_width",
             type=int,
             help=(
                 "Resize input image to this width before processing. "

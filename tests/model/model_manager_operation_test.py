@@ -29,7 +29,7 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
             skip_special_tokens=False,
             system=None,
             display_tokens=0,
-            image_width=256,
+            vision_width=256,
             vision_threshold=0.5,
             do_sample=False,
             enable_gradient_calculation=False,

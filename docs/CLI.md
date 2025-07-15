@@ -2088,8 +2088,8 @@ DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--audio-reference-path AUDIO_REFERENCE_PATH]
                         [--audio-reference-text AUDIO_REFERENCE_TEXT]
                         [--audio-sampling-rate AUDIO_SAMPLING_RATE]
-                        [--image-threshold IMAGE_THRESHOLD]
-                        [--image-width IMAGE_WIDTH] [--do-sample]
+                        [--vision-threshold VISION_THRESHOLD]
+                        [--vision-width VISION_WIDTH] [--do-sample]
                         [--enable-gradient-calculation] [--use-cache]
                         [--max-new-tokens MAX_NEW_TOKENS]
                         [--modality 
@@ -2207,10 +2207,10 @@ gather,local_packed_rowwise,sequence_parallel,replicate}
   --audio-sampling-rate AUDIO_SAMPLING_RATE
                         Sampling rate to use for audio generation. Only
                         applicable to audio modalities.
-  --image-threshold IMAGE_THRESHOLD
+  --vision-threshold VISION_THRESHOLD
                         Score threshold for object detection. Only applicable
                         to vision modalities.
-  --image-width IMAGE_WIDTH
+  --vision-width VISION_WIDTH
                         Resize input image to this width before processing.
                         Only applicable to vision image text to text modality.
   --do-sample           Tell if the token generation process should be
