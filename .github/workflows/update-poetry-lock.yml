@@ -20,7 +20,6 @@ jobs:
           fetch-depth: 0
 
       - name: Import GPG key
-        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
         uses: crazy-max/ghaction-import-gpg@v5
         with:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
