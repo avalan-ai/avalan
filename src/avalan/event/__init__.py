@@ -31,6 +31,8 @@ class EventType(StrEnum):
     MODEL_EXECUTE_AFTER = "model_execute_after"
     MODEL_MANAGER_CALL_BEFORE = "model_manager_call_before"
     MODEL_MANAGER_CALL_AFTER = "model_manager_call_after"
+    FLOW_MANAGER_CALL_BEFORE = "flow_manager_call_before"
+    FLOW_MANAGER_CALL_AFTER = "flow_manager_call_after"
     START = "start"
     STREAM_END = "stream_end"
     TOKEN_GENERATED = "token_generated"
