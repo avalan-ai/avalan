@@ -113,7 +113,7 @@ class TextGenerationModelTestCase(TestCase):
                 auto_model_mock.assert_called_once_with(
                     model_id,
                     cache_dir=None,
-                    subfolder=None,
+                    subfolder="",
                     attn_implementation=None,
                     trust_remote_code=False,
                     torch_dtype="auto",

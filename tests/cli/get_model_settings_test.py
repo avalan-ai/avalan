@@ -47,6 +47,7 @@ class GetModelSettingsTestCase(unittest.TestCase):
             "tokens": ["t"],
             "subfolder": "model_sub",
             "tokenizer_subfolder": "tok_sub",
+            "refiner_model_id": None,
             "trust_remote_code": True,
             "weight_type": "fp16",
         }
