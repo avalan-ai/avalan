@@ -14,15 +14,14 @@ from avalan.tool.browser import BrowserToolSettings
 class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
     async def test_file_not_found(self):
         stack = AsyncExitStack()
+        loader = OrchestratorLoader(
+            hub=MagicMock(spec=HuggingfaceHub),
+            logger=MagicMock(spec=Logger),
+            participant_id=uuid4(),
+            stack=stack,
+        )
         with self.assertRaises(FileNotFoundError):
-            await OrchestratorLoader.from_file(
-                "missing.toml",
-                agent_id=uuid4(),
-                hub=MagicMock(spec=HuggingfaceHub),
-                logger=MagicMock(spec=Logger),
-                participant_id=uuid4(),
-                stack=stack,
-            )
+            await loader.from_file("missing.toml", agent_id=uuid4())
         await stack.aclose()
 
     async def test_permission_error(self):
@@ -33,15 +32,14 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         chmod(path, 0)
         stack = AsyncExitStack()
         try:
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
             with self.assertRaises(PermissionError):
-                await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
-                    hub=MagicMock(spec=HuggingfaceHub),
-                    logger=MagicMock(spec=Logger),
-                    participant_id=uuid4(),
-                    stack=stack,
-                )
+                await loader.from_file(path, agent_id=uuid4())
         finally:
             chmod(path, 0o644)
         await stack.aclose()
@@ -54,15 +52,14 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             patch("avalan.agent.loader.exists", return_value=True),
             patch("avalan.agent.loader.access", return_value=False),
         ):
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
             with self.assertRaises(PermissionError):
-                await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
-                    hub=MagicMock(spec=HuggingfaceHub),
-                    logger=MagicMock(spec=Logger),
-                    participant_id=uuid4(),
-                    stack=stack,
-                )
+                await loader.from_file(path, agent_id=uuid4())
         await stack.aclose()
 
     async def test_load_default_orchestrator(self):
@@ -128,13 +125,15 @@ uri = \"ai://local/model\"
                     return_value=event_manager,
                 ),
             ):
-                result = await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                     disable_memory=True,
                 )
 
@@ -214,13 +213,15 @@ debug = true
                     return_value=event_manager,
                 ),
             ):
-                await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                     disable_memory=True,
                 )
 
@@ -294,13 +295,15 @@ engine = \"chromium\"
                     return_value=event_manager,
                 ),
             ):
-                await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                     disable_memory=True,
                 )
 
@@ -372,13 +375,15 @@ value = { type = \"string\", description = \"d\" }
                     return_value=event_manager,
                 ),
             ):
-                result = await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                     disable_memory=True,
                 )
 
@@ -401,15 +406,14 @@ uri = \"ai://local/model\"
                 fh.write(config)
 
             stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
             with self.assertRaises(AssertionError):
-                await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
-                    hub=MagicMock(spec=HuggingfaceHub),
-                    logger=MagicMock(spec=Logger),
-                    participant_id=uuid4(),
-                    stack=stack,
-                )
+                await loader.from_file(path, agent_id=uuid4())
         await stack.aclose()
 
     async def test_sentence_model_engine_config(self):
@@ -438,16 +442,18 @@ backend = "onnx"
 
             with patch.object(
                 OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value="orch"),
             ) as lfs_patch:
-                result = await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                 )
 
                 self.assertEqual(result, "orch")
@@ -489,16 +495,18 @@ debug_source = \"{debug_path}\"
 
             with patch.object(
                 OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value="orch"),
             ) as lfs_patch:
-                result = await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                 )
 
                 self.assertEqual(result, "orch")
@@ -536,16 +544,18 @@ value = { type = \"string\", description = \"d\" }
 
             with patch.object(
                 OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value="orch"),
             ) as lfs_patch:
-                result = await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                 )
 
                 self.assertEqual(result, "orch")
@@ -579,16 +589,18 @@ enable_thinking = true
 
             with patch.object(
                 OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value="orch"),
             ) as lfs_patch:
-                result = await OrchestratorLoader.from_file(
-                    path,
-                    agent_id=uuid4(),
+                loader = OrchestratorLoader(
                     hub=hub,
                     logger=logger,
                     participant_id=uuid4(),
                     stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
                 )
 
                 self.assertEqual(result, "orch")
@@ -636,16 +648,18 @@ permanent = {{ {entries} }}
                     stack = AsyncExitStack()
                     with patch.object(
                         OrchestratorLoader,
-                        "load_from_settings",
+                        "from_settings",
                         new=AsyncMock(return_value="orch"),
                     ) as lfs_patch:
-                        result = await OrchestratorLoader.from_file(
-                            path,
-                            agent_id=uuid4(),
+                        loader = OrchestratorLoader(
                             hub=MagicMock(spec=HuggingfaceHub),
                             logger=MagicMock(spec=Logger),
                             participant_id=uuid4(),
                             stack=stack,
+                        )
+                        result = await loader.from_file(
+                            path,
+                            agent_id=uuid4(),
                         )
 
                         self.assertEqual(result, "orch")
@@ -718,13 +732,13 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 "avalan.agent.loader.EventManager", return_value=event_manager
             ),
         ):
-            result = await OrchestratorLoader.load_from_settings(
-                settings,
+            loader = OrchestratorLoader(
                 hub=hub,
                 logger=logger,
                 participant_id=uuid4(),
                 stack=stack,
             )
+            result = await loader.from_settings(settings)
 
             self.assertEqual(result, "orch")
             orch_patch.assert_called_once()
@@ -819,13 +833,13 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                         return_value=event_manager,
                     ),
                 ):
-                    await OrchestratorLoader.load_from_settings(
-                        settings,
+                    loader = OrchestratorLoader(
                         hub=hub,
                         logger=logger,
                         participant_id=uuid4(),
                         stack=stack,
                     )
+                    await loader.from_settings(settings)
 
                     self.assertEqual(pg_patch.await_count, len(case))
                     self.assertEqual(
@@ -901,13 +915,13 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 "avalan.agent.loader.EventManager", return_value=event_manager
             ),
         ):
-            result = await OrchestratorLoader.load_from_settings(
-                settings,
+            loader = OrchestratorLoader(
                 hub=hub,
                 logger=logger,
                 participant_id=uuid4(),
                 stack=stack,
             )
+            result = await loader.from_settings(settings)
 
             self.assertEqual(result, "json_orch")
             json_patch.assert_called_once()

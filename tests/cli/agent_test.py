@@ -142,7 +142,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_cmds.OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value=orch),
             ) as lfs,
             patch.object(
@@ -248,7 +248,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_cmds.OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value=orch),
             ) as lfs,
             patch.object(
@@ -667,7 +667,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_cmds.OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value=self.orch),
             ) as fs_patch,
             patch.object(
@@ -706,7 +706,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_cmds.OrchestratorLoader,
-                "load_from_settings",
+                "from_settings",
                 new=AsyncMock(return_value=self.orch),
             ) as fs_patch,
             patch.object(
