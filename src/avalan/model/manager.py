@@ -37,6 +37,7 @@ from ..model.vision.image import (
 from ..model.vision.diffusion import TextToImageDiffusionModel
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
+from ..tool.manager import ToolManager
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from argparse import Namespace
@@ -97,6 +98,7 @@ class ModelManager(ContextDecorator):
         modality: Modality,
         model: ModelType,
         operation: Operation,
+        tool: ToolManager | None = None
     ):
         stopping_criteria = (
             KeywordStoppingCriteria(
@@ -179,6 +181,7 @@ class ModelManager(ContextDecorator):
                         skip_special_tokens=operation.parameters[
                             "text"
                         ].skip_special_tokens,
+                        tool=tool
                     )
                 else:
                     result = await model(
@@ -187,6 +190,7 @@ class ModelManager(ContextDecorator):
                             "text"
                         ].system_prompt,
                         settings=operation.generation_settings,
+                        tool=tool
                     )
 
             case Modality.TEXT_QUESTION_ANSWERING:
@@ -566,9 +570,12 @@ class ModelManager(ContextDecorator):
         low_cpu_mem_usage: bool = False,
         parallel: ParallelStrategy | None = None,
         quiet: bool = False,
+        refiner_model_id: str | None = None,
         revision: str | None = None,
         special_tokens: list[str] | None = None,
+        subfolder: str | None = None,
         tokenizer: str | None = None,
+        tokenizer_subfolder: str | None = None,
         tokens: list[str] | None = None,
         trust_remote_code: bool | None = None,
         weight_type: WeightType = "auto",
@@ -581,9 +588,12 @@ class ModelManager(ContextDecorator):
             low_cpu_mem_usage=low_cpu_mem_usage,
             loader_class=loader_class,
             parallel=parallel,
+            refiner_model_id=refiner_model_id or None,
             revision=revision,
             special_tokens=special_tokens or None,
+            subfolder=subfolder or None,
             tokenizer_name_or_path=tokenizer,
+            tokenizer_subfolder=tokenizer_subfolder or None,
             tokens=tokens or None,
             weight_type=weight_type,
         )

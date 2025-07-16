@@ -345,6 +345,24 @@ The output lists each annotation:
 └──────────────────┘
 ```
 
+#### Text to Image
+
+Create an image based off your prompt:
+
+```bash
+echo 'Leo Messi petting a purring tubby cat' | \
+    avalan model run "stabilityai/stable-diffusion-xl-base-1.0" \
+        --modality vision_text_to_image \
+        --refiner-model "stabilityai/stable-diffusion-xl-refiner-1.0" \
+        --weight "fp16" \
+        --path example_generated.jpg \
+        --vision-color-model RGB \
+        --vision-image-format JPEG \
+        --vision-high-noise-frac 0.8 \
+        --vision-steps 150
+```
+
+Look at the generated image of Leo Messi petting a cute cat:
 
 ## Tools
 

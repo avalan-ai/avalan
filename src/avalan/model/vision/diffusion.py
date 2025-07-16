@@ -95,7 +95,7 @@ class TextToImageDiffusionModel(TransformerModel):
         color_model: VisionColorModel = VisionColorModel.RGB,
         high_noise_frac: float = 0.8,
         image_format: VisionImageFormat = VisionImageFormat.JPEG,
-        n_steps: int = 40,
+        n_steps: int = 150,
         output_type: Literal["latent"] = "latent",
     ) -> str:
         assert (

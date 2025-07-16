@@ -951,6 +951,14 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--refiner-model",
+            type=str,
+            help=(
+                "Expert model to use for refinement. "
+                "Only applicable to vision text to image modality."
+            ),
+        )
+        model_run_parser.add_argument(
             "--audio-reference-path",
             type=str,
             help=(
@@ -1021,17 +1029,19 @@ class CLI:
             default=0.8,
             type=float,
             help=(
-                "High noise fraction for diffusion. "
+                "High noise fraction for diffusion (controls the split "
+                "point between the base model and the refiner. "
                 "Only applicable to vision text to image modality."
             ),
         )
         model_run_parser.add_argument(
             "--vision-steps",
             dest="vision_steps",
-            default=40,
+            default=150,
             type=int,
             help=(
-                "Number of inference steps for diffusion. "
+                "Number of denoising (sampling) iterations in the "
+                "diffusion scheduler. "
                 "Only applicable to vision text to image modality."
             ),
         )

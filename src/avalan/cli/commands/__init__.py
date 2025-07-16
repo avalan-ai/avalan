@@ -24,9 +24,9 @@ def get_model_settings(
         or Modality.TEXT_GENERATION
     )
     return dict(
-        base_url=args.base_url if hasattr(args, "base_url") else None,
+        base_url=getattr(args, "base_url", None),
         engine_uri=engine_uri,
-        attention=args.attention if hasattr(args, "attention") else None,
+        attention=getattr(args, "attention", None),
         device=args.device,
         disable_loading_progress_bar=args.disable_loading_progress_bar,
         modality=modality,
@@ -34,7 +34,8 @@ def get_model_settings(
         low_cpu_mem_usage=args.low_cpu_mem_usage,
         quiet=args.quiet,
         revision=args.revision,
-        parallel=args.parallel if hasattr(args, "parallel") else None,
+        parallel=getattr(args, "parallel", None),
+        refiner_model_id=getattr(args, "refiner_model", None),
         special_tokens=(
             args.special_token
             if args.special_token and isinstance(args.special_token, list)
@@ -44,16 +45,8 @@ def get_model_settings(
         tokens=(
             args.token if args.token and isinstance(args.token, list) else None
         ),
-        subfolder=args.subfolder if hasattr(args, "subfolder") else None,
-        tokenizer_subfolder=(
-            args.tokenizer_subfolder
-            if hasattr(args, "tokenizer_subfolder")
-            else None
-        ),
-        trust_remote_code=(
-            args.trust_remote_code
-            if hasattr(args, "trust_remote_code")
-            else None
-        ),
+        subfolder=getattr(args, "subfolder", None),
+        tokenizer_subfolder=getattr(args, "tokenizer_subfolder", None),
+        trust_remote_code=getattr(args, "trust_remote_code", None),
         weight_type=args.weight_type,
     )
