@@ -218,6 +218,12 @@ async def agent_message_search(
     limit = args.limit
 
     async with AsyncExitStack() as stack:
+        loader = OrchestratorLoader(
+            hub=hub,
+            logger=logger,
+            participant_id=participant_id,
+            stack=stack,
+        )
         with console.status(
             _("Loading agent..."),
             spinner=theme.get_spinner("agent_loading"),
@@ -230,13 +236,9 @@ async def agent_message_search(
                     participant_id,
                 )
 
-                orchestrator = await OrchestratorLoader.from_file(
+                orchestrator = await loader.from_file(
                     specs_path,
                     agent_id=agent_id,
-                    hub=hub,
-                    logger=logger,
-                    participant_id=participant_id,
-                    stack=stack,
                 )
             else:
                 assert (
@@ -257,12 +259,8 @@ async def agent_message_search(
                 browser_settings = get_tool_settings(
                     args, prefix="browser", settings_cls=BrowserToolSettings
                 )
-                orchestrator = await OrchestratorLoader.load_from_settings(
+                orchestrator = await loader.from_settings(
                     settings,
-                    hub=hub,
-                    logger=logger,
-                    participant_id=participant_id,
-                    stack=stack,
                     browser_settings=browser_settings,
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
@@ -352,6 +350,12 @@ async def agent_run(
             event_stats.triggers[event.type] += 1
 
     async def _init_orchestrator() -> Orchestrator:
+        loader = OrchestratorLoader(
+            hub=hub,
+            logger=logger,
+            participant_id=participant_id,
+            stack=stack,
+        )
         if specs_path:
             logger.debug(
                 "Loading agent from %s for participant %s",
@@ -359,13 +363,9 @@ async def agent_run(
                 participant_id,
             )
 
-            orchestrator = await OrchestratorLoader.from_file(
+            orchestrator = await loader.from_file(
                 specs_path,
                 agent_id=agent_id,
-                hub=hub,
-                logger=logger,
-                participant_id=participant_id,
-                stack=stack,
                 disable_memory=args.no_session,
             )
         else:
@@ -388,12 +388,8 @@ async def agent_run(
             browser_settings = get_tool_settings(
                 args, prefix="browser", settings_cls=BrowserToolSettings
             )
-            orchestrator = await OrchestratorLoader.load_from_settings(
+            orchestrator = await loader.from_settings(
                 settings,
-                hub=hub,
-                logger=logger,
-                participant_id=participant_id,
-                stack=stack,
                 browser_settings=browser_settings,
             )
         orchestrator.event_manager.add_listener(_event_listener)
@@ -567,16 +563,18 @@ async def agent_serve(
     ), "specifications file or --engine-uri must be specified"
 
     async with AsyncExitStack() as stack:
+        loader = OrchestratorLoader(
+            hub=hub,
+            logger=logger,
+            participant_id=uuid4(),
+            stack=stack,
+        )
         if specs_path:
             logger.debug("Loading agent from %s", specs_path)
 
-            orchestrator = await OrchestratorLoader.from_file(
+            orchestrator = await loader.from_file(
                 specs_path,
                 agent_id=uuid4(),
-                hub=hub,
-                logger=logger,
-                participant_id=uuid4(),
-                stack=stack,
             )
         else:
             assert args.role
@@ -593,12 +591,8 @@ async def agent_serve(
             browser_settings = get_tool_settings(
                 args, prefix="browser", settings_cls=BrowserToolSettings
             )
-            orchestrator = await OrchestratorLoader.load_from_settings(
+            orchestrator = await loader.from_settings(
                 settings,
-                hub=hub,
-                logger=logger,
-                participant_id=uuid4(),
-                stack=stack,
                 browser_settings=browser_settings,
             )
         orchestrator = await stack.enter_async_context(orchestrator)

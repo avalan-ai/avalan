@@ -34,19 +34,32 @@ class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE = 125
     DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
 
-    @classmethod
-    async def from_file(
-        cls,
-        path: str,
-        *args,
-        agent_id: UUID | None,
+    _hub: HuggingfaceHub
+    _logger: Logger
+    _participant_id: UUID
+    _stack: AsyncExitStack
+
+    def __init__(
+        self,
+        *,
         hub: HuggingfaceHub,
         logger: Logger,
         participant_id: UUID,
         stack: AsyncExitStack,
+    ) -> None:
+        self._hub = hub
+        self._logger = logger
+        self._participant_id = participant_id
+        self._stack = stack
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: UUID | None,
         disable_memory: bool = False,
     ) -> Orchestrator:
-        _l = cls._log_wrapper(logger)
+        _l = self._log_wrapper(self._logger)
 
         if not exists(path):
             raise FileNotFoundError(path)
@@ -223,27 +236,18 @@ class OrchestratorLoader:
                     )
                 browser_settings = BrowserToolSettings(**tool_config)
 
-            return await cls.load_from_settings(
+            return await self.from_settings(
                 settings,
-                hub=hub,
-                logger=logger,
-                participant_id=participant_id,
-                stack=stack,
                 browser_settings=browser_settings,
             )
 
-    @classmethod
-    async def load_from_settings(
-        cls,
+    async def from_settings(
+        self,
         settings: OrchestratorSettings,
         *,
-        hub: HuggingfaceHub,
-        logger: Logger,
-        participant_id: UUID,
-        stack: AsyncExitStack,
         browser_settings: BrowserToolSettings | None = None,
     ) -> Orchestrator:
-        _l = cls._log_wrapper(logger)
+        _l = self._log_wrapper(self._logger)
 
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)
@@ -260,9 +264,9 @@ class OrchestratorLoader:
         sentence_model = SentenceTransformerModel(
             model_id=settings.sentence_model_id,
             settings=sentence_model_engine_settings,
-            logger=logger,
+            logger=self._logger,
         )
-        sentence_model = stack.enter_context(sentence_model)
+        sentence_model = self._stack.enter_context(sentence_model)
 
         _l(
             "Loading text partitioner for model %s for agent %s with settings"
@@ -276,7 +280,7 @@ class OrchestratorLoader:
 
         text_partitioner = TextPartitioner(
             model=sentence_model,
-            logger=logger,
+            logger=self._logger,
             max_tokens=settings.sentence_model_max_tokens,
             overlap_size=settings.sentence_model_overlap_size,
             window_size=settings.sentence_model_window_size,
@@ -294,9 +298,9 @@ class OrchestratorLoader:
 
         memory = await MemoryManager.create_instance(
             agent_id=settings.agent_id,
-            participant_id=participant_id,
+            participant_id=self._participant_id,
             text_partitioner=text_partitioner,
-            logger=logger,
+            logger=self._logger,
             with_permanent_message_memory=settings.memory_permanent_message,
             with_recent_message_memory=settings.memory_recent,
             event_manager=event_manager,
@@ -309,7 +313,7 @@ class OrchestratorLoader:
                 settings.agent_id,
             )
             store = await PgsqlRawMemory.create_instance(
-                dsn=dsn, logger=logger
+                dsn=dsn, logger=self._logger
             )
             memory.add_permanent_memory(namespace, store)
 
@@ -339,7 +343,7 @@ class OrchestratorLoader:
             enable_tools=settings.tools,
             settings=ToolManagerSettings(),
         )
-        tool = await stack.enter_async_context(tool)
+        tool = await self._stack.enter_async_context(tool)
 
         _l(
             "Creating orchestrator %s #%s",
@@ -347,8 +351,10 @@ class OrchestratorLoader:
             settings.agent_id,
         )
 
-        model_manager = ModelManager(hub, logger, event_manager=event_manager)
-        model_manager = stack.enter_context(model_manager)
+        model_manager = ModelManager(
+            self._hub, self._logger, event_manager=event_manager
+        )
+        model_manager = self._stack.enter_context(model_manager)
 
         engine_uri = model_manager.parse_uri(settings.uri)
         engine_settings = model_manager.get_engine_settings(
@@ -360,11 +366,11 @@ class OrchestratorLoader:
 
         if settings.orchestrator_type == "json":
             assert settings.json_config is not None
-            agent = cls._load_json_orchestrator(
+            agent = self._load_json_orchestrator(
                 agent_id=settings.agent_id,
                 engine_uri=engine_uri,
                 engine_settings=engine_settings,
-                logger=logger,
+                logger=self._logger,
                 model_manager=model_manager,
                 memory=memory,
                 tool=tool,
@@ -377,7 +383,7 @@ class OrchestratorLoader:
         else:
             agent = DefaultOrchestrator(
                 engine_uri,
-                logger,
+                self._logger,
                 model_manager,
                 memory,
                 tool,
