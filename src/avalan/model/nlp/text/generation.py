@@ -83,7 +83,7 @@ class TextGenerationModel(BaseNLPModel):
         model = loader.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder,
+            subfolder=self._settings.subfolder or "",
             attn_implementation=self._settings.attention,
             trust_remote_code=self._settings.trust_remote_code,
             state_dict=self._settings.state_dict,

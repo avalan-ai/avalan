@@ -39,7 +39,7 @@ class BaseNLPModel(TransformerModel, ABC):
         "ui8": uint8,
         "auto": "auto",
     }
-    
+
     def _generate_output(
         self,
         inputs: dict[str, Tensor] | Tensor,
