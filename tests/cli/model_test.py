@@ -58,6 +58,7 @@ class CliModelTestCase(TestCase):
             "tokens": ["t"],
             "subfolder": None,
             "tokenizer_subfolder": None,
+            "refiner_model_id": None,
             "trust_remote_code": True,
             "weight_type": "fp16",
         }

@@ -110,6 +110,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         "manual_sampling": False,
                         "pick": 0,
                         "skip_special_tokens": False,
+                        "tool": None,
                     },
                 ),
             ),
