@@ -113,6 +113,45 @@ class ToolFormat(StrEnum):
     OPENAI = "openai"
 
 
+class VisionColorModel(StrEnum):
+    ONE = "1"
+    L = "L"
+    LA = "LA"
+    P = "P"
+    PA = "PA"
+    RGB = "RGB"
+    RGBA = "RGBA"
+    RGBX = "RGBX"
+    CMYK = "CMYK"
+    YCBCR = "YCbCr"
+    LAB = "LAB"
+    HSV = "HSV"
+    INTENSITY = "I"
+    FLOAT = "F"
+
+
+class VisionImageFormat(StrEnum):
+    BMP = "BMP"
+    DDS = "DDS"
+    EPS = "EPS"
+    GIF = "GIF"
+    ICNS = "ICNS"
+    ICO = "ICO"
+    IM = "IM"
+    JPEG = "JPEG"
+    JPEG2000 = "JPEG2000"
+    MSP = "MSP"
+    PCX = "PCX"
+    PNG = "PNG"
+    PPM = "PPM"
+    SGI = "SGI"
+    SPI = "SPI"
+    TGA = "TGA"
+    TIFF = "TIFF"
+    WEBP = "WEBP"
+    XBM = "XBM"
+
+
 @dataclass(frozen=True, kw_only=True)
 class EngineSettings:
     auto_load_model: bool = True
@@ -526,6 +565,10 @@ class OperationVisionParameters:
     system_prompt: str | None = None
     threshold: float | None = None
     width: int | None = None
+    color_model: VisionColorModel | None = None
+    high_noise_frac: float | None = None
+    image_format: VisionImageFormat | None = None
+    n_steps: int | None = None
 
 
 class OperationParameters(TypedDict, total=False):

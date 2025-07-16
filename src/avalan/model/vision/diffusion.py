@@ -1,5 +1,10 @@
 from ...compat import override
-from ...entities import Input, TransformerEngineSettings
+from ...entities import (
+    Input,
+    TransformerEngineSettings,
+    VisionColorModel,
+    VisionImageFormat,
+)
 from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.transformer import TransformerModel
@@ -87,48 +92,21 @@ class TextToImageDiffusionModel(TransformerModel):
         prompt: str,
         path: str,
         *,
-        color_model: Literal[
-            "1",
-            "L",
-            "LA",
-            "P",
-            "PA",
-            "RGB",
-            "RGBA",
-            "RGBX",
-            "CMYK",
-            "YCbCr",
-            "LAB",
-            "HSV",
-            "I",
-            "F",
-        ] = "RGB",
+        color_model: VisionColorModel = VisionColorModel.RGB,
         high_noise_frac: float = 0.8,
-        image_format: Literal[
-            "BMP",
-            "DDS",
-            "EPS",
-            "GIF",
-            "ICNS",
-            "ICO",
-            "IM",
-            "JPEG",
-            "JPEG2000",
-            "MSP",
-            "PCX",
-            "PNG",
-            "PPM",
-            "SGI",
-            "SPI",
-            "TGA",
-            "TIFF",
-            "WEBP",
-            "XBM",
-        ] = "JPEG",
+        image_format: VisionImageFormat = VisionImageFormat.JPEG,
         n_steps: int = 40,
         output_type: Literal["latent"] = "latent",
     ) -> str:
-        assert prompt and path
+        assert (
+            prompt
+            and path
+            and color_model
+            and high_noise_frac is not None
+            and image_format
+            and n_steps
+            and output_type
+        )
 
         with inference_mode():
             image = self._base(
