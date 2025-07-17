@@ -155,3 +155,77 @@ class S3VectorsMessageMemoryTestCase(IsolatedAsyncioTestCase):
             )
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].score, 0.5)
+
+    async def test_create_session(self):
+        memory = S3VectorsMessageMemory(
+            bucket="b", collection="c", client=MagicMock(), logger=MagicMock()
+        )
+        sid = UUID("22222222-2222-2222-2222-222222222222")
+        with patch(
+            "avalan.memory.permanent.s3vectors.message.uuid4",
+            return_value=sid,
+        ):
+            result = await memory.create_session(
+                agent_id=uuid4(), participant_id=uuid4()
+            )
+        self.assertEqual(result, sid)
+
+    async def test_continue_session_and_get_id(self):
+        memory = S3VectorsMessageMemory(
+            bucket="b", collection="c", client=MagicMock(), logger=MagicMock()
+        )
+        sid = uuid4()
+        result = await memory.continue_session_and_get_id(
+            agent_id=uuid4(), participant_id=uuid4(), session_id=sid
+        )
+        self.assertEqual(result, sid)
+
+    async def test_search_messages_missing_metadata(self):
+        client = MagicMock()
+        msg_id1 = uuid4()
+        msg_id2 = uuid4()
+        part = TextPartition(
+            data="x", embeddings=np.array([0.1]), total_tokens=1
+        )
+        client.query_vector.return_value = {
+            "Items": [
+                {},
+                {"Metadata": {}},
+                {"Metadata": {"message_id": str(msg_id1)}, "Score": 0.1},
+                {"Metadata": {"message_id": str(msg_id2)}, "Score": 0.2},
+            ]
+        }
+        client.get_object.return_value = {
+            "Body": MagicMock(
+                read=MagicMock(
+                    return_value=b'{"agent_id": "'
+                    + str(uuid4()).encode()
+                    + b'", "model_id": "m", "author": "user", "data": "hi"}'
+                )
+            )
+        }
+        memory = S3VectorsMessageMemory(
+            bucket="b", collection="c", client=client, logger=MagicMock()
+        )
+        with (
+            patch(
+                "avalan.memory.permanent.s3vectors.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.s3vectors.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+        ):
+            result = await memory.search_messages(
+                search_partitions=[part],
+                agent_id=uuid4(),
+                session_id=None,
+                participant_id=uuid4(),
+                function=VectorFunction.L2_DISTANCE,
+                limit=4,
+                search_user_messages=True,
+                exclude_session_id=None,
+            )
+        self.assertEqual(len(result), 2)
+        self.assertEqual(client.get_object.call_count, 2)
