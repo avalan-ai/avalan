@@ -31,6 +31,7 @@ class TextToImageDiffusionModel(TransformerModel):
         logger: Logger | None = None,
     ):
         settings = settings or TransformerEngineSettings()
+        assert settings.refiner_model_id
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
 
