@@ -374,7 +374,7 @@ description = "The AWS SDK for Python"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"secrets\" or extra == \"all\""
+markers = "extra == \"memory\" or extra == \"test\" or extra == \"secrets\" or extra == \"all\""
 files = [
     {file = "boto3-1.39.3-py3-none-any.whl", hash = "sha256:056cfa2440fe1a157a7c2be897c749c83e1a322144aa4dad889f2fca66571019"},
     {file = "boto3-1.39.3.tar.gz", hash = "sha256:0a367106497649ae3d8a7b571b8c3be01b7b935a0fe303d4cc2574ed03aecbb4"},
@@ -395,7 +395,7 @@ description = "Low-level, data-driven core of boto 3."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"secrets\" or extra == \"all\""
+markers = "extra == \"memory\" or extra == \"test\" or extra == \"secrets\" or extra == \"all\""
 files = [
     {file = "botocore-1.39.3-py3-none-any.whl", hash = "sha256:66a81cfac18ad5e9f47696c73fdf44cdbd8f8ca51ab3fca1effca0aabf61f02f"},
     {file = "botocore-1.39.3.tar.gz", hash = "sha256:da8f477e119f9f8a3aaa8b3c99d9c6856ed0a243680aa3a3fbbfc15a8d4093fb"},
@@ -1430,7 +1430,7 @@ description = "Read metadata from Python packages"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"test\" or extra == \"secrets\" or extra == \"all\" or extra == \"vendors\" or extra == \"vision\")"
+markers = "python_version == \"3.11\" and (extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\" or extra == \"secrets\") or extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\""
 files = [
     {file = "importlib_metadata-8.0.0-py3-none-any.whl", hash = "sha256:15584cf2b1bf449d98ff8a6ff1abef57bf20f3ac6454f431736cd3e660921b2f"},
     {file = "importlib_metadata-8.0.0.tar.gz", hash = "sha256:188bd24e4c346d3f0a933f275c2fec67050326a856b9a359881d7c2a697e8812"},
@@ -1667,7 +1667,7 @@ description = "JSON Matching Expressions"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"secrets\" or extra == \"all\""
+markers = "extra == \"memory\" or extra == \"test\" or extra == \"secrets\" or extra == \"all\""
 files = [
     {file = "jmespath-1.0.1-py3-none-any.whl", hash = "sha256:02e2e4cc71b5bcab88332eebf907519190dd9e6e82107fa7f83b1003a6252980"},
     {file = "jmespath-1.0.1.tar.gz", hash = "sha256:90261b206d6defd58fdd5e85f478bf633a2901798906be2ad389150c5c60edbe"},
@@ -4154,7 +4154,7 @@ description = "An Amazon S3 Transfer Manager"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"secrets\" or extra == \"all\""
+markers = "extra == \"memory\" or extra == \"test\" or extra == \"secrets\" or extra == \"all\""
 files = [
     {file = "s3transfer-0.13.0-py3-none-any.whl", hash = "sha256:0148ef34d6dd964d0d8cf4311b2b21c474693e57c2e069ec708ce043d2b527be"},
     {file = "s3transfer-0.13.0.tar.gz", hash = "sha256:f5e6db74eb7776a37208001113ea7aa97695368242b364d73e91c981ac522177"},
@@ -5366,7 +5366,7 @@ description = "Backport of pathlib-compatible object wrapper for zip files"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"test\" or extra == \"secrets\" or extra == \"all\" or extra == \"vendors\" or extra == \"vision\")"
+markers = "python_version == \"3.11\" and (extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\" or extra == \"secrets\") or extra == \"test\" or extra == \"vendors\" or extra == \"all\" or extra == \"vision\""
 files = [
     {file = "zipp-3.21.0-py3-none-any.whl", hash = "sha256:ac1bbe05fd2991f160ebce24ffbac5f6d11d83dc90891255885223d42b3cd931"},
     {file = "zipp-3.21.0.tar.gz", hash = "sha256:2c9958f6430a2040341a52eb608ed6dd93ef4392e02ffe219417c1b28b5dd1f4"},
@@ -5385,7 +5385,7 @@ agent = ["jinja2"]
 all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "diffusers", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
 audio = ["soundfile", "torchaudio"]
 cpu = ["accelerate"]
-memory = ["faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
+memory = ["boto3", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
 mlx = ["mlx-lm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
@@ -5400,4 +5400,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.11,<3.14"
-content-hash = "6d644fa28b231ced54c7f30e08c0cdec77cea7040ed8e2a87fb002e507b7efb0"
+content-hash = "cbde62212f90dadc2297adb51d5df53821bafae1e0355aa470bf524d2c487210"
