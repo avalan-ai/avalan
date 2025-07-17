@@ -9,14 +9,16 @@ es_stub.AsyncElasticsearch = MagicMock()
 es_stub.__spec__ = importlib.machinery.ModuleSpec("elasticsearch", loader=None)
 sys.modules.setdefault("elasticsearch", es_stub)
 
-from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import MemoryType
-from avalan.memory.permanent.elasticsearch.raw import ElasticsearchRawMemory
-from datetime import datetime, timezone
-import numpy as np
-from uuid import uuid4, UUID
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from avalan.memory.partitioner.text import TextPartition  # noqa: E402
+from avalan.memory.permanent import MemoryType  # noqa: E402
+from avalan.memory.permanent.elasticsearch.raw import (  # noqa: E402
+    ElasticsearchRawMemory,
+)
+from datetime import datetime, timezone  # noqa: E402
+import numpy as np  # noqa: E402
+from uuid import UUID, uuid4  # noqa: E402
+from unittest import IsolatedAsyncioTestCase  # noqa: E402
+from unittest.mock import AsyncMock, patch  # noqa: E402
 
 
 class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
@@ -153,6 +155,61 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
             )
         self.assertEqual(result, [])
         client.get.assert_not_called()
+
+    async def test_search_memories_missing_source(self):
+        mem_id_valid = uuid4()
+        mem_id_no_source = uuid4()
+        part = TextPartition(
+            data="y", embeddings=np.array([0.5]), total_tokens=1
+        )
+        client = MagicMock()
+        client.query_vector.return_value = {
+            "Items": [
+                {},
+                {"Metadata": {}},
+                {"Metadata": {"memory_id": str(mem_id_no_source)}},
+                {"Metadata": {"memory_id": str(mem_id_valid)}},
+            ]
+        }
+        client.get.side_effect = [
+            {},
+            {
+                "_source": {
+                    "id": str(mem_id_valid),
+                    "model_id": "m",
+                    "type": "raw",
+                    "participant_id": str(mem_id_valid),
+                    "namespace": "ns",
+                    "identifier": "id",
+                    "data": "d",
+                    "partitions": 1,
+                    "symbols": {},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            },
+        ]
+        memory = ElasticsearchRawMemory(
+            index="idx", client=client, logger=MagicMock()
+        )
+        with (
+            patch(
+                "avalan.memory.permanent.elasticsearch.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.elasticsearch.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+        ):
+            result = await memory.search_memories(
+                search_partitions=[part],
+                participant_id=mem_id_valid,
+                namespace="ns",
+                function=MemoryType.RAW,  # type: ignore[arg-type]
+                limit=4,
+            )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(client.get.call_count, 2)
 
     async def test_search_not_implemented(self):
         memory = ElasticsearchRawMemory(
