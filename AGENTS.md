@@ -13,6 +13,8 @@ and `pytest` for testing.
 - Prefer `type | None` instead of `Optional[type]` for optional values.
 - Use assertions to ensure argument validity.
 - Do not ignore exceptions unless instructed.
+- Don't use `from __future__ import annotations`.
+- Don't use inline imports unless instructed, imports should always be at the top.
 
 ### Coding Standards
 
