@@ -9,16 +9,16 @@ es_stub.AsyncElasticsearch = MagicMock()
 es_stub.__spec__ = importlib.machinery.ModuleSpec("elasticsearch", loader=None)
 sys.modules.setdefault("elasticsearch", es_stub)
 
-from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent.elasticsearch.message import (
+from avalan.memory.partitioner.text import TextPartition  # noqa: E402
+from avalan.memory.permanent.elasticsearch.message import (  # noqa: E402
     ElasticsearchMessageMemory,
 )
-from avalan.entities import EngineMessage, Message, MessageRole
-from avalan.memory.permanent import VectorFunction
-from uuid import uuid4, UUID
-import numpy as np
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from avalan.entities import EngineMessage, Message, MessageRole  # noqa: E402
+from avalan.memory.permanent import VectorFunction  # noqa: E402
+from uuid import UUID, uuid4  # noqa: E402
+import numpy as np  # noqa: E402
+from unittest import IsolatedAsyncioTestCase  # noqa: E402
+from unittest.mock import AsyncMock, patch  # noqa: E402
 
 
 class ElasticsearchMessageMemoryTestCase(IsolatedAsyncioTestCase):
@@ -232,4 +232,94 @@ class ElasticsearchMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 exclude_session_id=None,
             )
         self.assertEqual(len(result), 2)
+        self.assertEqual(client.get.call_count, 2)
+
+    async def test_get_recent_messages_missing_source(self):
+        client = MagicMock()
+        session_id = uuid4()
+        client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "agent_id": str(uuid4()),
+                            "model_id": "m",
+                            "author": "user",
+                            "data": "hi",
+                        },
+                        "_id": f"{session_id}/m1.json",
+                    },
+                    {"_id": f"{session_id}/m2.json"},
+                ]
+            }
+        }
+        memory = ElasticsearchMessageMemory(
+            index="idx", client=client, logger=MagicMock()
+        )
+        with (
+            patch(
+                "avalan.memory.permanent.elasticsearch.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.elasticsearch.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+        ):
+            result = await memory.get_recent_messages(
+                session_id=session_id, participant_id=uuid4(), limit=2
+            )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].message.content, "hi")
+
+    async def test_search_messages_missing_source(self):
+        client = MagicMock()
+        msg_id_valid = uuid4()
+        msg_id_no_source = uuid4()
+        part = TextPartition(
+            data="y", embeddings=np.array([0.5]), total_tokens=1
+        )
+        client.query_vector.return_value = {
+            "Items": [
+                {},
+                {"Metadata": {}},
+                {"Metadata": {"message_id": str(msg_id_no_source)}},
+                {"Metadata": {"message_id": str(msg_id_valid)}, "Score": 0.4},
+            ]
+        }
+        client.get.side_effect = [
+            {},
+            {
+                "_source": {
+                    "agent_id": str(uuid4()),
+                    "model_id": "m",
+                    "author": "user",
+                    "data": "hi",
+                }
+            },
+        ]
+        memory = ElasticsearchMessageMemory(
+            index="idx", client=client, logger=MagicMock()
+        )
+        with (
+            patch(
+                "avalan.memory.permanent.elasticsearch.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.elasticsearch.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+        ):
+            result = await memory.search_messages(
+                search_partitions=[part],
+                agent_id=uuid4(),
+                session_id=None,
+                participant_id=uuid4(),
+                function=VectorFunction.L2_DISTANCE,
+                limit=4,
+                search_user_messages=True,
+                exclude_session_id=None,
+            )
+        self.assertEqual(len(result), 1)
         self.assertEqual(client.get.call_count, 2)
