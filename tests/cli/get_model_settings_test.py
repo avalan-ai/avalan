@@ -42,6 +42,8 @@ class GetModelSettingsTestCase(unittest.TestCase):
             "low_cpu_mem_usage": True,
             "quiet": False,
             "revision": "rev",
+            "base_model_id": None,
+            "checkpoint": None,
             "special_tokens": ["<s>"],
             "tokenizer": "tok",
             "tokens": ["t"],
