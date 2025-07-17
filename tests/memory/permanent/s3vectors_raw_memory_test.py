@@ -50,6 +50,10 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
                 "avalan.memory.permanent.s3vectors.raw.to_thread",
                 AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
             ),
+            patch(
+                "avalan.memory.permanent.s3vectors.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
         ):
             await memory.append_with_partitions(
                 "ns",
@@ -93,9 +97,15 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         memory = S3VectorsRawMemory(
             bucket="b", collection="c", client=client, logger=MagicMock()
         )
-        with patch(
-            "avalan.memory.permanent.s3vectors.raw.to_thread",
-            AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+        with (
+            patch(
+                "avalan.memory.permanent.s3vectors.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.s3vectors.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
         ):
             result = await memory.search_memories(
                 search_partitions=[part],
@@ -116,9 +126,15 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         memory = S3VectorsRawMemory(
             bucket="b", collection="c", client=client, logger=MagicMock()
         )
-        with patch(
-            "avalan.memory.permanent.s3vectors.raw.to_thread",
-            AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+        with (
+            patch(
+                "avalan.memory.permanent.s3vectors.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.s3vectors.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
         ):
             result = await memory.search_memories(
                 search_partitions=[part],

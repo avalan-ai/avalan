@@ -7,7 +7,8 @@ from ....memory.permanent import (
     PermanentMemoryPartition,
     VectorFunction,
 )
-from asyncio import to_thread
+from . import S3VectorsMemory
+from asyncio import to_thread  # noqa: F401
 from datetime import datetime, timezone
 from json import dumps, loads
 from logging import Logger
@@ -17,7 +18,7 @@ from uuid import UUID, uuid4
 from boto3 import client as boto_client
 
 
-class S3VectorsRawMemory(PermanentMemory):
+class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
     _bucket: str
     _collection: str
     _client: Any
@@ -31,11 +32,14 @@ class S3VectorsRawMemory(PermanentMemory):
         client: Any,
         logger: Logger,
     ) -> None:
-        self._bucket = bucket
-        self._collection = collection
-        self._client = client
-        self._logger = logger
-        super().__init__(sentence_model=None)
+        S3VectorsMemory.__init__(
+            self,
+            bucket=bucket,
+            collection=collection,
+            client=client,
+            logger=logger,
+        )
+        PermanentMemory.__init__(self, sentence_model=None)
 
     @classmethod
     async def create_instance(
@@ -85,8 +89,7 @@ class S3VectorsRawMemory(PermanentMemory):
             symbols=symbols,
             created_at=now_utc,
         )
-        await to_thread(
-            self._client.put_object,
+        await self._put_object(
             Bucket=self._bucket,
             Key=f"{self._collection}/{entry.id}.json",
             Body=dumps(
@@ -113,8 +116,7 @@ class S3VectorsRawMemory(PermanentMemory):
                 embedding=p.embeddings,
                 created_at=now_utc,
             )
-            await to_thread(
-                self._client.put_vector,
+            await self._put_vector(
                 Bucket=self._bucket,
                 Collection=self._collection,
                 Id=f"{row.memory_id}:{row.partition}",
@@ -137,8 +139,7 @@ class S3VectorsRawMemory(PermanentMemory):
     ) -> list[Memory]:
         assert participant_id and namespace and search_partitions
         query = search_partitions[0].embeddings.tolist()
-        response = await to_thread(
-            self._client.query_vector,
+        response = await self._query_vector(
             Bucket=self._bucket,
             Collection=self._collection,
             QueryVector=query,
@@ -155,8 +156,7 @@ class S3VectorsRawMemory(PermanentMemory):
             mem_id = item.get("Metadata", {}).get("memory_id")
             if not mem_id:
                 continue
-            obj = await to_thread(
-                self._client.get_object,
+            obj = await self._get_object(
                 Bucket=self._bucket,
                 Key=f"{self._collection}/{mem_id}.json",
             )
