@@ -13,7 +13,7 @@ from ....memory.permanent import (
     PermanentMemoryPartition,
     VectorFunction,
 )
-from . import ElasticsearchMemory
+from . import ElasticsearchMemory, to_thread  # noqa: F401
 
 
 class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
