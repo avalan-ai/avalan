@@ -870,6 +870,53 @@ files = [
 ]
 
 [[package]]
+name = "elastic-transport"
+version = "8.17.1"
+description = "Transport classes and utilities shared among Python Elastic client libraries"
+optional = true
+python-versions = ">=3.8"
+groups = ["main"]
+markers = "extra == \"memory\" or extra == \"test\" or extra == \"all\""
+files = [
+    {file = "elastic_transport-8.17.1-py3-none-any.whl", hash = "sha256:192718f498f1d10c5e9aa8b9cf32aed405e469a7f0e9d6a8923431dbb2c59fb8"},
+    {file = "elastic_transport-8.17.1.tar.gz", hash = "sha256:5edef32ac864dca8e2f0a613ef63491ee8d6b8cfb52881fa7313ba9290cac6d2"},
+]
+
+[package.dependencies]
+certifi = "*"
+urllib3 = ">=1.26.2,<3"
+
+[package.extras]
+develop = ["aiohttp", "furo", "httpx", "opentelemetry-api", "opentelemetry-sdk", "orjson", "pytest", "pytest-asyncio", "pytest-cov", "pytest-httpserver", "pytest-mock", "requests", "respx", "sphinx (>2)", "sphinx-autodoc-typehints", "trustme"]
+
+[[package]]
+name = "elasticsearch"
+version = "9.0.2"
+description = "Python client for Elasticsearch"
+optional = true
+python-versions = ">=3.8"
+groups = ["main"]
+markers = "extra == \"memory\" or extra == \"test\" or extra == \"all\""
+files = [
+    {file = "elasticsearch-9.0.2-py3-none-any.whl", hash = "sha256:47cac1f0e5e7be8d8c6751a5d7818d416adfc11eac72f1b59e145930a87de880"},
+    {file = "elasticsearch-9.0.2.tar.gz", hash = "sha256:290e790153500d9f3cb66d74918ac70e9f96b5cd88147213859edca6ab5013f5"},
+]
+
+[package.dependencies]
+elastic-transport = ">=8.15.1,<9"
+python-dateutil = "*"
+typing-extensions = "*"
+
+[package.extras]
+async = ["aiohttp (>=3,<4)"]
+dev = ["aiohttp", "black", "build", "coverage", "isort", "jinja2", "mapbox-vector-tile", "mypy", "nltk", "nox", "numpy", "orjson", "pandas", "pyarrow", "pyright", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "python-dateutil", "pyyaml (>=5.4)", "requests (>=2,<3)", "sentence-transformers", "simsimd", "tqdm", "twine", "types-python-dateutil", "types-tqdm", "unasync"]
+docs = ["sphinx", "sphinx-autodoc-typehints", "sphinx-rtd-theme (>=2.0)"]
+orjson = ["orjson (>=3)"]
+pyarrow = ["pyarrow (>=1)"]
+requests = ["requests (>=2.4.0,!=2.32.2,<3.0.0)"]
+vectorstore-mmr = ["numpy (>=1)", "simsimd (>=3)"]
+
+[[package]]
 name = "faiss-cpu"
 version = "1.11.0"
 description = "A library for efficient similarity search and clustering of dense vectors."
@@ -5382,15 +5429,15 @@ type = ["pytest-mypy"]
 
 [extras]
 agent = ["jinja2"]
-all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "diffusers", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
+all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
 audio = ["soundfile", "torchaudio"]
 cpu = ["accelerate"]
-memory = ["boto3", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
+memory = ["boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
 mlx = ["mlx-lm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
-test = ["RestrictedPython", "boto3", "diffusers", "faiss-cpu", "fastapi", "huggingface-hub", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
+test = ["RestrictedPython", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "huggingface-hub", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
 tool = ["RestrictedPython", "playwright", "sympy", "youtube-transcript-api"]
 translation = ["protobuf", "sentencepiece", "tiktoken"]
 vendors = ["anthropic", "google-genai", "litellm", "openai", "pillow", "tiktoken"]
@@ -5400,4 +5447,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.11,<3.14"
-content-hash = "cbde62212f90dadc2297adb51d5df53821bafae1e0355aa470bf524d2c487210"
+content-hash = "46cf1cce843d8eabcc18771eb242c704b50cd3d05245ce13989c5c7391eccdd9"
