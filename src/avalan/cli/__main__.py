@@ -953,6 +953,23 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--checkpoint",
+            type=str,
+            help=(
+                "AnimateDiff motion adapter checkpoint to use. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--base-model",
+            type=str,
+            help=(
+                "ID of the base model for text-to-video generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+
+        model_run_parser.add_argument(
             "--refiner-model",
             type=str,
             help=(
@@ -1045,22 +1062,6 @@ class CLI:
                 "Number of denoising (sampling) iterations in the "
                 "diffusion scheduler. "
                 "Only applicable to vision text to image modality."
-            ),
-        )
-        model_run_parser.add_argument(
-            "--vision-checkpoint",
-            type=str,
-            help=(
-                "AnimateDiff motion adapter checkpoint to use. "
-                "Only applicable to vision text to video modality."
-            ),
-        )
-        model_run_parser.add_argument(
-            "--vision-base",
-            type=str,
-            help=(
-                "ID of the base model for text-to-video generation. "
-                "Only applicable to vision text to video modality."
             ),
         )
         model_run_parser.add_argument(
