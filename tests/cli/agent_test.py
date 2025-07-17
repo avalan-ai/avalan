@@ -6,7 +6,22 @@ from uuid import uuid4
 
 from rich.syntax import Syntax
 
-from avalan.entities import ToolCall
+from avalan.entities import (
+    ToolCall,
+    Message,
+    MessageRole,
+    GenerationSettings,
+    EngineUri,
+    Modality,
+    Operation,
+    OperationParameters,
+    OperationTextParameters,
+)
+from avalan.agent import Specification
+from avalan.agent.engine import EngineAgent
+from avalan.memory.manager import MemoryManager
+from avalan.event.manager import EventManager
+from avalan.tool.manager import ToolManager
 from avalan.cli.commands import agent as agent_cmds
 from avalan.event import Event, EventType
 from avalan.memory.permanent import VectorFunction
@@ -1032,6 +1047,130 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         tg.assert_awaited_once()
         ctc.assert_called_once_with(self.console, call_obj)
         self.assertEqual(self.callback_result, "y")
+
+    async def test_run_passes_tool_manager_to_model_call(self):
+        self.args.tool = ["math"]
+
+        tool_manager = MagicMock(spec=ToolManager)
+        self.orch.tool = tool_manager
+
+        class DummyEngine:
+            model_id = "m"
+            model_type = "t"
+            last_tool = None
+
+            async def __call__(self, *_a, tool=None, **_k):
+                DummyEngine.last_tool = tool
+                return "out"
+
+            def input_token_count(self, *_a, **_k):
+                return 0
+
+        class DummyModelManager:
+            def __init__(self) -> None:
+                self.passed_tool = None
+
+            async def __call__(
+                self, engine_uri, modality, model, operation, tool
+            ):
+                self.passed_tool = tool
+                return await model(None, tool=tool)
+
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+
+        model_manager = DummyModelManager()
+        memory = MagicMock(spec=MemoryManager)
+        memory.has_permanent_message = False
+        memory.has_recent_message = False
+        memory.recent_message = Message(role=MessageRole.USER, content="hi")
+        memory.recent_messages = []
+        memory.append_message = AsyncMock()
+        memory.participant_id = uuid4()
+        memory.permanent_message = None
+
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        class DummyAgent(EngineAgent):
+            def _prepare_call(self, specification, input, **kwargs):
+                return {}
+
+            async def _run(self, input, **_kwargs):
+                operation = Operation(
+                    generation_settings=GenerationSettings(),
+                    input=input,
+                    modality=Modality.TEXT_GENERATION,
+                    parameters=OperationParameters(
+                        text=OperationTextParameters()
+                    ),
+                    requires_input=True,
+                )
+                return await self._model_manager(
+                    engine_uri,
+                    operation.modality,
+                    engine,
+                    operation,
+                    self._tool,
+                )
+
+        engine = DummyEngine()
+        agent = DummyAgent(
+            engine,
+            memory,
+            tool_manager,
+            event_manager,
+            model_manager,
+            engine_uri,
+        )
+
+        async def orch_call(*_a, **_k):
+            await agent(
+                Specification(role="assistant", goal=None),
+                Message(role=MessageRole.USER, content="hi"),
+            )
+            return DummyOrchestratorResponse()
+
+        class DummyOrchestratorResponse:
+            def __aiter__(self_inner):
+                async def gen():
+                    yield "x"
+
+                return gen()
+
+        self.orch.side_effect = orch_call
+        self.orch.engine = engine
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.assertIs(model_manager.passed_tool, tool_manager)
+        self.assertIs(DummyEngine.last_tool, tool_manager)
 
 
 class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
