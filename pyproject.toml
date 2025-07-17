@@ -64,6 +64,7 @@ memory = [
   "sentence-transformers==5.0.0",
   "tree-sitter==0.24.0",
   "tree-sitter-python==0.23.6",
+  "elasticsearch==9.0.2",
 ]
 quantization = [
   "bitsandbytes==0.46.1",
@@ -99,6 +100,7 @@ test = [
   "torchaudio==2.7.1",
   "tree-sitter==0.24.0",
   "tree-sitter-python==0.23.6",
+  "elasticsearch==9.0.2",
 ]
 tool = [
   "playwright==1.53.0",
@@ -172,6 +174,7 @@ all = [
   "tree-sitter-python==0.23.6",
   "uvicorn==0.35.0",
   "youtube-transcript-api==1.0.0",
+  "elasticsearch==9.0.2",
 ]
 
 [tool.black]
