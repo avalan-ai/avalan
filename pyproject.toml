@@ -55,6 +55,7 @@ cpu = [
   "accelerate==1.8.1",
 ]
 memory = [
+  "boto3==1.39.3",
   "faiss-cpu==1.11.0",
   "markitdown[pdf]==0.1.2",
   "markdownify==1.1.0",
