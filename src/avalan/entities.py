@@ -86,6 +86,7 @@ class Modality(StrEnum):
     VISION_IMAGE_CLASSIFICATION = "vision_image_classification"
     VISION_IMAGE_TO_TEXT = "vision_image_to_text"
     VISION_TEXT_TO_IMAGE = "vision_text_to_image"
+    VISION_TEXT_TO_ANIMATION = "vision_text_to_animation"
     VISION_IMAGE_TEXT_TO_TEXT = "vision_image_text_to_text"
     VISION_ENCODER_DECODER = "vision_encoder_decoder"
     VISION_SEMANTIC_SEGMENTATION = "vision_semantic_segmentation"

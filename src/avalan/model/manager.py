@@ -35,6 +35,7 @@ from ..model.vision.image import (
     VisionEncoderDecoderModel,
 )
 from ..model.vision.diffusion import TextToImageDiffusionModel
+from ..model.vision.animation import TextToAnimationModel
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
 from ..tool.manager import ToolManager
@@ -59,6 +60,7 @@ ModelType: TypeAlias = (
     | TextToSpeechModel
     | TokenClassificationModel
     | VisionEncoderDecoderModel
+    | TextToAnimationModel
 )
 
 
@@ -327,6 +329,31 @@ class ModelManager(ContextDecorator):
                     n_steps=operation.parameters["vision"].n_steps,
                 )
 
+            case Modality.VISION_TEXT_TO_ANIMATION:
+                assert (
+                    operation.input
+                    and operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                    and operation.parameters["vision"].n_steps is not None
+                    and operation.parameters["vision"].timestep_spacing
+                    and operation.parameters["vision"].beta_schedule
+                    and operation.parameters["vision"].guidance_scale
+                    is not None
+                )
+
+                result = await model(
+                    operation.input,
+                    operation.parameters["vision"].path,
+                    beta_schedule=operation.parameters["vision"].beta_schedule,
+                    guidance_scale=operation.parameters[
+                        "vision"
+                    ].guidance_scale,
+                    steps=operation.parameters["vision"].n_steps,
+                    timestep_spacing=operation.parameters[
+                        "vision"
+                    ].timestep_spacing,
+                )
+
             case Modality.VISION_SEMANTIC_SEGMENTATION:
                 assert (
                     operation.parameters["vision"]
@@ -388,6 +415,7 @@ class ModelManager(ContextDecorator):
             Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
             Modality.VISION_TEXT_TO_IMAGE,
+            Modality.VISION_TEXT_TO_ANIMATION,
         }
 
         match modality:
@@ -510,6 +538,17 @@ class ModelManager(ContextDecorator):
                         high_noise_frac=args.vision_high_noise_frac,
                         image_format=args.vision_image_format,
                         n_steps=args.vision_steps,
+                    )
+                )
+
+            case Modality.VISION_TEXT_TO_ANIMATION:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        n_steps=args.vision_steps,
+                        timestep_spacing=args.vision_timestep_spacing,
+                        beta_schedule=args.vision_beta_schedule,
+                        guidance_scale=args.vision_guidance_scale,
                     )
                 )
 
@@ -644,6 +683,8 @@ class ModelManager(ContextDecorator):
                     model = VisionEncoderDecoderModel(**model_load_args)
                 case Modality.VISION_TEXT_TO_IMAGE:
                     model = TextToImageDiffusionModel(**model_load_args)
+                case Modality.VISION_TEXT_TO_ANIMATION:
+                    model = TextToAnimationModel(**model_load_args)
                 case Modality.VISION_SEMANTIC_SEGMENTATION:
                     model = SemanticSegmentationModel(**model_load_args)
                 case Modality.TEXT_QUESTION_ANSWERING:
