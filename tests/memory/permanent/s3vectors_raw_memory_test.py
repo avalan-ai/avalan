@@ -17,6 +17,19 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(memory, S3VectorsRawMemory)
         self.assertIs(memory._client._client, client)
 
+    async def test_create_instance_no_client(self):
+        client = MagicMock()
+        with patch(
+            "avalan.memory.permanent.s3vectors.raw.boto_client",
+            return_value=client,
+        ) as boto_patch:
+            memory = await S3VectorsRawMemory.create_instance(
+                bucket="b", collection="c", logger=MagicMock()
+            )
+        boto_patch.assert_called_once_with("s3vectors")
+        self.assertIsInstance(memory, S3VectorsRawMemory)
+        self.assertIs(memory._client._client, client)
+
     async def test_append_with_partitions(self):
         memory = S3VectorsRawMemory(
             bucket="b", collection="c", client=AsyncMock(), logger=MagicMock()
@@ -93,3 +106,33 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
             )
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, mem_id)
+
+    async def test_search_memories_missing_id(self):
+        part = TextPartition(
+            data="x", embeddings=np.array([0.4]), total_tokens=1
+        )
+        client = MagicMock()
+        client.query_vector.return_value = {"Items": [{"Metadata": {}}]}
+        memory = S3VectorsRawMemory(
+            bucket="b", collection="c", client=client, logger=MagicMock()
+        )
+        with patch(
+            "avalan.memory.permanent.s3vectors.raw.to_thread",
+            AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+        ):
+            result = await memory.search_memories(
+                search_partitions=[part],
+                participant_id=uuid4(),
+                namespace="ns",
+                function=MemoryType.RAW,  # type: ignore[arg-type]
+                limit=1,
+            )
+        self.assertEqual(result, [])
+        client.get_object.assert_not_called()
+
+    async def test_search_not_implemented(self):
+        memory = S3VectorsRawMemory(
+            bucket="b", collection="c", client=MagicMock(), logger=MagicMock()
+        )
+        with self.assertRaises(NotImplementedError):
+            await memory.search("q")
