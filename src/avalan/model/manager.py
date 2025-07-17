@@ -98,7 +98,7 @@ class ModelManager(ContextDecorator):
         modality: Modality,
         model: ModelType,
         operation: Operation,
-        tool: ToolManager | None = None
+        tool: ToolManager | None = None,
     ):
         stopping_criteria = (
             KeywordStoppingCriteria(
@@ -181,7 +181,7 @@ class ModelManager(ContextDecorator):
                         skip_special_tokens=operation.parameters[
                             "text"
                         ].skip_special_tokens,
-                        tool=tool
+                        tool=tool,
                     )
                 else:
                     result = await model(
@@ -190,7 +190,7 @@ class ModelManager(ContextDecorator):
                             "text"
                         ].system_prompt,
                         settings=operation.generation_settings,
-                        tool=tool
+                        tool=tool,
                     )
 
             case Modality.TEXT_QUESTION_ANSWERING:

@@ -7,9 +7,9 @@ from ...entities import (
     MessageRole,
 )
 from ...model import TextGenerationVendor
+from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
-from ...model.engine import Engine
 from diffusers import DiffusionPipeline
 from ...model.transformer import TransformerModel
 from PIL import Image
