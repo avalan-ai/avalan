@@ -1,5 +1,6 @@
 from abc import ABC
 from asyncio import to_thread as _to_thread
+from inspect import iscoroutinefunction
 from logging import Logger
 from typing import Any, Callable
 
@@ -34,6 +35,8 @@ class S3VectorsMemory(ABC):
     async def _call_client(
         self, func: Callable[..., Any], **kwargs: Any
     ) -> Any:
+        if iscoroutinefunction(func):
+            return await func(**kwargs)
         return await to_thread(func, **kwargs)
 
     async def _put_object(self, **kwargs: Any) -> Any:
