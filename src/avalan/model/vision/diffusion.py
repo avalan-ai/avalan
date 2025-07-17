@@ -22,7 +22,6 @@ from typing import Literal
 
 
 class TextToImageDiffusionModel(TransformerModel):
-    _refiner_model_id: str
     _base: DiffusionPipeline
 
     def __init__(
@@ -32,8 +31,6 @@ class TextToImageDiffusionModel(TransformerModel):
         logger: Logger | None = None,
     ):
         settings = settings or TransformerEngineSettings()
-        assert settings.refiner_model_id
-        self._refiner_model_id = settings.refiner_model_id
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
 
@@ -52,7 +49,7 @@ class TextToImageDiffusionModel(TransformerModel):
         base.to(self._device)
 
         refiner = DiffusionPipeline.from_pretrained(
-            self._refiner_model_id,
+            self._settings.refiner_model_id,
             text_encoder_2=base.text_encoder_2,
             vae=base.vae,
             torch_dtype=dtype,

@@ -320,7 +320,7 @@ class EngineAgent(ABC):
             operation.modality,
             self._model,
             operation,
-            self._tool
+            self._tool,
         )
         await self._event_manager.trigger(
             Event(

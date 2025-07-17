@@ -152,6 +152,18 @@ class VisionImageFormat(StrEnum):
     XBM = "XBM"
 
 
+class TimestepSpacing(StrEnum):
+    LINSPACE = "linspace"
+    LEADING = "leading"
+    TRAILING = "trailing"
+
+
+class BetaSchedule(StrEnum):
+    LINEAR = "linear"
+    SCALED_LINEAR = "scaled_linear"
+    SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
+
+
 @dataclass(frozen=True, kw_only=True)
 class EngineSettings:
     auto_load_model: bool = True
@@ -569,6 +581,9 @@ class OperationVisionParameters:
     high_noise_frac: float | None = None
     image_format: VisionImageFormat | None = None
     n_steps: int | None = None
+    timestep_spacing: TimestepSpacing | None = None
+    beta_schedule: BetaSchedule | None = None
+    guidance_scale: float | None = None
 
 
 class OperationParameters(TypedDict, total=False):
@@ -706,6 +721,8 @@ class TransformerEngineSettings(EngineSettings):
     state_dict: dict[str, Tensor] = None
     tokens: list[str] | None = None
     weight_type: WeightType = "auto"
+    base_model_id: str | None = None
+    checkpoint: str | None = None
     refiner_model_id: str | None = None
 
 

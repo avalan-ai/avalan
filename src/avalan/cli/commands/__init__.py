@@ -35,6 +35,8 @@ def get_model_settings(
         quiet=args.quiet,
         revision=args.revision,
         parallel=getattr(args, "parallel", None),
+        base_model_id=getattr(args, "base_model", None),
+        checkpoint=getattr(args, "checkpoint", None),
         refiner_model_id=getattr(args, "refiner_model", None),
         special_tokens=(
             args.special_token

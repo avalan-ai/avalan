@@ -9,8 +9,10 @@ async def example(prompt: str, path: str) -> None:
     print("Loading model... ", end="", flush=True)
     with TextToImageDiffusionModel(
         "stabilityai/stable-diffusion-xl-base-1.0",
-        refiner_model_id="stabilityai/stable-diffusion-xl-refiner-1.0",
-        settings=TransformerEngineSettings(weight_type="fp16")
+        settings=TransformerEngineSettings(
+            refiner_model_id="stabilityai/stable-diffusion-xl-refiner-1.0",
+            weight_type="fp16"
+        )
     ) as diff:
         print(f"DONE. Running image generation to {path}", flush=True)
 
