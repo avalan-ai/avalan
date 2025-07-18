@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch, call
 
 from avalan.entities import (
     BetaSchedule,
+    EngineSettings,
     TimestepSpacing,
-    TransformerEngineSettings,
 )
 from avalan.model.engine import Engine
-from avalan.model.vision.animation import TextToAnimationModel
+from avalan.model.vision.diffusion import TextToAnimationModel
 from diffusers import AnimateDiffPipeline, DiffusionPipeline
 
 
@@ -23,14 +23,14 @@ class TextToAnimationModelInstantiationTestCase(TestCase):
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
-                "avalan.model.vision.animation.MotionAdapter"
+                "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
             patch(
-                "avalan.model.vision.animation.hf_hub_download",
+                "avalan.model.vision.diffusion.animation.hf_hub_download",
                 return_value="ckpt_path",
             ) as download_mock,
             patch(
-                "avalan.model.vision.animation.load_file",
+                "avalan.model.vision.diffusion.animation.load_file",
                 return_value={"sd": 1},
             ) as load_mock,
             patch.object(AnimateDiffPipeline, "from_pretrained") as pipe_mock,
@@ -43,9 +43,7 @@ class TextToAnimationModelInstantiationTestCase(TestCase):
             pipe_instance.to.return_value = pipe_instance
             pipe_mock.return_value = pipe_instance
 
-            settings = TransformerEngineSettings(
-                base_model_id="base", checkpoint="ckpt"
-            )
+            settings = EngineSettings(base_model_id="base", checkpoint="ckpt")
             model = TextToAnimationModel(
                 self.model_id, settings, logger=logger_mock
             )
@@ -73,22 +71,25 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
-                "avalan.model.vision.animation.MotionAdapter"
+                "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
             patch(
-                "avalan.model.vision.animation.hf_hub_download",
+                "avalan.model.vision.diffusion.animation.hf_hub_download",
                 return_value="ckpt",
             ),
-            patch("avalan.model.vision.animation.load_file", return_value={}),
+            patch(
+                "avalan.model.vision.diffusion.animation.load_file",
+                return_value={},
+            ),
             patch.object(AnimateDiffPipeline, "from_pretrained") as pipe_mock,
             patch(
-                "avalan.model.vision.animation.EulerDiscreteScheduler.from_config"
+                "avalan.model.vision.diffusion.animation.EulerDiscreteScheduler.from_config"
             ) as scheduler_mock,
             patch(
-                "avalan.model.vision.animation.export_to_gif"
+                "avalan.model.vision.diffusion.animation.export_to_gif"
             ) as export_mock,
             patch(
-                "avalan.model.vision.animation.inference_mode",
+                "avalan.model.vision.diffusion.animation.inference_mode",
                 return_value=nullcontext(),
             ),
         ):
@@ -107,9 +108,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
             scheduler_instance = MagicMock()
             scheduler_mock.return_value = scheduler_instance
 
-            settings = TransformerEngineSettings(
-                base_model_id="base", checkpoint="ckpt"
-            )
+            settings = EngineSettings(base_model_id="base", checkpoint="ckpt")
             model = TextToAnimationModel(
                 self.model_id, settings, logger=logger_mock
             )
@@ -157,13 +156,16 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
-                "avalan.model.vision.animation.MotionAdapter"
+                "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
             patch(
-                "avalan.model.vision.animation.hf_hub_download",
+                "avalan.model.vision.diffusion.animation.hf_hub_download",
                 return_value="ckpt",
             ),
-            patch("avalan.model.vision.animation.load_file", return_value={}),
+            patch(
+                "avalan.model.vision.diffusion.animation.load_file",
+                return_value={},
+            ),
             patch.object(AnimateDiffPipeline, "from_pretrained") as pipe_mock,
         ):
             adapter_instance = MagicMock()
@@ -173,9 +175,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
             pipe_instance.to.return_value = pipe_instance
             pipe_mock.return_value = pipe_instance
 
-            settings = TransformerEngineSettings(
-                base_model_id="base", checkpoint="ckpt"
-            )
+            settings = EngineSettings(base_model_id="base", checkpoint="ckpt")
             model = TextToAnimationModel(
                 self.model_id, settings, logger=logger_mock
             )
@@ -186,9 +186,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
 
 class TextToAnimationModelBaseMethodsTestCase(TestCase):
     def test_uses_tokenizer(self) -> None:
-        settings = TransformerEngineSettings(
-            base_model_id="base", checkpoint="c"
-        )
+        settings = EngineSettings(base_model_id="base", checkpoint="c")
         with (
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch.object(
@@ -201,7 +199,7 @@ class TextToAnimationModelBaseMethodsTestCase(TestCase):
         self.assertFalse(model.uses_tokenizer)
 
     def test_load_tokenizer_not_supported(self) -> None:
-        settings = TransformerEngineSettings(
+        settings = EngineSettings(
             auto_load_model=False,
             auto_load_tokenizer=False,
             base_model_id="base",

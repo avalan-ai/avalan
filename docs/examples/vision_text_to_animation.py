@@ -1,6 +1,6 @@
 from asyncio import run
-from avalan.entities import TransformerEngineSettings
-from avalan.model.vision.animation import TextToAnimationModel
+from avalan.entities import EngineSettings
+from avalan.model.vision.diffusion import TextToAnimationModel
 from os.path import isfile
 from sys import argv, exit
 
@@ -10,7 +10,7 @@ async def example(prompt: str, path: str) -> None:
     steps = 4
     with TextToAnimationModel(
         "ByteDance/AnimateDiff-Lightning",
-        settings=TransformerEngineSettings(
+        settings=EngineSettings(
             base_model_id="stablediffusionapi/mistoonanime-v30",
             checkpoint=f"animatediff_lightning_{steps}step_diffusers.safetensors",
             weight_type="fp16"

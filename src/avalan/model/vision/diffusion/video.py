@@ -1,14 +1,14 @@
-from ...compat import override
-from ...entities import TransformerEngineSettings
-from ...model import TextGenerationVendor
-from ...model.engine import Engine
-from ...model.vision import BaseVisionModel
+from ....compat import override
+from ....entities import EngineSettings, Input
+from ....model import TextGenerationVendor
+from ....model.engine import Engine
+from ....model.vision import BaseVisionModel
 from dataclasses import replace
 from diffusers import DiffusionPipeline
 from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
 from diffusers.utils import export_to_video, load_image, load_video
 from logging import Logger
-from torch import inference_mode, Generator
+from torch import Generator, inference_mode
 from transformers import PreTrainedModel
 
 
@@ -18,10 +18,10 @@ class TextToVideoModel(BaseVisionModel):
     def __init__(
         self,
         model_id: str,
-        settings: TransformerEngineSettings | None = None,
+        settings: EngineSettings | None = None,
         logger: Logger | None = None,
     ):
-        settings = settings or TransformerEngineSettings()
+        settings = settings or EngineSettings()
         assert settings.upsampler_model_id
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
@@ -45,7 +45,7 @@ class TextToVideoModel(BaseVisionModel):
     @override
     async def __call__(
         self,
-        prompt: str,
+        input: Input,
         negative_prompt: str,
         reference_path: str,
         path: str,
@@ -61,12 +61,10 @@ class TextToVideoModel(BaseVisionModel):
         width: int = 832,
         steps: int = 30,
     ) -> str:
-        # prepare conditioning
         image = load_image(reference_path)
         video = load_video(export_to_video([image]))
         condition = LTXVideoCondition(video=video, frame_index=0)
 
-        # generate low‑res video
         down_h = int(height * downscale)
         down_w = int(width * downscale)
         down_h, down_w = (
@@ -80,7 +78,7 @@ class TextToVideoModel(BaseVisionModel):
         with inference_mode():
             latents = self._model(
                 conditions=[condition],
-                prompt=prompt,
+                prompt=input if isinstance(input, str) else str(input),
                 negative_prompt=negative_prompt,
                 width=down_w,
                 height=down_h,
@@ -90,16 +88,14 @@ class TextToVideoModel(BaseVisionModel):
                 output_type="latent",
             ).frames
 
-            # latent upsampling
             upscaled_h, upscaled_w = down_h * 2, down_w * 2
             upscaled_latents = self._upsampler_pipe(
                 latents=latents, output_type="latent"
             ).frames
 
-            # final denoising pass
             video = self._model(
                 conditions=[condition],
-                prompt=prompt,
+                prompt=input if isinstance(input, str) else str(input),
                 negative_prompt=negative_prompt,
                 width=upscaled_w,
                 height=upscaled_h,
@@ -113,7 +109,6 @@ class TextToVideoModel(BaseVisionModel):
                 output_type="pil",
             ).frames[0]
 
-        # resize to target resolution
         video = [frame.resize((width, height)) for frame in video]
         export_to_video(video, path, fps=fps)
 

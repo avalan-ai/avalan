@@ -34,9 +34,11 @@ from ..model.vision.image import (
     ImageToTextModel,
     VisionEncoderDecoderModel,
 )
-from ..model.vision.diffusion import TextToImageModel
-from ..model.vision.animation import TextToAnimationModel
-from ..model.vision.video import TextToVideoModel
+from ..model.vision.diffusion import (
+    TextToAnimationModel,
+    TextToImageModel,
+    TextToVideoModel,
+)
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
 from ..tool.manager import ToolManager
@@ -606,9 +608,7 @@ class ModelManager(ContextDecorator):
                         denoise_strength=getattr(
                             args, "vision_denoise_strength", None
                         ),
-                        n_steps=getattr(
-                            args, "vision_steps", None
-                        ),
+                        n_steps=getattr(args, "vision_steps", None),
                         inference_steps=getattr(
                             args, "vision_inference_steps", None
                         ),

@@ -3,7 +3,6 @@ from avalan.model.vision import BaseVisionModel
 from logging import Logger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
-from typing import Literal
 
 
 class DummyVisionModel(BaseVisionModel):
@@ -11,9 +10,10 @@ class DummyVisionModel(BaseVisionModel):
         return MagicMock()
 
     async def __call__(
-        self, image_source: str | object, tensor_format: Literal["pt"] = "pt"
+        self,
+        image_source: str | object,
     ):
-        return await super().__call__(image_source, tensor_format)
+        return await super().__call__(image_source)
 
 
 class BaseVisionModelTestCase(IsolatedAsyncioTestCase):

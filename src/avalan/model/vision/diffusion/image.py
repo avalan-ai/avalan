@@ -1,12 +1,13 @@
-from ...compat import override
-from ...entities import (
+from ....compat import override
+from ....entities import (
+    Input,
     TransformerEngineSettings,
     VisionColorModel,
     VisionImageFormat,
 )
-from ...model import TextGenerationVendor
-from ...model.engine import Engine
-from ...model.vision import BaseVisionModel
+from ....model import TextGenerationVendor
+from ....model.engine import Engine
+from ....model.vision import BaseVisionModel
 from dataclasses import replace
 from diffusers import DiffusionPipeline
 from logging import Logger
@@ -60,7 +61,7 @@ class TextToImageModel(BaseVisionModel):
     @override
     async def __call__(
         self,
-        prompt: str,
+        input: Input,
         path: str,
         *,
         color_model: VisionColorModel = VisionColorModel.RGB,
@@ -70,7 +71,7 @@ class TextToImageModel(BaseVisionModel):
         output_type: Literal["latent"] = "latent",
     ) -> str:
         assert (
-            prompt
+            input
             and path
             and color_model
             and high_noise_frac is not None
@@ -81,13 +82,13 @@ class TextToImageModel(BaseVisionModel):
 
         with inference_mode():
             image = self._base(
-                prompt=prompt,
+                prompt=input if isinstance(input, str) else str(input),
                 num_inference_steps=n_steps,
                 denoising_end=high_noise_frac,
                 output_type=output_type,
             ).images
             image = self._model(
-                prompt=prompt,
+                prompt=input if isinstance(input, str) else str(input),
                 num_inference_steps=n_steps,
                 denoising_start=high_noise_frac,
                 image=image,

@@ -1,6 +1,6 @@
-from avalan.entities import TransformerEngineSettings
+from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
-from avalan.model.vision.video import TextToVideoModel
+from avalan.model.vision.diffusion import TextToVideoModel
 from diffusers import DiffusionPipeline
 from contextlib import nullcontext
 from logging import Logger
@@ -29,9 +29,7 @@ class TextToVideoModelInstantiationTestCase(TestCase):
             upsampler_instance.to.return_value = upsampler_instance
             pipeline_mock.side_effect = [base_instance, upsampler_instance]
 
-            settings = TransformerEngineSettings(
-                upsampler_model_id=self.upsampler_id
-            )
+            settings = EngineSettings(upsampler_model_id=self.upsampler_id)
             model = TextToVideoModel(
                 self.model_id, settings, logger=logger_mock
             )
@@ -64,14 +62,23 @@ class TextToVideoModelCallTestCase(IsolatedAsyncioTestCase):
             ) as pipeline_mock,
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
-            patch("avalan.model.vision.video.load_image") as load_image_mock,
-            patch("avalan.model.vision.video.load_video", return_value="vid"),
-            patch("avalan.model.vision.video.export_to_video") as export_mock,
             patch(
-                "avalan.model.vision.video.inference_mode",
+                "avalan.model.vision.diffusion.video.load_image"
+            ) as load_image_mock,
+            patch(
+                "avalan.model.vision.diffusion.video.load_video",
+                return_value="vid",
+            ),
+            patch(
+                "avalan.model.vision.diffusion.video.export_to_video"
+            ) as export_mock,
+            patch(
+                "avalan.model.vision.diffusion.video.inference_mode",
                 return_value=nullcontext(),
             ),
-            patch("avalan.model.vision.video.LTXVideoCondition") as cond_cls,
+            patch(
+                "avalan.model.vision.diffusion.video.LTXVideoCondition"
+            ) as cond_cls,
         ):
             base_instance = MagicMock(spec=DiffusionPipeline)
             base_instance.to.return_value = base_instance
@@ -92,9 +99,7 @@ class TextToVideoModelCallTestCase(IsolatedAsyncioTestCase):
             cond_cls.return_value = cond_instance
             load_image_mock.return_value = "img"
 
-            settings = TransformerEngineSettings(
-                upsampler_model_id=self.upsampler_id
-            )
+            settings = EngineSettings(upsampler_model_id=self.upsampler_id)
             model = TextToVideoModel(
                 self.model_id, settings, logger=logger_mock
             )
