@@ -17,7 +17,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🔌 Multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
 - 🌐 Multi-modal integration (NLP, vision, audio.)
 - 🔗 Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and LiteLLM.
-- 🤖 Sophisticated memory management and advanced reasoning (ReACT tooling, adaptive planning.)
+- 🤖 Sophisticated memory management with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, and AWS S3 Vectors, plus advanced reasoning (ReACT tooling, adaptive planning.)
 - 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
 - 📊 Comprehensive observability through metrics, event tracing, and dashboards.
 - 🚀 Deploy your AI workflows to the cloud.
@@ -38,7 +38,7 @@ transformers, vLLM and mlx-lm.
 
 #### Speech recognition
 
-Recognize speech using a model:
+Recognize speech from an audio file:
 
 ```bash
 avalan model run "facebook/wav2vec2-base-960h" \
@@ -57,7 +57,7 @@ PERSONIFICATION OF GRACE AND GOODNESS
 
 #### Text to speech
 
-Generate speech in Oprah's voice from a prompt using an 18-second clip of her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm):
+Generate speech in Oprah's voice from a prompt. This example uses an 18-second clip from her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm) as a reference:
 
 ```bash
 echo "[S1] Leo Messi is the greatest football player of all times." | \
@@ -72,7 +72,7 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
 
 #### Text generation
 
-Run a locally installed model and adjust sampling settings such as `--temperature`, `--top-p`, and `--top-k`. The example below prompts as "Aurora" and limits the output to 100 tokens:
+Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example prompts as "Aurora" and limits the output to 100 tokens:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
@@ -84,7 +84,7 @@ echo "Who are you, and who is Leo Messi?" \
         --top-k 20
 ```
 
-Vendor APIs work the same way. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The following example calls OpenAI's GPT-4o with the same sampling settings:
+Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
@@ -98,7 +98,7 @@ echo "Who are you, and who is Leo Messi?" \
 
 #### Question answering
 
-Answer questions from context using a question answering model:
+Answer a question based on context using a question-answering model:
 
 ```bash
 echo "What sport does Leo play?" \
@@ -115,7 +115,7 @@ football
 
 #### Sequence classification
 
-Determine sentiment in a piece of text:
+Classify the sentiment of a short text:
 
 ```bash
 echo "We love Leo Messi." \
@@ -123,7 +123,7 @@ echo "We love Leo Messi." \
         --modality "text_sequence_classification"
 ```
 
-The result is positive, as expected:
+The result is positive as expected:
 
 ```text
 POSITIVE
@@ -131,7 +131,7 @@ POSITIVE
 
 #### Sequence to sequence
 
-Summarize a text with a sequence-to-sequence model:
+Summarize text using a sequence-to-sequence model:
 
 ```bash
 echo "
@@ -147,7 +147,7 @@ echo "
         --modality "text_sequence_to_sequence"
 ```
 
-The resulting summary:
+The summary:
 
 ```text
 Andy Cucci is held by many as the greatest footballer of all times.
@@ -155,7 +155,7 @@ Andy Cucci is held by many as the greatest footballer of all times.
 
 #### Translation
 
-Translate text between languages using a sequence-to-sequence model:
+Translate text between languages with a sequence-to-sequence model:
 
 ```bash
 echo "
@@ -171,7 +171,7 @@ echo "
         --text-max-length 512
 ```
 
-The Spanish version of the text:
+Here is the Spanish version:
 
 ```text
 Lionel Messi, conocido como Leo Messi, es un futbolista argentino profesional
@@ -204,7 +204,7 @@ The model identifies the image:
 
 #### Image to text
 
-Generate a text description for an image:
+Generate a caption for an image:
 
 ```bash
 avalan model run "salesforce/blip-image-captioning-base" \
@@ -220,7 +220,7 @@ a sign for a gas station on the side of a building [SEP]
 
 #### Image text to text
 
-Provide an image and an instruction to an `image-text-to-text` model:
+Provide an image and instruction to an `image-text-to-text` model:
 
 ```bash
 echo "Transcribe the text on this image, keeping format" | \
@@ -283,7 +283,7 @@ Results are sorted by accuracy and include bounding boxes:
 
 #### Semantic segmentation
 
-Classify each pixel with a semantic segmentation model:
+Classify each pixel using a semantic segmentation model:
 
 ```bash
 avalan model run "nvidia/segformer-b0-finetuned-ade-512-512" \
@@ -347,7 +347,7 @@ The output lists each annotation:
 
 #### Text to Animation
 
-Create an animation of a given prompt using a base model for styling:
+Create an animation from a prompt using a base model for styling:
 
 ```bash
 echo 'A tabby cat slowly walking' | \
@@ -369,7 +369,7 @@ And here's the generated anime inspired animation of a walking cat:
 
 #### Text to Image
 
-Create an image based off your prompt:
+Create an image from a text prompt:
 
 ```bash
 echo 'Leo Messi petting a purring tubby cat' | \
@@ -384,7 +384,7 @@ echo 'Leo Messi petting a purring tubby cat' | \
         --vision-steps 150
 ```
 
-Look at the generated image of Leo Messi petting a cute cat:
+Here is the generated image of Leo Messi petting a cute cat:
 
 ![Leo Messi petting a cute cat](https://avalan.ai/images/github/vision_text_to_image_generated.webp)
 
@@ -461,6 +461,9 @@ echo "Tell me what avalan does based on the web page https://raw.githubuserconte
 ```
 
 ## Memories
+
+Avalan offers a unified memory API with native implementations for PostgreSQL
+(using pgvector), Elasticsearch, AWS Opensearch, and AWS S3 Vectors.
 
 Start a chat session and tell the agent your name. The `--memory-permanent-message` option specifies where messages are stored, `--id` uniquely identifies the agent, and `--participant` sets the user ID:
 
