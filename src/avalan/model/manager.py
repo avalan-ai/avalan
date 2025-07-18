@@ -36,6 +36,7 @@ from ..model.vision.image import (
 )
 from ..model.vision.diffusion import TextToImageModel
 from ..model.vision.animation import TextToAnimationModel
+from ..model.vision.video import TextToVideoModel
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
 from ..tool.manager import ToolManager
@@ -61,6 +62,7 @@ ModelType: TypeAlias = (
     | TokenClassificationModel
     | VisionEncoderDecoderModel
     | TextToAnimationModel
+    | TextToVideoModel
 )
 
 
@@ -229,7 +231,8 @@ class ModelManager(ContextDecorator):
 
                 result = await model(
                     operation.input,
-                    labeled_only=operation.parameters["text"].labeled_only or False,
+                    labeled_only=operation.parameters["text"].labeled_only
+                    or False,
                     system_prompt=operation.parameters["text"].system_prompt,
                 )
 
@@ -355,6 +358,37 @@ class ModelManager(ContextDecorator):
                     ].timestep_spacing,
                 )
 
+            case Modality.VISION_TEXT_TO_VIDEO:
+                assert (
+                    operation.input
+                    and operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                )
+
+                vision = operation.parameters["vision"]
+                kwargs = {
+                    "reference_path": vision.reference_path,
+                    "negative_prompt": vision.negative_prompt,
+                    "height": vision.height,
+                    "downscale": vision.downscale,
+                    "frames": vision.frames,
+                    "denoise_strength": vision.denoise_strength,
+                    "inference_steps": vision.inference_steps,
+                    "decode_timestep": vision.decode_timestep,
+                    "noise_scale": vision.noise_scale,
+                    "frames_per_second": vision.frames_per_second,
+                }
+                if vision.width is not None:
+                    kwargs["width"] = vision.width
+                if vision.n_steps is not None:
+                    kwargs["steps"] = vision.n_steps
+
+                result = await model(
+                    operation.input,
+                    vision.path,
+                    **kwargs,
+                )
+
             case Modality.VISION_SEMANTIC_SEGMENTATION:
                 assert (
                     operation.parameters["vision"]
@@ -417,6 +451,7 @@ class ModelManager(ContextDecorator):
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
             Modality.VISION_TEXT_TO_IMAGE,
             Modality.VISION_TEXT_TO_ANIMATION,
+            Modality.VISION_TEXT_TO_VIDEO,
         }
 
         match modality:
@@ -554,6 +589,37 @@ class ModelManager(ContextDecorator):
                     )
                 )
 
+            case Modality.VISION_TEXT_TO_VIDEO:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        reference_path=getattr(
+                            args, "vision_reference_path", None
+                        ),
+                        negative_prompt=getattr(
+                            args, "vision_negative_prompt", None
+                        ),
+                        width=getattr(args, "vision_width", None),
+                        height=getattr(args, "vision_height", None),
+                        downscale=getattr(args, "vision_downscale", None),
+                        frames=getattr(args, "vision_frames", None),
+                        denoise_strength=getattr(
+                            args, "vision_denoise_strength", None
+                        ),
+                        n_steps=getattr(
+                            args, "vision_steps", None
+                        ),
+                        inference_steps=getattr(
+                            args, "vision_inference_steps", None
+                        ),
+                        decode_timestep=getattr(
+                            args, "vision_decode_timestep", None
+                        ),
+                        noise_scale=getattr(args, "vision_noise_scale", None),
+                        frames_per_second=getattr(args, "vision_fps", None),
+                    )
+                )
+
             case Modality.VISION_SEMANTIC_SEGMENTATION:
                 parameters = OperationParameters(
                     vision=OperationVisionParameters(
@@ -614,6 +680,7 @@ class ModelManager(ContextDecorator):
         base_model_id: str | None = None,
         checkpoint: str | None = None,
         refiner_model_id: str | None = None,
+        upsampler_model_id: str | None = None,
         revision: str | None = None,
         special_tokens: list[str] | None = None,
         subfolder: str | None = None,
@@ -634,6 +701,7 @@ class ModelManager(ContextDecorator):
             base_model_id=base_model_id or None,
             checkpoint=checkpoint or None,
             refiner_model_id=refiner_model_id or None,
+            upsampler_model_id=upsampler_model_id or None,
             revision=revision,
             special_tokens=special_tokens or None,
             subfolder=subfolder or None,
@@ -691,6 +759,8 @@ class ModelManager(ContextDecorator):
                     model = TextToImageModel(**model_load_args)
                 case Modality.VISION_TEXT_TO_ANIMATION:
                     model = TextToAnimationModel(**model_load_args)
+                case Modality.VISION_TEXT_TO_VIDEO:
+                    model = TextToVideoModel(**model_load_args)
                 case Modality.VISION_SEMANTIC_SEGMENTATION:
                     model = SemanticSegmentationModel(**model_load_args)
                 case Modality.TEXT_QUESTION_ANSWERING:

@@ -84,9 +84,7 @@ class SequenceToSequenceModelInstantiationTestCase(TestCase):
                 tp_plan=None,
             )
             auto_tokenizer_mock.assert_called_once_with(
-                self.model_id,
-                use_fast=True,
-                subfolder=""
+                self.model_id, use_fast=True, subfolder=""
             )
 
 

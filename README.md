@@ -56,6 +56,7 @@ action. Use the table of contents below to jump to the task you need:
   - 🧩 [Semantic segmentation](#semantic-segmentation)
   - 🎬 [Text to animation](#text-to-animation)
   - 🖌️ [Text to image](#text-to-image)
+  - 🎥 [Text to video](#text-to-video)
 
 ### Audio
 
@@ -405,7 +406,7 @@ The output lists each annotation:
 └──────────────────┘
 ```
 
-#### Text to Animation
+#### Text to animation
 
 Create an animation from a prompt using a base model for styling:
 
@@ -427,7 +428,7 @@ And here's the generated anime inspired animation of a walking cat:
 
 ![An anime cat slowly walking](https://avalan.ai/images/github/vision_text_to_animation_generated.webp)
 
-#### Text to Image
+#### Text to image
 
 Create an image from a text prompt:
 
@@ -447,6 +448,34 @@ echo 'Leo Messi petting a purring tubby cat' | \
 Here is the generated image of Leo Messi petting a cute cat:
 
 ![Leo Messi petting a cute cat](https://avalan.ai/images/github/vision_text_to_image_generated.webp)
+
+#### Text to video
+
+Create an MP4 video from a prompt, guardrailing generation with a negative
+prompt, and using an image as a reference point:
+
+```bash
+echo 'A cute little penguin takes out a book and starts reading it' | \
+    avalan model run "Lightricks/LTX-Video-0.9.7-dev" \
+        --modality vision_text_to_video \
+        --upsampler-model "Lightricks/ltxv-spatial-upscaler-0.9.7" \
+        --weight "fp16" \
+        --vision-steps 30 \
+        --vision-negative-prompt "worst quality, inconsistent motion, blurry, jittery, distorted" \
+        --vision-inference-steps 10 \
+        --vision-reference-path penguin.png \
+        --vision-width 832 \
+        --vision-height 480 \
+        --vision-frames 96 \
+        --vision-fps 24 \
+        --vision-decode-timestep 0.05 \
+        --vision-denoise-strength 0.4 \
+        --path example_text_to_video.mp4
+```
+
+And here's the generated video:
+
+![A penguin opening a book](https://avalan.ai/images/github/vision_text_to_video_generated.webp)
 
 ## Tools
 

@@ -2206,6 +2206,7 @@ equence_parallel,replicate}]
                         [--attention {eager,flash_attention_2,flex_attention,sdpa}]
                         [--path PATH] [--checkpoint CHECKPOINT]
                         [--base-model BASE_MODEL]
+                        [--upsampler-model UPSAMPLER_MODEL]
                         [--refiner-model REFINER_MODEL]
                         [--audio-reference-path AUDIO_REFERENCE_PATH]
                         [--audio-reference-text AUDIO_REFERENCE_TEXT]
@@ -2220,17 +2221,27 @@ equence_parallel,replicate}]
                         [--vision-timestep-spacing {linspace,leading,trailing}]
                         [--vision-beta-schedule {linear,scaled_linear,squaredcos_cap_v2}]
                         [--vision-guidance-scale VISION_GUIDANCE_SCALE]
-                        [--do-sample] [--enable-gradient-calculation]
-                        [--use-cache] [--max-new-tokens MAX_NEW_TOKENS]
+                        [--vision-reference-path VISION_REFERENCE_PATH]
+                        [--vision-negative-prompt VISION_NEGATIVE_PROMPT]
+                        [--vision-height VISION_HEIGHT]
+                        [--vision-downscale VISION_DOWNSCALE]
+                        [--vision-frames VISION_FRAMES]
+                        [--vision-denoise-strength VISION_DENOISE_STRENGTH]
+                        [--vision-inference-steps VISION_INFERENCE_STEPS]
+                        [--vision-decode-timestep VISION_DECODE_TIMESTEP]
+                        [--vision-noise-scale VISION_NOISE_SCALE]
+                        [--vision-fps VISION_FPS] [--do-sample]
+                        [--enable-gradient-calculation] [--use-cache]
+                        [--max-new-tokens MAX_NEW_TOKENS]
                         [--modality
 {audio_speech_recognition,audio_text_to_speech,embedding,text_generation,text_question_answering,text_sequenc
 e_classification,text_sequence_to_sequence,text_translation,text_token_classification,vision_object_detection
-,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_image_
-text_to_text,vision_encoder_decoder,vision_semantic_segmentation}]
+,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_text_t
+o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}]
                         [--min-p MIN_P]
                         [--repetition-penalty REPETITION_PENALTY]
                         [--skip-special-tokens] [--system SYSTEM]
-                        [--text-context TEXT_CONTEXT]
+                        [--text-context TEXT_CONTEXT] [--text-labeled-only]
                         [--text-max-length TEXT_MAX_LENGTH]
                         [--text-num-beams TEXT_NUM_BEAMS]
                         [--text-from-lang TEXT_FROM_LANG]
@@ -2330,13 +2341,16 @@ equence_parallel,replicate}
   --attention {eager,flash_attention_2,flex_attention,sdpa}
                         Attention implementation to use (defaults to best
                         available)
-  --path PATH           Path where to store generated audio. Only applicable
-                        to audio modalities.
+  --path PATH           Path where to store generated audio or vision output.
+                        Only applicable to audio and vision modalities.
   --checkpoint CHECKPOINT
                         AnimateDiff motion adapter checkpoint to use. Only
                         applicable to vision text to video modality.
   --base-model BASE_MODEL
                         ID of the base model for text-to-video generation.
+                        Only applicable to vision text to video modality.
+  --upsampler-model UPSAMPLER_MODEL
+                        Upsampler model to use for text-to-video generation.
                         Only applicable to vision text to video modality.
   --refiner-model REFINER_MODEL
                         Expert model to use for refinement. Only applicable to
@@ -2380,6 +2394,36 @@ equence_parallel,replicate}
   --vision-guidance-scale VISION_GUIDANCE_SCALE
                         Guidance scale for text-to-video generation. Only
                         applicable to vision text to video modality.
+  --vision-reference-path VISION_REFERENCE_PATH
+                        Reference image to guide generation. Only applicable
+                        to vision text to video modality.
+  --vision-negative-prompt VISION_NEGATIVE_PROMPT
+                        Negative prompt for generation. Only applicable to
+                        vision text to video modality.
+  --vision-height VISION_HEIGHT
+                        Height of generated video. Only applicable to vision
+                        text to video modality.
+  --vision-downscale VISION_DOWNSCALE
+                        Downscale factor for upsampling. Only applicable to
+                        vision text to video modality.
+  --vision-frames VISION_FRAMES
+                        Number of frames to generate. Only applicable to
+                        vision text to video modality.
+  --vision-denoise-strength VISION_DENOISE_STRENGTH
+                        Denoise strength for upsampling. Only applicable to
+                        vision text to video modality.
+  --vision-inference-steps VISION_INFERENCE_STEPS
+                        Number of inference steps for upsampler. Only
+                        applicable to vision text to video modality.
+  --vision-decode-timestep VISION_DECODE_TIMESTEP
+                        Decode timestep for video decoding. Only applicable to
+                        vision text to video modality.
+  --vision-noise-scale VISION_NOISE_SCALE
+                        Noise scale for video generation. Only applicable to
+                        vision text to video modality.
+  --vision-fps VISION_FPS
+                        Frames per second for generated video. Only applicable
+                        to vision text to video modality.
   --do-sample           Tell if the token generation process should be
                         deterministic or stochastic. When enabled, it's
                         stochastic and uses probability distribution.
@@ -2392,8 +2436,8 @@ equence_parallel,replicate}
   --modality
 {audio_speech_recognition,audio_text_to_speech,embedding,text_generation,text_question_answering,text_sequenc
 e_classification,text_sequence_to_sequence,text_translation,text_token_classification,vision_object_detection
-,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_image_
-text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
+,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_text_t
+o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
   --min-p MIN_P         Minimum token probability, which will be scaled by the
                         probability of the most likely token [0, 1]
   --repetition-penalty REPETITION_PENALTY
@@ -2404,6 +2448,9 @@ text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
   --system SYSTEM       Use this as system prompt
   --text-context TEXT_CONTEXT
                         Context string for question answering
+  --text-labeled-only   If specified, only tokens with labels detected are
+                        returned. Only applicable to text_token_classification
+                        modalities.
   --text-max-length TEXT_MAX_LENGTH
                         The maximum length the generated tokens can have.
                         Corresponds to the length of the input prompt +

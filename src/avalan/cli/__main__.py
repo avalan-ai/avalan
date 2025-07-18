@@ -948,8 +948,8 @@ class CLI:
             "--path",
             type=str,
             help=(
-                "Path where to store generated audio. "
-                "Only applicable to audio modalities."
+                "Path where to store generated audio or vision output. "
+                "Only applicable to audio and vision modalities."
             ),
         )
         model_run_parser.add_argument(
@@ -965,6 +965,14 @@ class CLI:
             type=str,
             help=(
                 "ID of the base model for text-to-video generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--upsampler-model",
+            type=str,
+            help=(
+                "Upsampler model to use for text-to-video generation. "
                 "Only applicable to vision text to video modality."
             ),
         )
@@ -1089,6 +1097,93 @@ class CLI:
             type=float,
             help=(
                 "Guidance scale for text-to-video generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-reference-path",
+            type=str,
+            help=(
+                "Reference image to guide generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-negative-prompt",
+            type=str,
+            help=(
+                "Negative prompt for generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-height",
+            type=int,
+            help=(
+                "Height of generated video. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-downscale",
+            default=2 / 3,
+            type=float,
+            help=(
+                "Downscale factor for upsampling. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-frames",
+            default=96,
+            type=int,
+            help=(
+                "Number of frames to generate. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-denoise-strength",
+            default=0.4,
+            type=float,
+            help=(
+                "Denoise strength for upsampling. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-inference-steps",
+            default=10,
+            type=int,
+            help=(
+                "Number of inference steps for upsampler. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-decode-timestep",
+            default=0.05,
+            type=float,
+            help=(
+                "Decode timestep for video decoding. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-noise-scale",
+            default=0.025,
+            type=float,
+            help=(
+                "Noise scale for video generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-fps",
+            default=24,
+            type=int,
+            help=(
+                "Frames per second for generated video. "
                 "Only applicable to vision text to video modality."
             ),
         )
@@ -1628,12 +1723,9 @@ class CLI:
             def filter(self, record: LogRecord) -> bool:
                 message = record.getMessage()
                 return (
-                    (
-                        "Some weights of the model checkpoint" not in message
-                        or not "BertForTokenClassification"
-                    ) and
-                    "wav2vec2.masked_spec_embed" not in message
-                )
+                    "Some weights of the model checkpoint" not in message
+                    or not "BertForTokenClassification"
+                ) and "wav2vec2.masked_spec_embed" not in message
 
         hf_logger = hf_logging.get_logger("transformers.modeling_utils")
         hf_logger.addFilter(_SilencingFilter())
