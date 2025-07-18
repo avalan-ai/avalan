@@ -38,6 +38,7 @@ def get_model_settings(
         base_model_id=getattr(args, "base_model", None),
         checkpoint=getattr(args, "checkpoint", None),
         refiner_model_id=getattr(args, "refiner_model", None),
+        upsampler_model_id=getattr(args, "upsampler_model", None),
         special_tokens=(
             args.special_token
             if args.special_token and isinstance(args.special_token, list)

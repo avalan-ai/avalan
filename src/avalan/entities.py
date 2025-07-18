@@ -87,6 +87,7 @@ class Modality(StrEnum):
     VISION_IMAGE_TO_TEXT = "vision_image_to_text"
     VISION_TEXT_TO_IMAGE = "vision_text_to_image"
     VISION_TEXT_TO_ANIMATION = "vision_text_to_animation"
+    VISION_TEXT_TO_VIDEO = "vision_text_to_video"
     VISION_IMAGE_TEXT_TO_TEXT = "vision_image_text_to_text"
     VISION_ENCODER_DECODER = "vision_encoder_decoder"
     VISION_SEMANTIC_SEGMENTATION = "vision_semantic_segmentation"
@@ -195,6 +196,7 @@ class EngineSettings:
     base_model_id: str | None = None
     checkpoint: str | None = None
     refiner_model_id: str | None = None
+    upsampler_model_id: str | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -591,6 +593,16 @@ class OperationTextParameters:
 @dataclass(frozen=True, kw_only=True)
 class OperationVisionParameters:
     path: str
+    reference_path: str | None = None
+    negative_prompt: str | None = None
+    height: int | None = None
+    downscale: float | None = 2 / 3
+    frames: int | None = 96
+    denoise_strength: float | None = 0.4
+    inference_steps: int | None = 10
+    decode_timestep: float | None = 0.05
+    noise_scale: float | None = 0.025
+    frames_per_second: int | None = 24
     skip_special_tokens: bool | None = None
     system_prompt: str | None = None
     threshold: float | None = None

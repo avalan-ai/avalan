@@ -4,7 +4,7 @@ from ...model import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
 from diffusers import DiffusionPipeline
-from torch import argmax, inference_mode, Tensor
+from torch import argmax, inference_mode
 from transformers import AutoModelForTokenClassification, PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
@@ -37,10 +37,18 @@ class TokenClassificationModel(BaseNLPModel):
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
-        labels = getattr(model.config, "id2label", None) if hasattr(model, "config") else None
+        labels = (
+            getattr(model.config, "id2label", None)
+            if hasattr(model, "config")
+            else None
+        )
         if labels:
-            default_label_ids = {lbl_id for lbl_id, lbl in labels.items() if "-" not in lbl}
-            self._default_label_id = next(iter(default_label_ids)) if default_label_ids else None
+            default_label_ids = {
+                lbl_id for lbl_id, lbl in labels.items() if "-" not in lbl
+            }
+            self._default_label_id = (
+                next(iter(default_label_ids)) if default_label_ids else None
+            )
         return model
 
     def _tokenize_input(

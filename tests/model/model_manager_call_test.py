@@ -325,6 +325,44 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             (
+                Modality.VISION_TEXT_TO_VIDEO,
+                Operation(
+                    generation_settings=self.settings,
+                    input="txt",
+                    modality=Modality.VISION_TEXT_TO_VIDEO,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="video.mp4",
+                            reference_path=None,
+                            negative_prompt=None,
+                            height=None,
+                            downscale=2 / 3,
+                            frames=96,
+                            denoise_strength=0.4,
+                            inference_steps=10,
+                            decode_timestep=0.05,
+                            noise_scale=0.025,
+                            frames_per_second=24,
+                        )
+                    ),
+                ),
+                (
+                    ("txt", "video.mp4"),
+                    {
+                        "reference_path": None,
+                        "negative_prompt": None,
+                        "height": None,
+                        "downscale": 2 / 3,
+                        "frames": 96,
+                        "denoise_strength": 0.4,
+                        "inference_steps": 10,
+                        "decode_timestep": 0.05,
+                        "noise_scale": 0.025,
+                        "frames_per_second": 24,
+                    },
+                ),
+            ),
+            (
                 Modality.VISION_SEMANTIC_SEGMENTATION,
                 Operation(
                     generation_settings=self.settings,

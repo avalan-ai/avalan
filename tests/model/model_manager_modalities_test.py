@@ -31,6 +31,7 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
             Modality.VISION_ENCODER_DECODER: "VisionEncoderDecoderModel",
             Modality.VISION_TEXT_TO_IMAGE: "TextToImageModel",
             Modality.VISION_TEXT_TO_ANIMATION: "TextToAnimationModel",
+            Modality.VISION_TEXT_TO_VIDEO: "TextToVideoModel",
             Modality.VISION_SEMANTIC_SEGMENTATION: "SemanticSegmentationModel",
         }
         for modality, class_name in modalities.items():

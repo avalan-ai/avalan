@@ -77,6 +77,7 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
             Modality.VISION_IMAGE_TEXT_TO_TEXT: (self._check_vision, True),
             Modality.VISION_ENCODER_DECODER: (self._check_vision, False),
             Modality.VISION_OBJECT_DETECTION: (self._check_vision, False),
+            Modality.VISION_TEXT_TO_VIDEO: (self._check_vision, True),
             Modality.VISION_SEMANTIC_SEGMENTATION: (self._check_vision, False),
         }
         for modality, (checker, expected_requires_input) in cases.items():

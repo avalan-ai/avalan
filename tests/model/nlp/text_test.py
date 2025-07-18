@@ -212,9 +212,7 @@ class TextGenerationModelMethodsTestCase(TestCase):
                 ),
             )
 
-            auto_tok.assert_called_once_with(
-                "m", use_fast=True, subfolder=""
-            )
+            auto_tok.assert_called_once_with("m", use_fast=True, subfolder="")
             tokenizer.add_special_tokens.assert_called_once()
             args = tokenizer.add_special_tokens.call_args.args[0]
             self.assertIn("additional_special_tokens", args)
@@ -245,9 +243,7 @@ class TextGenerationModelMethodsTestCase(TestCase):
                 ),
             )
 
-            auto_tok.assert_called_once_with(
-                "m", use_fast=True, subfolder=""
-            )
+            auto_tok.assert_called_once_with("m", use_fast=True, subfolder="")
             tokenizer.add_tokens.assert_called_once_with(tokens)
 
 
