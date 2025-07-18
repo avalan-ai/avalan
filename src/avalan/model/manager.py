@@ -362,40 +362,31 @@ class ModelManager(ContextDecorator):
                 assert (
                     operation.input
                     and operation.parameters["vision"]
-                    and operation.parameters["vision"].negative_prompt
-                    and operation.parameters["vision"].reference_path
                     and operation.parameters["vision"].path
-                    and operation.parameters["vision"].height
-                    and operation.parameters["vision"].width
                 )
+
+                vision = operation.parameters["vision"]
+                kwargs = {
+                    "reference_path": vision.reference_path,
+                    "negative_prompt": vision.negative_prompt,
+                    "height": vision.height,
+                    "downscale": vision.downscale,
+                    "frames": vision.frames,
+                    "denoise_strength": vision.denoise_strength,
+                    "inference_steps": vision.inference_steps,
+                    "decode_timestep": vision.decode_timestep,
+                    "noise_scale": vision.noise_scale,
+                    "frames_per_second": vision.frames_per_second,
+                }
+                if vision.width is not None:
+                    kwargs["width"] = vision.width
+                if vision.n_steps is not None:
+                    kwargs["steps"] = vision.n_steps
 
                 result = await model(
                     operation.input,
-                    operation.parameters[
-                        "vision"
-                    ].negative_prompt,
-                    operation.parameters[
-                        "vision"
-                    ].reference_path,
-                    operation.parameters["vision"].path,
-                    decode_timestep=operation.parameters[
-                        "vision"
-                    ].decode_timestep,
-                    denoise_strength=operation.parameters[
-                        "vision"
-                    ].denoise_strength,
-                    downscale=operation.parameters["vision"].downscale,
-                    fps=operation.parameters[
-                        "vision"
-                    ].frames_per_second,
-                    frames=operation.parameters["vision"].frames,
-                    height=operation.parameters["vision"].height,
-                    inference_steps=operation.parameters[
-                        "vision"
-                    ].inference_steps,
-                    noise_scale=operation.parameters["vision"].noise_scale,
-                    width=operation.parameters["vision"].width,
-                    steps=operation.parameters["vision"].n_steps,
+                    vision.path,
+                    **kwargs,
                 )
 
             case Modality.VISION_SEMANTIC_SEGMENTATION:
