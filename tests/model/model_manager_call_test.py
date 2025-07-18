@@ -299,6 +299,32 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             (
+                Modality.VISION_TEXT_TO_ANIMATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input="txt",
+                    modality=Modality.VISION_TEXT_TO_ANIMATION,
+                    parameters=OperationParameters(
+                        vision=OperationVisionParameters(
+                            path="out.gif",
+                            n_steps=4,
+                            timestep_spacing="trailing",
+                            beta_schedule="linear",
+                            guidance_scale=1.0,
+                        )
+                    ),
+                ),
+                (
+                    ("txt", "out.gif"),
+                    {
+                        "beta_schedule": "linear",
+                        "guidance_scale": 1.0,
+                        "steps": 4,
+                        "timestep_spacing": "trailing",
+                    },
+                ),
+            ),
+            (
                 Modality.VISION_SEMANTIC_SEGMENTATION,
                 Operation(
                     generation_settings=self.settings,
