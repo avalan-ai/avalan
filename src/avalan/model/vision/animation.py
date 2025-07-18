@@ -6,7 +6,7 @@ from ...entities import (
     TransformerEngineSettings,
 )
 from ...model import TextGenerationVendor
-from ...model.nlp import BaseNLPModel
+from ...model.engine import Engine
 from ...model.transformer import TransformerModel
 from dataclasses import replace
 from diffusers import (
@@ -49,7 +49,7 @@ class TextToAnimationModel(TransformerModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        dtype = BaseNLPModel._get_weight_type(self._settings.weight_type)
+        dtype = Engine.weight(self._settings.weight_type)
         adapter = MotionAdapter().to(self._device, dtype)
         adapter.load_state_dict(
             load_file(

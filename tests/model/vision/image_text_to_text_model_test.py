@@ -10,7 +10,7 @@ from avalan.model.vision.image import (
     ImageTextToTextModel,
 )
 from avalan.model.vision import BaseVisionModel
-from avalan.model.nlp import BaseNLPModel
+from avalan.model.engine import Engine
 from logging import Logger
 from transformers import (
     AutoTokenizer,
@@ -51,9 +51,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
                 AutoModelForImageTextToText, "from_pretrained"
             ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ) as wt_mock,
+            patch.object(Engine, "weight", return_value="dtype") as wt_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
@@ -97,9 +95,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
                 AutoModelForImageTextToText, "from_pretrained"
             ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ) as wt_mock,
+            patch.object(Engine, "weight", return_value="dtype") as wt_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
@@ -144,9 +140,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
                 Gemma3ForConditionalGeneration, "from_pretrained"
             ) as gemma_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ) as wt_mock,
+            patch.object(Engine, "weight", return_value="dtype") as wt_mock,
         ):
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance

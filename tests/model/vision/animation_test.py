@@ -10,7 +10,6 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.engine import Engine
-from avalan.model.nlp import BaseNLPModel
 from avalan.model.vision.animation import TextToAnimationModel
 from diffusers import AnimateDiffPipeline, DiffusionPipeline
 
@@ -21,9 +20,7 @@ class TextToAnimationModelInstantiationTestCase(TestCase):
     def test_instantiation_with_load_model(self) -> None:
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ),
+            patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
                 "avalan.model.vision.animation.MotionAdapter"
@@ -73,9 +70,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
     async def test_call_all_parameter_combinations(self) -> None:
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ),
+            patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
                 "avalan.model.vision.animation.MotionAdapter"
@@ -159,9 +154,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
     async def test_call_invalid_steps(self) -> None:
         logger_mock = MagicMock(spec=Logger)
         with (
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ),
+            patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
                 "avalan.model.vision.animation.MotionAdapter"

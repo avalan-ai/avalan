@@ -91,9 +91,7 @@ class TextGenerationModel(BaseNLPModel):
             low_cpu_mem_usage=(
                 True if self._device else self._settings.low_cpu_mem_usage
             ),
-            torch_dtype=BaseNLPModel._get_weight_type(
-                self._settings.weight_type
-            ),
+            torch_dtype=Engine.weight(self._settings.weight_type),
             device_map=self._device,
             token=self._settings.access_token,
             quantization_config=bnb_config,

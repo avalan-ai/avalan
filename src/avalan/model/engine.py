@@ -6,6 +6,7 @@ from ..entities import (
     ModelConfig,
     SentenceTransformerModelConfig,
     TokenizerConfig,
+    WeightType,
 )
 from ..model import (
     EngineResponse,
@@ -18,7 +19,20 @@ from contextlib import ExitStack
 from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
-from torch import cuda
+from torch import (
+    bool as tbool,
+    bfloat16,
+    cuda,
+    dtype,
+    float16,
+    float32,
+    float64,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint8,
+)
 from torch.backends import mps
 from transformers import logging as transformers_logging
 from transformers.utils.logging import (
@@ -30,7 +44,7 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Any
+from typing import Any, Final, Literal
 
 
 class Engine(ABC):
@@ -65,6 +79,23 @@ class Engine(ABC):
         "ui8": 1,
     }
 
+    _WEIGHTS: Final[dict[str, Literal["auto"] | dtype]] = {
+        "bool": tbool,
+        "bf16": bfloat16,
+        "f16": float16,
+        "fp16": float16,
+        "f32": float32,
+        "fp32": float32,
+        "f64": float64,
+        "fp64": float64,
+        "i8": int8,
+        "i16": int16,
+        "i32": int32,
+        "i64": int64,
+        "ui8": uint8,
+        "auto": "auto",
+    }
+
     @staticmethod
     def _get_tp_plan(
         parallel: ParallelStrategy | dict[str, ParallelStrategy] | None,
@@ -74,6 +105,10 @@ class Engine(ABC):
         if isinstance(parallel, dict):
             return {k: v.value for k, v in parallel.items()}
         return parallel.value
+
+    @staticmethod
+    def weight(weight_type: WeightType) -> Literal["auto"] | dtype:
+        return Engine._WEIGHTS.get(weight_type, "auto")
 
     def __init__(
         self,

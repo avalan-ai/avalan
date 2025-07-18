@@ -1,7 +1,6 @@
 from avalan.entities import TransformerEngineSettings
 from avalan.model.vision.diffusion import TextToImageDiffusionModel
 from avalan.entities import VisionColorModel, VisionImageFormat
-from avalan.model.nlp import BaseNLPModel
 from avalan.model.engine import Engine
 from diffusers import DiffusionPipeline
 from contextlib import nullcontext
@@ -26,9 +25,7 @@ class TextToImageDiffusionModelInstantiationTestCase(TestCase):
             patch.object(
                 DiffusionPipeline, "from_pretrained"
             ) as pipeline_mock,
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ),
+            patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
         ):
             base_instance = MagicMock(spec=DiffusionPipeline)
@@ -80,9 +77,7 @@ class TextToImageDiffusionModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 DiffusionPipeline, "from_pretrained"
             ) as pipeline_mock,
-            patch.object(
-                BaseNLPModel, "_get_weight_type", return_value="dtype"
-            ),
+            patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
                 "avalan.model.vision.diffusion.inference_mode",
