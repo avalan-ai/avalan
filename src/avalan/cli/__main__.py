@@ -968,7 +968,6 @@ class CLI:
                 "Only applicable to vision text to video modality."
             ),
         )
-
         model_run_parser.add_argument(
             "--refiner-model",
             type=str,
@@ -1162,6 +1161,16 @@ class CLI:
             "--text-context",
             type=str,
             help="Context string for question answering",
+        )
+        model_run_parser.add_argument(
+            "--text-labeled-only",
+            default=None,
+            action="store_true",
+            help=(
+                "If specified, only tokens with labels detected are "
+                "returned. "
+                "Only applicable to text_token_classification modalities."
+            ),
         )
         model_run_parser.add_argument(
             "--text-max-length",
@@ -1615,12 +1624,19 @@ class CLI:
             r"However, `temperature` is set.*",
         )
 
-        class _MaskSpecEmbedFilter(Filter):
+        class _SilencingFilter(Filter):
             def filter(self, record: LogRecord) -> bool:
-                return "wav2vec2.masked_spec_embed" not in record.getMessage()
+                message = record.getMessage()
+                return (
+                    (
+                        "Some weights of the model checkpoint" not in message
+                        or not "BertForTokenClassification"
+                    ) and
+                    "wav2vec2.masked_spec_embed" not in message
+                )
 
         hf_logger = hf_logging.get_logger("transformers.modeling_utils")
-        hf_logger.addFilter(_MaskSpecEmbedFilter())
+        hf_logger.addFilter(_SilencingFilter())
 
         filterwarnings(
             "ignore",

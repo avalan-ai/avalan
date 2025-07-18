@@ -54,7 +54,7 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
 
         self.assertIs(model._model, llm_instance)
         auto_tok.assert_called_once_with(
-            self.model_id, use_fast=True, subfolder=None
+            self.model_id, use_fast=True, subfolder=""
         )
         vllm_mock.LLM.assert_called_once()
 

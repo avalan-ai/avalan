@@ -1449,6 +1449,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once_with(
             "hi",
+            labeled_only=False,
             system_prompt="sys",
         )
         tg_patch.assert_not_called()

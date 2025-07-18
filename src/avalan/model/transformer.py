@@ -111,7 +111,7 @@ class TransformerModel(Engine, ABC):
         return AutoTokenizer.from_pretrained(
             tokenizer_name_or_path or self._model_id,
             use_fast=use_fast,
-            subfolder=self._settings.tokenizer_subfolder,
+            subfolder=self._settings.tokenizer_subfolder or "",
         )
 
     def _load_tokenizer_with_tokens(

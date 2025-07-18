@@ -55,7 +55,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             trust_remote_code=self._settings.trust_remote_code,
             # default behavior in transformers v4.48
             use_fast=True,
-            subfolder=self._settings.tokenizer_subfolder,
+            subfolder=self._settings.tokenizer_subfolder or "",
         )
         model = AutoModelForCTC.from_pretrained(
             self._model_id,
@@ -65,7 +65,7 @@ class SpeechRecognitionModel(BaseAudioModel):
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
             ignore_mismatched_sizes=True,
-            subfolder=self._settings.subfolder,
+            subfolder=self._settings.subfolder or "",
         )
         return model
 
@@ -97,14 +97,14 @@ class TextToSpeechModel(BaseAudioModel):
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
-            subfolder=self._settings.tokenizer_subfolder,
+            subfolder=self._settings.tokenizer_subfolder or "",
         )
         model = DiaForConditionalGeneration.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            subfolder=self._settings.subfolder,
+            subfolder=self._settings.subfolder or "",
         )
         return model
 

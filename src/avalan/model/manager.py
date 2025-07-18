@@ -229,6 +229,7 @@ class ModelManager(ContextDecorator):
 
                 result = await model(
                     operation.input,
+                    labeled_only=operation.parameters["text"].labeled_only or False,
                     system_prompt=operation.parameters["text"].system_prompt,
                 )
 

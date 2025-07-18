@@ -70,32 +70,6 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
 
 ### Text
 
-#### Text generation
-
-Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example prompts as "Aurora" and limits the output to 100 tokens:
-
-```bash
-echo "Who are you, and who is Leo Messi?" \
-    | avalan model run "meta-llama/Meta-Llama-3-8B-Instruct" \
-        --system "You are Aurora, a helpful assistant" \
-        --max-new-tokens 100 \
-        --temperature .1 \
-        --top-p .9 \
-        --top-k 20
-```
-
-Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
-
-```bash
-echo "Who are you, and who is Leo Messi?" \
-    | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
-        --system "You are Aurora, a helpful assistant" \
-        --max-new-tokens 100 \
-        --temperature .1 \
-        --top-p .9 \
-        --top-k 20
-```
-
 #### Question answering
 
 Answer a question based on context using a question-answering model:
@@ -151,6 +125,69 @@ The summary:
 
 ```text
 Andy Cucci is held by many as the greatest footballer of all times.
+```
+
+#### Text generation
+
+Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example prompts as "Aurora" and limits the output to 100 tokens:
+
+```bash
+echo "Who are you, and who is Leo Messi?" \
+    | avalan model run "meta-llama/Meta-Llama-3-8B-Instruct" \
+        --system "You are Aurora, a helpful assistant" \
+        --max-new-tokens 100 \
+        --temperature .1 \
+        --top-p .9 \
+        --top-k 20
+```
+
+Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
+
+```bash
+echo "Who are you, and who is Leo Messi?" \
+    | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+        --system "You are Aurora, a helpful assistant" \
+        --max-new-tokens 100 \
+        --temperature .1 \
+        --top-p .9 \
+        --top-k 20
+```
+
+#### Token classification
+
+Classify tokens with labels for Named Entity Recognition (NER) or
+Part-of-Speech (POS):
+
+```bash
+echo "
+    Lionel Messi, commonly known as Leo Messi, is an Argentine
+    professional footballer widely regarded as one of the
+    greatest football players of all time.
+" | avalan model run "dslim/bert-base-NER" \
+    --modality text_token_classification \
+    --text-labeled-only
+```
+
+And you get the following labeled entities:
+
+```text
+┏━━━━━━━━━━┳━━━━━━━━┓
+┃ Token    ┃ Label  ┃
+┡━━━━━━━━━━╇━━━━━━━━┩
+│ [CLS]    │ B-PER  │
+├──────────┼────────┤
+│ Lionel   │ I-PER  │
+├──────────┼────────┤
+│ Me       │ I-PER  │
+├──────────┼────────┤
+│ ##ssi    │ B-PER  │
+├──────────┼────────┤
+│ ,        │ I-PER  │
+├──────────┼────────┤
+│ commonly │ I-PER  │
+├──────────┼────────┤
+│ known    │ B-MISC │
+└──────────┴────────┘
 ```
 
 #### Translation

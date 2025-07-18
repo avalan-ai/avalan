@@ -13,7 +13,7 @@ async def example() -> None:
             "greatest football players of all time."
         )
 
-        named_entities = await tc(text)
+        named_entities = await tc(text, labeled_only=True)
         for token, entity_type in named_entities.items():
             print(f'"{token}": {entity_type}')
 

@@ -31,7 +31,7 @@ class SequenceClassificationModel(BaseNLPModel):
         model = AutoModelForSequenceClassification.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder,
+            subfolder=self._settings.subfolder or "",
             attn_implementation=self._settings.attention,
             trust_remote_code=self._settings.trust_remote_code,
             torch_dtype=Engine.weight(self._settings.weight_type),
@@ -97,7 +97,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         model = AutoModelForSeq2SeqLM.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder,
+            subfolder=self._settings.subfolder or "",
             attn_implementation=self._settings.attention,
             trust_remote_code=self._settings.trust_remote_code,
             torch_dtype=Engine.weight(self._settings.weight_type),
