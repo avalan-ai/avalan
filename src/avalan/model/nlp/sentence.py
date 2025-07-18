@@ -43,9 +43,7 @@ class SentenceTransformerModel(BaseNLPModel):
             token=self._settings.access_token,
             model_kwargs={
                 "attn_implementation": self._settings.attention,
-                "torch_dtype": BaseNLPModel._get_weight_type(
-                    self._settings.weight_type
-                ),
+                "torch_dtype": Engine.weight(self._settings.weight_type),
                 "low_cpu_mem_usage": (
                     True if self._device else self._settings.low_cpu_mem_usage
                 ),

@@ -34,9 +34,7 @@ class SequenceClassificationModel(BaseNLPModel):
             subfolder=self._settings.subfolder,
             attn_implementation=self._settings.attention,
             trust_remote_code=self._settings.trust_remote_code,
-            torch_dtype=BaseNLPModel._get_weight_type(
-                self._settings.weight_type
-            ),
+            torch_dtype=Engine.weight(self._settings.weight_type),
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,
@@ -102,9 +100,7 @@ class SequenceToSequenceModel(BaseNLPModel):
             subfolder=self._settings.subfolder,
             attn_implementation=self._settings.attention,
             trust_remote_code=self._settings.trust_remote_code,
-            torch_dtype=BaseNLPModel._get_weight_type(
-                self._settings.weight_type
-            ),
+            torch_dtype=Engine.weight(self._settings.weight_type),
             state_dict=self._settings.state_dict,
             local_files_only=self._settings.local_files_only,
             token=self._settings.access_token,

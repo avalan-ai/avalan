@@ -8,7 +8,6 @@ from ...entities import (
 )
 from ...model import TextGenerationVendor
 from ...model.engine import Engine
-from ...model.nlp import BaseNLPModel
 from ...model.vision import BaseVisionModel
 from diffusers import DiffusionPipeline
 from ...model.transformer import TransformerModel
@@ -129,9 +128,7 @@ class ImageTextToTextModel(ImageToTextModel):
         loader = self._loaders[self._settings.loader_class]
         model = loader.from_pretrained(
             self._model_id,
-            torch_dtype=BaseNLPModel._get_weight_type(
-                self._settings.weight_type
-            ),
+            torch_dtype=Engine.weight(self._settings.weight_type),
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )

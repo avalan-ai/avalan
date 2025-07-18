@@ -1,45 +1,16 @@
 from abc import ABC
-from ...entities import GenerationSettings, WeightType
+from ...entities import GenerationSettings, WeightType as WeightType
 from ...model.transformer import TransformerModel
 from contextlib import nullcontext
 from torch import (
-    dtype,
-    bool as tbool,
-    bfloat16,
-    float16,
-    float32,
-    float64,
-    int8,
-    int16,
-    int32,
-    int64,
     inference_mode,
     Tensor,
-    uint8,
 )
 from transformers import AsyncTextIteratorStreamer
 from transformers.generation import StoppingCriteria
-from typing import Final, Literal
 
 
 class BaseNLPModel(TransformerModel, ABC):
-    _WEIGHTS: Final[dict[str, Literal["auto"] | dtype]] = {
-        "bool": tbool,
-        "bf16": bfloat16,
-        "f16": float16,
-        "fp16": float16,
-        "f32": float32,
-        "fp32": float32,
-        "f64": float64,
-        "fp64": float64,
-        "i8": int8,
-        "i16": int16,
-        "i32": int32,
-        "i64": int64,
-        "ui8": uint8,
-        "auto": "auto",
-    }
-
     def _generate_output(
         self,
         inputs: dict[str, Tensor] | Tensor,
@@ -115,7 +86,3 @@ class BaseNLPModel(TransformerModel, ABC):
                 )
             )
         return outputs
-
-    @staticmethod
-    def _get_weight_type(weight_type: WeightType) -> Literal["auto"] | dtype:
-        return BaseNLPModel._WEIGHTS.get(weight_type, "auto")
