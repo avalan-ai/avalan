@@ -32,7 +32,30 @@ Take a quick look at which models and modalities you can use in [Models](#models
 Avalan makes text, audio, and vision models available from the CLI or in your
 own code. You can run local models or call vendor models from OpenRouter,
 OpenAI, LiteLLM, Ollama, DeepSeek and Gemini. It works across engines such as
-transformers, vLLM and mlx-lm.
+transformers, vLLM and mlx-lm. The examples below show each modality in
+action. Use the table of contents below to jump to the task you need:
+
+* 🎧 [**Audio**](#audio) – Turn audio into text or produce speech for
+  accessibility and media.
+  - 🗣️ [Speech recognition](#speech-recognition)
+  - 🔊 [Text to speech](#text-to-speech)
+* 📝 [**Text**](#text) – Perform natural language processing to understand or
+  generate information.
+  - ❓ [Question answering](#question-answering)
+  - 🧮 [Sequence classification](#sequence-classification)
+  - 🔁 [Sequence to sequence](#sequence-to-sequence)
+  - ✍️ [Text generation](#text-generation)
+  - 🏷️ [Token classification](#token-classification)
+  - 🌍 [Translation](#translation)
+* 👁️ [**Vision**](#vision) – Analyze images or create visuals for content and
+  automation.
+  - 🖼️ [Image classification](#image-classification)
+  - 📷 [Image to text](#image-to-text)
+  - 🔤 [Image text to text](#image-text-to-text)
+  - 🎯 [Object detection](#object-detection)
+  - 🧩 [Semantic segmentation](#semantic-segmentation)
+  - 🎬 [Text to animation](#text-to-animation)
+  - 🖌️ [Text to image](#text-to-image)
 
 ### Audio
 
