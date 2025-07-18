@@ -229,6 +229,7 @@ class ModelManager(ContextDecorator):
 
                 result = await model(
                     operation.input,
+                    labeled_only=operation.parameters["text"].labeled_only or False,
                     system_prompt=operation.parameters["text"].system_prompt,
                 )
 
@@ -468,6 +469,7 @@ class ModelManager(ContextDecorator):
             case Modality.TEXT_TOKEN_CLASSIFICATION:
                 parameters = OperationParameters(
                     text=OperationTextParameters(
+                        labeled_only=getattr(args, "text_labeled_only", None),
                         system_prompt=system_prompt,
                     )
                 )

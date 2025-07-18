@@ -78,7 +78,7 @@ class SequenceClassificationModelInstantiationTestCase(TestCase):
             auto_model_mock.assert_called_once_with(
                 self.model_id,
                 cache_dir=None,
-                subfolder=None,
+                subfolder="",
                 attn_implementation=None,
                 trust_remote_code=False,
                 torch_dtype="auto",
@@ -91,7 +91,7 @@ class SequenceClassificationModelInstantiationTestCase(TestCase):
             auto_tokenizer_mock.assert_called_once_with(
                 self.model_id,
                 use_fast=True,
-                subfolder=None,
+                subfolder="",
             )
 
 

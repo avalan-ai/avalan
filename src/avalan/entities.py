@@ -578,6 +578,7 @@ class OperationAudioParameters:
 @dataclass(frozen=True, kw_only=True)
 class OperationTextParameters:
     context: str | None = None
+    labeled_only: bool | None = None
     language_destination: str | None = None
     language_source: str | None = None
     manual_sampling: bool | None = None

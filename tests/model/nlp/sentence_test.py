@@ -101,7 +101,7 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
                 auto_tokenizer_mock.assert_called_once_with(
                     self.model_id,
                     use_fast=True,
-                    subfolder=None,
+                    subfolder="",
                 )
 
     def test_token_count(self):

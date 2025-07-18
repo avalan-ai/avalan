@@ -164,7 +164,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         text=OperationTextParameters(system_prompt=None)
                     ),
                 ),
-                (("tok",), {"system_prompt": None}),
+                (("tok",), {"labeled_only": False, "system_prompt": None}),
             ),
             (
                 Modality.TEXT_TRANSLATION,

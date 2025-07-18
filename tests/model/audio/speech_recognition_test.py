@@ -57,7 +57,7 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
                 self.model_id,
                 trust_remote_code=False,
                 use_fast=True,
-                subfolder=None,
+                subfolder="",
             )
             model_mock.assert_called_once_with(
                 self.model_id,
@@ -67,7 +67,7 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
                 ignore_mismatched_sizes=True,
-                subfolder=None,
+                subfolder="",
             )
 
 

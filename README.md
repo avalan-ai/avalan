@@ -32,7 +32,30 @@ Take a quick look at which models and modalities you can use in [Models](#models
 Avalan makes text, audio, and vision models available from the CLI or in your
 own code. You can run local models or call vendor models from OpenRouter,
 OpenAI, LiteLLM, Ollama, DeepSeek and Gemini. It works across engines such as
-transformers, vLLM and mlx-lm.
+transformers, vLLM and mlx-lm. The examples below show each modality in
+action. Use the table of contents below to jump to the task you need:
+
+* 🎧 [**Audio**](#audio) – Turn audio into text or produce speech for
+  accessibility and media.
+  - 🗣️ [Speech recognition](#speech-recognition)
+  - 🔊 [Text to speech](#text-to-speech)
+* 📝 [**Text**](#text) – Perform natural language processing to understand or
+  generate information.
+  - ❓ [Question answering](#question-answering)
+  - 🧮 [Sequence classification](#sequence-classification)
+  - 🔁 [Sequence to sequence](#sequence-to-sequence)
+  - ✍️ [Text generation](#text-generation)
+  - 🏷️ [Token classification](#token-classification)
+  - 🌍 [Translation](#translation)
+* 👁️ [**Vision**](#vision) – Analyze images or create visuals for content and
+  automation.
+  - 🖼️ [Image classification](#image-classification)
+  - 📷 [Image to text](#image-to-text)
+  - 🔤 [Image text to text](#image-text-to-text)
+  - 🎯 [Object detection](#object-detection)
+  - 🧩 [Semantic segmentation](#semantic-segmentation)
+  - 🎬 [Text to animation](#text-to-animation)
+  - 🖌️ [Text to image](#text-to-image)
 
 ### Audio
 
@@ -69,32 +92,6 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
 ```
 
 ### Text
-
-#### Text generation
-
-Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example prompts as "Aurora" and limits the output to 100 tokens:
-
-```bash
-echo "Who are you, and who is Leo Messi?" \
-    | avalan model run "meta-llama/Meta-Llama-3-8B-Instruct" \
-        --system "You are Aurora, a helpful assistant" \
-        --max-new-tokens 100 \
-        --temperature .1 \
-        --top-p .9 \
-        --top-k 20
-```
-
-Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
-
-```bash
-echo "Who are you, and who is Leo Messi?" \
-    | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
-        --system "You are Aurora, a helpful assistant" \
-        --max-new-tokens 100 \
-        --temperature .1 \
-        --top-p .9 \
-        --top-k 20
-```
 
 #### Question answering
 
@@ -151,6 +148,69 @@ The summary:
 
 ```text
 Andy Cucci is held by many as the greatest footballer of all times.
+```
+
+#### Text generation
+
+Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example prompts as "Aurora" and limits the output to 100 tokens:
+
+```bash
+echo "Who are you, and who is Leo Messi?" \
+    | avalan model run "meta-llama/Meta-Llama-3-8B-Instruct" \
+        --system "You are Aurora, a helpful assistant" \
+        --max-new-tokens 100 \
+        --temperature .1 \
+        --top-p .9 \
+        --top-k 20
+```
+
+Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
+
+```bash
+echo "Who are you, and who is Leo Messi?" \
+    | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+        --system "You are Aurora, a helpful assistant" \
+        --max-new-tokens 100 \
+        --temperature .1 \
+        --top-p .9 \
+        --top-k 20
+```
+
+#### Token classification
+
+Classify tokens with labels for Named Entity Recognition (NER) or
+Part-of-Speech (POS):
+
+```bash
+echo "
+    Lionel Messi, commonly known as Leo Messi, is an Argentine
+    professional footballer widely regarded as one of the
+    greatest football players of all time.
+" | avalan model run "dslim/bert-base-NER" \
+    --modality text_token_classification \
+    --text-labeled-only
+```
+
+And you get the following labeled entities:
+
+```text
+┏━━━━━━━━━━┳━━━━━━━━┓
+┃ Token    ┃ Label  ┃
+┡━━━━━━━━━━╇━━━━━━━━┩
+│ [CLS]    │ B-PER  │
+├──────────┼────────┤
+│ Lionel   │ I-PER  │
+├──────────┼────────┤
+│ Me       │ I-PER  │
+├──────────┼────────┤
+│ ##ssi    │ B-PER  │
+├──────────┼────────┤
+│ ,        │ I-PER  │
+├──────────┼────────┤
+│ commonly │ I-PER  │
+├──────────┼────────┤
+│ known    │ B-MISC │
+└──────────┴────────┘
 ```
 
 #### Translation

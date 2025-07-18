@@ -67,7 +67,7 @@ class TextGenerationModelTestCase(TestCase):
                 )
                 self.assertIsInstance(model, TextGenerationModel)
                 auto_tokenizer_mock.assert_called_once_with(
-                    model_id, use_fast=True, subfolder=None
+                    model_id, use_fast=True, subfolder=""
                 )
 
     def test_instantiation_with_load_model_and_tokenizer(self):
@@ -127,7 +127,7 @@ class TextGenerationModelTestCase(TestCase):
                     tp_plan=None,
                 )
                 auto_tokenizer_mock.assert_called_once_with(
-                    model_id, use_fast=True, subfolder=None
+                    model_id, use_fast=True, subfolder=""
                 )
 
 
@@ -213,7 +213,7 @@ class TextGenerationModelMethodsTestCase(TestCase):
             )
 
             auto_tok.assert_called_once_with(
-                "m", use_fast=True, subfolder=None
+                "m", use_fast=True, subfolder=""
             )
             tokenizer.add_special_tokens.assert_called_once()
             args = tokenizer.add_special_tokens.call_args.args[0]
@@ -246,7 +246,7 @@ class TextGenerationModelMethodsTestCase(TestCase):
             )
 
             auto_tok.assert_called_once_with(
-                "m", use_fast=True, subfolder=None
+                "m", use_fast=True, subfolder=""
             )
             tokenizer.add_tokens.assert_called_once_with(tokens)
 
