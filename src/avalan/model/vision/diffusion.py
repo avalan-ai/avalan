@@ -1,27 +1,21 @@
 from ...compat import override
 from ...entities import (
-    Input,
     TransformerEngineSettings,
     VisionColorModel,
     VisionImageFormat,
 )
 from ...model import TextGenerationVendor
 from ...model.engine import Engine
-from ...model.transformer import TransformerModel
+from ...model.vision import BaseVisionModel
 from dataclasses import replace
 from diffusers import DiffusionPipeline
 from logging import Logger
-from torch import inference_mode, Tensor
-from transformers import (
-    PreTrainedModel,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-from transformers.tokenization_utils_base import BatchEncoding
+from torch import inference_mode
+from transformers import PreTrainedModel
 from typing import Literal
 
 
-class TextToImageDiffusionModel(TransformerModel):
+class TextToImageModel(BaseVisionModel):
     _base: DiffusionPipeline
 
     def __init__(
@@ -62,27 +56,6 @@ class TextToImageDiffusionModel(TransformerModel):
         self._base = base
 
         return refiner
-
-    @override
-    @property
-    def uses_tokenizer(self) -> bool:
-        return False
-
-    @override
-    def _load_tokenizer(
-        self, tokenizer_name_or_path: str | None, use_fast: bool
-    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
-        raise NotImplementedError()
-
-    @override
-    def _tokenize_input(
-        self,
-        input: Input,
-        context: str | None = None,
-        tensor_format: Literal["pt"] = "pt",
-        **kwargs,
-    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
-        raise NotImplementedError()
 
     @override
     async def __call__(

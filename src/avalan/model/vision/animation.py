@@ -1,13 +1,12 @@
 from ...compat import override
 from ...entities import (
     BetaSchedule,
-    Input,
     TimestepSpacing,
     TransformerEngineSettings,
 )
 from ...model import TextGenerationVendor
 from ...model.engine import Engine
-from ...model.transformer import TransformerModel
+from ...model.vision import BaseVisionModel
 from dataclasses import replace
 from diffusers import (
     AnimateDiffPipeline,
@@ -20,17 +19,11 @@ from diffusers.utils import export_to_gif
 from huggingface_hub import hf_hub_download
 from logging import Logger
 from safetensors.torch import load_file
-from torch import inference_mode, Tensor
-from transformers import (
-    PreTrainedModel,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal
+from torch import inference_mode
+from transformers import PreTrainedModel
 
 
-class TextToAnimationModel(TransformerModel):
+class TextToAnimationModel(BaseVisionModel):
     _schedulers: dict[tuple[TimestepSpacing, BetaSchedule], SchedulerMixin] = (
         {}
     )
@@ -64,27 +57,6 @@ class TextToAnimationModel(TransformerModel):
         ).to(self._device)
 
         return pipe
-
-    @override
-    @property
-    def uses_tokenizer(self) -> bool:
-        return False
-
-    @override
-    def _load_tokenizer(
-        self, tokenizer_name_or_path: str | None, use_fast: bool
-    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
-        raise NotImplementedError()
-
-    @override
-    def _tokenize_input(
-        self,
-        input: Input,
-        context: str | None = None,
-        tensor_format: Literal["pt"] = "pt",
-        **kwargs,
-    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
-        raise NotImplementedError()
 
     @override
     async def __call__(

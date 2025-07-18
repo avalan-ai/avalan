@@ -200,7 +200,7 @@ class TextToAnimationModelBaseMethodsTestCase(TestCase):
             model = TextToAnimationModel("id", settings)
         self.assertFalse(model.uses_tokenizer)
 
-    def test_load_tokenizer_not_implemented(self) -> None:
+    def test_load_tokenizer_not_supported(self) -> None:
         settings = TransformerEngineSettings(
             auto_load_model=False,
             auto_load_tokenizer=False,
@@ -216,27 +216,7 @@ class TextToAnimationModelBaseMethodsTestCase(TestCase):
             ),
         ):
             model = TextToAnimationModel("id", settings)
-        with self.assertRaises(NotImplementedError):
-            model._load_tokenizer(None, True)
-
-    def test_tokenize_input_not_implemented(self) -> None:
-        settings = TransformerEngineSettings(
-            auto_load_model=False,
-            auto_load_tokenizer=False,
-            base_model_id="base",
-            checkpoint="c",
-        )
-        with (
-            patch.object(Engine, "get_default_device", return_value="cpu"),
-            patch.object(
-                TextToAnimationModel,
-                "_load_model",
-                return_value=MagicMock(spec=DiffusionPipeline),
-            ),
-        ):
-            model = TextToAnimationModel("id", settings)
-        with self.assertRaises(NotImplementedError):
-            model._tokenize_input("in")
+        self.assertFalse(hasattr(model, "_load_tokenizer"))
 
 
 if __name__ == "__main__":
