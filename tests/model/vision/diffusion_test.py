@@ -78,7 +78,7 @@ class TextToImageModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
-                "avalan.model.vision.diffusion.inference_mode",
+                "avalan.model.vision.diffusion.image.inference_mode",
                 return_value=nullcontext(),
             ) as inf_mock,
         ):

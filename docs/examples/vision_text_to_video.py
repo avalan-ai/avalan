@@ -5,8 +5,8 @@
 #
 
 from asyncio import run
-from avalan.entities import TransformerEngineSettings
-from avalan.model.vision.video import TextToVideoModel
+from avalan.entities import EngineSettings
+from avalan.model.vision.diffusion import TextToVideoModel
 from os.path import isfile
 from sys import argv, exit
 
@@ -20,7 +20,7 @@ async def example(
     print("Loading model... ", end="", flush=True)
     with TextToVideoModel(
         "Lightricks/LTX-Video-0.9.7-dev",
-        settings=TransformerEngineSettings(
+        settings=EngineSettings(
             upsampler_model_id="Lightricks/ltxv-spatial-upscaler-0.9.7",
             weight_type="fp16"
         )

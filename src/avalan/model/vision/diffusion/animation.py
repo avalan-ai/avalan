@@ -1,12 +1,8 @@
-from ...compat import override
-from ...entities import (
-    BetaSchedule,
-    TimestepSpacing,
-    TransformerEngineSettings,
-)
-from ...model import TextGenerationVendor
-from ...model.engine import Engine
-from ...model.vision import BaseVisionModel
+from ....compat import override
+from ....entities import BetaSchedule, EngineSettings, Input, TimestepSpacing
+from ....model import TextGenerationVendor
+from ....model.engine import Engine
+from ....model.vision import BaseVisionModel
 from dataclasses import replace
 from diffusers import (
     AnimateDiffPipeline,
@@ -31,10 +27,10 @@ class TextToAnimationModel(BaseVisionModel):
     def __init__(
         self,
         model_id: str,
-        settings: TransformerEngineSettings | None = None,
+        settings: EngineSettings | None = None,
         logger: Logger | None = None,
     ):
-        settings = settings or TransformerEngineSettings()
+        settings = settings or EngineSettings()
         assert settings.base_model_id and settings.checkpoint
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
@@ -61,7 +57,7 @@ class TextToAnimationModel(BaseVisionModel):
     @override
     async def __call__(
         self,
-        prompt: str,
+        input: Input,
         path: str,
         *,
         beta_schedule: BetaSchedule = "linear",
@@ -90,7 +86,7 @@ class TextToAnimationModel(BaseVisionModel):
 
         with inference_mode():
             output = self._model(
-                prompt=prompt,
+                prompt=input if isinstance(input, str) else str(input),
                 guidance_scale=guidance_scale,
                 num_inference_steps=steps,
             )

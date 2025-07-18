@@ -15,6 +15,7 @@ and `pytest` for testing.
 - Do not ignore exceptions unless instructed.
 - Don't use `from __future__ import annotations`.
 - Don't use inline imports unless instructed, imports should always be at the top.
+- Do not declare `__all__` lists.
 
 ### Coding Standards
 
