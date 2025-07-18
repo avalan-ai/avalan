@@ -228,7 +228,7 @@ known_first_party = ["avalan"]
 src_paths = ["src"]
 
 [tool.poetry]
-version = "1.2.8"
+version = "1.2.9"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
