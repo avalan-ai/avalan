@@ -1,13 +1,13 @@
 from asyncio import run
 from avalan.entities import TransformerEngineSettings
-from avalan.model.vision.diffusion import TextToImageDiffusionModel
+from avalan.model.vision.diffusion import TextToImageModel
 from os.path import isfile
 from sys import argv, exit
 
 
 async def example(prompt: str, path: str) -> None:
     print("Loading model... ", end="", flush=True)
-    with TextToImageDiffusionModel(
+    with TextToImageModel(
         "stabilityai/stable-diffusion-xl-base-1.0",
         settings=TransformerEngineSettings(
             refiner_model_id="stabilityai/stable-diffusion-xl-refiner-1.0",

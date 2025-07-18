@@ -34,7 +34,7 @@ from ..model.vision.image import (
     ImageToTextModel,
     VisionEncoderDecoderModel,
 )
-from ..model.vision.diffusion import TextToImageDiffusionModel
+from ..model.vision.diffusion import TextToImageModel
 from ..model.vision.animation import TextToAnimationModel
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
@@ -686,7 +686,7 @@ class ModelManager(ContextDecorator):
                 case Modality.VISION_ENCODER_DECODER:
                     model = VisionEncoderDecoderModel(**model_load_args)
                 case Modality.VISION_TEXT_TO_IMAGE:
-                    model = TextToImageDiffusionModel(**model_load_args)
+                    model = TextToImageModel(**model_load_args)
                 case Modality.VISION_TEXT_TO_ANIMATION:
                     model = TextToAnimationModel(**model_load_args)
                 case Modality.VISION_SEMANTIC_SEGMENTATION:

@@ -166,6 +166,14 @@ class BetaSchedule(StrEnum):
 
 
 @dataclass(frozen=True, kw_only=True)
+class QuantizationSettings:
+    load_in_4bit: bool
+    bnb_4bit_quant_type: Literal["nf4"]
+    bnb_4bit_use_double_quant: bool
+    bnb_4bit_compute_dtype: type
+
+
+@dataclass(frozen=True, kw_only=True)
 class EngineSettings:
     auto_load_model: bool = True
     auto_load_tokenizer: bool = True
@@ -179,6 +187,14 @@ class EngineSettings:
     tokenizer_name_or_path: str | None = None
     subfolder: str | None = None
     tokenizer_subfolder: str | None = None
+    access_token: str | None = None
+    base_url: str | None = None
+    revision: str | None = None
+    quantization: QuantizationSettings | None = None
+    weight_type: WeightType = "auto"
+    base_model_id: str | None = None
+    checkpoint: str | None = None
+    refiner_model_id: str | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -694,14 +710,6 @@ class ToolManagerSettings:
 
 
 @dataclass(frozen=True, kw_only=True)
-class QuantizationSettings:
-    load_in_4bit: bool
-    bnb_4bit_quant_type: Literal["nf4"]
-    bnb_4bit_use_double_quant: bool
-    bnb_4bit_compute_dtype: type
-
-
-@dataclass(frozen=True, kw_only=True)
 class TextPartition:
     data: str
     total_tokens: int
@@ -710,21 +718,13 @@ class TextPartition:
 
 @dataclass(frozen=True, kw_only=True)
 class TransformerEngineSettings(EngineSettings):
-    access_token: str | None = None
     attention: AttentionImplementation | None = None
-    base_url: str | None = None
     loader_class: TextGenerationLoaderClass | None = "auto"
     local_files_only: bool = False
     low_cpu_mem_usage: bool = False
-    quantization: QuantizationSettings | None = None
-    revision: str | None = None
     special_tokens: list[str] | None = None
     state_dict: dict[str, Tensor] = None
     tokens: list[str] | None = None
-    weight_type: WeightType = "auto"
-    base_model_id: str | None = None
-    checkpoint: str | None = None
-    refiner_model_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
