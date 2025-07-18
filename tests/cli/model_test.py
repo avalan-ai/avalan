@@ -3021,6 +3021,126 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "custom.mp4")
 
+    async def test_run_text_to_video_width_only(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            path="wide.mp4",
+            vision_reference_path=None,
+            vision_negative_prompt=None,
+            vision_height=None,
+            vision_width=320,
+            vision_downscale=2 / 3,
+            vision_frames=96,
+            vision_denoise_strength=0.4,
+            vision_inference_steps=10,
+            vision_decode_timestep=0.05,
+            vision_noise_scale=0.025,
+            vision_fps=24,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock(return_value="wide.mp4")
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = AsyncMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        async def call_side_effect(engine_uri, modality, model, operation):
+            return await RealModelManager.__call__(
+                manager, engine_uri, modality, model, operation
+            )
+
+        manager.side_effect = call_side_effect
+
+        with patch.object(
+            model_cmds, "ModelManager", return_value=manager
+        ) as mm_patch:
+            with patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ):
+                with (
+                    patch.object(
+                        model_cmds,
+                        "get_model_settings",
+                        return_value={
+                            "engine_uri": engine_uri,
+                            "modality": Modality.VISION_TEXT_TO_VIDEO,
+                        },
+                    ) as gms_patch,
+                    patch.object(model_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        model_cmds, "token_generation", new_callable=AsyncMock
+                    ) as tg_patch,
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
+
+        mm_patch.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms_patch.assert_called_once_with(args, hub, logger, engine_uri)
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.VISION_TEXT_TO_VIDEO,
+        )
+        lm.assert_awaited_once_with(
+            "hi",
+            "wide.mp4",
+            reference_path=None,
+            negative_prompt=None,
+            height=None,
+            width=320,
+            downscale=2 / 3,
+            frames=96,
+            denoise_strength=0.4,
+            inference_steps=10,
+            decode_timestep=0.05,
+            noise_scale=0.025,
+            frames_per_second=24,
+        )
+        tg_patch.assert_not_called()
+        self.assertEqual(console.print.call_args.args[0], "wide.mp4")
+
     async def test_run_invalid_modality_raises(self):
         args = Namespace(
             model="id",
