@@ -469,6 +469,7 @@ class ModelManager(ContextDecorator):
             case Modality.TEXT_TOKEN_CLASSIFICATION:
                 parameters = OperationParameters(
                     text=OperationTextParameters(
+                        labeled_only=getattr(args, "text_labeled_only", None),
                         system_prompt=system_prompt,
                     )
                 )
