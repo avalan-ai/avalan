@@ -85,22 +85,18 @@ class TokenClassificationModel(BaseNLPModel):
             outputs = self._model(**inputs)
             # logits shape (1, seq_len, num_labels)
             input_ids = inputs["input_ids"][0]
-            label_ids = argmax(outputs.logits, dim=2)
-            mask: Tensor | None = label_ids != self._default_label_id if self._default_label_id is not None else None
-            if mask is not None:
-                input_ids = input_ids.unsqueeze(0)
+            label_ids = argmax(outputs.logits, dim=2)[0]
+
+            if labeled_only and self._default_label_id is not None:
+                mask = label_ids != self._default_label_id
                 input_ids = input_ids[mask]
                 label_ids = label_ids[mask]
-                input_ids = input_ids.squeeze(0)
-                label_ids = label_ids.unsqueeze(0)
 
             assert input_ids.numel() == label_ids.numel()
-            tokens = self._tokenizer.convert_ids_to_tokens(
-                inputs["input_ids"][0]
-            )
+            tokens = self._tokenizer.convert_ids_to_tokens(input_ids)
             labels = [
                 self._model.config.id2label[label_id.item()]
-                for label_id in label_ids[0]
+                for label_id in label_ids
             ]
             tokens_to_labels = dict(zip(tokens, labels))
             return tokens_to_labels
