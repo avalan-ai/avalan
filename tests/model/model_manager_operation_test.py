@@ -96,3 +96,11 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
         self.assertEqual(op.modality, FakeModality.UNKNOWN)
         self.assertIsNone(op.parameters)
         self.assertFalse(op.requires_input)
+
+    def test_text_to_video_with_steps(self):
+        self.args.vision_steps = 7
+        op = self.manager.get_operation_from_arguments(
+            Modality.VISION_TEXT_TO_VIDEO, self.args, "i"
+        )
+        self.assertEqual(op.parameters["vision"].n_steps, 7)
+        self.assertTrue(op.requires_input)
