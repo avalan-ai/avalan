@@ -86,6 +86,7 @@ class Modality(StrEnum):
     VISION_IMAGE_CLASSIFICATION = "vision_image_classification"
     VISION_IMAGE_TO_TEXT = "vision_image_to_text"
     VISION_TEXT_TO_IMAGE = "vision_text_to_image"
+    VISION_TEXT_TO_ANIMATION = "vision_text_to_animation"
     VISION_IMAGE_TEXT_TO_TEXT = "vision_image_text_to_text"
     VISION_ENCODER_DECODER = "vision_encoder_decoder"
     VISION_SEMANTIC_SEGMENTATION = "vision_semantic_segmentation"
@@ -150,6 +151,18 @@ class VisionImageFormat(StrEnum):
     TIFF = "TIFF"
     WEBP = "WEBP"
     XBM = "XBM"
+
+
+class TimestepSpacing(StrEnum):
+    LINSPACE = "linspace"
+    LEADING = "leading"
+    TRAILING = "trailing"
+
+
+class BetaSchedule(StrEnum):
+    LINEAR = "linear"
+    SCALED_LINEAR = "scaled_linear"
+    SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -569,6 +582,9 @@ class OperationVisionParameters:
     high_noise_frac: float | None = None
     image_format: VisionImageFormat | None = None
     n_steps: int | None = None
+    timestep_spacing: TimestepSpacing | None = None
+    beta_schedule: BetaSchedule | None = None
+    guidance_scale: float | None = None
 
 
 class OperationParameters(TypedDict, total=False):
@@ -706,6 +722,8 @@ class TransformerEngineSettings(EngineSettings):
     state_dict: dict[str, Tensor] = None
     tokens: list[str] | None = None
     weight_type: WeightType = "auto"
+    base_model_id: str | None = None
+    checkpoint: str | None = None
     refiner_model_id: str | None = None
 
 

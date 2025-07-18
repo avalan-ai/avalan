@@ -25,7 +25,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
 
-Take a quick look at which models you can use in [Models](#models), the tools available to agents in [Tools](#tools), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Serving agents](#serving-agents), the [framework code](#framework-code) you can reuse, and see every CLI option in the [CLI docs](docs/CLI.md).
+Take a quick look at which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Serving agents](#serving-agents), the [framework code](#framework-code) you can reuse, and see every CLI option in the [CLI docs](docs/CLI.md).
 
 ## Models
 
@@ -345,6 +345,28 @@ The output lists each annotation:
 └──────────────────┘
 ```
 
+#### Text to Animation
+
+Create an animation of a given prompt using a base model for styling:
+
+```bash
+echo 'A tabby cat slowly walking' | \
+    avalan model run "ByteDance/AnimateDiff-Lightning" \
+        --modality vision_text_to_animation \
+        --base-model "stablediffusionapi/mistoonanime-v30" \
+        --checkpoint "animatediff_lightning_4step_diffusers.safetensors" \
+        --weight "fp16" \
+        --path example_cat_walking.gif \
+        --vision-beta-schedule "linear" \
+        --vision-guidance-scale 1.0 \
+        --vision-steps 4 \
+        --vision-timestep-spacing "trailing"
+```
+
+And here's the generated anime inspired animation of a walking cat:
+
+![An anime cat slowly walking](https://avalan.ai/images/github/vision_text_to_animation_generated.webp)
+
 #### Text to Image
 
 Create an image based off your prompt:
@@ -355,7 +377,7 @@ echo 'Leo Messi petting a purring tubby cat' | \
         --modality vision_text_to_image \
         --refiner-model "stabilityai/stable-diffusion-xl-refiner-1.0" \
         --weight "fp16" \
-        --path example_generated.jpg \
+        --path example_messi_petting_cat.jpg \
         --vision-color-model RGB \
         --vision-image-format JPEG \
         --vision-high-noise-frac 0.8 \

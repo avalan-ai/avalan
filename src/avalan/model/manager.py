@@ -35,6 +35,7 @@ from ..model.vision.image import (
     VisionEncoderDecoderModel,
 )
 from ..model.vision.diffusion import TextToImageDiffusionModel
+from ..model.vision.animation import TextToAnimationModel
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..secrets import KeyringSecrets
 from ..tool.manager import ToolManager
@@ -59,6 +60,7 @@ ModelType: TypeAlias = (
     | TextToSpeechModel
     | TokenClassificationModel
     | VisionEncoderDecoderModel
+    | TextToAnimationModel
 )
 
 
@@ -98,7 +100,7 @@ class ModelManager(ContextDecorator):
         modality: Modality,
         model: ModelType,
         operation: Operation,
-        tool: ToolManager | None = None
+        tool: ToolManager | None = None,
     ):
         stopping_criteria = (
             KeywordStoppingCriteria(
@@ -181,7 +183,7 @@ class ModelManager(ContextDecorator):
                         skip_special_tokens=operation.parameters[
                             "text"
                         ].skip_special_tokens,
-                        tool=tool
+                        tool=tool,
                     )
                 else:
                     result = await model(
@@ -190,7 +192,7 @@ class ModelManager(ContextDecorator):
                             "text"
                         ].system_prompt,
                         settings=operation.generation_settings,
-                        tool=tool
+                        tool=tool,
                     )
 
             case Modality.TEXT_QUESTION_ANSWERING:
@@ -327,6 +329,31 @@ class ModelManager(ContextDecorator):
                     n_steps=operation.parameters["vision"].n_steps,
                 )
 
+            case Modality.VISION_TEXT_TO_ANIMATION:
+                assert (
+                    operation.input
+                    and operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                    and operation.parameters["vision"].n_steps is not None
+                    and operation.parameters["vision"].timestep_spacing
+                    and operation.parameters["vision"].beta_schedule
+                    and operation.parameters["vision"].guidance_scale
+                    is not None
+                )
+
+                result = await model(
+                    operation.input,
+                    operation.parameters["vision"].path,
+                    beta_schedule=operation.parameters["vision"].beta_schedule,
+                    guidance_scale=operation.parameters[
+                        "vision"
+                    ].guidance_scale,
+                    steps=operation.parameters["vision"].n_steps,
+                    timestep_spacing=operation.parameters[
+                        "vision"
+                    ].timestep_spacing,
+                )
+
             case Modality.VISION_SEMANTIC_SEGMENTATION:
                 assert (
                     operation.parameters["vision"]
@@ -388,6 +415,7 @@ class ModelManager(ContextDecorator):
             Modality.TEXT_TOKEN_CLASSIFICATION,
             Modality.VISION_IMAGE_TEXT_TO_TEXT,
             Modality.VISION_TEXT_TO_IMAGE,
+            Modality.VISION_TEXT_TO_ANIMATION,
         }
 
         match modality:
@@ -513,6 +541,17 @@ class ModelManager(ContextDecorator):
                     )
                 )
 
+            case Modality.VISION_TEXT_TO_ANIMATION:
+                parameters = OperationParameters(
+                    vision=OperationVisionParameters(
+                        path=args.path,
+                        n_steps=args.vision_steps,
+                        timestep_spacing=args.vision_timestep_spacing,
+                        beta_schedule=args.vision_beta_schedule,
+                        guidance_scale=args.vision_guidance_scale,
+                    )
+                )
+
             case Modality.VISION_SEMANTIC_SEGMENTATION:
                 parameters = OperationParameters(
                     vision=OperationVisionParameters(
@@ -570,6 +609,8 @@ class ModelManager(ContextDecorator):
         low_cpu_mem_usage: bool = False,
         parallel: ParallelStrategy | None = None,
         quiet: bool = False,
+        base_model_id: str | None = None,
+        checkpoint: str | None = None,
         refiner_model_id: str | None = None,
         revision: str | None = None,
         special_tokens: list[str] | None = None,
@@ -588,6 +629,8 @@ class ModelManager(ContextDecorator):
             low_cpu_mem_usage=low_cpu_mem_usage,
             loader_class=loader_class,
             parallel=parallel,
+            base_model_id=base_model_id or None,
+            checkpoint=checkpoint or None,
             refiner_model_id=refiner_model_id or None,
             revision=revision,
             special_tokens=special_tokens or None,
@@ -644,6 +687,8 @@ class ModelManager(ContextDecorator):
                     model = VisionEncoderDecoderModel(**model_load_args)
                 case Modality.VISION_TEXT_TO_IMAGE:
                     model = TextToImageDiffusionModel(**model_load_args)
+                case Modality.VISION_TEXT_TO_ANIMATION:
+                    model = TextToAnimationModel(**model_load_args)
                 case Modality.VISION_SEMANTIC_SEGMENTATION:
                     model = SemanticSegmentationModel(**model_load_args)
                 case Modality.TEXT_QUESTION_ANSWERING:

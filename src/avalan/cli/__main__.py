@@ -35,6 +35,8 @@ from ..entities import (
     ParallelStrategy,
     VisionColorModel,
     VisionImageFormat,
+    BetaSchedule,
+    TimestepSpacing,
     TextGenerationLoaderClass,
     User,
     WeightType,
@@ -951,6 +953,23 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--checkpoint",
+            type=str,
+            help=(
+                "AnimateDiff motion adapter checkpoint to use. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--base-model",
+            type=str,
+            help=(
+                "ID of the base model for text-to-video generation. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+
+        model_run_parser.add_argument(
             "--refiner-model",
             type=str,
             help=(
@@ -1043,6 +1062,35 @@ class CLI:
                 "Number of denoising (sampling) iterations in the "
                 "diffusion scheduler. "
                 "Only applicable to vision text to image modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-timestep-spacing",
+            default=TimestepSpacing.TRAILING,
+            type=str,
+            choices=[t.value for t in TimestepSpacing],
+            help=(
+                "Timestep spacing strategy for the Euler scheduler. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-beta-schedule",
+            default=BetaSchedule.LINEAR,
+            type=str,
+            choices=[b.value for b in BetaSchedule],
+            help=(
+                "Beta schedule for the Euler scheduler. "
+                "Only applicable to vision text to video modality."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--vision-guidance-scale",
+            default=1.0,
+            type=float,
+            help=(
+                "Guidance scale for text-to-video generation. "
+                "Only applicable to vision text to video modality."
             ),
         )
         model_run_parser.add_argument(

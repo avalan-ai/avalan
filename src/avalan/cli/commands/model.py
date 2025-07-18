@@ -239,6 +239,9 @@ async def model_run(
             elif modality == Modality.VISION_TEXT_TO_IMAGE:
                 console.print(output)
 
+            elif modality == Modality.VISION_TEXT_TO_ANIMATION:
+                console.print(output)
+
             else:
                 raise NotImplementedError(f"Modality {modality} not supported")
 
