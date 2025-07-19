@@ -18,7 +18,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🌐 Multi-modal integration (NLP, vision, audio.)
 - 🔗 Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and LiteLLM.
 - 🤖 Sophisticated memory management with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, and AWS S3 Vectors.
-- 🧠 Multiple reasoning strategies including ReACT, Chain‑of‑Thought, Tree‑of‑Though, Plan‑and‑Reflect, and Self‑Consistency.
+- 🧠 Multiple reasoning strategies including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, and Self‑Consistency.
 - 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
 - 📊 Comprehensive observability through metrics, event tracing, and dashboards.
 - 🚀 Deploy your AI workflows to the cloud.
