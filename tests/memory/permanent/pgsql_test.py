@@ -188,9 +188,7 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
         participant_id = uuid4()
         sess_id = UUID("11111111-1111-1111-1111-111111111111")
 
-        with patch(
-            "avalan.memory.permanent.pgsql.message.uuid4", return_value=sess_id
-        ):
+        with patch("avalan.memory.permanent.uuid4", return_value=sess_id):
             result = await memory.create_session(
                 agent_id=agent_id, participant_id=participant_id
             )

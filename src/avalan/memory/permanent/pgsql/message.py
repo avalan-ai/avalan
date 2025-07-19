@@ -4,7 +4,6 @@ from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageMemory,
     PermanentMessageScored,
-    Session,
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
@@ -44,11 +43,9 @@ class PgsqlMessageMemory(
         self, *args, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         now_utc = datetime.now(timezone.utc)
-        session = Session(
-            id=uuid4(),
-            agent_id=agent_id,
-            participant_id=participant_id,
-            messages=0,
+        session = self._build_session(
+            agent_id,
+            participant_id,
             created_at=now_utc,
         )
         async with self._database.connection() as connection:
