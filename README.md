@@ -18,7 +18,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🔌 Multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
 - 🔗 Native adapters for Anyscale, Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace, Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others.
 - 🤖 Sophisticated memory management with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, and AWS S3 Vectors.
-- 🧠 Multiple reasoning strategies including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, and Self‑Consistency.
+- 🧠 Multiple reasoning strategies including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, Self‑Consistency, Scratchpad‑Toolformer, Cascaded Prompting, Critic‑Guided Direction‑Following Experts, and Product‑of‑Experts.
 - 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
 - 📊 Comprehensive observability through metrics, event tracing, and dashboards.
 - 🚀 Deploy your AI workflows to the cloud.
@@ -26,7 +26,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
 
-Take a quick look at which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Serving agents](#serving-agents), the [framework code](#framework-code) you can reuse, and see every CLI option in the [CLI docs](docs/CLI.md).
+Take a quick look at which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Serving agents](#serving-agents), the [framework code](#framework-code) you can reuse, and see every CLI option in the [CLI docs](docs/CLI.md).
 
 ## Models
 
@@ -550,6 +550,46 @@ echo "Tell me what avalan does based on the web page https://raw.githubuserconte
       --display-events \
       --display-tools
 ```
+
+## Reasoning strategies
+
+Avalan supports several reasoning approaches for guiding agents through complex problems.
+
+### ReACT
+
+ReACT interleaves reasoning with tool use so an agent can think through steps and take actions in turn.
+
+### Chain‑of‑Thought
+
+Chain‑of‑Thought builds sequential reasoning traces to reach an answer for tasks that require intermediate logic.
+
+### Tree‑of‑Thought
+
+Tree‑of‑Thought explores multiple branches of reasoning in parallel to select the best path for difficult decisions.
+
+### Plan‑and‑Reflect
+
+Plan‑and‑Reflect has the agent outline a plan, act, and then review the results, promoting methodical problem solving.
+
+### Self‑Consistency
+
+Self‑Consistency samples several reasoning paths and aggregates them to produce more reliable answers.
+
+### Scratchpad‑Toolformer
+
+Scratchpad‑Toolformer combines an internal scratchpad with learned tool usage to manipulate intermediate results.
+
+### Cascaded Prompting
+
+Cascaded Prompting chains prompts so each step refines the next, ideal for multi-stage instructions.
+
+### Critic‑Guided Direction‑Following Experts
+
+Critic‑Guided Direction‑Following Experts use a critic model to guide expert models when strict quality is required.
+
+### Product‑of‑Experts
+
+Product‑of‑Experts merges the outputs of several experts to generate answers that benefit from multiple viewpoints.
 
 ## Memories
 
