@@ -3,7 +3,6 @@ from ....memory.permanent import (
     Memory,
     MemoryType,
     PermanentMemory,
-    PermanentMemoryPartition,
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
@@ -53,29 +52,18 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             namespace and participant_id and data and identifier and partitions
         )
         now_utc = datetime.now(timezone.utc)
-        entry = Memory(
-            id=uuid4(),
-            model_id=model_id,
-            type=memory_type,
-            participant_id=participant_id,
-            namespace=namespace,
-            identifier=identifier,
-            data=data,
-            partitions=len(partitions),
-            symbols=symbols,
+        entry, partition_rows = self._build_memory_with_partitions(
+            namespace,
+            participant_id,
+            memory_type,
+            data,
+            identifier,
+            partitions,
             created_at=now_utc,
+            symbols=symbols,
+            model_id=model_id,
+            memory_id=uuid4(),
         )
-        partition_rows = [
-            PermanentMemoryPartition(
-                participant_id=entry.participant_id,
-                memory_id=entry.id,
-                partition=i,
-                data=p.data,
-                embedding=p.embeddings,
-                created_at=now_utc,
-            )
-            for i, p in enumerate(partitions)
-        ]
 
         async with self._database.connection() as connection:
             async with connection.transaction():
@@ -129,7 +117,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             (
                                 str(mp.participant_id),
                                 str(mp.memory_id),
-                                mp.partition + 1,
+                                mp.partition,
                                 mp.data,
                                 Vector(mp.embedding),
                                 mp.created_at,

@@ -4,7 +4,6 @@ from ....memory.permanent import (
     Memory,
     MemoryType,
     PermanentMemory,
-    PermanentMemoryPartition,
     VectorFunction,
 )
 from . import S3VectorsMemory
@@ -76,18 +75,17 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             namespace and participant_id and data and identifier and partitions
         )
         now_utc = datetime.now(timezone.utc)
-        entry_id = uuid4()
-        entry = Memory(
-            id=entry_id,
-            model_id=model_id,
-            type=memory_type,
-            participant_id=participant_id,
-            namespace=namespace,
-            identifier=identifier,
-            data=data,
-            partitions=len(partitions),
-            symbols=symbols,
+        entry, partition_rows = self._build_memory_with_partitions(
+            namespace,
+            participant_id,
+            memory_type,
+            data,
+            identifier,
+            partitions,
             created_at=now_utc,
+            symbols=symbols,
+            model_id=model_id,
+            memory_id=uuid4(),
         )
         await self._put_object(
             Bucket=self._bucket,
@@ -107,15 +105,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
                 }
             ).encode(),
         )
-        for idx, p in enumerate(partitions):
-            row = PermanentMemoryPartition(
-                participant_id=entry.participant_id,
-                memory_id=entry.id,
-                partition=idx + 1,
-                data=p.data,
-                embedding=p.embeddings,
-                created_at=now_utc,
-            )
+        for row in partition_rows:
             await self._put_vector(
                 Bucket=self._bucket,
                 Collection=self._collection,
