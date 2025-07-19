@@ -232,6 +232,24 @@ class PermanentMessageMemory(MessageMemory):
         ]
         return message, message_partitions
 
+    @staticmethod
+    def _build_session(
+        agent_id: UUID,
+        participant_id: UUID,
+        *,
+        created_at: datetime,
+        session_id: UUID | None = None,
+    ) -> Session:
+        if session_id is None:
+            session_id = uuid4()
+        return Session(
+            id=session_id,
+            agent_id=agent_id,
+            participant_id=participant_id,
+            messages=0,
+            created_at=created_at,
+        )
+
 
 class PermanentMemory(MemoryStore[Memory]):
     _sentence_model: SentenceTransformerModel

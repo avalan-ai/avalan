@@ -54,7 +54,24 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
     async def create_session(
         self, *, agent_id: UUID, participant_id: UUID
     ) -> UUID:
-        return uuid4()
+        now_utc = datetime.now(timezone.utc)
+        session = self._build_session(
+            agent_id,
+            participant_id,
+            created_at=now_utc,
+        )
+        await self._index_document(
+            index=self._index,
+            id=f"{session.id}.json",
+            document={
+                "id": str(session.id),
+                "agent_id": str(session.agent_id),
+                "participant_id": str(session.participant_id),
+                "messages": session.messages,
+                "created_at": session.created_at.isoformat(),
+            },
+        )
+        return session.id
 
     async def continue_session_and_get_id(
         self,
@@ -63,6 +80,13 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
+        result = await self._get_document(
+            index=self._index, id=f"{session_id}.json"
+        )
+        meta = result.get("_source") if result else None
+        assert meta
+        assert meta.get("agent_id") == str(agent_id)
+        assert meta.get("participant_id") == str(participant_id)
         return session_id
 
     async def append_with_partitions(

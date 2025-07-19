@@ -167,22 +167,37 @@ class ElasticsearchMessageMemoryTestCase(IsolatedAsyncioTestCase):
         )
         sid = UUID("22222222-2222-2222-2222-222222222222")
         with patch(
-            "avalan.memory.permanent.elasticsearch.message.uuid4",
+            "avalan.memory.permanent.uuid4",
             return_value=sid,
         ):
             result = await memory.create_session(
                 agent_id=uuid4(), participant_id=uuid4()
             )
         self.assertEqual(result, sid)
+        self.assertTrue(memory._client.index.called)
 
     async def test_continue_session_and_get_id(self):
         memory = ElasticsearchMessageMemory(
             index="idx", client=MagicMock(), logger=MagicMock()
         )
         sid = uuid4()
-        result = await memory.continue_session_and_get_id(
-            agent_id=uuid4(), participant_id=uuid4(), session_id=sid
-        )
+        agent_id = uuid4()
+        participant_id = uuid4()
+        memory._client.get.return_value = {
+            "_source": {
+                "agent_id": str(agent_id),
+                "participant_id": str(participant_id),
+            }
+        }
+        with patch(
+            "avalan.memory.permanent.elasticsearch.to_thread",
+            AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+        ):
+            result = await memory.continue_session_and_get_id(
+                agent_id=agent_id,
+                participant_id=participant_id,
+                session_id=sid,
+            )
         self.assertEqual(result, sid)
 
     async def test_search_messages_missing_metadata(self):
