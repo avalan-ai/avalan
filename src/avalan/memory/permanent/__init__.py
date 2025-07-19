@@ -9,7 +9,7 @@ from enum import StrEnum
 from numpy import ndarray
 from typing import Literal
 from ...compat import override
-from uuid import UUID
+from uuid import UUID, uuid4
 
 Order = Literal["asc", "desc"]
 
@@ -197,6 +197,41 @@ class PermanentMessageMemory(MessageMemory):
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 
+    @staticmethod
+    def _build_message_with_partitions(
+        engine_message: EngineMessage,
+        session_id: UUID | None,
+        partitions: list[TextPartition],
+        *,
+        created_at: datetime,
+        message_id: UUID | None = None,
+    ) -> tuple[PermanentMessage, list[PermanentMessagePartition]]:
+        if message_id is None:
+            message_id = uuid4()
+        message = PermanentMessage(
+            id=message_id,
+            agent_id=engine_message.agent_id,
+            model_id=engine_message.model_id,
+            session_id=session_id,
+            author=engine_message.message.role,
+            data=engine_message.message.content,
+            partitions=len(partitions),
+            created_at=created_at,
+        )
+        message_partitions = [
+            PermanentMessagePartition(
+                agent_id=message.agent_id,
+                session_id=message.session_id,
+                message_id=message.id,
+                partition=i + 1,
+                data=p.data,
+                embedding=p.embeddings,
+                created_at=created_at,
+            )
+            for i, p in enumerate(partitions)
+        ]
+        return message, message_partitions
+
 
 class PermanentMemory(MemoryStore[Memory]):
     _sentence_model: SentenceTransformerModel
@@ -240,6 +275,47 @@ class PermanentMemory(MemoryStore[Memory]):
         limit: int | None = None,
     ) -> list[Memory]:
         raise NotImplementedError()
+
+    @staticmethod
+    def _build_memory_with_partitions(
+        namespace: str,
+        participant_id: UUID,
+        memory_type: MemoryType,
+        data: str,
+        identifier: str,
+        partitions: list[TextPartition],
+        *,
+        created_at: datetime,
+        symbols: dict | None = None,
+        model_id: str | None = None,
+        memory_id: UUID | None = None,
+    ) -> tuple[Memory, list[PermanentMemoryPartition]]:
+        if memory_id is None:
+            memory_id = uuid4()
+        entry = Memory(
+            id=memory_id,
+            model_id=model_id,
+            type=memory_type,
+            participant_id=participant_id,
+            namespace=namespace,
+            identifier=identifier,
+            data=data,
+            partitions=len(partitions),
+            symbols=symbols,
+            created_at=created_at,
+        )
+        partition_rows = [
+            PermanentMemoryPartition(
+                participant_id=participant_id,
+                memory_id=memory_id,
+                partition=i + 1,
+                data=p.data,
+                embedding=p.embeddings,
+                created_at=created_at,
+            )
+            for i, p in enumerate(partitions)
+        ]
+        return entry, partition_rows
 
 
 class RecordNotFoundException(Exception):

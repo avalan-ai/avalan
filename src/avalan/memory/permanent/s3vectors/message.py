@@ -15,9 +15,7 @@ from ....entities import (
 )
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
-    PermanentMessage,
     PermanentMessageMemory,
-    PermanentMessagePartition,
     VectorFunction,
 )
 from . import S3VectorsMemory
@@ -84,16 +82,12 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
     ) -> None:
         assert engine_message and partitions
         now_utc = datetime.now(timezone.utc)
-        message_id = uuid4()
-        message = PermanentMessage(
-            id=message_id,
-            agent_id=engine_message.agent_id,
-            model_id=engine_message.model_id,
-            session_id=self._session_id,
-            author=engine_message.message.role,
-            data=engine_message.message.content,
-            partitions=len(partitions),
+        message, message_partitions = self._build_message_with_partitions(
+            engine_message,
+            self._session_id,
+            partitions,
             created_at=now_utc,
+            message_id=uuid4(),
         )
         key = (
             f"{self._collection}/{message.session_id}/{message.id}.json"
@@ -118,16 +112,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
                 }
             ).encode(),
         )
-        for idx, part in enumerate(partitions):
-            row = PermanentMessagePartition(
-                agent_id=message.agent_id,
-                session_id=message.session_id,
-                message_id=message.id,
-                partition=idx + 1,
-                data=part.data,
-                embedding=part.embeddings,
-                created_at=now_utc,
-            )
+        for row in message_partitions:
             await self._put_vector(
                 Bucket=self._bucket,
                 Collection=self._collection,

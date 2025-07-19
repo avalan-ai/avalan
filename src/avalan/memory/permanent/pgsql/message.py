@@ -3,7 +3,6 @@ from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageMemory,
-    PermanentMessagePartition,
     PermanentMessageScored,
     Session,
     VectorFunction,
@@ -107,28 +106,13 @@ class PgsqlMessageMemory(
     ) -> None:
         assert engine_message and partitions
         now_utc = datetime.now(timezone.utc)
-        message = PermanentMessage(
-            id=uuid4(),
-            agent_id=engine_message.agent_id,
-            model_id=engine_message.model_id,
-            session_id=self._session_id,
-            author=engine_message.message.role,
-            data=engine_message.message.content,
-            partitions=len(partitions),
+        message, message_partitions = self._build_message_with_partitions(
+            engine_message,
+            self._session_id,
+            partitions,
             created_at=now_utc,
+            message_id=uuid4(),
         )
-        message_partitions = [
-            PermanentMessagePartition(
-                agent_id=message.agent_id,
-                session_id=message.session_id,
-                message_id=message.id,
-                partition=i,
-                data=p.data,
-                embedding=p.embeddings,
-                created_at=now_utc,
-            )
-            for i, p in enumerate(partitions)
-        ]
 
         async with self._database.connection() as connection:
             async with connection.transaction():
@@ -193,7 +177,7 @@ class PgsqlMessageMemory(
                                 str(mp.agent_id),
                                 str(mp.session_id) if mp.session_id else None,
                                 str(mp.message_id),
-                                mp.partition + 1,
+                                mp.partition,
                                 mp.data,
                                 Vector(mp.embedding),
                                 mp.created_at,

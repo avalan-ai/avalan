@@ -6,9 +6,10 @@ from avalan.memory.permanent import (
     VectorFunction,
 )
 from avalan.model.nlp.sentence import SentenceTransformerModel
-from uuid import uuid4
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 
 
@@ -163,3 +164,90 @@ class PermanentMemoryTestCase(IsolatedAsyncioTestCase):
                 namespace="ns",
                 function=VectorFunction.COSINE_DISTANCE,
             )
+
+
+class BuildPartitionsTestCase(TestCase):
+    def setUp(self):
+        self.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        self.engine_message = EngineMessage(
+            agent_id=uuid4(),
+            model_id="model",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+        self.partitions = [
+            TextPartition(
+                data="a", total_tokens=1, embeddings=np.array([0.1])
+            ),
+            TextPartition(
+                data="b", total_tokens=1, embeddings=np.array([0.2])
+            ),
+        ]
+        self.session_id = uuid4()
+        self.participant_id = uuid4()
+
+    def test_build_message_with_generated_id(self):
+        msg_id = UUID("11111111-1111-1111-1111-111111111111")
+        with patch("avalan.memory.permanent.uuid4", return_value=msg_id):
+            message, mp = (
+                PermanentMessageMemory._build_message_with_partitions(
+                    self.engine_message,
+                    self.session_id,
+                    self.partitions,
+                    created_at=self.created_at,
+                )
+            )
+        self.assertEqual(message.id, msg_id)
+        self.assertEqual(len(mp), 2)
+        self.assertEqual(mp[0].partition, 1)
+        self.assertEqual(mp[0].message_id, msg_id)
+        self.assertEqual(mp[1].partition, 2)
+        self.assertEqual(mp[1].message_id, msg_id)
+
+    def test_build_message_with_explicit_id(self):
+        msg_id = uuid4()
+        message, mp = PermanentMessageMemory._build_message_with_partitions(
+            self.engine_message,
+            self.session_id,
+            self.partitions,
+            created_at=self.created_at,
+            message_id=msg_id,
+        )
+        self.assertEqual(message.id, msg_id)
+        self.assertEqual(mp[0].message_id, msg_id)
+
+    def test_build_memory_with_generated_id(self):
+        mem_id = UUID("22222222-2222-2222-2222-222222222222")
+        with patch("avalan.memory.permanent.uuid4", return_value=mem_id):
+            entry, rows = PermanentMemory._build_memory_with_partitions(
+                "ns",
+                self.participant_id,
+                MemoryType.RAW,
+                data="d",
+                identifier="id",
+                partitions=self.partitions,
+                created_at=self.created_at,
+            )
+        self.assertEqual(entry.id, mem_id)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].memory_id, mem_id)
+        self.assertEqual(rows[0].partition, 1)
+        self.assertEqual(rows[1].memory_id, mem_id)
+        self.assertEqual(rows[1].partition, 2)
+
+    def test_build_memory_with_explicit_id(self):
+        mem_id = uuid4()
+        entry, rows = PermanentMemory._build_memory_with_partitions(
+            "ns",
+            self.participant_id,
+            MemoryType.RAW,
+            data="d",
+            identifier="id",
+            partitions=self.partitions,
+            created_at=self.created_at,
+            memory_id=mem_id,
+        )
+        self.assertEqual(entry.id, mem_id)
+        self.assertEqual(rows[0].memory_id, mem_id)
+        self.assertEqual(rows[0].partition, 1)
+        self.assertEqual(rows[1].memory_id, mem_id)
+        self.assertEqual(rows[1].partition, 2)
