@@ -414,6 +414,14 @@ Input = str | list[str] | Message | list[Message]
 
 
 @dataclass(frozen=True, kw_only=True)
+class ReasoningOrchestratorResponse:
+    """Result returned by :class:`ReasoningOrchestrator`."""
+
+    answer: str
+    reasoning: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class EngineMessage:
     agent_id: UUID
     model_id: str
