@@ -31,10 +31,12 @@ Take a quick look at which models and modalities you can use in [Models](#models
 ## Models
 
 Avalan makes text, audio, and vision models available from the CLI or in your
-own code. You can run local models or call vendor models from OpenRouter,
-OpenAI, LiteLLM, Ollama, DeepSeek and Gemini. It works across engines such as
-transformers, vLLM and mlx-lm. The examples below show each modality in
-action. Use the table of contents below to jump to the task you need:
+own code. You can run local models or call vendor models from Anyscale,
+Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace,
+Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others. It
+works across engines such as transformers, vLLM and mlx-lm. The examples below
+show each modality in action. Use the table of contents below to jump to the
+task you need:
 
 * 🎧 [**Audio**](#audio) – Turn audio into text or produce speech for
   accessibility and media.
