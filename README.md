@@ -14,8 +14,8 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 **Highlights**
 
+- 🎞️ Multi-modal integration (NLP/text, vision, audio.)
 - 🔌 Multi-backend support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
-- 🌐 Multi-modal integration (NLP, vision, audio.)
 - 🔗 Native adapters for OpenRouter, Ollama, OpenAI, DeepSeek, Gemini, and LiteLLM.
 - 🤖 Sophisticated memory management with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, and AWS S3 Vectors.
 - 🧠 Multiple reasoning strategies including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, and Self‑Consistency.
