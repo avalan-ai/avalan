@@ -37,32 +37,32 @@ action. Use the table of contents below to jump to the task you need:
 
 * 🎧 [**Audio**](#audio) – Turn audio into text or produce speech for
   accessibility and media.
-  - 🗣️ [Speech recognition](#speech-recognition)
-  - 🔊 [Text to speech](#text-to-speech)
+  - 🗣️ [Speech recognition](#speech-recognition) – Convert spoken audio to text
+  - 🔊 [Text to speech](#text-to-speech) – Generate spoken audio from text
 * 📝 [**Text**](#text) – Perform natural language processing to understand or
   generate information.
-  - ❓ [Question answering](#question-answering)
-  - 🧮 [Sequence classification](#sequence-classification)
-  - 🔁 [Sequence to sequence](#sequence-to-sequence)
-  - ✍️ [Text generation](#text-generation)
-  - 🏷️ [Token classification](#token-classification)
-  - 🌍 [Translation](#translation)
+  - ❓ [Question answering](#question-answering) – Answer questions from context
+  - 🧮 [Sequence classification](#sequence-classification) – Label a sequence such as sentiment
+  - 🔁 [Sequence to sequence](#sequence-to-sequence) – Transform text like summarization
+  - ✍️ [Text generation](#text-generation) – Produce new text from prompts
+  - 🏷️ [Token classification](#token-classification) – Tag tokens for tasks like NER
+  - 🌍 [Translation](#translation) – Convert text between languages
 * 👁️ [**Vision**](#vision) – Analyze images or create visuals for content and
   automation.
-  - 🖼️ [Image classification](#image-classification)
-  - 📷 [Image to text](#image-to-text)
-  - 🔤 [Image text to text](#image-text-to-text)
-  - 🎯 [Object detection](#object-detection)
-  - 🧩 [Semantic segmentation](#semantic-segmentation)
-  - 🎬 [Text to animation](#text-to-animation)
-  - 🖌️ [Text to image](#text-to-image)
-  - 🎥 [Text to video](#text-to-video)
+  - 🖼️ [Image classification](#image-classification) – Identify objects in an image
+  - 📷 [Image to text](#image-to-text) – Describe an image with text
+  - 🔤 [Image text to text](#image-text-to-text) – Provide an image and instruction to produce text
+  - 🎯 [Object detection](#object-detection) – Locate objects within an image
+  - 🧩 [Semantic segmentation](#semantic-segmentation) – Label each pixel in an image
+  - 🎬 [Text to animation](#text-to-animation) – Create animations from prompts
+  - 🖌️ [Text to image](#text-to-image) – Generate images from text
+  - 🎥 [Text to video](#text-to-video) – Produce videos from text prompts
 
 ### Audio
 
 #### Speech recognition
 
-Recognize speech from an audio file:
+Transcribe speech from an audio file:
 
 ```bash
 avalan model run "facebook/wav2vec2-base-960h" \
@@ -81,7 +81,7 @@ PERSONIFICATION OF GRACE AND GOODNESS
 
 #### Text to speech
 
-Generate speech in Oprah's voice from a prompt. This example uses an 18-second clip from her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm) as a reference:
+Generate speech in Oprah's voice from a text prompt. The example uses an 18-second clip from her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm) as a reference:
 
 ```bash
 echo "[S1] Leo Messi is the greatest football player of all times." | \
@@ -96,7 +96,7 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
 
 #### Question answering
 
-Answer a question based on context using a question-answering model:
+Answer a question based on context using a question answering model:
 
 ```bash
 echo "What sport does Leo play?" \
@@ -113,7 +113,7 @@ football
 
 #### Sequence classification
 
-Classify the sentiment of a short text:
+Classify the sentiment of short text:
 
 ```bash
 echo "We love Leo Messi." \
@@ -153,7 +153,7 @@ Andy Cucci is held by many as the greatest footballer of all times.
 
 #### Text generation
 
-Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example prompts as "Aurora" and limits the output to 100 tokens:
+Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example instructs the assistant to act as "Aurora" and limits the output to 100 tokens:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
@@ -245,7 +245,7 @@ sin precedentes durante su carrera.
 
 #### Image classification
 
-Classify an image (hot dog or not):
+Classify an image, such as determining whether it is a hot dog:
 
 ```bash
 avalan model run "microsoft/resnet-50" \
@@ -281,7 +281,7 @@ a sign for a gas station on the side of a building [SEP]
 
 #### Image text to text
 
-Provide an image and instruction to an `image-text-to-text` model:
+Provide an image and an instruction to an `image-text-to-text` model:
 
 ```bash
 echo "Transcribe the text on this image, keeping format" | \
@@ -451,8 +451,7 @@ Here is the generated image of Leo Messi petting a cute cat:
 
 #### Text to video
 
-Create an MP4 video from a prompt, guardrailing generation with a negative
-prompt, and using an image as a reference point:
+Create an MP4 video from a prompt, using a negative prompt for guardrails and an image as reference:
 
 ```bash
 echo 'A cute little penguin takes out a book and starts reading it' | \
@@ -479,7 +478,7 @@ And here's the generated video:
 
 ## Tools
 
-Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. The example below uses a local 8B LLM, enables recent memory, and loads a calculator tool. The agent begins with a math question and remains open for follow-ups:
+Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. The example below uses a local 8B LLM, enables recent memory, and loads a calculator tool. The agent begins with a math question and stays open for follow-ups:
 
 ```bash
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
@@ -629,7 +628,7 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 
 ## Framework code
 
-Through the avalan microframework, you can easily integrate real time token
+Through the avalan microframework, you can easily integrate real-time token
 streaming with your own code, as [this example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/text_generation.py):
 
 ```python
@@ -682,8 +681,7 @@ if __name__ == "__main__":
     run(example(path))
 ```
 
-Looking for sequence to sequence models? Just as easy, like this [summarization
-example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/seq2seq_summarization.py):
+Looking for sequence-to-sequence models? It's just as easy, as this [summarization example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/seq2seq_summarization.py):
 
 ```python
 from asyncio import run
