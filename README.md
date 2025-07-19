@@ -10,7 +10,7 @@
   <a href="https://discord.gg/8Eh9TNvk"><img src="https://img.shields.io/badge/discord-community-blue" alt="Discord Community" /></a>
 </p>
 
-Avalan empowers developers and enterprises to build, orchestrate, and deploy intelligent AI agents both locally and in the cloud. It provides a unified SDK and CLI for running millions of models with ease.
+Avalan empowers developers and enterprises to build, orchestrate, and deploy intelligent AI solutions locally, on-premises and in the cloud. It provides a unified SDK and CLI for running millions of models with ease.
 
 **Highlights**
 
