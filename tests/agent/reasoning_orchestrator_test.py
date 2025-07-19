@@ -98,3 +98,114 @@ class ReasoningOrchestratorTestCase(IsolatedAsyncioTestCase):
             result,
             ReasoningOrchestratorResponse(answer="yes", reasoning="step"),
         )
+
+
+class ReasoningOrchestratorAdditionalTestCase(IsolatedAsyncioTestCase):
+    async def _make_orchestrator(self, text: str):
+        renderer = Renderer()
+        orchestrator = AsyncMock(
+            _logger=MagicMock(),
+            _model_manager=MagicMock(),
+            _memory=MagicMock(),
+            _tool=MagicMock(),
+            _event_manager=MagicMock(),
+            _call_options=None,
+            _exit_memory=True,
+            id=uuid4(),
+            renderer=renderer,
+            operations=[
+                MagicMock(specification=MagicMock(template_vars=None))
+            ],
+        )
+        orchestrator.name = "Agent"
+        resp = MagicMock()
+        resp.to_str = AsyncMock(return_value=text)
+        orchestrator.return_value = resp
+        return ReasoningOrchestrator(orchestrator), orchestrator
+
+    async def test_context_manager(self):
+        renderer = Renderer()
+        orch = AsyncMock(
+            __aenter__=AsyncMock(return_value=None),
+            __aexit__=AsyncMock(return_value=True),
+            _logger=MagicMock(),
+            _model_manager=MagicMock(),
+            _memory=MagicMock(),
+            _tool=MagicMock(),
+            _event_manager=MagicMock(),
+            _call_options=None,
+            _exit_memory=True,
+            id=uuid4(),
+            name="ctx",
+            renderer=renderer,
+            operations=[],
+        )
+        cot = ReasoningOrchestrator(orch)
+        async with cot as res:
+            self.assertIs(res, cot)
+        orch.__aenter__.assert_awaited_once()
+        orch.__aexit__.assert_awaited_once()
+
+    def test_name_property(self):
+        renderer = Renderer()
+        orch = AsyncMock(
+            _logger=MagicMock(),
+            _model_manager=MagicMock(),
+            _memory=MagicMock(),
+            _tool=MagicMock(),
+            _event_manager=MagicMock(),
+            _call_options=None,
+            _exit_memory=True,
+            id=uuid4(),
+            renderer=renderer,
+            operations=[],
+        )
+        orch.name = "named"
+        cot = ReasoningOrchestrator(orch)
+        self.assertEqual(cot.name, "named")
+
+    async def test_think_without_answer(self):
+        cot, orchestrator = await self._make_orchestrator(
+            "<think>r</think> done"
+        )
+        result = await cot("q")
+        self.assertEqual(
+            result, ReasoningOrchestratorResponse(answer="done", reasoning="r")
+        )
+        orchestrator.assert_awaited()
+
+    async def test_reasoning_without_answer(self):
+        cot, orchestrator = await self._make_orchestrator("Reasoning: steps")
+        result = await cot("q")
+        self.assertEqual(
+            result,
+            ReasoningOrchestratorResponse(answer="steps", reasoning="steps"),
+        )
+        orchestrator.assert_awaited()
+
+    async def test_thought_with_answer(self):
+        cot, orchestrator = await self._make_orchestrator(
+            "Thought: r\nAnswer: a"
+        )
+        result = await cot("q")
+        self.assertEqual(
+            result, ReasoningOrchestratorResponse(answer="a", reasoning="r")
+        )
+        orchestrator.assert_awaited()
+
+    async def test_thought_without_answer(self):
+        cot, orchestrator = await self._make_orchestrator("Thought: r")
+        result = await cot("q")
+        self.assertEqual(
+            result, ReasoningOrchestratorResponse(answer="r", reasoning="r")
+        )
+        orchestrator.assert_awaited()
+
+    async def test_no_prefix(self):
+        cot, orchestrator = await self._make_orchestrator("just text")
+        result = await cot("q")
+        self.assertEqual(
+            result,
+            ReasoningOrchestratorResponse(answer="just text", reasoning=None),
+        )
+        orchestrator.assert_awaited()
