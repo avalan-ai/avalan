@@ -664,6 +664,15 @@ class TokenDetail(Token):
     tokens: list[Token] | None = None
 
 
+class TaggedToken(str):
+    """String token carrying an attached tag."""
+
+    def __new__(cls, value: str, tag: str | None = None):
+        obj = str.__new__(cls, value)
+        obj.tag = tag
+        return obj
+
+
 @dataclass(frozen=True, kw_only=True)
 class ToolCall:
     id: UUID

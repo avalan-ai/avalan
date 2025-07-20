@@ -14,6 +14,9 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
+from avalan.agent.orchestrator.response.parsers.reasoning import (
+    ReasoningParser,
+)
 
 from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
@@ -646,3 +649,78 @@ class OrchestratorResponseConfirmTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(resp._tool_confirm_all)
         tool.assert_awaited()
+
+
+class OrchestratorResponseDisableToolParsingTestCase(IsolatedAsyncioTestCase):
+    async def test_disable_tool_parsing(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def gen():
+            for ch in "call":
+                yield ch
+
+        response = TextGenerationResponse(
+            lambda: gen(), use_async_generator=True
+        )
+
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.return_value = [ToolCall(id=uuid4(), name="calc")]
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertEqual("".join(items), "call")
+        tool.get_calls.assert_not_called()
+
+
+class OrchestratorResponseThinkParserTestCase(IsolatedAsyncioTestCase):
+    async def test_think_parser(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def gen():
+            yield "<think>"
+            yield "x"
+            yield "</think>"
+            yield "y"
+
+        response = TextGenerationResponse(
+            lambda: gen(), use_async_generator=True
+        )
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+            parsers=[ReasoningParser()],
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertEqual(items[0], "<think>")
+        self.assertIsInstance(items[1], str)
+        self.assertEqual(getattr(items[1], "tag", None), "think")
+        self.assertEqual(items[2], "</think>")
+        self.assertEqual(items[3], "y")
