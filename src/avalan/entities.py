@@ -679,6 +679,20 @@ class ReasoningToken(Token):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolCallToken(Token):
+    """Token produced while the model emits a tool call."""
+
+    def __init__(
+        self,
+        token: str,
+        *,
+        id: Tensor | int = -1,
+        probability: float | None = None,
+    ) -> None:
+        super().__init__(id=id, token=token, probability=probability)
+
+
+@dataclass(frozen=True, kw_only=True)
 class ToolCall:
     id: UUID
     name: str
