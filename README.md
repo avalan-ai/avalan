@@ -21,7 +21,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🧠 Multiple **reasoning strategies** including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, Self‑Consistency, Scratchpad‑Toolformer, Cascaded Prompting, Critic‑Guided Direction‑Following Experts, and Product‑of‑Experts.
 - 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
 - 📊 Comprehensive **observability** through metrics, event tracing, and dashboards.
-- 🚀 **Deploy** your AI workflows to the cloud.
+- 🚀 **Deploy** your *AI workflows* to the cloud.
 - 💻 Use via the **CLI** or integrate the **Python SDK** directly in your code.
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
