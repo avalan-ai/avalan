@@ -664,13 +664,18 @@ class TokenDetail(Token):
     tokens: list[Token] | None = None
 
 
-class TaggedToken(str):
-    """String token carrying an attached tag."""
+@dataclass(frozen=True, kw_only=True)
+class ReasoningToken(Token):
+    """Token produced while the model is reasoning."""
 
-    def __new__(cls, value: str, tag: str | None = None):
-        obj = str.__new__(cls, value)
-        obj.tag = tag
-        return obj
+    def __init__(
+        self,
+        token: str,
+        *,
+        id: Tensor | int = -1,
+        probability: float | None = None,
+    ) -> None:
+        super().__init__(id=id, token=token, probability=probability)
 
 
 @dataclass(frozen=True, kw_only=True)

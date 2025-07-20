@@ -2,7 +2,7 @@
 
 from typing import Any, Iterable
 
-from .....entities import TaggedToken
+from .....entities import ReasoningToken
 
 
 class ReasoningParser:
@@ -31,7 +31,7 @@ class ReasoningParser:
             self._thinking = True
             return [token_str]
         if self._thinking:
-            return [TaggedToken(token_str, "think")]
+            return [ReasoningToken(token_str)]
         return [token_str]
 
     async def flush(self) -> Iterable[Any]:

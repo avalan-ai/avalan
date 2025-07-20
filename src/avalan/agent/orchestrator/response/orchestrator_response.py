@@ -4,6 +4,7 @@ from ....entities import (
     Input,
     Message,
     MessageRole,
+    ReasoningToken,
     Token,
     TokenDetail,
     ToolCall,
@@ -466,13 +467,28 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 else:
                     self._parser_queue.put(it)
             else:
-                if isinstance(token, Token):
+                if isinstance(it, ReasoningToken):
+                    token_id = (
+                        token.id
+                        if isinstance(token, (Token, TokenDetail))
+                        else it.id
+                    )
+                    self._parser_queue.put(
+                        ReasoningToken(
+                            token=it.token,
+                            id=token_id,
+                            probability=it.probability,
+                        )
+                    )
+                elif isinstance(token, Token):
                     self._parser_queue.put(Token(id=token.id, token=str(it)))
                 elif isinstance(token, TokenDetail):
                     self._parser_queue.put(
                         TokenDetail(
                             id=token.id,
-                            token=str(it),
+                            token=(
+                                it.token if isinstance(it, Token) else str(it)
+                            ),
                             probability=token.probability,
                             tokens=token.tokens,
                             probability_distribution=token.probability_distribution,
