@@ -28,7 +28,7 @@ These features make avalan ideal for everything from quick experiments to enterp
 
 # Why Avalan
 
-* 🌐 **Open ecosystem**: tap not only the big LLM APIs but the millions of freely available models—text, vision, audio, agents, and more.
+* 🌐 **Open ecosystem**: tap not only the big LLM APIs but the millions of freely available models: text, vision, audio, agents, and more.
 * 🏠 **Run anywhere**: on‑prem, in your cloud, at the edge, or on a laptop. No deployment restrictions.
 * 🎛️ **Total control**: switch models, tweak parameters, chain workflows, and track detailed metrics from CLI, code, or simple config files.
 * 🔗 **Protocol‑agnostic**: native support for MCP, A2A, the OpenAI API, and easy adapters for your own interfaces.
