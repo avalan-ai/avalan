@@ -10,18 +10,19 @@ from avalan.entities import (
     Token,
     TransformerEngineSettings,
 )
-from avalan.event import EventType
+from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
 from avalan.agent.orchestrator.response.parsers.reasoning import (
     ReasoningParser,
 )
+from avalan.agent.orchestrator.response.parsers.tool import ToolCallParser
 
 from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
 from avalan.tool.manager import ToolManager
-from avalan.entities import ToolCall, ToolCallResult
+from avalan.entities import ToolCall, ToolCallResult, TaggedToken
 from avalan.cli import CommandAbortException
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
@@ -724,3 +725,52 @@ class OrchestratorResponseThinkParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(getattr(items[1], "tag", None), "think")
         self.assertEqual(items[2], "</think>")
         self.assertEqual(items[3], "y")
+
+class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
+    async def test_flush_items_yielded_in_iteration(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def gen():
+            if False:
+                yield "x"
+
+        response = TextGenerationResponse(lambda: gen(), use_async_generator=True)
+
+        tool_manager = MagicMock(spec=ToolManager)
+        tool_parser = ToolCallParser(tool_manager, event_manager)
+        reason_parser = ReasoningParser()
+
+        process_event = Event(type=EventType.TOOL_PROCESS, payload=[])
+        other_event = Event(type=EventType.TOOL_PROCESS, payload=None)
+
+        tool_parser.flush = AsyncMock(side_effect=[[process_event, other_event], []])
+        reason_parser.flush = AsyncMock(side_effect=[[TaggedToken("z", "think")], []])
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            parsers=[tool_parser, reason_parser],
+            enable_tool_parsing=False,
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertEqual(len(items), 3)
+        self.assertEqual(getattr(items[0], "tag", None), "think")
+        self.assertEqual(getattr(items[1], "type", None), EventType.TOOL_PROCESS)
+        self.assertEqual(getattr(items[2], "type", None), EventType.TOOL_PROCESS)
+
+        triggered = [c.args[0].type for c in event_manager.trigger.await_args_list]
+        self.assertIn(EventType.TOOL_PROCESS, triggered)
+        self.assertIn(EventType.END, triggered)
