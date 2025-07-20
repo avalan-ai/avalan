@@ -883,3 +883,69 @@ class OrchestratorResponseEmitTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(result, TokenDetail)
         self.assertEqual(result.token, "b")
+
+
+class OrchestratorResponseToolParserStateTestCase(IsolatedAsyncioTestCase):
+    async def test_tool_parser_buffer_cleared_after_call(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        async def outer_gen():
+            for ch in "call":
+                yield ch
+
+        outer_response = TextGenerationResponse(
+            lambda: outer_gen(), use_async_generator=True
+        )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if "call" in text
+            else None
+        )
+
+        async def tool_exec(call, context: ToolCallContext):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="2",
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "o"
+            yield "k"
+
+        inner_response = TextGenerationResponse(
+            lambda: inner_gen(), use_async_generator=True
+        )
+        agent.return_value = inner_response
+
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            event_manager=event_manager,
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertEqual(tool.call_count, 1)
+        self.assertEqual(
+            "".join(str(i) for i in items if isinstance(i, str)), "callok"
+        )
