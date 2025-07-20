@@ -132,6 +132,11 @@ class Orchestrator:
     def event_manager(self) -> EventManager:
         return self._event_manager
 
+    @property
+    def renderer(self) -> Renderer:
+        """Return the renderer used by the orchestrator."""
+        return self._renderer
+
     async def __call__(self, input: Input, **kwargs) -> OrchestratorResponse:
         tool_confirm = kwargs.pop("tool_confirm", None)
         if self.is_finished:
