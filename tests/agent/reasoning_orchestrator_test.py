@@ -1,6 +1,7 @@
 from avalan.agent.orchestrator.orchestrators.reasoning.cot import (
     ReasoningOrchestrator,
 )
+from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import ReasoningOrchestratorResponse
 from avalan.agent.renderer import Renderer
 from avalan.entities import Message, MessageRole
@@ -163,6 +164,47 @@ class ReasoningOrchestratorAdditionalTestCase(IsolatedAsyncioTestCase):
         orch.name = "named"
         cot = ReasoningOrchestrator(orch)
         self.assertEqual(cot.name, "named")
+
+    def test_name_direct_getattr(self):
+        renderer = Renderer()
+        orch = AsyncMock(
+            _logger=MagicMock(),
+            _model_manager=MagicMock(),
+            _memory=MagicMock(),
+            _tool=MagicMock(),
+            _event_manager=MagicMock(),
+            _call_options=None,
+            _exit_memory=True,
+            id=uuid4(),
+            renderer=renderer,
+            operations=[],
+        )
+        orch.name = "named"
+        cot = ReasoningOrchestrator(orch)
+        self.assertEqual(cot.__getattr__("name"), "named")
+
+    def test_name_indirect_getattr(self):
+        renderer = Renderer()
+        orig = Orchestrator.name
+        delattr(Orchestrator, "name")
+        try:
+            orch = AsyncMock(
+                _logger=MagicMock(),
+                _model_manager=MagicMock(),
+                _memory=MagicMock(),
+                _tool=MagicMock(),
+                _event_manager=MagicMock(),
+                _call_options=None,
+                _exit_memory=True,
+                id=uuid4(),
+                renderer=renderer,
+                operations=[],
+            )
+            orch.name = "named"
+            cot = ReasoningOrchestrator(orch)
+            self.assertEqual(getattr(cot, "name"), "named")
+        finally:
+            setattr(Orchestrator, "name", orig)
 
     async def test_think_without_answer(self):
         cot, orchestrator = await self._make_orchestrator(
