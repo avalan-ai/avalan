@@ -40,6 +40,8 @@ class ToolCallParser:
         event = Event(
             type=EventType.TOOL_PROCESS, payload=calls, started=perf_counter()
         )
+
+        self._buffer = StringIO()
         return [token_str, event]
 
     async def flush(self) -> Iterable[Any]:
