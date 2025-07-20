@@ -1,3 +1,4 @@
+from avalan.agent.orchestrator.response import orchestrator_response
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
@@ -8,6 +9,7 @@ from avalan.entities import (
     MessageRole,
     ToolCallContext,
     Token,
+    TokenDetail,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventType
@@ -726,6 +728,7 @@ class OrchestratorResponseThinkParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(items[2], "</think>")
         self.assertEqual(items[3], "y")
 
+
 class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
     async def test_flush_items_yielded_in_iteration(self):
         engine = _DummyEngine()
@@ -739,7 +742,9 @@ class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
             if False:
                 yield "x"
 
-        response = TextGenerationResponse(lambda: gen(), use_async_generator=True)
+        response = TextGenerationResponse(
+            lambda: gen(), use_async_generator=True
+        )
 
         tool_manager = MagicMock(spec=ToolManager)
         tool_parser = ToolCallParser(tool_manager, event_manager)
@@ -748,8 +753,12 @@ class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
         process_event = Event(type=EventType.TOOL_PROCESS, payload=[])
         other_event = Event(type=EventType.TOOL_PROCESS, payload=None)
 
-        tool_parser.flush = AsyncMock(side_effect=[[process_event, other_event], []])
-        reason_parser.flush = AsyncMock(side_effect=[[TaggedToken("z", "think")], []])
+        tool_parser.flush = AsyncMock(
+            side_effect=[[process_event, other_event], []]
+        )
+        reason_parser.flush = AsyncMock(
+            side_effect=[[TaggedToken("z", "think")], []]
+        )
 
         resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
@@ -768,9 +777,109 @@ class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(items), 3)
         self.assertEqual(getattr(items[0], "tag", None), "think")
-        self.assertEqual(getattr(items[1], "type", None), EventType.TOOL_PROCESS)
-        self.assertEqual(getattr(items[2], "type", None), EventType.TOOL_PROCESS)
+        self.assertEqual(
+            getattr(items[1], "type", None), EventType.TOOL_PROCESS
+        )
+        self.assertEqual(
+            getattr(items[2], "type", None), EventType.TOOL_PROCESS
+        )
 
-        triggered = [c.args[0].type for c in event_manager.trigger.await_args_list]
+        triggered = [
+            c.args[0].type for c in event_manager.trigger.await_args_list
+        ]
         self.assertIn(EventType.TOOL_PROCESS, triggered)
         self.assertIn(EventType.END, triggered)
+
+
+class OrchestratorResponseInternalTestCase(IsolatedAsyncioTestCase):
+    async def test_parser_queue_item(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+
+        resp.__aiter__()
+        resp._parser_queue.put("x")
+        item = await resp.__anext__()
+        self.assertEqual(item, "x")
+
+
+class _EventParser:
+    async def push(self, token_str: str):
+        return [Event(type=EventType.TOOL_DETECT)]
+
+    async def flush(self):
+        return []
+
+
+class _EchoParser:
+    async def push(self, token_str: str):
+        return [token_str]
+
+    async def flush(self):
+        return []
+
+
+class OrchestratorResponseEmitTestCase(IsolatedAsyncioTestCase):
+    async def test_emit_event_and_token_detail(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            parsers=[_EventParser(), _EchoParser()],
+            enable_tool_parsing=False,
+        )
+
+        resp.__aiter__()
+        event = await resp._emit("a")
+        self.assertIsInstance(event, Event)
+        self.assertEqual(event.type, EventType.TOOL_DETECT)
+
+        resp2 = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            parsers=[_EchoParser()],
+            enable_tool_parsing=False,
+        )
+
+        resp2.__aiter__()
+        token_detail = TokenDetail(
+            id=1,
+            token="b",
+            probability=0.1,
+            tokens=None,
+            probability_distribution=None,
+            step=0,
+        )
+
+        class FakeToken:  # type: ignore
+            pass
+
+        original_token = orchestrator_response.Token
+        orchestrator_response.Token = FakeToken
+        try:
+            result = await resp2._emit(token_detail)
+        finally:
+            orchestrator_response.Token = original_token
+
+        self.assertIsInstance(result, TokenDetail)
+        self.assertEqual(result.token, "b")
