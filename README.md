@@ -19,9 +19,9 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🔗 **Native adapters** for Anyscale, Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace, Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others.
 - 🤖 Sophisticated **memory management** with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, and AWS S3 Vectors.
 - 🧠 Multiple **reasoning strategies** including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, Self‑Consistency, Scratchpad‑Toolformer, Cascaded Prompting, Critic‑Guided Direction‑Following Experts, and Product‑of‑Experts.
-- 🔀 Intuitive pipelines with branching, filtering, and recursive workflows.
+- 🔀 Intuitive pipelines with branching, filtering, and recursive **AI workflows**.
 - 📊 Comprehensive **observability** through metrics, event tracing, and dashboards.
-- 🚀 **Deploy** your *AI workflows* to the cloud.
+- 🚀 **Deploy** your AI workflows to the cloud, your premises, or locally.
 - 💻 Use via the **CLI** or integrate the **Python SDK** directly in your code.
 
 These features make avalan ideal for everything from quick experiments to enterprise deployments.
