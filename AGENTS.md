@@ -15,6 +15,8 @@ and `pytest` for testing.
 - Do not ignore exceptions unless instructed.
 - Don't use `from __future__ import annotations`.
 - Don't use inline imports unless instructed, imports should always be at the top.
+- Favor always `from module import something`, looking to avoid module references outside the import area.
+- Keep imports in alphabetical order of the imported modules.
 - Do not declare `__all__` lists.
 
 ### Coding Standards
@@ -53,12 +55,13 @@ fixes with [black](https://black.readthedocs.io/en/stable/) and
 make lint
 ```
 
-## Testing
+## Testing and coverage
 
-When adding or modifying code, make sure you add unit tests for it, aiming
-for full coverage. You can get information about test coverage by running
-the `test-coverage` target from the `Makefile`. If you run it without
-arguments:
+When adding or modifying code make sure you add unit tests for it, aiming for full coverag, so test varying parameter values and include negative testing.
+
+When you add or modify tests, always do your best to reach full coverage, particularly if coverage is mentioned on the task request.
+
+To get information about test coverage, use the `test-coverage` target from the `Makefile`. If you run it without arguments, like so:
 
 ```bash
 make test-coverage
