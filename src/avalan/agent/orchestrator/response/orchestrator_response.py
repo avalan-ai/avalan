@@ -15,11 +15,12 @@ from ....event.manager import EventManager
 from ....model import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....cli import CommandAbortException
+from .parsers import StreamParser
+from .parsers.tool import ToolCallParser
 from queue import Queue
 from inspect import iscoroutine
-from io import StringIO
 from time import perf_counter
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Iterable
 from uuid import UUID
 
 
@@ -33,8 +34,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _engine_args: dict
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
-    _buffer: StringIO
     _calls: Queue[ToolCall]
+    _parser_queue: Queue[Token | TokenDetail | Event | str]
     _tool_call_events: Queue[Event]
     _tool_process_events: Queue[Event]
     _tool_result_events: Queue[Event]
@@ -59,6 +60,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         participant_id: UUID | None = None,
         session_id: UUID | None = None,
         tool_confirm: Callable[[ToolCall], str | None] | None = None,
+        enable_tool_parsing: bool = True,
+        parsers: Iterable[StreamParser] | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         self._input = input
@@ -77,6 +80,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._session_id = session_id
         self._tool_confirm = tool_confirm
         self._tool_confirm_all = False
+        self._parsers: list[StreamParser] = list(parsers or [])
+        if enable_tool_parsing and self._tool_manager:
+            self._parsers.append(
+                ToolCallParser(self._tool_manager, self._event_manager)
+            )
 
     @property
     def input_token_count(self) -> int:
@@ -98,8 +106,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if self._event_manager:
             self._response.add_done_callback(self._on_consumed)
         self._response_iterator = self._response.__aiter__()
-        self._buffer = StringIO()
         self._calls = Queue()
+        self._parser_queue = Queue()
         self._tool_context = ToolCallContext(
             input=self._input,
             agent_id=self._agent_id,
@@ -115,6 +123,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
     async def __anext__(self) -> Token | TokenDetail | Event:
         assert self._response_iterator
+
+        if not self._parser_queue.empty():
+            return self._parser_queue.get()
 
         if not self._tool_process_events.empty():
             event = self._tool_process_events.get()
@@ -255,6 +266,14 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         try:
             token = await self._response_iterator.__anext__()
         except StopAsyncIteration:
+            for parser in self._parsers:
+                for item in await parser.flush():
+                    if isinstance(item, Event):
+                        self._tool_process_events.put(item)
+                    else:
+                        self._parser_queue.put(item)
+            if not self._parser_queue.empty():
+                return self._parser_queue.get()
             if self._event_manager and not self._finished:
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))
@@ -430,36 +449,40 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         self._step += 1
 
-        if not self._tool_manager:
-            return token
+        items: list[Any] = [token_str]
+        for parser in self._parsers:
+            parsed: list[Any] = []
+            for it in items:
+                if isinstance(it, str):
+                    parsed.extend(await parser.push(it))
+                else:
+                    parsed.append(it)
+            items = parsed
 
-        buffer_value = self._buffer.getvalue()
-        should_check = self._tool_manager.is_potential_tool_call(
-            buffer_value, token_str
-        )
-        self._buffer.write(token_str)
+        for it in items:
+            if isinstance(it, Event):
+                if it.type == EventType.TOOL_PROCESS:
+                    self._tool_process_events.put(it)
+                else:
+                    self._parser_queue.put(it)
+            else:
+                if isinstance(token, Token):
+                    self._parser_queue.put(Token(id=token.id, token=str(it)))
+                elif isinstance(token, TokenDetail):
+                    self._parser_queue.put(
+                        TokenDetail(
+                            id=token.id,
+                            token=str(it),
+                            probability=token.probability,
+                            tokens=token.tokens,
+                            probability_distribution=token.probability_distribution,
+                            step=token.step,
+                        )
+                    )
+                else:
+                    self._parser_queue.put(it)
 
-        if not should_check:
-            return token
-
-        if self._event_manager:
-            await self._event_manager.trigger(
-                Event(type=EventType.TOOL_DETECT)
-            )
-
-        calls = self._tool_manager.get_calls(self._buffer.getvalue())
-        if not calls:
-            return token
-
-        self._tool_process_events.put(
-            Event(
-                type=EventType.TOOL_PROCESS,
-                payload=calls,
-                started=perf_counter(),
-            )
-        )
-
-        return token
+        return self._parser_queue.get()
 
     async def _on_consumed(self) -> None:
         assert self._event_manager
