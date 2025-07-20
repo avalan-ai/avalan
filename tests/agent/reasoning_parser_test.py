@@ -1,6 +1,7 @@
 from avalan.agent.orchestrator.response.parsers.reasoning import (
     ReasoningParser,
 )
+from avalan.entities import ReasoningToken
 from unittest import IsolatedAsyncioTestCase
 
 
@@ -12,7 +13,7 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
             tokens.extend(await parser.push(t))
         self.assertEqual(tokens[0], "a")
         self.assertEqual(tokens[1], "<think>")
-        self.assertEqual(getattr(tokens[2], "tag", None), "think")
+        self.assertIsInstance(tokens[2], ReasoningToken)
         self.assertEqual(tokens[3], "</think>")
         self.assertEqual(tokens[4], "c")
 
@@ -29,8 +30,8 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         for t in ["Thought:", "d", "e"]:
             tokens.extend(await parser.push(t))
         self.assertEqual(tokens[0], "Thought:")
-        self.assertEqual(getattr(tokens[1], "tag", None), "think")
-        self.assertEqual(getattr(tokens[2], "tag", None), "think")
+        self.assertIsInstance(tokens[1], ReasoningToken)
+        self.assertIsInstance(tokens[2], ReasoningToken)
 
     async def test_without_prefixes(self):
         parser = ReasoningParser(prefixes=["Thought:"])

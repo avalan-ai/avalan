@@ -24,7 +24,7 @@ from avalan.agent.orchestrator.response.parsers.tool import ToolCallParser
 from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
 from avalan.tool.manager import ToolManager
-from avalan.entities import ToolCall, ToolCallResult, TaggedToken
+from avalan.entities import ReasoningToken, ToolCall, ToolCallResult
 from avalan.cli import CommandAbortException
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
@@ -723,8 +723,7 @@ class OrchestratorResponseThinkParserTestCase(IsolatedAsyncioTestCase):
             items.append(item)
 
         self.assertEqual(items[0], "<think>")
-        self.assertIsInstance(items[1], str)
-        self.assertEqual(getattr(items[1], "tag", None), "think")
+        self.assertIsInstance(items[1], ReasoningToken)
         self.assertEqual(items[2], "</think>")
         self.assertEqual(items[3], "y")
 
@@ -757,7 +756,7 @@ class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
             side_effect=[[process_event, other_event], []]
         )
         reason_parser.flush = AsyncMock(
-            side_effect=[[TaggedToken("z", "think")], []]
+            side_effect=[[ReasoningToken(token="z")], []]
         )
 
         resp = OrchestratorResponse(
@@ -776,7 +775,7 @@ class OrchestratorResponseParserFlushTestCase(IsolatedAsyncioTestCase):
             items.append(item)
 
         self.assertEqual(len(items), 3)
-        self.assertEqual(getattr(items[0], "tag", None), "think")
+        self.assertIsInstance(items[0], ReasoningToken)
         self.assertEqual(
             getattr(items[1], "type", None), EventType.TOOL_PROCESS
         )
