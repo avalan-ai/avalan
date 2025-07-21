@@ -500,6 +500,86 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             frame = await gen.__anext__()
         self.assertTrue(frame[1].renderables)
 
+    async def test_tokens_wrap_long_lines(self):
+        long1 = "Word " * 20
+        long2 = "Another word " * 20
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                text_tokens=[f"{long1}\n", long2],
+                tokens=None,
+                input_token_count=0,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                elapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+            )
+            _, frame = await gen.__anext__()
+
+        self.assertEqual(len(frame.renderables), 1)
+        text = frame.renderables[0].renderable
+        self.assertIn("Word Word", text)
+        self.assertIn("Another word", text)
+        self.assertGreaterEqual(text.count("\n"), 1)
+
+    async def test_tokens_thinking_wrap_long_lines(self):
+        think_line = "Reasoning " * 10
+        answer_line = "Answer " * 10
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                text_tokens=[
+                    "<think>\n",
+                    f"{think_line}\n",
+                    f"{think_line}\n",
+                    "</think>\n",
+                    f"{answer_line}\n",
+                    answer_line,
+                ],
+                tokens=None,
+                input_token_count=0,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                elapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+            )
+            _, frame = await gen.__anext__()
+
+        self.assertEqual(len(frame.renderables), 2)
+        think_text = frame.renderables[0].renderable
+        answer_text = frame.renderables[1].renderable
+        self.assertIn("Reasoning", think_text)
+        self.assertIn("Answer", answer_text)
+        self.assertGreaterEqual(answer_text.count("\n"), 1)
+
 
 class FancyThemeAdditionalTestCase(unittest.TestCase):
     def setUp(self) -> None:
