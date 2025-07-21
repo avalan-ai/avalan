@@ -1,6 +1,6 @@
 from avalan.entities import EngineSettings, ImageEntity
 from avalan.model.engine import Engine
-from avalan.model.vision.image import (
+from avalan.model.vision.classification import (
     ImageClassificationModel,
     AutoImageProcessor,
     AutoModelForImageClassification,
@@ -96,7 +96,7 @@ class ImageClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 AutoModelForImageClassification, "from_pretrained"
             ) as model_mock,
             patch(
-                "avalan.model.vision.image.inference_mode",
+                "avalan.model.vision.classification.inference_mode",
                 return_value=nullcontext(),
             ) as inference_mode_mock,
             patch.object(BaseVisionModel, "_get_image") as get_image_mock,

@@ -2,7 +2,7 @@ from ...compat import override
 from ...entities import ImageEntity, EngineSettings
 from ...model import TextGenerationVendor
 from ...model.vision import BaseVisionModel
-from ...model.vision.image import ImageClassificationModel
+from ...model.vision.classification import ImageClassificationModel
 from ...model.engine import Engine
 from diffusers import DiffusionPipeline
 from logging import Logger

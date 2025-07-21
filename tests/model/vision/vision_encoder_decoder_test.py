@@ -1,9 +1,9 @@
 from avalan.entities import TransformerEngineSettings
 from avalan.model.engine import Engine
-from avalan.model.vision.image import (
+from avalan.model.vision.decoder import (
     AutoImageProcessor,
-    HFVisionEncoderDecoderModel,
     VisionEncoderDecoderModel,
+    VisionEncoderDecoderModelImpl
 )
 from logging import Logger
 from transformers import (
@@ -42,7 +42,7 @@ class VisionEncoderDecoderModelInstantiationTestCase(TestCase):
                 AutoImageProcessor, "from_pretrained"
             ) as processor_mock,
             patch.object(
-                HFVisionEncoderDecoderModel, "from_pretrained"
+                VisionEncoderDecoderModelImpl, "from_pretrained"
             ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
         ):
@@ -92,10 +92,10 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
                 AutoImageProcessor, "from_pretrained"
             ) as processor_mock,
             patch.object(
-                HFVisionEncoderDecoderModel, "from_pretrained"
+                VisionEncoderDecoderModelImpl, "from_pretrained"
             ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch("avalan.model.vision.image.Image.open") as image_open_mock,
+            patch("avalan.model.vision.decoder.Image.open") as image_open_mock,
         ):
             processor_instance = MagicMock()
             processor_instance.return_value = DummyInputs(pixel_values="t")

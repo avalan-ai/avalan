@@ -13,28 +13,28 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
 
     def test_load_engine_local_modalities(self):
         modalities = {
+            Modality.AUDIO_CLASSIFICATION: "AudioClassificationModel",
+            Modality.AUDIO_GENERATION: "AudioGenerationModel",
+            Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
+            Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",
+            Modality.EMBEDDING: "SentenceTransformerModel",
             Modality.TEXT_GENERATION: "TextGenerationModel",
             Modality.TEXT_QUESTION_ANSWERING: "QuestionAnsweringModel",
             Modality.TEXT_SEQUENCE_CLASSIFICATION: (
                 "SequenceClassificationModel"
             ),
             Modality.TEXT_SEQUENCE_TO_SEQUENCE: "SequenceToSequenceModel",
-            Modality.TEXT_TRANSLATION: "TranslationModel",
             Modality.TEXT_TOKEN_CLASSIFICATION: "TokenClassificationModel",
-            Modality.EMBEDDING: "SentenceTransformerModel",
-            Modality.AUDIO_CLASSIFICATION: "AudioClassificationModel",
-            Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
-            Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",
-            Modality.AUDIO_GENERATION: "AudioGenerationModel",
+            Modality.TEXT_TRANSLATION: "TranslationModel",
             Modality.VISION_OBJECT_DETECTION: "ObjectDetectionModel",
             Modality.VISION_IMAGE_CLASSIFICATION: "ImageClassificationModel",
             Modality.VISION_IMAGE_TO_TEXT: "ImageToTextModel",
             Modality.VISION_IMAGE_TEXT_TO_TEXT: "ImageTextToTextModel",
             Modality.VISION_ENCODER_DECODER: "VisionEncoderDecoderModel",
+            Modality.VISION_SEMANTIC_SEGMENTATION: "SemanticSegmentationModel",
             Modality.VISION_TEXT_TO_IMAGE: "TextToImageModel",
             Modality.VISION_TEXT_TO_ANIMATION: "TextToAnimationModel",
             Modality.VISION_TEXT_TO_VIDEO: "TextToVideoModel",
-            Modality.VISION_SEMANTIC_SEGMENTATION: "SemanticSegmentationModel",
         }
         for modality, class_name in modalities.items():
             with self.subTest(modality=modality):

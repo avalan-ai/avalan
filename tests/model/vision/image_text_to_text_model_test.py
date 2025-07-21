@@ -3,7 +3,7 @@ from avalan.entities import (
     TransformerEngineSettings,
     MessageRole,
 )
-from avalan.model.vision.image import (
+from avalan.model.vision.text import (
     AutoModelForImageTextToText,
     AutoProcessor,
     Gemma3ForConditionalGeneration,

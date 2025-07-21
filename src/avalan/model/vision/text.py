@@ -1,7 +1,6 @@
 from ...compat import override
 from ...entities import (
     GenerationSettings,
-    ImageEntity,
     ImageTextGenerationLoaderClass,
     Input,
     MessageRole,
@@ -15,54 +14,20 @@ from PIL import Image
 from torch import inference_mode, Tensor
 from transformers import (
     AutoImageProcessor,
-    AutoModelForImageClassification,
     AutoModelForImageTextToText,
     AutoModelForVision2Seq,
     AutoProcessor,
     Gemma3ForConditionalGeneration,
     PreTrainedModel,
     Qwen2VLForConditionalGeneration,
-    VisionEncoderDecoderModel as HFVisionEncoderDecoderModel,
 )
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
 
 
-# model predicts one of the 1000 ImageNet classes
-class ImageClassificationModel(BaseVisionModel):
-    def _load_model(
-        self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoImageProcessor.from_pretrained(
-            self._model_id,
-            # default behavior in transformers v4.48
-            use_fast=True,
-        )
-        model = AutoModelForImageClassification.from_pretrained(
-            self._model_id,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-        )
-        return model
-
-    @override
-    async def __call__(
-        self,
-        image_source: str | Image.Image,
-        tensor_format: Literal["pt"] = "pt",
-    ) -> ImageEntity:
-        image = BaseVisionModel._get_image(image_source)
-        inputs = self._processor(image, return_tensors=tensor_format)
-        inputs.to(self._device)
-
-        with inference_mode():
-            logits = self._model(**inputs).logits
-
-        label_index = logits.argmax(dim=1).item()
-        return ImageEntity(label=self._model.config.id2label[label_index])
-
-
 class ImageToTextModel(TransformerModel):
+    _processor: AutoImageProcessor | AutoProcessor
+
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
@@ -96,14 +61,20 @@ class ImageToTextModel(TransformerModel):
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
         image = BaseVisionModel._get_image(image_source)
-        inputs = self._processor(images=image, return_tensors=tensor_format)
+
+        inputs = self._processor(
+            images=image,
+            return_tensors=tensor_format
+        )
         inputs.to(self._device)
+
         with inference_mode():
             output_ids = self._model.generate(**inputs)
-        caption = self._tokenizer.decode(
+
+        output = self._tokenizer.decode(
             output_ids[0], skip_special_tokens=skip_special_tokens
         )
-        return caption
+        return output
 
 
 class ImageTextToTextModel(ImageToTextModel):
@@ -197,19 +168,3 @@ class ImageTextToTextModel(ImageToTextModel):
             clean_up_tokenization_spaces=False,
         )
         return output_text[0] if isinstance(output_text, list) else output_text
-
-
-class VisionEncoderDecoderModel(ImageToTextModel):
-    def _load_model(
-        self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoImageProcessor.from_pretrained(
-            self._model_id,
-            use_fast=True,
-        )
-        model = HFVisionEncoderDecoderModel.from_pretrained(
-            self._model_id,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-        )
-        return model

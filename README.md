@@ -62,6 +62,7 @@ task you need:
   - 🏷️ [Token classification](#token-classification):– Tag tokens for tasks like Named Entity Recognition.
   - 🌍 [Translation](#translation): Convert text between languages.
 * 👁️ [**Vision**](#vision): Analyze images or create visuals for content and automation.
+  - 👓 [Encoder Decoder](#encoder-decoder): Answer questions on documents, OCR-free.
   - 🖼️ [Image classification](#image-classification):– Identify objects in an image
   - 📷 [Image to text](#image-to-text): Describe an image with text
   - 🔤 [Image text to text](#image-text-to-text): Provide an image and instruction to produce text
@@ -294,6 +295,28 @@ sin precedentes durante su carrera.
 ```
 
 ### Vision
+
+#### Encoder decoder
+
+Answer questions to extract information from an image, without using OCR.
+
+```bash
+echo "<s_docvqa><s_question>
+    What is the FACTURA Number?
+</s_question><s_answer>" | \
+    avalan model run "naver-clova-ix/donut-base-finetuned-docvqa" \
+        --modality vision_encoder_decoder \
+        --path docs/examples/factura-page-1.png
+```
+
+And you get the answer:
+
+```
+<s_docvqa>
+<s_question>What is the FACTURA Number?</s_question>
+<s_answer>0012-00187506</s_answer>
+</s>
+```
 
 #### Image classification
 
