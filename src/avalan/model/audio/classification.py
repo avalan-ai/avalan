@@ -4,7 +4,6 @@ from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from diffusers import DiffusionPipeline
 from torch import inference_mode
-from torchaudio import load
 from transformers import (
     AutoFeatureExtractor,
     AutoModelForAudioClassification,
