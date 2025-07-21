@@ -434,8 +434,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         captured: dict[str, list] = {}
 
         async def fake_tokens(*p, **kw):
-            captured["text_tokens"] = list(p[7])
-            captured["input_token_count"] = p[9]
+            captured["text_tokens"] = list(p[7]) + list(p[8])
+            captured["input_token_count"] = p[10]
             yield (token, "frame1")
             yield (None, "frame2")
 
@@ -545,7 +545,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][9], 5)
+        self.assertEqual(theme.tokens.call_args[0][10], 5)
         lm.input_token_count.assert_not_called()
 
         # Response has zero count, fall back to orchestrator
@@ -570,7 +570,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][9], 7)
+        self.assertEqual(theme.tokens.call_args[0][10], 7)
 
         # Response zero and orchestrator none -> use lm.input_token_count
         theme.tokens.reset_mock()
@@ -594,7 +594,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][9], 33)
+        self.assertEqual(theme.tokens.call_args[0][10], 33)
         lm.input_token_count.assert_called_once_with("text")
 
     async def test_token_generation_tool_events(self):
@@ -664,13 +664,13 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         async def fake_tokens(*p, **kw):
             call_args.append(
                 {
-                    "text_tokens": list(p[7]),
-                    "tokens": list(p[8]) if p[8] else None,
-                    "tool_events": list(p[11]),
-                    "tool_event_calls": list(p[12]),
-                    "tool_event_results": list(p[13]),
-                    "spinner": p[14],
-                    "input_token_count": p[9],
+                    "text_tokens": list(p[7]) + list(p[8]),
+                    "tokens": list(p[9]) if p[9] else None,
+                    "tool_events": list(p[12]),
+                    "tool_event_calls": list(p[13]),
+                    "tool_event_results": list(p[14]),
+                    "spinner": p[15],
+                    "input_token_count": p[10],
                 }
             )
             yield (None, "frame")
@@ -3960,6 +3960,67 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(stop_signal.is_set())
         slp.assert_called()
+
+
+class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
+    async def test_reasoning_token_tracked(self):
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                async def gen():
+                    yield model_cmds.ReasoningToken(token="A")
+                    yield "B"
+
+                return gen()
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+
+        captured: list[dict[str, list[str]]] = []
+
+        async def fake_tokens(*p, **kw):
+            captured.append({"thinking": list(p[7]), "answer": list(p[8])})
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="text",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+        self.assertEqual(captured[-1]["thinking"], ["A"])
+        self.assertEqual(captured[-1]["answer"], ["B"])
 
 
 if __name__ == "__main__":
