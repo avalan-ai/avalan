@@ -41,16 +41,13 @@ class AudioGenerationModel(BaseAudioModel):
         assert path
 
         inputs = self._processor(
-            text=[prompt],
-            return_tensors=tensor_format,
-            padding=padding
+            text=[prompt], return_tensors=tensor_format, padding=padding
         )
         inputs.to(self._device)
 
         with inference_mode():
             audio_tokens = self._model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens
+                **inputs, max_new_tokens=max_new_tokens
             )
 
         sampling_rate = self._model.config.audio_encoder.sampling_rate

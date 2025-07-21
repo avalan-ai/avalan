@@ -76,6 +76,7 @@ class Modality(StrEnum):
     AUDIO_CLASSIFICATION = "audio_classification"
     AUDIO_SPEECH_RECOGNITION = "audio_speech_recognition"
     AUDIO_TEXT_TO_SPEECH = "audio_text_to_speech"
+    AUDIO_GENERATION = "audio_generation"
     EMBEDDING = "embedding"
     TEXT_GENERATION = "text_generation"
     TEXT_QUESTION_ANSWERING = "text_question_answering"
