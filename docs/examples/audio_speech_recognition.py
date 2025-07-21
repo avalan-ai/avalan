@@ -1,5 +1,5 @@
 from asyncio import run
-from avalan.model.audio import SpeechRecognitionModel
+from avalan.model.audio.speech_recognition import SpeechRecognitionModel
 import os
 import sys
 

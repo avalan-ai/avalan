@@ -1,9 +1,9 @@
 from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
-from avalan.model.audio import (
-    SpeechRecognitionModel,
+from avalan.model.audio.speech_recognition import (
     AutoProcessor,
     AutoModelForCTC,
+    SpeechRecognitionModel
 )
 from contextlib import nullcontext
 from logging import Logger
@@ -82,9 +82,9 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 SpeechRecognitionModel, "_resample"
             ) as resample_method,
-            patch("avalan.model.audio.argmax") as argmax_mock,
+            patch("avalan.model.audio.speech_recognition.argmax") as argmax_mock,
             patch(
-                "avalan.model.audio.inference_mode", return_value=nullcontext()
+                "avalan.model.audio.speech_recognition.inference_mode", return_value=nullcontext()
             ) as inference_mode_mock,
         ):
             processor_instance = MagicMock()
@@ -143,9 +143,9 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 SpeechRecognitionModel, "_resample"
             ) as resample_method,
-            patch("avalan.model.audio.argmax") as argmax_mock,
+            patch("avalan.model.audio.speech_recognition.argmax") as argmax_mock,
             patch(
-                "avalan.model.audio.inference_mode", return_value=nullcontext()
+                "avalan.model.audio.speech_recognition.inference_mode", return_value=nullcontext()
             ) as inf_mock,
         ):
             processor_instance = MagicMock()

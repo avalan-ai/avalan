@@ -135,6 +135,9 @@ class DummyTheme(Theme):
     def display_image_entity(self, entity):
         raise NotImplementedError()
 
+    def display_audio_labels(self, audio_labels: dict[str, float]):
+        raise NotImplementedError()
+
     def display_image_labels(self, labels):
         raise NotImplementedError()
 

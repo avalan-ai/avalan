@@ -73,6 +73,7 @@ class MessageRole(StrEnum):
 
 
 class Modality(StrEnum):
+    AUDIO_CLASSIFICATION = "audio_classification"
     AUDIO_SPEECH_RECOGNITION = "audio_speech_recognition"
     AUDIO_TEXT_TO_SPEECH = "audio_text_to_speech"
     EMBEDDING = "embedding"
@@ -582,7 +583,7 @@ class OperationAudioParameters:
     path: str
     reference_path: str | None = None
     reference_text: str | None = None
-    sampling_rate: int
+    sampling_rate: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

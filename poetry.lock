@@ -1471,6 +1471,59 @@ files = [
 all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2)"]
 
 [[package]]
+name = "imageio"
+version = "2.37.0"
+description = "Library for reading and writing a wide range of image, video, scientific, and volumetric data formats."
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "extra == \"test\" or extra == \"vision\" or extra == \"all\""
+files = [
+    {file = "imageio-2.37.0-py3-none-any.whl", hash = "sha256:11efa15b87bc7871b61590326b2d635439acc321cf7f8ce996f812543ce10eed"},
+    {file = "imageio-2.37.0.tar.gz", hash = "sha256:71b57b3669666272c818497aebba2b4c5f20d5b37c81720e5e1a56d59c492996"},
+]
+
+[package.dependencies]
+numpy = "*"
+pillow = ">=8.3.2"
+
+[package.extras]
+all-plugins = ["astropy", "av", "imageio-ffmpeg", "numpy (>2)", "pillow-heif", "psutil", "rawpy", "tifffile"]
+all-plugins-pypy = ["av", "imageio-ffmpeg", "pillow-heif", "psutil", "tifffile"]
+build = ["wheel"]
+dev = ["black", "flake8", "fsspec[github]", "pytest", "pytest-cov"]
+docs = ["numpydoc", "pydata-sphinx-theme", "sphinx (<6)"]
+ffmpeg = ["imageio-ffmpeg", "psutil"]
+fits = ["astropy"]
+full = ["astropy", "av", "black", "flake8", "fsspec[github]", "gdal", "imageio-ffmpeg", "itk", "numpy (>2)", "numpydoc", "pillow-heif", "psutil", "pydata-sphinx-theme", "pytest", "pytest-cov", "rawpy", "sphinx (<6)", "tifffile", "wheel"]
+gdal = ["gdal"]
+itk = ["itk"]
+linting = ["black", "flake8"]
+pillow-heif = ["pillow-heif"]
+pyav = ["av"]
+rawpy = ["numpy (>2)", "rawpy"]
+test = ["fsspec[github]", "pytest", "pytest-cov"]
+tifffile = ["tifffile"]
+
+[[package]]
+name = "imageio-ffmpeg"
+version = "0.6.0"
+description = "FFMPEG wrapper for Python"
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "extra == \"test\" or extra == \"vision\" or extra == \"all\""
+files = [
+    {file = "imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl", hash = "sha256:9d2baaf867088508d4a3458e61eeb30e945c4ad8016025545f66c4b5aaef0a61"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:1d47bebd83d2c5fc770720d211855f208af8a596c82d17730aa51e815cdee6dc"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-win32.whl", hash = "sha256:196faa79366b4a82f95c0f4053191d2013f4714a715780f0ad2a68ff37483cc2"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", hash = "sha256:02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a"},
+    {file = "imageio_ffmpeg-0.6.0.tar.gz", hash = "sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755"},
+]
+
+[[package]]
 name = "importlib-metadata"
 version = "8.0.0"
 description = "Read metadata from Python packages"
@@ -2745,6 +2798,27 @@ aiohttp = ["aiohttp", "httpx-aiohttp (>=0.1.6)"]
 datalib = ["numpy (>=1)", "pandas (>=1.2.3)", "pandas-stubs (>=1.1.0.11)"]
 realtime = ["websockets (>=13,<16)"]
 voice-helpers = ["numpy (>=2.0.2)", "sounddevice (>=0.5.1)"]
+
+[[package]]
+name = "opencv-python"
+version = "4.12.0.88"
+description = "Wrapper package for OpenCV python bindings."
+optional = true
+python-versions = ">=3.6"
+groups = ["main"]
+markers = "extra == \"test\" or extra == \"vision\" or extra == \"all\""
+files = [
+    {file = "opencv-python-4.12.0.88.tar.gz", hash = "sha256:8b738389cede219405f6f3880b851efa3415ccd674752219377353f017d2994d"},
+    {file = "opencv_python-4.12.0.88-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:f9a1f08883257b95a5764bf517a32d75aec325319c8ed0f89739a57fae9e92a5"},
+    {file = "opencv_python-4.12.0.88-cp37-abi3-macosx_13_0_x86_64.whl", hash = "sha256:812eb116ad2b4de43ee116fcd8991c3a687f099ada0b04e68f64899c09448e81"},
+    {file = "opencv_python-4.12.0.88-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:51fd981c7df6af3e8f70b1556696b05224c4e6b6777bdd2a46b3d4fb09de1a92"},
+    {file = "opencv_python-4.12.0.88-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:092c16da4c5a163a818f120c22c5e4a2f96e0db4f24e659c701f1fe629a690f9"},
+    {file = "opencv_python-4.12.0.88-cp37-abi3-win32.whl", hash = "sha256:ff554d3f725b39878ac6a2e1fa232ec509c36130927afc18a1719ebf4fbf4357"},
+    {file = "opencv_python-4.12.0.88-cp37-abi3-win_amd64.whl", hash = "sha256:d98edb20aa932fd8ebd276a72627dad9dc097695b3d435a4257557bbb49a79d2"},
+]
+
+[package.dependencies]
+numpy = {version = ">=2,<2.3.0", markers = "python_version >= \"3.9\""}
 
 [[package]]
 name = "packaging"
@@ -5429,7 +5503,7 @@ type = ["pytest-mypy"]
 
 [extras]
 agent = ["jinja2"]
-all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
+all = ["RestrictedPython", "accelerate", "anthropic", "bitsandbytes", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "imageio", "imageio-ffmpeg", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "openai", "opencv-python", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
 audio = ["soundfile", "torchaudio"]
 cpu = ["accelerate"]
 memory = ["boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
@@ -5437,14 +5511,14 @@ mlx = ["mlx-lm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
-test = ["RestrictedPython", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "huggingface-hub", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
+test = ["RestrictedPython", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "huggingface-hub", "imageio", "imageio-ffmpeg", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx-lm", "opencv-python", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
 tool = ["RestrictedPython", "playwright", "sympy", "youtube-transcript-api"]
 translation = ["protobuf", "sentencepiece", "tiktoken"]
 vendors = ["anthropic", "google-genai", "litellm", "openai", "pillow", "tiktoken"]
-vision = ["diffusers", "pillow", "torchvision"]
+vision = ["diffusers", "imageio", "imageio-ffmpeg", "opencv-python", "pillow", "torchvision"]
 vllm = ["vllm"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.11,<3.14"
-content-hash = "46cf1cce843d8eabcc18771eb242c704b50cd3d05245ce13989c5c7391eccdd9"
+content-hash = "abb697d491bcf35c3c667e6319aeb87c773b06160c8eaa62b294ffc246d6ba44"

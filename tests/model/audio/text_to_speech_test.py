@@ -1,9 +1,9 @@
 from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
-from avalan.model.audio import (
-    TextToSpeechModel,
+from avalan.model.audio.speech import (
     AutoProcessor,
-    DiaForConditionalGeneration,
+    TextToSpeechModel,
+    DiaForConditionalGeneration
 )
 from contextlib import nullcontext
 from logging import Logger
@@ -75,7 +75,7 @@ class TextToSpeechModelCallTestCase(IsolatedAsyncioTestCase):
                 DiaForConditionalGeneration, "from_pretrained"
             ) as model_mock,
             patch(
-                "avalan.model.audio.inference_mode", return_value=nullcontext()
+                "avalan.model.audio.speech.inference_mode", return_value=nullcontext()
             ) as inf_mock,
         ):
             call_result = MagicMock()
@@ -148,7 +148,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             ) as model_mock,
             patch.object(TextToSpeechModel, "_resample") as resample_method,
             patch(
-                "avalan.model.audio.inference_mode", return_value=nullcontext()
+                "avalan.model.audio.speech.inference_mode", return_value=nullcontext()
             ) as inf_mock,
         ):
             call_result = MagicMock()
@@ -213,7 +213,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
             ) as model_mock,
             patch.object(TextToSpeechModel, "_resample") as resample_method,
             patch(
-                "avalan.model.audio.inference_mode", return_value=nullcontext()
+                "avalan.model.audio.speech.inference_mode", return_value=nullcontext()
             ) as inf_mock,
         ):
             call_result = MagicMock()
@@ -275,7 +275,7 @@ class TextToSpeechModelReferenceTestCase(IsolatedAsyncioTestCase):
                 DiaForConditionalGeneration, "from_pretrained"
             ) as model_mock,
             patch(
-                "avalan.model.audio.inference_mode", return_value=nullcontext()
+                "avalan.model.audio.speech.inference_mode", return_value=nullcontext()
             ) as inf_mock,
         ):
             call_result = MagicMock()
