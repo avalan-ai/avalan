@@ -5,6 +5,7 @@ from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from json import dumps
 from ..entities import ToolCall
+from io import UnsupportedOperation
 from select import select
 from sys import stdin
 
@@ -37,8 +38,11 @@ def confirm_tool_call(console: Console, call: ToolCall) -> str:
 
 
 def has_input(console: Console) -> bool:
-    stdin_ready, __, __ = select([stdin], [], [], 0.0)
-    return bool(stdin_ready)
+    try:
+        stdin_ready, __, __ = select([stdin], [], [], 0.0)
+        return bool(stdin_ready)
+    except UnsupportedOperation:
+        return False
 
 
 def get_input(

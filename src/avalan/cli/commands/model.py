@@ -2,7 +2,7 @@ from dataclasses import replace
 
 from ...agent.orchestrator import Orchestrator
 from ...event import Event, EventType, TOOL_TYPES
-from ...cli import get_input, confirm
+from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
 from ...entities import (
     Model,
@@ -177,7 +177,7 @@ async def model_run(
         with manager.load(**model_settings) as model:
             logger.debug("Loaded model %s", model.config.__repr__())
 
-            if operation.requires_input:
+            if operation.requires_input or has_input(console):
                 input_string = get_input(
                     console,
                     _i["user_input"] + " ",

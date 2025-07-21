@@ -1,5 +1,5 @@
 from avalan.entities import TransformerEngineSettings
-from avalan.model.vision.image import (
+from avalan.model.vision.text import (
     AutoImageProcessor,
     AutoModelForVision2Seq,
     ImageToTextModel,
@@ -95,7 +95,7 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 AutoModelForVision2Seq, "from_pretrained"
             ) as model_mock,
             patch.object(AutoTokenizer, "from_pretrained") as tokenizer_mock,
-            patch("avalan.model.vision.image.Image.open") as image_open_mock,
+            patch("avalan.model.vision.text.Image.open") as image_open_mock,
         ):
             processor_instance = MagicMock()
             processor_instance.return_value = DummyInputs(pixel_values="t")
@@ -119,6 +119,7 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
             image_instance = MagicMock()
             image_open_mock.return_value = image_instance
+            image_instance.convert.return_value = image_instance
 
             model = ImageToTextModel(
                 self.model_id,
@@ -133,6 +134,7 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
             processor_instance.assert_called_with(
                 images=image_instance, return_tensors="pt"
             )
+            image_instance.convert.assert_called_once_with("RGB")
             model_instance.generate.assert_called_once_with(
                 **processor_instance.return_value
             )

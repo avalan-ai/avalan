@@ -9,5 +9,5 @@ class BaseVisionModel(Engine, ABC):
         return (
             image_source
             if isinstance(image_source, Image.Image)
-            else Image.open(image_source)
+            else Image.open(image_source).convert("RGB")
         )

@@ -2551,7 +2551,11 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             engine_uri=engine_uri,
             modality=Modality.VISION_ENCODER_DECODER,
         )
-        lm.assert_awaited_once_with("img.png", skip_special_tokens=False)
+        lm.assert_awaited_once_with(
+            "img.png",
+            prompt=None,
+            skip_special_tokens=False,
+        )
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "caption")
 

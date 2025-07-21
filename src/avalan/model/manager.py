@@ -31,18 +31,15 @@ from ..model.audio.speech_recognition import SpeechRecognitionModel
 from ..model.audio.speech import TextToSpeechModel
 from ..model.criteria import KeywordStoppingCriteria
 from ..model.vision.detection import ObjectDetectionModel
-from ..model.vision.image import (
-    ImageClassificationModel,
-    ImageTextToTextModel,
-    ImageToTextModel,
-    VisionEncoderDecoderModel,
-)
+from ..model.vision.classification import ImageClassificationModel
+from ..model.vision.decoder import VisionEncoderDecoderModel
 from ..model.vision.diffusion import (
     TextToAnimationModel,
     TextToImageModel,
     TextToVideoModel,
 )
 from ..model.vision.segmentation import SemanticSegmentationModel
+from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
 from ..tool.manager import ToolManager
 from ..event import Event, EventType
@@ -56,6 +53,7 @@ from urllib.parse import urlparse, parse_qsl
 
 ModelType: TypeAlias = (
     AudioClassificationModel
+    | AudioGenerationModel
     | ImageClassificationModel
     | ImageTextToTextModel
     | ImageToTextModel
@@ -298,6 +296,20 @@ class ModelManager(ContextDecorator):
                     ].skip_special_tokens,
                 )
 
+            case Modality.VISION_ENCODER_DECODER:
+                assert (
+                    operation.parameters["vision"]
+                    and operation.parameters["vision"].path
+                )
+
+                result = await model(
+                    operation.parameters["vision"].path,
+                    prompt=operation.input,
+                    skip_special_tokens=operation.parameters[
+                        "vision"
+                    ].skip_special_tokens,
+                )
+
             case Modality.VISION_IMAGE_CLASSIFICATION:
                 assert (
                     operation.parameters["vision"]
@@ -306,9 +318,7 @@ class ModelManager(ContextDecorator):
 
                 result = await model(operation.parameters["vision"].path)
 
-            case (
-                Modality.VISION_IMAGE_TO_TEXT | Modality.VISION_ENCODER_DECODER
-            ):
+            case Modality.VISION_IMAGE_TO_TEXT:
                 assert (
                     operation.parameters["vision"]
                     and operation.parameters["vision"].path
