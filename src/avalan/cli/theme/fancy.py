@@ -1653,12 +1653,12 @@ class FancyTheme(Theme):
     ) -> Generator[tuple[Token | None, RenderableType], None, None]:
         _, _n, _f, _l = self._, self._n, self._f, logger.debug
 
-        # Prepare data for rendering
-        output = "".join(text_tokens)
         pick_first = ceil(pick / 2) if pick > 1 else pick
         max_width = console_width - wrap_padding
+        
         think_wrapped, wrapped = [], []
         is_thinking = start_thinking
+        output = "".join(text_tokens)
 
         for line in output.splitlines():
             if line == "<think>":
@@ -1675,12 +1675,6 @@ class FancyTheme(Theme):
             else:
                 wrapped.extend(wrapped_line)
                 wrapped.append(linesep)
-
-        _is_thinking = (
-            isinstance(tokens[-1], ReasoningToken)
-            if tokens
-            else start_thinking
-        )
 
         think_section = (
             think_wrapped[-(think_height - 2 * think_padding) :]
