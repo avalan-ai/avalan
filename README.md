@@ -546,6 +546,14 @@ echo "What's avalan's latest release in pypi?" | \
       --display-tools
 ```
 
+## Reasoning strategies
+
+Avalan supports several reasoning approaches for guiding agents through complex problems.
+
+### ReACT
+
+ReACT interleaves reasoning with tool use so an agent can think through steps and take actions in turn.
+
 You can direct an agent to read specific locations for knowledge:
 
 ```bash
@@ -562,13 +570,9 @@ echo "Tell me what avalan does based on the web page https://raw.githubuserconte
       --display-tools
 ```
 
-## Reasoning strategies
+and you'll get the model's interpretation of what Avalan does based on its README.md file on github:
 
-Avalan supports several reasoning approaches for guiding agents through complex problems.
-
-### ReACT
-
-ReACT interleaves reasoning with tool use so an agent can think through steps and take actions in turn.
+![ReACT browsing tool usage for real-time information](https://avalan.ai/images/github/text_generation_tools_browser.webp)
 
 ### Chain‑of‑Thought
 
