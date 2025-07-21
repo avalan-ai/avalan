@@ -119,6 +119,7 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
             image_instance = MagicMock()
             image_open_mock.return_value = image_instance
+            image_instance.convert.return_value = image_instance
 
             model = ImageToTextModel(
                 self.model_id,
@@ -133,6 +134,7 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
             processor_instance.assert_called_with(
                 images=image_instance, return_tensors="pt"
             )
+            image_instance.convert.assert_called_once_with("RGB")
             model_instance.generate.assert_called_once_with(
                 **processor_instance.return_value
             )

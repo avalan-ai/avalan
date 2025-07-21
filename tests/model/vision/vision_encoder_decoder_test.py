@@ -119,6 +119,7 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
 
             image_instance = MagicMock()
             image_open_mock.return_value = image_instance
+            image_instance.convert.return_value = image_instance
 
             model = VisionEncoderDecoderModel(
                 self.model_id,
@@ -126,13 +127,14 @@ class VisionEncoderDecoderModelCallTestCase(IsolatedAsyncioTestCase):
                 logger=logger_mock,
             )
 
-            caption = await model("img.jpg")
+            caption = await model("img.jpg", None)
 
             self.assertEqual(caption, "caption")
             image_open_mock.assert_called_once_with("img.jpg")
             processor_instance.assert_called_with(
                 images=image_instance, return_tensors="pt"
             )
+            image_instance.convert.assert_called_once_with("RGB")
             model_instance.generate.assert_called_once_with(
                 **processor_instance.return_value
             )
