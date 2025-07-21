@@ -53,6 +53,7 @@ task you need:
   - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
   - 🗣️ [Speech recognition](#speech-recognition):– Convert spoken audio to text.
   - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
+  - 🎵 [Audio generation](#audio-generation): Compose short music loops from text.
 * 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
   - ❓ [Question answering](#question-answering): Answer questions from context.
   - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
@@ -129,6 +130,17 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
             --path example.wav \
             --audio-reference-path docs/examples/oprah.wav \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
+```
+
+#### Audio generation
+
+Create a short melody from a text prompt:
+
+```bash
+echo "A funky riff about Leo Messi." |
+    avalan model run "facebook/musicgen-small" \
+        --modality audio_generation \
+        --path melody.wav
 ```
 
 ### Text
