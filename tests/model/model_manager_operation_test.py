@@ -59,6 +59,7 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
         cases = {
             Modality.AUDIO_SPEECH_RECOGNITION: (self._check_audio, False),
             Modality.AUDIO_TEXT_TO_SPEECH: (self._check_audio, True),
+            Modality.AUDIO_GENERATION: (self._check_audio, True),
             Modality.EMBEDDING: (
                 lambda op: self.assertIsNone(op.parameters),
                 False,
