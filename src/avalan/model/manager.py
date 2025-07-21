@@ -26,6 +26,7 @@ from ..model.nlp.sequence import (
 )
 from ..model.nlp.token import TokenClassificationModel
 from ..model.audio.classification import AudioClassificationModel
+from ..model.audio.generation import AudioGenerationModel
 from ..model.audio.speech_recognition import SpeechRecognitionModel
 from ..model.audio.speech import TextToSpeechModel
 from ..model.criteria import KeywordStoppingCriteria
@@ -65,6 +66,7 @@ ModelType: TypeAlias = (
     | SequenceClassificationModel
     | SequenceToSequenceModel
     | SpeechRecognitionModel
+    | AudioGenerationModel
     | TextGenerationModel
     | TextToImageModel
     | TextToSpeechModel
@@ -185,6 +187,19 @@ class ModelManager(ContextDecorator):
                         "audio"
                     ].reference_text,
                     sampling_rate=operation.parameters["audio"].sampling_rate,
+                )
+
+            case Modality.AUDIO_GENERATION:
+                assert (
+                    operation.input
+                    and operation.parameters["audio"]
+                    and operation.parameters["audio"].path
+                )
+
+                result = await model(
+                    operation.input,
+                    operation.parameters["audio"].path,
+                    operation.generation_settings.max_new_tokens,
                 )
 
             case Modality.TEXT_GENERATION:
@@ -464,6 +479,7 @@ class ModelManager(ContextDecorator):
 
         requires_input = modality in {
             Modality.AUDIO_TEXT_TO_SPEECH,
+            Modality.AUDIO_GENERATION,
             Modality.TEXT_GENERATION,
             Modality.TEXT_QUESTION_ANSWERING,
             Modality.TEXT_SEQUENCE_CLASSIFICATION,
@@ -499,6 +515,14 @@ class ModelManager(ContextDecorator):
                         path=args.path,
                         reference_path=args.audio_reference_path,
                         reference_text=args.audio_reference_text,
+                        sampling_rate=args.audio_sampling_rate,
+                    )
+                )
+
+            case Modality.AUDIO_GENERATION:
+                parameters = OperationParameters(
+                    audio=OperationAudioParameters(
+                        path=args.path,
                         sampling_rate=args.audio_sampling_rate,
                     )
                 )
@@ -775,6 +799,8 @@ class ModelManager(ContextDecorator):
                     model = SpeechRecognitionModel(**model_load_args)
                 case Modality.AUDIO_TEXT_TO_SPEECH:
                     model = TextToSpeechModel(**model_load_args)
+                case Modality.AUDIO_GENERATION:
+                    model = AudioGenerationModel(**model_load_args)
                 case Modality.VISION_OBJECT_DETECTION:
                     model = ObjectDetectionModel(**model_load_args)
                 case Modality.VISION_IMAGE_CLASSIFICATION:

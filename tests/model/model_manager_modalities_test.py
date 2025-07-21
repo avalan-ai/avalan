@@ -25,6 +25,7 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
             Modality.AUDIO_CLASSIFICATION: "AudioClassificationModel",
             Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
             Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",
+            Modality.AUDIO_GENERATION: "AudioGenerationModel",
             Modality.VISION_OBJECT_DETECTION: "ObjectDetectionModel",
             Modality.VISION_IMAGE_CLASSIFICATION: "ImageClassificationModel",
             Modality.VISION_IMAGE_TO_TEXT: "ImageToTextModel",
@@ -89,6 +90,13 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
                 manager.load_engine(
                     uri, settings, Modality.AUDIO_CLASSIFICATION
                 )
+
+    def test_load_engine_audio_generation_remote(self):
+        with ModelManager(self.hub, self.logger) as manager:
+            uri = manager.parse_uri("ai://openai/ag")
+            settings = TransformerEngineSettings()
+            with self.assertRaises(NotImplementedError):
+                manager.load_engine(uri, settings, Modality.AUDIO_GENERATION)
 
 
 class ModelManagerLoadModalitiesTestCase(TestCase):
