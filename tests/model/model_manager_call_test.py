@@ -102,6 +102,21 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             (
+                Modality.AUDIO_GENERATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input="song",
+                    modality=Modality.AUDIO_GENERATION,
+                    parameters=OperationParameters(
+                        audio=OperationAudioParameters(
+                            path="out.wav",
+                            sampling_rate=16000,
+                        )
+                    ),
+                ),
+                (("song", "out.wav", 1), {}),
+            ),
+            (
                 Modality.TEXT_GENERATION,
                 Operation(
                     generation_settings=self.settings,
