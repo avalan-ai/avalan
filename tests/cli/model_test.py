@@ -3962,5 +3962,66 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
         slp.assert_called()
 
 
+class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
+    async def test_reasoning_token_tracked(self):
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                async def gen():
+                    yield model_cmds.ReasoningToken(token="A")
+                    yield "B"
+
+                return gen()
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+
+        captured: list[dict[str, list[str]]] = []
+
+        async def fake_tokens(*p, **kw):
+            captured.append({"thinking": list(p[7]), "answer": list(p[8])})
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="text",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+        self.assertEqual(captured[-1]["thinking"], ["A"])
+        self.assertEqual(captured[-1]["answer"], ["B"])
+
+
 if __name__ == "__main__":
     main()
