@@ -1598,9 +1598,7 @@ class FancyTheme(Theme):
         )
         for label, score in audio_labels.items():
             score_text = (
-                self._f("score", f"{score:.2f}")
-                if score is not None
-                else "-"
+                self._f("score", f"{score:.2f}") if score is not None else "-"
             )
             table.add_row(label, score_text)
         return Align(table, align="center")

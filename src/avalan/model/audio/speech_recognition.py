@@ -56,5 +56,3 @@ class SpeechRecognitionModel(BaseAudioModel):
         predicted_ids = argmax(logits, dim=-1)
         transcription = self._processor.batch_decode(predicted_ids)[0]
         return transcription
-
-

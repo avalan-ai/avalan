@@ -51,7 +51,7 @@ class AudioClassificationModel(BaseAudioModel):
             wave,
             sampling_rate=sr,
             return_tensors=tensor_format,
-            padding=padding
+            padding=padding,
         ).to(self._device)
 
         id2label = {int(k): v for k, v in self._model.config.id2label.items()}
