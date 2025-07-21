@@ -53,7 +53,7 @@ task you need:
   - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
   - 🗣️ [Speech recognition](#speech-recognition):– Convert spoken audio to text.
   - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
-  - 🎵 [Audio generation](#audio-generation): Compose short music loops from text.
+  - 🎵 [Audio generation](#audio-generation): Compose music from text.
 * 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
   - ❓ [Question answering](#question-answering): Answer questions from context.
   - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
@@ -140,6 +140,7 @@ Create a short melody from a text prompt:
 echo "A funky riff about Leo Messi." |
     avalan model run "facebook/musicgen-small" \
         --modality audio_generation \
+        --max-new-tokens 1024 \
         --path melody.wav
 ```
 
