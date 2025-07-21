@@ -262,7 +262,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         )
                     ),
                 ),
-                (("img.png",), {"skip_special_tokens": True}),
+                (("img.png",), {"prompt": None, "skip_special_tokens": True}),
             ),
             (
                 Modality.VISION_IMAGE_TEXT_TO_TEXT,
