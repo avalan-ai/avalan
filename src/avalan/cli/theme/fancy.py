@@ -11,7 +11,6 @@ from ...entities import (
     SentenceTransformerModelConfig,
     Similarity,
     Token,
-    ReasoningToken,
     TokenizerConfig,
     User,
     ImageEntity,
@@ -1625,7 +1624,8 @@ class FancyTheme(Theme):
         display_probabilities: bool,
         pick: int,
         focus_on_token_when: Callable[[Token], bool] | None,
-        text_tokens: list[str],
+        thinking_text_tokens: list[str],
+        answer_text_tokens: list[str],
         tokens: list[Token] | None,
         input_token_count: int,
         total_tokens: int,
@@ -1655,26 +1655,20 @@ class FancyTheme(Theme):
 
         pick_first = ceil(pick / 2) if pick > 1 else pick
         max_width = console_width - wrap_padding
-        
+
         think_wrapped, wrapped = [], []
-        is_thinking = start_thinking
-        output = "".join(text_tokens)
 
-        for line in output.splitlines():
-            if line == "<think>":
-                is_thinking = True
-                continue
-            elif is_thinking and line == "</think>":
-                is_thinking = False
-                continue
-
+        thinking_output = "".join(thinking_text_tokens)
+        for line in thinking_output.splitlines():
             wrapped_line = wrap(line, width=max_width)
-            if is_thinking:
-                think_wrapped.extend(wrapped_line)
-                think_wrapped.append(linesep)
-            else:
-                wrapped.extend(wrapped_line)
-                wrapped.append(linesep)
+            think_wrapped.extend(wrapped_line)
+            think_wrapped.append(linesep)
+
+        answer_output = "".join(answer_text_tokens)
+        for line in answer_output.splitlines():
+            wrapped_line = wrap(line, width=max_width)
+            wrapped.extend(wrapped_line)
+            wrapped.append(linesep)
 
         think_section = (
             think_wrapped[-(think_height - 2 * think_padding) :]
