@@ -861,6 +861,15 @@ class FancyThemeMoreTests(unittest.TestCase):
         self.assertEqual(table.columns[0]._cells[0], "cat")
         self.assertEqual(table.columns[0]._cells[1], "dog")
 
+    def test_display_audio_labels(self):
+        align = self.theme.display_audio_labels({"dog": 0.9, "cat": 0.5})
+        table = align.renderable
+        self.assertEqual(table.row_count, 2)
+        self.assertEqual(table.columns[0]._cells[0], "dog")
+        self.assertEqual(table.columns[0]._cells[1], "cat")
+        self.assertEqual(table.columns[1]._cells[0], "[score]0.90[/score]")
+        self.assertEqual(table.columns[1]._cells[1], "[score]0.50[/score]")
+
     def test_display_token_labels(self):
         align = self.theme.display_token_labels([{"tok": "LBL"}])
         table = align.renderable

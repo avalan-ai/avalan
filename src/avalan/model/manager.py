@@ -54,15 +54,21 @@ from time import perf_counter
 from urllib.parse import urlparse, parse_qsl
 
 ModelType: TypeAlias = (
-    ImageClassificationModel
+    AudioClassificationModel
+    | ImageClassificationModel
     | ImageTextToTextModel
+    | ImageToTextModel
     | ObjectDetectionModel
     | QuestionAnsweringModel
     | SemanticSegmentationModel
     | SentenceTransformerModel
+    | SequenceClassificationModel
+    | SequenceToSequenceModel
     | SpeechRecognitionModel
     | TextGenerationModel
+    | TextToImageModel
     | TextToSpeechModel
+    | TranslationModel
     | TokenClassificationModel
     | VisionEncoderDecoderModel
     | TextToAnimationModel

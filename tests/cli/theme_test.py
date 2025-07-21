@@ -360,6 +360,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
             lambda: Theme.display_image_entities(self.theme, [], False),
             lambda: Theme.display_image_entity(self.theme, None),
+            lambda: Theme.display_audio_labels(self.theme, {}),
             lambda: Theme.display_image_labels(self.theme, []),
             lambda: Theme.display_token_labels(self.theme, []),
             lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
