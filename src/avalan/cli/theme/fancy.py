@@ -11,6 +11,7 @@ from ...entities import (
     SentenceTransformerModelConfig,
     Similarity,
     Token,
+    ReasoningToken,
     TokenizerConfig,
     User,
     ImageEntity,
@@ -1674,6 +1675,12 @@ class FancyTheme(Theme):
             else:
                 wrapped.extend(wrapped_line)
                 wrapped.append(linesep)
+
+        _is_thinking = (
+            isinstance(tokens[-1], ReasoningToken)
+            if tokens
+            else start_thinking
+        )
 
         think_section = (
             think_wrapped[-(think_height - 2 * think_padding) :]
