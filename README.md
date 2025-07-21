@@ -49,30 +49,55 @@ works across engines such as transformers, vLLM and mlx-lm. The examples below
 show each modality in action. Use the table of contents below to jump to the
 task you need:
 
-* 🎧 [**Audio**](#audio) – Turn audio into text or produce speech for
-  accessibility and media.
-  - 🗣️ [Speech recognition](#speech-recognition) – Convert spoken audio to text
-  - 🔊 [Text to speech](#text-to-speech) – Generate spoken audio from text
-* 📝 [**Text**](#text) – Perform natural language processing to understand or
-  generate information.
-  - ❓ [Question answering](#question-answering) – Answer questions from context
-  - 🧮 [Sequence classification](#sequence-classification) – Label a sequence such as sentiment
-  - 🔁 [Sequence to sequence](#sequence-to-sequence) – Transform text like summarization
-  - ✍️ [Text generation](#text-generation) – Produce new text from prompts
-  - 🏷️ [Token classification](#token-classification) – Tag tokens for tasks like NER
-  - 🌍 [Translation](#translation) – Convert text between languages
-* 👁️ [**Vision**](#vision) – Analyze images or create visuals for content and
-  automation.
-  - 🖼️ [Image classification](#image-classification) – Identify objects in an image
-  - 📷 [Image to text](#image-to-text) – Describe an image with text
-  - 🔤 [Image text to text](#image-text-to-text) – Provide an image and instruction to produce text
-  - 🎯 [Object detection](#object-detection) – Locate objects within an image
-  - 🧩 [Semantic segmentation](#semantic-segmentation) – Label each pixel in an image
-  - 🎬 [Text to animation](#text-to-animation) – Create animations from prompts
-  - 🖌️ [Text to image](#text-to-image) – Generate images from text
-  - 🎥 [Text to video](#text-to-video) – Produce videos from text prompts
+* 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
+  - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
+  - 🗣️ [Speech recognition](#speech-recognition):– Convert spoken audio to text.
+  - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
+* 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
+  - ❓ [Question answering](#question-answering): Answer questions from context.
+  - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
+  - 🔁 [Sequence to sequence](#sequence-to-sequence): Transform text like summarization.
+  - ✍️ [Text generation](#text-generation): Produce new text from prompts.
+  - 🏷️ [Token classification](#token-classification):– Tag tokens for tasks like Named Entity Recognition.
+  - 🌍 [Translation](#translation): Convert text between languages.
+* 👁️ [**Vision**](#vision): Analyze images or create visuals for content and automation.
+  - 🖼️ [Image classification](#image-classification):– Identify objects in an image
+  - 📷 [Image to text](#image-to-text): Describe an image with text
+  - 🔤 [Image text to text](#image-text-to-text): Provide an image and instruction to produce text
+  - 🎯 [Object detection](#object-detection): Locate objects within an image
+  - 🧩 [Semantic segmentation](#semantic-segmentation): Label each pixel in an image
+  - 🎬 [Text to animation](#text-to-animation): Create animations from prompts
+  - 🖌️ [Text to image](#text-to-image): Generate images from text
+  - 🎥 [Text to video](#text-to-video): Produce videos from text prompts
 
 ### Audio
+
+#### Audio classification
+
+Determine the sentiment (neutral, happy, angry, sad) of a given audio file:
+
+```bash
+avalan model run "superb/hubert-base-superb-er" \
+    --modality audio_classification \
+    --path oprah.wav \
+    --audio-sampling-rate 16000
+```
+
+And you'll get the likeliness of each sentiment:
+
+```text
+┏━━━━━━━┳━━━━━━━┓
+┃ Label ┃ Score ┃
+┡━━━━━━━╇━━━━━━━┩
+│ ang   │ 0.49  │
+├───────┼───────┤
+│ hap   │ 0.45  │
+├───────┼───────┤
+│ neu   │ 0.04  │
+├───────┼───────┤
+│ sad   │ 0.02  │
+└───────┴───────┘
+```
 
 #### Speech recognition
 

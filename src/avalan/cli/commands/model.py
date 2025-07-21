@@ -203,6 +203,9 @@ async def model_run(
             }:
                 console.print(output)
 
+            elif modality == Modality.AUDIO_CLASSIFICATION:
+                console.print(theme.display_audio_labels(output))
+
             elif modality == Modality.AUDIO_TEXT_TO_SPEECH:
                 console.print(f"Audio generated in {output}")
 

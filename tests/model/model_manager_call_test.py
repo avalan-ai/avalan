@@ -45,6 +45,21 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
         model = DummyModel()
         cases = [
             (
+                Modality.AUDIO_CLASSIFICATION,
+                Operation(
+                    generation_settings=self.settings,
+                    input=None,
+                    modality=Modality.AUDIO_CLASSIFICATION,
+                    parameters=OperationParameters(
+                        audio=OperationAudioParameters(
+                            path="a.wav",
+                            sampling_rate=16000,
+                        )
+                    ),
+                ),
+                ((), {"path": "a.wav", "sampling_rate": 16000}),
+            ),
+            (
                 Modality.AUDIO_SPEECH_RECOGNITION,
                 Operation(
                     generation_settings=self.settings,

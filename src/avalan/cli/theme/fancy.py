@@ -1583,6 +1583,26 @@ class FancyTheme(Theme):
         table.add_row(entity.label)
         return Align(table, align="center")
 
+    def display_audio_labels(
+        self, audio_labels: dict[str, float]
+    ) -> RenderableType:
+        _ = self._
+        table = Table(
+            Column(header=_("Label"), justify="left"),
+            Column(header=_("Score"), justify="left"),
+            show_footer=False,
+            show_header=True,
+            show_edge=True,
+            show_lines=True,
+            border_style="gray58",
+        )
+        for label, score in audio_labels.items():
+            score_text = (
+                self._f("score", f"{score:.2f}") if score is not None else "-"
+            )
+            table.add_row(label, score_text)
+        return Align(table, align="center")
+
     def display_image_labels(self, labels: list[str]) -> RenderableType:
         _ = self._
         table = Table(

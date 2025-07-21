@@ -10,7 +10,7 @@
 #
 
 from asyncio import run
-from avalan.model.audio import TextToSpeechModel
+from avalan.model.audio.speech import TextToSpeechModel
 from os.path import isfile
 from sys import argv
 

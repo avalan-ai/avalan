@@ -294,6 +294,12 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def display_audio_labels(
+        self, audio_labels: dict[str, float]
+    ) -> RenderableType:
+        raise NotImplementedError()
+
+    @abstractmethod
     def display_image_labels(self, labels: list[str]) -> RenderableType:
         raise NotImplementedError()
 

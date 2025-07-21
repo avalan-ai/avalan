@@ -25,7 +25,9 @@ from ..model.nlp.sequence import (
     TranslationModel,
 )
 from ..model.nlp.token import TokenClassificationModel
-from ..model.audio import SpeechRecognitionModel, TextToSpeechModel
+from ..model.audio.classification import AudioClassificationModel
+from ..model.audio.speech_recognition import SpeechRecognitionModel
+from ..model.audio.speech import TextToSpeechModel
 from ..model.criteria import KeywordStoppingCriteria
 from ..model.vision.detection import ObjectDetectionModel
 from ..model.vision.image import (
@@ -52,15 +54,21 @@ from time import perf_counter
 from urllib.parse import urlparse, parse_qsl
 
 ModelType: TypeAlias = (
-    ImageClassificationModel
+    AudioClassificationModel
+    | ImageClassificationModel
     | ImageTextToTextModel
+    | ImageToTextModel
     | ObjectDetectionModel
     | QuestionAnsweringModel
     | SemanticSegmentationModel
     | SentenceTransformerModel
+    | SequenceClassificationModel
+    | SequenceToSequenceModel
     | SpeechRecognitionModel
     | TextGenerationModel
+    | TextToImageModel
     | TextToSpeechModel
+    | TranslationModel
     | TokenClassificationModel
     | VisionEncoderDecoderModel
     | TextToAnimationModel
@@ -135,6 +143,18 @@ class ModelManager(ContextDecorator):
         result: Any
 
         match modality:
+            case Modality.AUDIO_CLASSIFICATION:
+                assert (
+                    operation.parameters["audio"]
+                    and operation.parameters["audio"].path
+                    and operation.parameters["audio"].sampling_rate
+                )
+
+                result = await model(
+                    path=operation.parameters["audio"].path,
+                    sampling_rate=operation.parameters["audio"].sampling_rate,
+                )
+
             case Modality.AUDIO_SPEECH_RECOGNITION:
                 assert (
                     operation.parameters["audio"]
@@ -457,6 +477,14 @@ class ModelManager(ContextDecorator):
         }
 
         match modality:
+            case Modality.AUDIO_CLASSIFICATION:
+                parameters = OperationParameters(
+                    audio=OperationAudioParameters(
+                        path=args.path,
+                        sampling_rate=args.audio_sampling_rate,
+                    )
+                )
+
             case Modality.AUDIO_SPEECH_RECOGNITION:
                 parameters = OperationParameters(
                     audio=OperationAudioParameters(
@@ -741,6 +769,8 @@ class ModelManager(ContextDecorator):
             match modality:
                 case Modality.EMBEDDING:
                     model = SentenceTransformerModel(**model_load_args)
+                case Modality.AUDIO_CLASSIFICATION:
+                    model = AudioClassificationModel(**model_load_args)
                 case Modality.AUDIO_SPEECH_RECOGNITION:
                     model = SpeechRecognitionModel(**model_load_args)
                 case Modality.AUDIO_TEXT_TO_SPEECH:

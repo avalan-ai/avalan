@@ -73,6 +73,7 @@ class MessageRole(StrEnum):
 
 
 class Modality(StrEnum):
+    AUDIO_CLASSIFICATION = "audio_classification"
     AUDIO_SPEECH_RECOGNITION = "audio_speech_recognition"
     AUDIO_TEXT_TO_SPEECH = "audio_text_to_speech"
     EMBEDDING = "embedding"
