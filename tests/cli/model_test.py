@@ -1361,6 +1361,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         theme.display_audio_labels.assert_called_once_with(
             manager.return_value
         )
+        tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args_list[-1].args[0], "table")
 
     async def test_run_text_question_answering(self):
