@@ -79,7 +79,8 @@ Determine the sentiment (neutral, happy, angry, sad) of a given audio file:
 ```bash
 avalan model run "superb/hubert-base-superb-er" \
     --modality audio_classification \
-    --path oprah.wav
+    --path oprah.wav \
+    --audio-sampling-rate 16000
 ```
 
 And you'll get the likeliness of each sentiment:

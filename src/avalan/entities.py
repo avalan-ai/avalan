@@ -583,7 +583,7 @@ class OperationAudioParameters:
     path: str
     reference_path: str | None = None
     reference_text: str | None = None
-    sampling_rate: int | None = None
+    sampling_rate: int
 
 
 @dataclass(frozen=True, kw_only=True)

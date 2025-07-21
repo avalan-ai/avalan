@@ -35,21 +35,15 @@ class AudioClassificationModel(BaseAudioModel):
         path: str,
         *,
         padding: bool = True,
+        sampling_rate: int = 16_000,
         tensor_format: Literal["pt"] = "pt",
     ) -> dict[str, float]:
         assert path
 
-        wave, sr = load(path)
-        if wave.shape[0] > 1:
-            # stereo -> mono
-            wave = wave.mean(dim=0)
-        else:
-            # already mono, just drop channel dim (samples,)
-            wave = wave.squeeze(0)
-
+        wave = self._resample_mono(path, sampling_rate)
         inputs = self._extractor(
             wave,
-            sampling_rate=sr,
+            sampling_rate=sampling_rate,
             return_tensors=tensor_format,
             padding=padding,
         ).to(self._device)

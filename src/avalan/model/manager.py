@@ -141,10 +141,12 @@ class ModelManager(ContextDecorator):
                 assert (
                     operation.parameters["audio"]
                     and operation.parameters["audio"].path
+                    and operation.parameters["audio"].sampling_rate
                 )
 
                 result = await model(
                     path=operation.parameters["audio"].path,
+                    sampling_rate=operation.parameters["audio"].sampling_rate,
                 )
 
             case Modality.AUDIO_SPEECH_RECOGNITION:
@@ -473,6 +475,7 @@ class ModelManager(ContextDecorator):
                 parameters = OperationParameters(
                     audio=OperationAudioParameters(
                         path=args.path,
+                        sampling_rate=args.audio_sampling_rate,
                     )
                 )
 
