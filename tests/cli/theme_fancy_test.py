@@ -76,6 +76,39 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_tool_text_tokens_panel(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                thinking_text_tokens=[],
+                tool_text_tokens=["tool"],
+                answer_text_tokens=["answer"],
+                tokens=None,
+                input_token_count=0,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                elapsed=1.0,
+                console_width=80,
+                logger=MagicMock(),
+            )
+            _, frame = await gen.__anext__()
+        self.assertEqual(len(frame.renderables), 2)
+        self.assertIn("tool", frame.renderables[0].renderable)
+
 
 class FancyThemeTestCase(IsolatedAsyncioTestCase):
     def setUp(self):

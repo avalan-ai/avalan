@@ -4218,5 +4218,74 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(captured[-1]["answer"], ["B"])
 
 
+class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
+    async def test_tool_call_token_tracked(self):
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                async def gen():
+                    yield model_cmds.ToolCallToken(token="TOOL")
+                    yield model_cmds.Token(id=1, token="A")
+
+                return gen()
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+        stop_signal = asyncio.Event()
+
+        captured: list[list[str]] = []
+
+        async def fake_tokens(*p, **kw):
+            captured.append(list(p[8]))
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+
+        group = SimpleNamespace(renderables=[None])
+
+        await model_cmds._token_stream(
+            live=live,
+            group=group,
+            tokens_group_index=0,
+            args=args,
+            console=console,
+            theme=theme,
+            logger=logger,
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(
+                model_id="m",
+                tokenizer_config=None,
+                input_token_count=lambda s: 1,
+            ),
+            input_string="text",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=stop_signal,
+            tool_events_limit=None,
+            with_stats=True,
+        )
+
+        self.assertTrue(stop_signal.is_set())
+        self.assertEqual(captured, [["TOOL"], ["TOOL"]])
+
+
 if __name__ == "__main__":
     main()
