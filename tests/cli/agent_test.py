@@ -25,6 +25,10 @@ from avalan.tool.manager import ToolManager
 from avalan.cli.commands import agent as agent_cmds
 from avalan.event import Event, EventType
 from avalan.memory.permanent import VectorFunction
+from avalan.model.response.text import TextGenerationResponse
+from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.response.parsers.tool import ToolCallParser
+from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -1204,3 +1208,191 @@ class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             await agent_cmds.agent_init(args, console, theme)
         console.print.assert_not_called()
+
+
+class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.args = Namespace(
+            specifications_file="spec.toml",
+            use_sync_generator=False,
+            display_tokens=0,
+            stats=False,
+            id="aid",
+            participant="pid",
+            session="sid",
+            no_session=False,
+            skip_load_recent_messages=False,
+            load_recent_messages_limit=1,
+            no_repl=False,
+            quiet=False,
+            skip_hub_access_check=False,
+            conversation=False,
+            watch=False,
+            tty=None,
+            tool_events=2,
+            tool=None,
+            run_max_new_tokens=100,
+            run_skip_special_tokens=False,
+            engine_uri=None,
+            name=None,
+            role=None,
+            task=None,
+            instructions=None,
+            memory_recent=None,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            tool_browser_engine=None,
+            tool_browser_debug=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            tools_confirm=False,
+        )
+        self.console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        self.console.status.return_value = status_cm
+        self.theme = MagicMock()
+        self.theme._ = lambda s: s
+        self.theme.icons = {"user_input": ">", "agent_output": "<"}
+        self.theme.get_spinner.return_value = "sp"
+        self.theme.agent.return_value = "agent_panel"
+        self.theme.recent_messages.return_value = "recent_panel"
+        self.hub = MagicMock()
+        self.hub.can_access.return_value = True
+        self.hub.model.side_effect = lambda m: f"mdl-{m}"
+        self.logger = MagicMock()
+
+        self.orch = AsyncMock()
+        self.orch.engine_agent = True
+        self.orch.engine = MagicMock(model_id="m")
+        self.orch.model_ids = ["m"]
+        self.orch.event_manager.add_listener = MagicMock()
+        self.orch.memory = MagicMock()
+        self.orch.memory.has_recent_message = False
+        self.orch.memory.has_permanent_message = False
+        self.orch.memory.recent_message = MagicMock(
+            is_empty=True, size=0, data=[]
+        )
+        self.orch.memory.continue_session = AsyncMock()
+        self.orch.memory.start_session = AsyncMock()
+
+        self.dummy_stack = AsyncMock()
+        self.dummy_stack.__aenter__.return_value = self.dummy_stack
+        self.dummy_stack.__aexit__.return_value = False
+        self.dummy_stack.enter_async_context = AsyncMock(
+            return_value=self.orch
+        )
+
+    async def test_agent_run_mixed_tokens(self):
+        async def complex_generator():
+            rp = ReasoningParser()
+            tm = MagicMock()
+            tm.is_potential_tool_call.return_value = True
+            tm.get_calls.return_value = None
+            tp = ToolCallParser(tm, None)
+            sequence = [
+                "X",
+                "<think>",
+                "ra",
+                "rb",
+                "</think>",
+                "Y",
+                "<tool_call>",
+                "foo",
+                "bar",
+                "</tool_call>",
+                "Z",
+            ]
+            for s in sequence:
+                items = await rp.push(s)
+                for item in items:
+                    parsed = (
+                        await tp.push(item)
+                        if isinstance(item, str)
+                        else [item]
+                    )
+                    for p in parsed:
+                        if isinstance(p, str):
+                            if p == "</think>":
+                                yield TokenDetail(
+                                    id=3, token=p, probability=0.5
+                                )
+                            elif p in {"X", "Y"}:
+                                yield Token(id=1, token=p)
+                            elif p == "<think>" or p == "Z":
+                                yield p
+                        elif isinstance(p, ToolCallToken):
+                            if p.token == "</tool_call>":
+                                yield TokenDetail(
+                                    id=4, token=p.token, probability=0.5
+                                )
+                            else:
+                                yield p
+                        else:
+                            yield p
+
+        class DummyOrchestratorResponse:
+            input_token_count = 1
+
+            def __init__(self):
+                self._resp = TextGenerationResponse(
+                    lambda: complex_generator(), use_async_generator=True
+                )
+
+            def __aiter__(self_inner):
+                return self_inner._resp.__aiter__()
+
+        self.orch.return_value = DummyOrchestratorResponse()
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        tg_patch.assert_awaited_once()
+        resp_obj = tg_patch.await_args.kwargs["response"]
+        tokens = []
+        async for t in resp_obj:
+            tokens.append(t)
+
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, ReasoningToken)]),
+            2,
+        )
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, ToolCallToken)]),
+            3,
+        )
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, TokenDetail)]),
+            2,
+        )
+        self.assertGreaterEqual(
+            len([t for t in tokens if type(t) is Token]),
+            2,
+        )
+        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 2)
