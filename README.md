@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" />
   <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
   <a href="https://discord.gg/8Eh9TNvk"><img src="https://img.shields.io/badge/discord-community-blue" alt="Discord Community" /></a>
+  <a href="https://deepwiki.com/avalan-ai/avalan"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 Avalan empowers developers and enterprises to build, orchestrate, and deploy intelligent AI solutions locally, on-premises and in the cloud. It provides a unified SDK and CLI for running millions of models with ease.
