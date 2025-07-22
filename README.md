@@ -101,6 +101,16 @@ And you'll get the likeliness of each sentiment:
 └───────┴───────┘
 ```
 
+You can achieve the same result directly from Python:
+
+```python
+from avalan.model.audio.classification import AudioClassificationModel
+
+with AudioClassificationModel("superb/hubert-base-superb-er") as model:
+    labels = await model("oprah.wav", sampling_rate=16000)
+    print(labels)
+```
+
 #### Speech recognition
 
 Transcribe speech from an audio file:
@@ -120,6 +130,16 @@ THAT A SURPRISE HERE WAS THIS PETITE ALMOST DELICATE LADY WHO WAS THE
 PERSONIFICATION OF GRACE AND GOODNESS
 ```
 
+The SDK lets you do the same programmatically:
+
+```python
+from avalan.model.audio.speech_recognition import SpeechRecognitionModel
+
+with SpeechRecognitionModel("facebook/wav2vec2-base-960h") as model:
+    output = await model("oprah.wav", sampling_rate=16000)
+    print(output)
+```
+
 #### Text to speech
 
 Generate speech in Oprah's voice from a text prompt. The example uses an 18-second clip from her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm) as a reference:
@@ -133,6 +153,24 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
 ```
 
+In code you can generate speech in the same way:
+
+```python
+from avalan.model.audio.speech import TextToSpeechModel
+
+with TextToSpeechModel("nari-labs/Dia-1.6B-0626") as model:
+    await model(
+        "[S1] Leo Messi is the greatest football player of all times.",
+        "example.wav",
+        reference_path="docs/examples/oprah.wav",
+        reference_text=(
+            "[S1] And then I grew up and had the esteemed honor of meeting her. "
+            "And wasn't that a surprise. Here was this petite, almost delicate "
+            "lady who was the personification of grace and goodness."
+        ),
+    )
+```
+
 #### Audio generation
 
 Create a short melody from a text prompt:
@@ -143,6 +181,15 @@ echo "A funky riff about Leo Messi." |
         --modality audio_generation \
         --max-new-tokens 1024 \
         --path melody.wav
+```
+
+Using the library instead of the CLI:
+
+```python
+from avalan.model.audio.generation import AudioGenerationModel
+
+with AudioGenerationModel("facebook/musicgen-small") as model:
+    await model("A funky riff about Leo Messi.", "melody.wav", max_new_tokens=1024)
 ```
 
 ### Text
@@ -164,6 +211,19 @@ The answer comes as no surprise:
 football
 ```
 
+Or run it from your own script:
+
+```python
+from avalan.model.nlp.question import QuestionAnsweringModel
+
+with QuestionAnsweringModel("deepset/roberta-base-squad2") as model:
+    answer = await model(
+        "What sport does Leo play?", 
+        context="Lionel Messi, known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time."
+    )
+    print(answer)
+```
+
 #### Sequence classification
 
 Classify the sentiment of short text:
@@ -178,6 +238,16 @@ The result is positive as expected:
 
 ```text
 POSITIVE
+```
+
+The SDK version looks like this:
+
+```python
+from avalan.model.nlp.sequence import SequenceClassificationModel
+
+with SequenceClassificationModel("distilbert-base-uncased-finetuned-sst-2-english") as model:
+    output = await model("We love Leo Messi.")
+    print(output)
 ```
 
 #### Sequence to sequence
@@ -204,6 +274,25 @@ The summary:
 Andy Cucci is held by many as the greatest footballer of all times.
 ```
 
+Calling from Python is just as easy:
+
+```python
+from avalan.model.nlp.sequence import SequenceToSequenceModel
+
+with SequenceToSequenceModel("facebook/bart-large-cnn") as model:
+    output = await model("""
+    Andres Cuccittini, commonly known as Andy Cucci, is an Argentine
+    professional footballer who plays as a forward for the Argentina
+    national team. Regarded by many as the greatest footballer of all
+    time, Cucci has achieved unparalleled success throughout his career.
+
+    Born on July 25, 1988, in Ushuaia, Argentina, Cucci began playing
+    football at a young age and joined the Boca Juniors youth
+    academy.
+    """)
+    print(output)
+```
+
 #### Text generation
 
 Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example instructs the assistant to act as "Aurora" and limits the output to 100 tokens:
@@ -218,6 +307,26 @@ echo "Who are you, and who is Leo Messi?" \
         --top-k 20
 ```
 
+Here's the equivalent Python snippet:
+
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.nlp.text.generation import TextGenerationModel
+
+with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as model:
+    async for token in await model(
+        "Who are you, and who is Leo Messi?", 
+        system_prompt="You are Aurora, a helpful assistant", 
+        settings=GenerationSettings(
+            max_new_tokens=100, 
+            temperature=0.1, 
+            top_p=0.9, 
+            top_k=20
+        )
+    ):
+        print(token, end="", flush=True)
+```
+
 Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
 
 ```bash
@@ -228,6 +337,26 @@ echo "Who are you, and who is Leo Messi?" \
         --temperature .1 \
         --top-p .9 \
         --top-k 20
+```
+
+Swap in the vendor URI in code too:
+
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.nlp.text.generation import TextGenerationModel
+
+with TextGenerationModel("ai://$OPENAI_API_KEY@openai/gpt-4o") as model:
+    async for token in await model(
+        "Who are you, and who is Leo Messi?", 
+        system_prompt="You are Aurora, a helpful assistant", 
+        settings=GenerationSettings(
+            max_new_tokens=100, 
+            temperature=0.1, 
+            top_p=0.9, 
+            top_k=20
+        )
+    ):
+        print(token, end="", flush=True)
 ```
 
 #### Token classification
@@ -267,6 +396,19 @@ And you get the following labeled entities:
 └──────────┴────────┘
 ```
 
+Use the Python API if you prefer:
+
+```python
+from avalan.model.nlp.token import TokenClassificationModel
+
+with TokenClassificationModel("dslim/bert-base-NER") as model:
+    labels = await model(
+        "Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time.", 
+        labeled_only=True
+    )
+    print(labels)
+```
+
 #### Translation
 
 Translate text between languages with a sequence-to-sequence model:
@@ -294,6 +436,25 @@ como el mejor futbolista de todos los tiempos, Messi ha conseguido un éxito
 sin precedentes durante su carrera.
 ```
 
+The SDK call mirrors the CLI parameters:
+
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.nlp.sequence import TranslationModel
+
+with TranslationModel("facebook/mbart-large-50-many-to-many-mmt") as model:
+    output = await model(
+        "Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer who plays as a forward for the Argentina national team. Regarded by many as the greatest footballer of all time, Messi has achieved unparalleled success throughout his career.", 
+        source_language="en_US", 
+        destination_language="es_XX", 
+        settings=GenerationSettings(
+            num_beams=4, 
+            max_length=512
+        )
+    )
+    print(output)
+```
+
 ### Vision
 
 #### Encoder decoder
@@ -318,6 +479,19 @@ And you get the answer:
 </s>
 ```
 
+Here's how you'd call it in a script:
+
+```python
+from avalan.model.vision.decoder import VisionEncoderDecoderModel
+
+with VisionEncoderDecoderModel("naver-clova-ix/donut-base-finetuned-docvqa") as model:
+    answer = await model(
+        "docs/examples/factura-page-1.png", 
+        prompt="<s_docvqa><s_question>What is the FACTURA Number?</s_question><s_answer>"
+    )
+    print(answer)
+```
+
 #### Image classification
 
 Classify an image, such as determining whether it is a hot dog:
@@ -338,6 +512,16 @@ The model identifies the image:
 └──────────────────┘
 ```
 
+Programmatic usage:
+
+```python
+from avalan.model.vision.image import ImageClassificationModel
+
+with ImageClassificationModel("microsoft/resnet-50") as model:
+    output = await model("docs/examples/cat.jpg")
+    print(output)
+```
+
 #### Image to text
 
 Generate a caption for an image:
@@ -352,6 +536,16 @@ Example output:
 
 ```text
 a sign for a gas station on the side of a building [SEP]
+```
+
+Python snippet:
+
+```python
+from avalan.model.vision.image import ImageToTextModel
+
+with ImageToTextModel("salesforce/blip-image-captioning-base") as model:
+    caption = await model("docs/examples/Example_Image_1.jpg")
+    print(caption)
 ```
 
 #### Image text to text
@@ -374,6 +568,22 @@ The transcription (truncated for brevity):
 
 Guillermo de Ockham (según se utiliza la grafía latina o la inglesa) es tan célebre como conocido. Su doctrina
 suele merecer las más diversas interpretaciones, y su biografía adolece tremendas oscuridades.
+```
+
+Invoke the model with the SDK like so:
+
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.vision.image import ImageTextToTextModel
+
+with ImageTextToTextModel("google/gemma-3-12b-it") as model:
+    output = await model(
+        "docs/examples/typewritten_partial_sheet.jpg", 
+        "Transcribe the text on this image, keeping format", 
+        settings=GenerationSettings(max_new_tokens=1024), 
+        width=512
+    )
+    print(output)
 ```
 
 #### Object detection
@@ -415,6 +625,16 @@ Results are sorted by accuracy and include bounding boxes:
 ├──────────────┼───────┼──────────────────────────────────┤
 │ spoon        │  0.31 │ 646.69, 505.31, 673.04, 543.10   │
 └──────────────┴───────┴──────────────────────────────────┘
+```
+
+Example SDK call:
+
+```python
+from avalan.model.vision.detection import ObjectDetectionModel
+
+with ObjectDetectionModel("facebook/detr-resnet-50") as model:
+    labels = await model("docs/examples/kitchen.jpg", threshold=0.3)
+    print(labels)
 ```
 
 #### Semantic segmentation
@@ -481,6 +701,16 @@ The output lists each annotation:
 └──────────────────┘
 ```
 
+This is how you'd do it in code:
+
+```python
+from avalan.model.vision.segmentation import SemanticSegmentationModel
+
+with SemanticSegmentationModel("nvidia/segformer-b0-finetuned-ade-512-512") as model:
+    labels = await model("docs/examples/kitchen.jpg")
+    print(labels)
+```
+
 #### Text to animation
 
 Create an animation from a prompt using a base model for styling:
@@ -503,6 +733,23 @@ And here's the generated anime inspired animation of a walking cat:
 
 ![An anime cat slowly walking](https://avalan.ai/images/github/vision_text_to_animation_generated.webp)
 
+SDK usage:
+
+```python
+from avalan.entities import EngineSettings
+from avalan.model.vision.diffusion import TextToAnimationModel
+
+with TextToAnimationModel("ByteDance/AnimateDiff-Lightning", settings=EngineSettings(base_model_id="stablediffusionapi/mistoonanime-v30", checkpoint="animatediff_lightning_4step_diffusers.safetensors", weight_type="fp16")) as model:
+    await model(
+        "A tabby cat slowly walking", 
+        "example_cat_walking.gif",
+        beta_schedule="linear", 
+        guidance_scale=1.0, 
+        steps=4, 
+        timestep_spacing="trailing"
+    )
+```
+
 #### Text to image
 
 Create an image from a text prompt:
@@ -523,6 +770,23 @@ echo 'Leo Messi petting a purring tubby cat' | \
 Here is the generated image of Leo Messi petting a cute cat:
 
 ![Leo Messi petting a cute cat](https://avalan.ai/images/github/vision_text_to_image_generated.webp)
+
+You can also create images from Python:
+
+```python
+from avalan.entities import TransformerEngineSettings
+from avalan.model.vision.diffusion import TextToImageModel
+
+with TextToImageModel("stabilityai/stable-diffusion-xl-base-1.0", settings=TransformerEngineSettings(refiner_model_id="stabilityai/stable-diffusion-xl-refiner-1.0", weight_type="fp16")) as model:
+    await model(
+        "Leo Messi petting a purring tubby cat",
+        "example_messi_petting_cat.jpg", 
+        color_model="RGB", 
+        image_format="JPEG", 
+        high_noise_frac=0.8, 
+        n_steps=150
+    )
+```
 
 #### Text to video
 
@@ -550,6 +814,29 @@ echo 'A cute little penguin takes out a book and starts reading it' | \
 And here's the generated video:
 
 ![A penguin opening a book](https://avalan.ai/images/github/vision_text_to_video_generated.webp)
+
+Python example:
+
+```python
+from avalan.entities import EngineSettings
+from avalan.model.vision.diffusion import TextToVideoModel
+
+with TextToVideoModel("Lightricks/LTX-Video-0.9.7-dev", settings=EngineSettings(upsampler_model_id="Lightricks/ltxv-spatial-upscaler-0.9.7", weight_type="fp16")) as model:
+    await model(
+        "A cute little penguin takes out a book and starts reading it",
+        "worst quality, inconsistent motion, blurry, jittery, distorted",
+        "penguin.png",
+        "example_text_to_video.mp4", 
+        steps=30, 
+        inference_steps=10, 
+        width=832, 
+        height=480, 
+        frames=96, 
+        fps=24, 
+        decode_timestep=0.05, 
+        denoise_strength=0.4
+    )
+```
 
 ## Tools
 
@@ -745,127 +1032,9 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
-## Framework code
+## Creating agents
 
-Through the avalan microframework, you can easily integrate real-time token
-streaming with your own code, as [this example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/text_generation.py):
-
-```python
-from asyncio import run
-from avalan.entities import GenerationSettings
-from avalan.model.nlp.text import TextGenerationModel
-
-async def example() -> None:
-    print("Loading model... ", end="", flush=True)
-    with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as lm:
-        print("DONE.", flush=True)
-
-        system_prompt = """
-            You are Leo Messi, the greatest football/soccer player of all
-            times.
-        """
-
-        async for token in await lm(
-            "Who are you?",
-            system_prompt=system_prompt,
-            settings=GenerationSettings(temperature=0.9, max_new_tokens=256)
-        ):
-            print(token, end="", flush=True)
-
-if __name__ == "__main__":
-    run(example())
-```
-
-Besides natural language processing, you can also work with other types of
-models, such as those that handle vision, like the following
-[image classification example](https://github.com/avalan-ai/avalan/blob/main/docs/examples/vision_image_classification.py):
-
-```python
-from asyncio import run
-from avalan.model.vision.detection import ObjectDetectionModel
-import os
-import sys
-
-async def example(path: str) -> None:
-    print("Loading model... ", end="", flush=True)
-    with ObjectDetectionModel("facebook/detr-resnet-50") as od:
-        print(f"DONE. Running classification for {path}", flush=True)
-
-        for entity in await od(path):
-            print(entity, flush=True)
-
-if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv)==2 and os.path.isfile(sys.argv[1]) \
-           else sys.exit(f"Usage: {sys.argv[0]} <valid_file_path>")
-    run(example(path))
-```
-
-Looking for sequence-to-sequence models? It's just as easy, as this [summarization example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/seq2seq_summarization.py):
-
-```python
-from asyncio import run
-from avalan.entities import GenerationSettings
-from avalan.model.nlp.sequence import SequenceToSequenceModel
-
-async def example() -> None:
-    print("Loading model... ", end="", flush=True)
-    with SequenceToSequenceModel("facebook/bart-large-cnn") as s:
-        print("DONE.", flush=True)
-
-        text = """
-            Andres Cuccittini, commonly known as Andy Cucci, is an Argentine
-            professional footballer who plays as a forward for the Argentina
-            national team. Regarded by many as the greatest footballer of all
-            time, Cucci has achieved unparalleled success throughout his career.
-
-            Born on July 25, 1988, in Ushuaia, Argentina, Cucci began playing
-            football at a young age and joined the Boca Juniors youth
-            academy.
-            """
-
-        summary = await s(text, GenerationSettings(num_beams=4, max_length=60))
-        print(summary)
-
-if __name__ == "__main__":
-    run(example())
-```
-
-You can also perform translations, as [the following example shows](https://github.com/avalan-ai/avalan/blob/main/docs/examples/seq2seq_translation.py).
-You'll need the `translation` extra installed for this to run:
-
-```python
-from asyncio import run
-from avalan.entities import GenerationSettings
-from avalan.model.nlp.sequence import TranslationModel
-
-async def example() -> None:
-    print("Loading model... ", end="", flush=True)
-    with TranslationModel("facebook/mbart-large-50-many-to-many-mmt") as t:
-        print("DONE.", flush=True)
-
-        text = """
-            Lionel Messi, commonly known as Leo Messi, is an Argentine
-            professional footballer who plays as a forward for the Argentina
-            national team. Regarded by many as the greatest footballer of all
-            time, Messi has achieved unparalleled success throughout his career.
-        """
-
-        translation = await t(
-            text,
-            source_language="en_US",
-            destination_language="es_XX",
-            settings=GenerationSettings(num_beams=4, max_length=512)
-        )
-
-        print(" ".join([line.strip() for line in text.splitlines()]).strip())
-        print("-" * 12)
-        print(translation)
-
-if __name__ == "__main__":
-    run(example())
-```
-
-You can also create AI agents. Let's create one to handle gettext translations.
+You can easily create AI agents from configuration files. Let's create one to handle gettext translations.
 Create a file named [agent_gettext_translator.toml](https://github.com/avalan-ai/avalan/blob/main/docs/examples.agent_gettext_translator.toml)
 with the following contents:
 
