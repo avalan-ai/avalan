@@ -344,8 +344,10 @@ Swap in the vendor URI in code too:
 ```python
 from avalan.entities import GenerationSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
+from os import getenv
 
-with TextGenerationModel("ai://$OPENAI_API_KEY@openai/gpt-4o") as model:
+api_key = getenv("OPENAI_API_KEY")
+with TextGenerationModel(f"ai://{api_key}@openai/gpt-4o") as model:
     async for token in await model(
         "Who are you, and who is Leo Messi?", 
         system_prompt="You are Aurora, a helpful assistant", 
