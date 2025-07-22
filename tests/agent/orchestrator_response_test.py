@@ -19,7 +19,7 @@ from avalan.model import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
-from avalan.agent.orchestrator.response.parsers.tool import ToolCallParser
+from avalan.model.response.parsers.tool import ToolCallParser
 
 from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
