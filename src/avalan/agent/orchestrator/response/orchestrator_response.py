@@ -16,8 +16,8 @@ from ....event.manager import EventManager
 from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....cli import CommandAbortException
-from .parsers import StreamParser
-from .parsers.tool import ToolCallParser
+from avalan.model.response.parsers import StreamParser
+from avalan.model.response.parsers.tool import ToolCallParser
 from queue import Queue
 from inspect import iscoroutine
 from time import perf_counter

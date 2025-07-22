@@ -4,10 +4,10 @@ from io import StringIO
 from time import perf_counter
 from typing import Any, Iterable
 
-from .....entities import ToolCallToken
-from .....event import Event, EventType
-from .....event.manager import EventManager
-from .....tool.manager import ToolManager
+from ....entities import ToolCallToken
+from ....event import Event, EventType
+from ....event.manager import EventManager
+from ....tool.manager import ToolManager
 
 
 class ToolCallParser:

@@ -1,4 +1,4 @@
-from avalan.agent.orchestrator.response.parsers.tool import ToolCallParser
+from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ToolCallToken
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
