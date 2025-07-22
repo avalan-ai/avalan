@@ -37,7 +37,7 @@ These features make avalan ideal for everything from quick experiments to enterp
 
 # Quick Look
 
-Take a quick look at which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Serving agents](#serving-agents), the [framework code](#framework-code) you can reuse, and see every CLI option in the [CLI docs](docs/CLI.md).
+Take a quick look at which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), and see every CLI option in the [CLI docs](docs/CLI.md).
 
 ## Models
 
@@ -1003,36 +1003,7 @@ avalan memory document index \
     "https://trucogame.com/pages/reglamento-de-truco-argentino"
 ```
 
-## Serving agents
-
-Serve your agents on an OpenAI API–compatible endpoint:
-
-```bash
-avalan agent serve docs/examples/agent_tool.toml -vvv
-```
-
-Or build an agent from inline settings and expose its OpenAI API endpoints:
-
-```bash
-avalan agent serve \
-    --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-    --tool "math.calculator" \
-    --memory-recent \
-    --run-max-new-tokens 1024 \
-    --name "Tool" \
-    --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-    -vvv
-```
-
-You can call your tool streaming agent's OpenAI-compatible endpoint just like
-the real API; simply change `--base-url`:
-
-```bash
-echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
-    avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
-```
-
-## Creating agents
+## Agents
 
 You can easily create AI agents from configuration files. Let's create one to handle gettext translations.
 Create a file named [agent_gettext_translator.toml](https://github.com/avalan-ai/avalan/blob/main/docs/examples.agent_gettext_translator.toml)
@@ -1091,6 +1062,35 @@ icdiff locale/avalan.pot <(
 There are more agent, NLP, multimodal, audio, and vision examples in the
 [docs/examples](https://github.com/avalan-ai/avalan/blob/main/docs/examples)
 folder.
+
+### Serving agents
+
+Serve your agents on an OpenAI API–compatible endpoint:
+
+```bash
+avalan agent serve docs/examples/agent_tool.toml -vvv
+```
+
+Or build an agent from inline settings and expose its OpenAI API endpoints:
+
+```bash
+avalan agent serve \
+    --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+    --tool "math.calculator" \
+    --memory-recent \
+    --run-max-new-tokens 1024 \
+    --name "Tool" \
+    --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+    -vvv
+```
+
+You can call your tool streaming agent's OpenAI-compatible endpoint just like
+the real API; simply change `--base-url`:
+
+```bash
+echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
+    avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
+```
 
 # Install
 
