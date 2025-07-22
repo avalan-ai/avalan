@@ -4,7 +4,6 @@ from ....entities import (
     Input,
     Message,
     MessageRole,
-    ReasoningToken,
     Token,
     TokenDetail,
     ToolCall,
@@ -16,12 +15,10 @@ from ....event.manager import EventManager
 from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....cli import CommandAbortException
-from avalan.model.response.parsers import StreamParser
-from avalan.model.response.parsers.tool import ToolCallParser
 from queue import Queue
 from inspect import iscoroutine
 from time import perf_counter
-from typing import Any, AsyncIterator, Callable, Iterable
+from typing import Any, AsyncIterator, Callable
 from uuid import UUID
 
 
@@ -36,7 +33,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
     _calls: Queue[ToolCall]
-    _parser_queue: Queue[Token | TokenDetail | Event | str]
     _tool_call_events: Queue[Event]
     _tool_process_events: Queue[Event]
     _tool_result_events: Queue[Event]
@@ -61,8 +57,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         participant_id: UUID | None = None,
         session_id: UUID | None = None,
         tool_confirm: Callable[[ToolCall], str | None] | None = None,
-        enable_tool_parsing: bool = True,
-        parsers: Iterable[StreamParser] | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         self._input = input
@@ -81,11 +75,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._session_id = session_id
         self._tool_confirm = tool_confirm
         self._tool_confirm_all = False
-        self._parsers: list[StreamParser] = list(parsers or [])
-        if enable_tool_parsing and self._tool_manager:
-            self._parsers.append(
-                ToolCallParser(self._tool_manager, self._event_manager)
-            )
 
     @property
     def input_token_count(self) -> int:
@@ -108,7 +97,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             self._response.add_done_callback(self._on_consumed)
         self._response_iterator = self._response.__aiter__()
         self._calls = Queue()
-        self._parser_queue = Queue()
         self._tool_context = ToolCallContext(
             input=self._input,
             agent_id=self._agent_id,
@@ -124,9 +112,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
     async def __anext__(self) -> Token | TokenDetail | Event:
         assert self._response_iterator
-
-        if not self._parser_queue.empty():
-            return self._parser_queue.get()
 
         if not self._tool_process_events.empty():
             event = self._tool_process_events.get()
@@ -267,14 +252,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         try:
             token = await self._response_iterator.__anext__()
         except StopAsyncIteration:
-            for parser in self._parsers:
-                for item in await parser.flush():
-                    if isinstance(item, Event):
-                        self._tool_process_events.put(item)
-                    else:
-                        self._parser_queue.put(item)
-            if not self._parser_queue.empty():
-                return self._parser_queue.get()
             if self._event_manager and not self._finished:
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))
@@ -421,12 +398,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return response
 
     async def _emit(
-        self, token: Token | TokenDetail | str
+        self, item: Token | TokenDetail | Event | str
     ) -> Token | TokenDetail | Event:
-        token_str = token.token if hasattr(token, "token") else token
-
-        if self._event_manager:
-            token_id = getattr(token, "id", None)
+        if self._event_manager and not isinstance(item, Event):
+            token_str = item.token if hasattr(item, "token") else str(item)
+            token_id = getattr(item, "id", None)
             tokenizer = (
                 self._engine_agent.engine.tokenizer
                 if self._engine_agent.engine
@@ -450,55 +426,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         self._step += 1
 
-        items: list[Any] = [token_str]
-        for parser in self._parsers:
-            parsed: list[Any] = []
-            for it in items:
-                if isinstance(it, str):
-                    parsed.extend(await parser.push(it))
-                else:
-                    parsed.append(it)
-            items = parsed
+        if isinstance(item, Event):
+            if item.type == EventType.TOOL_PROCESS:
+                self._tool_process_events.put(item)
+                return await self.__anext__()
+            return item
 
-        for it in items:
-            if isinstance(it, Event):
-                if it.type == EventType.TOOL_PROCESS:
-                    self._tool_process_events.put(it)
-                else:
-                    self._parser_queue.put(it)
-            else:
-                if isinstance(it, ReasoningToken):
-                    token_id = (
-                        token.id
-                        if isinstance(token, (Token, TokenDetail))
-                        else it.id
-                    )
-                    self._parser_queue.put(
-                        ReasoningToken(
-                            token=it.token,
-                            id=token_id,
-                            probability=it.probability,
-                        )
-                    )
-                elif isinstance(token, Token):
-                    self._parser_queue.put(Token(id=token.id, token=str(it)))
-                elif isinstance(token, TokenDetail):
-                    self._parser_queue.put(
-                        TokenDetail(
-                            id=token.id,
-                            token=(
-                                it.token if isinstance(it, Token) else str(it)
-                            ),
-                            probability=token.probability,
-                            tokens=token.tokens,
-                            probability_distribution=token.probability_distribution,
-                            step=token.step,
-                        )
-                    )
-                else:
-                    self._parser_queue.put(it)
-
-        return self._parser_queue.get()
+        return item
 
     async def _on_consumed(self) -> None:
         assert self._event_manager
