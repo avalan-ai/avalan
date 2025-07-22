@@ -1645,6 +1645,7 @@ class FancyTheme(Theme):
         pick: int,
         focus_on_token_when: Callable[[Token], bool] | None,
         thinking_text_tokens: list[str],
+        tool_text_tokens: list[str],
         answer_text_tokens: list[str],
         tokens: list[Token] | None,
         input_token_count: int,
@@ -1664,10 +1665,13 @@ class FancyTheme(Theme):
         tool_events_limit: int | None = None,
         think_height: int = 6,
         think_padding: int = 1,
+        tool_height: int = 6,
+        tool_padding: int = 1,
         height: int = 12,
         padding: int = 1,
         wrap_padding: int = 4,
         limit_think_height: bool = True,
+        limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
     ) -> Generator[tuple[Token | None, RenderableType], None, None]:
@@ -1676,13 +1680,19 @@ class FancyTheme(Theme):
         pick_first = ceil(pick / 2) if pick > 1 else pick
         max_width = console_width - wrap_padding
 
-        think_wrapped, wrapped = [], []
+        think_wrapped, tool_wrapped, wrapped = [], [], []
 
         thinking_output = "".join(thinking_text_tokens)
         for line in thinking_output.splitlines():
             wrapped_line = wrap(line, width=max_width)
             think_wrapped.extend(wrapped_line)
             think_wrapped.append(linesep)
+
+        tool_output = "".join(tool_text_tokens)
+        for line in tool_output.splitlines():
+            wrapped_line = wrap(line, width=max_width)
+            tool_wrapped.extend(wrapped_line)
+            tool_wrapped.append(linesep)
 
         answer_output = "".join(answer_text_tokens)
         for line in answer_output.splitlines():
@@ -1697,6 +1707,15 @@ class FancyTheme(Theme):
         )
         think_wrapped_output = (
             " ".join(think_section).strip() if think_section else None
+        )
+
+        tool_section = (
+            tool_wrapped[-(tool_height - 2 * tool_padding) :]
+            if tool_wrapped and limit_tool_height
+            else tool_wrapped
+        )
+        tool_wrapped_output = (
+            " ".join(tool_section).strip() if tool_section else None
         )
 
         wrapped_section = (
@@ -1826,6 +1845,25 @@ class FancyTheme(Theme):
             if think_wrapped_output
             else None
         )
+        tool_panel = (
+            Panel(
+                f"[cyan]{tool_wrapped_output}[/cyan]",
+                title=_("Tool call requests"),
+                title_align="left",
+                height=(
+                    tool_height + 2 * tool_padding
+                    if limit_tool_height
+                    else None
+                ),
+                padding=tool_padding,
+                expand=True,
+                box=box.SQUARE,
+                border_style="bright_cyan",
+                style="gray35 on gray3",
+            )
+            if tool_wrapped_output
+            else None
+        )
         answer_panel = (
             Panel(
                 wrapped_output,
@@ -1869,6 +1907,7 @@ class FancyTheme(Theme):
                     *_lf(
                         [
                             think_pannel or None,
+                            tool_panel or None,
                             tool_running_panel or None,
                             answer_panel or None,
                         ]
@@ -2076,6 +2115,7 @@ class FancyTheme(Theme):
                     *_lf(
                         [
                             think_pannel or None,
+                            tool_panel or None,
                             tool_running_panel or None,
                             answer_panel or None,
                             (

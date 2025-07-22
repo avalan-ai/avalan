@@ -1,4 +1,4 @@
-from importlib.metadata import metadata
+from importlib.metadata import metadata, version as metadata_version
 from packaging.version import parse, Version
 from urllib.parse import urlparse
 from urllib.parse import ParseResult
@@ -6,9 +6,10 @@ from urllib.parse import ParseResult
 
 def _config() -> dict:
     config = metadata("avalan")
+    package_version = metadata_version("avalan")
     return {
         "name": config["Name"],
-        "version": config["Version"],
+        "version": package_version,
         "license": config["License"],
         "url": "https://avalan.ai",
     }
