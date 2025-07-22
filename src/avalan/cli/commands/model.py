@@ -9,6 +9,7 @@ from ...entities import (
     Modality,
     ReasoningToken,
     Token,
+    ToolCallToken,
 )
 from ...event import EventStats
 from ...model import TextGenerationResponse
@@ -521,8 +522,9 @@ async def _token_stream(
         args.start_thinking if hasattr(args, "start_thinking") else False
     )
     tokens = []
-    thinking_text_tokens: list[str] = []
     answer_text_tokens: list[str] = []
+    thinking_text_tokens: list[str] = []
+    tool_text_tokens: list[str] = []
     tool_events: list[Event] = []
     tool_event_calls: list[Event] = []
     tool_event_results: list[Event] = []
@@ -553,8 +555,9 @@ async def _token_stream(
             tool_events.append(event)
             if event.type == EventType.TOOL_MODEL_RESPONSE:
                 tokens = []
-                thinking_text_tokens = []
                 answer_text_tokens = []
+                tool_text_tokens = []
+                thinking_text_tokens = []
                 inner_response = event.payload["response"]
                 assert isinstance(inner_response, TextGenerationResponse)
                 if inner_response.input_token_count:
@@ -566,7 +569,9 @@ async def _token_stream(
 
         else:
             text_token = token.token if isinstance(token, Token) else token
-            if isinstance(token, ReasoningToken):
+            if isinstance(token, ToolCallToken):
+                tool_text_tokens.append(text_token)
+            elif isinstance(token, ReasoningToken):
                 thinking_text_tokens.append(text_token)
             else:
                 answer_text_tokens.append(text_token)
@@ -645,6 +650,7 @@ async def _token_stream(
                 else None
             ),
             thinking_text_tokens,
+            tool_text_tokens,
             answer_text_tokens,
             tokens or None,
             input_token_count,

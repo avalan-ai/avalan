@@ -434,8 +434,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         captured: dict[str, list] = {}
 
         async def fake_tokens(*p, **kw):
-            captured["text_tokens"] = list(p[7]) + list(p[8])
-            captured["input_token_count"] = p[10]
+            captured["text_tokens"] = list(p[7]) + list(p[9])
+            captured["input_token_count"] = p[11]
             yield (token, "frame1")
             yield (None, "frame2")
 
@@ -545,7 +545,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][10], 5)
+        self.assertEqual(theme.tokens.call_args[0][11], 5)
         lm.input_token_count.assert_not_called()
 
         # Response has zero count, fall back to orchestrator
@@ -570,7 +570,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][10], 7)
+        self.assertEqual(theme.tokens.call_args[0][11], 7)
 
         # Response zero and orchestrator none -> use lm.input_token_count
         theme.tokens.reset_mock()
@@ -594,7 +594,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][10], 33)
+        self.assertEqual(theme.tokens.call_args[0][11], 33)
         lm.input_token_count.assert_called_once_with("text")
 
     async def test_token_generation_tool_events(self):
@@ -664,13 +664,13 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         async def fake_tokens(*p, **kw):
             call_args.append(
                 {
-                    "text_tokens": list(p[7]) + list(p[8]),
-                    "tokens": list(p[9]) if p[9] else None,
-                    "tool_events": list(p[12]),
-                    "tool_event_calls": list(p[13]),
-                    "tool_event_results": list(p[14]),
-                    "spinner": p[15],
-                    "input_token_count": p[10],
+                    "text_tokens": list(p[7]) + list(p[9]),
+                    "tokens": list(p[10]) if p[10] else None,
+                    "tool_events": list(p[13]),
+                    "tool_event_calls": list(p[14]),
+                    "tool_event_results": list(p[15]),
+                    "spinner": p[16],
+                    "input_token_count": p[11],
                 }
             )
             yield (None, "frame")
@@ -4186,7 +4186,7 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
         captured: list[dict[str, list[str]]] = []
 
         async def fake_tokens(*p, **kw):
-            captured.append({"thinking": list(p[7]), "answer": list(p[8])})
+            captured.append({"thinking": list(p[7]), "answer": list(p[9])})
             yield (None, "frame")
 
         theme = MagicMock()
@@ -4216,6 +4216,75 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(captured[-1]["thinking"], ["A"])
         self.assertEqual(captured[-1]["answer"], ["B"])
+
+
+class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
+    async def test_tool_call_token_tracked(self):
+        class Resp:
+            input_token_count = 1
+
+            def __aiter__(self):
+                async def gen():
+                    yield model_cmds.ToolCallToken(token="TOOL")
+                    yield model_cmds.Token(id=1, token="A")
+
+                return gen()
+
+        args = Namespace(
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        logger = MagicMock()
+        stop_signal = asyncio.Event()
+
+        captured: list[list[str]] = []
+
+        async def fake_tokens(*p, **kw):
+            captured.append(list(p[8]))
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        live = MagicMock()
+
+        group = SimpleNamespace(renderables=[None])
+
+        await model_cmds._token_stream(
+            live=live,
+            group=group,
+            tokens_group_index=0,
+            args=args,
+            console=console,
+            theme=theme,
+            logger=logger,
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(
+                model_id="m",
+                tokenizer_config=None,
+                input_token_count=lambda s: 1,
+            ),
+            input_string="text",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=stop_signal,
+            tool_events_limit=None,
+            with_stats=True,
+        )
+
+        self.assertTrue(stop_signal.is_set())
+        self.assertEqual(captured, [["TOOL"], ["TOOL"]])
 
 
 if __name__ == "__main__":

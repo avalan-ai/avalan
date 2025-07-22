@@ -42,9 +42,7 @@ Take a quick look at which models and modalities you can use in [Models](#models
 ## Models
 
 Avalan makes text, audio, and vision models available from the CLI or in your
-own code. You can run local models or call vendor models from Anyscale,
-Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace,
-Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others. It
+own code. You can run millions of open models, or call all popular vendor models. It
 works across engines such as transformers, vLLM and mlx-lm. The examples below
 show each modality in action. Use the table of contents below to jump to the
 task you need:
@@ -218,7 +216,7 @@ from avalan.model.nlp.question import QuestionAnsweringModel
 
 with QuestionAnsweringModel("deepset/roberta-base-squad2") as model:
     answer = await model(
-        "What sport does Leo play?", 
+        "What sport does Leo play?",
         context="Lionel Messi, known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time."
     )
     print(answer)
@@ -315,12 +313,12 @@ from avalan.model.nlp.text.generation import TextGenerationModel
 
 with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as model:
     async for token in await model(
-        "Who are you, and who is Leo Messi?", 
-        system_prompt="You are Aurora, a helpful assistant", 
+        "Who are you, and who is Leo Messi?",
+        system_prompt="You are Aurora, a helpful assistant",
         settings=GenerationSettings(
-            max_new_tokens=100, 
-            temperature=0.1, 
-            top_p=0.9, 
+            max_new_tokens=100,
+            temperature=0.1,
+            top_p=0.9,
             top_k=20
         )
     ):
@@ -349,12 +347,12 @@ from os import getenv
 api_key = getenv("OPENAI_API_KEY")
 with TextGenerationModel(f"ai://{api_key}@openai/gpt-4o") as model:
     async for token in await model(
-        "Who are you, and who is Leo Messi?", 
-        system_prompt="You are Aurora, a helpful assistant", 
+        "Who are you, and who is Leo Messi?",
+        system_prompt="You are Aurora, a helpful assistant",
         settings=GenerationSettings(
-            max_new_tokens=100, 
-            temperature=0.1, 
-            top_p=0.9, 
+            max_new_tokens=100,
+            temperature=0.1,
+            top_p=0.9,
             top_k=20
         )
     ):
@@ -405,7 +403,7 @@ from avalan.model.nlp.token import TokenClassificationModel
 
 with TokenClassificationModel("dslim/bert-base-NER") as model:
     labels = await model(
-        "Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time.", 
+        "Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time.",
         labeled_only=True
     )
     print(labels)
@@ -446,11 +444,11 @@ from avalan.model.nlp.sequence import TranslationModel
 
 with TranslationModel("facebook/mbart-large-50-many-to-many-mmt") as model:
     output = await model(
-        "Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer who plays as a forward for the Argentina national team. Regarded by many as the greatest footballer of all time, Messi has achieved unparalleled success throughout his career.", 
-        source_language="en_US", 
-        destination_language="es_XX", 
+        "Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer who plays as a forward for the Argentina national team. Regarded by many as the greatest footballer of all time, Messi has achieved unparalleled success throughout his career.",
+        source_language="en_US",
+        destination_language="es_XX",
         settings=GenerationSettings(
-            num_beams=4, 
+            num_beams=4,
             max_length=512
         )
     )
@@ -488,7 +486,7 @@ from avalan.model.vision.decoder import VisionEncoderDecoderModel
 
 with VisionEncoderDecoderModel("naver-clova-ix/donut-base-finetuned-docvqa") as model:
     answer = await model(
-        "docs/examples/factura-page-1.png", 
+        "docs/examples/factura-page-1.png",
         prompt="<s_docvqa><s_question>What is the FACTURA Number?</s_question><s_answer>"
     )
     print(answer)
@@ -580,9 +578,9 @@ from avalan.model.vision.image import ImageTextToTextModel
 
 with ImageTextToTextModel("google/gemma-3-12b-it") as model:
     output = await model(
-        "docs/examples/typewritten_partial_sheet.jpg", 
-        "Transcribe the text on this image, keeping format", 
-        settings=GenerationSettings(max_new_tokens=1024), 
+        "docs/examples/typewritten_partial_sheet.jpg",
+        "Transcribe the text on this image, keeping format",
+        settings=GenerationSettings(max_new_tokens=1024),
         width=512
     )
     print(output)
@@ -743,11 +741,11 @@ from avalan.model.vision.diffusion import TextToAnimationModel
 
 with TextToAnimationModel("ByteDance/AnimateDiff-Lightning", settings=EngineSettings(base_model_id="stablediffusionapi/mistoonanime-v30", checkpoint="animatediff_lightning_4step_diffusers.safetensors", weight_type="fp16")) as model:
     await model(
-        "A tabby cat slowly walking", 
+        "A tabby cat slowly walking",
         "example_cat_walking.gif",
-        beta_schedule="linear", 
-        guidance_scale=1.0, 
-        steps=4, 
+        beta_schedule="linear",
+        guidance_scale=1.0,
+        steps=4,
         timestep_spacing="trailing"
     )
 ```
@@ -782,10 +780,10 @@ from avalan.model.vision.diffusion import TextToImageModel
 with TextToImageModel("stabilityai/stable-diffusion-xl-base-1.0", settings=TransformerEngineSettings(refiner_model_id="stabilityai/stable-diffusion-xl-refiner-1.0", weight_type="fp16")) as model:
     await model(
         "Leo Messi petting a purring tubby cat",
-        "example_messi_petting_cat.jpg", 
-        color_model="RGB", 
-        image_format="JPEG", 
-        high_noise_frac=0.8, 
+        "example_messi_petting_cat.jpg",
+        color_model="RGB",
+        image_format="JPEG",
+        high_noise_frac=0.8,
         n_steps=150
     )
 ```
@@ -828,14 +826,14 @@ with TextToVideoModel("Lightricks/LTX-Video-0.9.7-dev", settings=EngineSettings(
         "A cute little penguin takes out a book and starts reading it",
         "worst quality, inconsistent motion, blurry, jittery, distorted",
         "penguin.png",
-        "example_text_to_video.mp4", 
-        steps=30, 
-        inference_steps=10, 
-        width=832, 
-        height=480, 
-        frames=96, 
-        fps=24, 
-        decode_timestep=0.05, 
+        "example_text_to_video.mp4",
+        steps=30,
+        inference_steps=10,
+        width=832,
+        height=480,
+        frames=96,
+        fps=24,
+        decode_timestep=0.05,
         denoise_strength=0.4
     )
 ```
@@ -899,6 +897,10 @@ echo "What's avalan's latest release in pypi?" | \
 ## Reasoning strategies
 
 Avalan supports several reasoning approaches for guiding agents through complex problems.
+
+### Reasoning models
+
+Reasoning models that emit thinking tags are natively supported:
 
 ### ReACT
 
