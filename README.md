@@ -51,7 +51,7 @@ task you need:
 
 * 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
   - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
-  - 🗣️ [Speech recognition](#speech-recognition):– Convert spoken audio to text.
+  - 🗣️ [Speech recognition](#speech-recognition): Convert spoken audio to text.
   - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
   - 🎵 [Audio generation](#audio-generation): Compose music from text.
 * 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
