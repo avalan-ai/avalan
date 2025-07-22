@@ -16,7 +16,7 @@ from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
-from avalan.agent.orchestrator.response.parsers.reasoning import (
+from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
 from avalan.agent.orchestrator.response.parsers.tool import ToolCallParser

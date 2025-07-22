@@ -1,9 +1,12 @@
 from . import InvalidJsonResponseException
 from ...entities import (
+    ReasoningToken,
     Token,
     TokenDetail,
 )
+from .parsers.reasoning import ReasoningParser
 from io import StringIO
+from queue import Queue
 from inspect import iscoroutine
 from json import loads, JSONDecodeError
 from re import compile, DOTALL, Pattern
@@ -33,18 +36,25 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _buffer: StringIO = StringIO()
     _on_consumed: Callable[[], Awaitable[None] | None] | None = None
     _consumed: bool = False
+    _reasoning_parser: ReasoningParser | None = None
+    _parser_queue: Queue[Token | TokenDetail | str] | None = None
 
     def __init__(
         self,
         output_fn: OutputFunction,
         *args,
         use_async_generator: bool,
+        enable_reasoning_parser: bool = True,
         **kwargs,
     ):
         self._args = args
         self._kwargs = kwargs
         self._output_fn = output_fn
         self._use_async_generator = use_async_generator
+        self._parser_queue = Queue()
+        self._reasoning_parser = (
+            ReasoningParser() if enable_reasoning_parser else None
+        )
 
         if "inputs" in self._kwargs:
             inputs = self._kwargs["inputs"]
@@ -78,6 +88,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         return self
 
     async def __anext__(self) -> Token | TokenDetail | str:
+        assert self._output
+
+        if self._parser_queue and not self._parser_queue.empty():
+            return self._parser_queue.get()
+
         try:
             token = await self._output.__anext__()
         except StopAsyncIteration:
@@ -85,6 +100,40 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             raise
         self._buffer.write(token if isinstance(token, str) else token.token)
         return token
+
+        token_str = token if isinstance(token, str) else token.token
+        self._buffer.write(token_str)
+
+        if not self._reasoning_parser:
+            return token
+
+        items = await self._reasoning_parser.push(token_str)
+        for it in items:
+            if isinstance(it, ReasoningToken):
+                token_id = (
+                    token.id
+                    if isinstance(token, (Token, TokenDetail))
+                    else it.id
+                )
+                parsed = ReasoningToken(
+                    token=it.token, id=token_id, probability=it.probability
+                )
+            elif isinstance(token, Token):
+                parsed = Token(id=token.id, token=str(it))
+            elif isinstance(token, TokenDetail):
+                parsed = TokenDetail(
+                    id=token.id,
+                    token=it if isinstance(it, str) else it.token,
+                    probability=token.probability,
+                    tokens=token.tokens,
+                    probability_distribution=token.probability_distribution,
+                    step=token.step,
+                )
+            else:
+                parsed = it
+            self._parser_queue.put(parsed)
+
+        return self._parser_queue.get()
 
     async def to_str(self) -> str:
         if not self._use_async_generator:
