@@ -59,11 +59,11 @@ task you need:
   - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
   - 🔁 [Sequence to sequence](#sequence-to-sequence): Transform text like summarization.
   - ✍️ [Text generation](#text-generation): Produce new text from prompts.
-  - 🏷️ [Token classification](#token-classification):– Tag tokens for tasks like Named Entity Recognition.
+  - 🏷️ [Token classification](#token-classification): Tag tokens for tasks like Named Entity Recognition.
   - 🌍 [Translation](#translation): Convert text between languages.
 * 👁️ [**Vision**](#vision): Analyze images or create visuals for content and automation.
   - 👓 [Encoder Decoder](#encoder-decoder): Answer questions on documents, OCR-free.
-  - 🖼️ [Image classification](#image-classification):– Identify objects in an image
+  - 🖼️ [Image classification](#image-classification): Identify objects in an image
   - 📷 [Image to text](#image-to-text): Describe an image with text
   - 🔤 [Image text to text](#image-text-to-text): Provide an image and instruction to produce text
   - 🎯 [Object detection](#object-detection): Locate objects within an image
@@ -494,7 +494,7 @@ with VisionEncoderDecoderModel("naver-clova-ix/donut-base-finetuned-docvqa") as 
 
 #### Image classification
 
-Classify an image, such as determining whether it is a hot dog:
+Classify an image, such as determining whether it is a hot dog, or not a hot dog 🤓:
 
 ```bash
 avalan model run "microsoft/resnet-50" \
