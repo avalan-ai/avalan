@@ -434,8 +434,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         captured: dict[str, list] = {}
 
         async def fake_tokens(*p, **kw):
-            captured["text_tokens"] = list(p[7]) + list(p[8])
-            captured["input_token_count"] = p[10]
+            captured["text_tokens"] = list(p[7]) + list(p[9])
+            captured["input_token_count"] = p[11]
             yield (token, "frame1")
             yield (None, "frame2")
 
@@ -545,7 +545,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][10], 5)
+        self.assertEqual(theme.tokens.call_args[0][11], 5)
         lm.input_token_count.assert_not_called()
 
         # Response has zero count, fall back to orchestrator
@@ -570,7 +570,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][10], 7)
+        self.assertEqual(theme.tokens.call_args[0][11], 7)
 
         # Response zero and orchestrator none -> use lm.input_token_count
         theme.tokens.reset_mock()
@@ -594,7 +594,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=2,
             )
 
-        self.assertEqual(theme.tokens.call_args[0][10], 33)
+        self.assertEqual(theme.tokens.call_args[0][11], 33)
         lm.input_token_count.assert_called_once_with("text")
 
     async def test_token_generation_tool_events(self):
@@ -664,13 +664,13 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         async def fake_tokens(*p, **kw):
             call_args.append(
                 {
-                    "text_tokens": list(p[7]) + list(p[8]),
-                    "tokens": list(p[9]) if p[9] else None,
-                    "tool_events": list(p[12]),
-                    "tool_event_calls": list(p[13]),
-                    "tool_event_results": list(p[14]),
-                    "spinner": p[15],
-                    "input_token_count": p[10],
+                    "text_tokens": list(p[7]) + list(p[9]),
+                    "tokens": list(p[10]) if p[10] else None,
+                    "tool_events": list(p[13]),
+                    "tool_event_calls": list(p[14]),
+                    "tool_event_results": list(p[15]),
+                    "spinner": p[16],
+                    "input_token_count": p[11],
                 }
             )
             yield (None, "frame")
@@ -4186,7 +4186,7 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
         captured: list[dict[str, list[str]]] = []
 
         async def fake_tokens(*p, **kw):
-            captured.append({"thinking": list(p[7]), "answer": list(p[8])})
+            captured.append({"thinking": list(p[7]), "answer": list(p[9])})
             yield (None, "frame")
 
         theme = MagicMock()
