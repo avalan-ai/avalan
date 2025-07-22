@@ -5,7 +5,7 @@ from ...entities import (
     Input,
     MessageRole,
 )
-from ...model import TextGenerationVendor
+from ...model.vendor import TextGenerationVendor
 from ...model.engine import Engine
 from ...model.vision import BaseVisionModel
 from diffusers import DiffusionPipeline
@@ -62,10 +62,7 @@ class ImageToTextModel(TransformerModel):
     ) -> str:
         image = BaseVisionModel._get_image(image_source)
 
-        inputs = self._processor(
-            images=image,
-            return_tensors=tensor_format
-        )
+        inputs = self._processor(images=image, return_tensors=tensor_format)
         inputs.to(self._device)
 
         with inference_mode():

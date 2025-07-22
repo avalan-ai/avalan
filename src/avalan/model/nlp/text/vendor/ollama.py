@@ -6,7 +6,7 @@ from .....entities import (
     TokenDetail,
     TransformerEngineSettings,
 )
-from .....model import TextGenerationVendor, TextGenerationVendorStream
+from .....model.vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager

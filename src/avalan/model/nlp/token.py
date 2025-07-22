@@ -1,6 +1,6 @@
 from ...compat import override
 from ...entities import Input
-from ...model import TextGenerationVendor
+from ...model.vendor import TextGenerationVendor
 from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
 from diffusers import DiffusionPipeline

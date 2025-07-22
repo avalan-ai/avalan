@@ -1,6 +1,6 @@
 from ....compat import override
 from ....entities import EngineSettings, Input
-from ....model import TextGenerationVendor
+from ....model.vendor import TextGenerationVendor
 from ....model.engine import Engine
 from ....model.vision import BaseVisionModel
 from dataclasses import replace

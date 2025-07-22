@@ -1,5 +1,5 @@
 from ...compat import override
-from ...model import TextGenerationVendor
+from ...model.vendor import TextGenerationVendor
 from ...model.engine import Engine
 from ...model.vision import BaseVisionModel
 from ...model.vision.text import ImageToTextModel
@@ -45,15 +45,15 @@ class VisionEncoderDecoderModel(ImageToTextModel):
             return await super().__call__(
                 image_source=image_source,
                 skip_special_tokens=skip_special_tokens,
-                tensor_format=tensor_format
+                tensor_format=tensor_format,
             )
 
         image = BaseVisionModel._get_image(image_source)
-        pixel_values = self._processor(image, return_tensors=tensor_format).pixel_values.to(self._device)
+        pixel_values = self._processor(
+            image, return_tensors=tensor_format
+        ).pixel_values.to(self._device)
         decoder_input_ids = self._tokenizer(
-            prompt,
-            add_special_tokens=False,
-            return_tensors="pt"
+            prompt, add_special_tokens=False, return_tensors="pt"
         ).input_ids.to(self._device)
 
         with inference_mode():

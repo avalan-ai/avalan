@@ -12,7 +12,7 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import EventStats
-from ...model import TextGenerationResponse
+from ...model.response.text import TextGenerationResponse
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...entities import GenerationSettings  # noqa: F401

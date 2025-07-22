@@ -5,7 +5,7 @@ from .....entities import (
     Token,
     TokenDetail,
 )
-from .....model import TextGenerationVendor, TextGenerationVendorStream
+from .....model.vendor import TextGenerationVendor, TextGenerationVendorStream
 from diffusers import DiffusionPipeline
 from . import TextGenerationVendorModel
 from .....tool.manager import ToolManager

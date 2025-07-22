@@ -13,7 +13,7 @@ from ....entities import (
 )
 from ....event import Event, EventType
 from ....event.manager import EventManager
-from ....model import TextGenerationResponse
+from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....cli import CommandAbortException
 from .parsers import StreamParser

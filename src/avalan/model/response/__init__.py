@@ -1,0 +1,2 @@
+class InvalidJsonResponseException(Exception):
+    pass

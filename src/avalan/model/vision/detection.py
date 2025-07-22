@@ -1,6 +1,6 @@
 from ...compat import override
 from ...entities import ImageEntity, EngineSettings
-from ...model import TextGenerationVendor
+from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.classification import ImageClassificationModel
 from ...model.engine import Engine

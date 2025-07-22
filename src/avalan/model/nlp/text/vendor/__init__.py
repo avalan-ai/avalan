@@ -4,7 +4,8 @@ from .....entities import (
     Input,
     TransformerEngineSettings,
 )
-from .....model import TextGenerationResponse, TextGenerationVendor
+from .....model.response.text import TextGenerationResponse
+from .....model.vendor import TextGenerationVendor
 from diffusers import DiffusionPipeline
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
