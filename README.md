@@ -100,6 +100,14 @@ And you'll get the likeliness of each sentiment:
 │ sad   │ 0.02  │
 └───────┴───────┘
 ```
+You can achieve the same result directly from Python:
+```python
+from avalan.model.audio.classification import AudioClassificationModel
+
+with AudioClassificationModel("superb/hubert-base-superb-er") as model:
+    await model("oprah.wav", sampling_rate=16000)
+```
+
 
 #### Speech recognition
 
@@ -119,6 +127,14 @@ AND THEN I GREW UP AND HAD THE ESTEEMED HONOUR OF MEETING HER AND WASN'T
 THAT A SURPRISE HERE WAS THIS PETITE ALMOST DELICATE LADY WHO WAS THE
 PERSONIFICATION OF GRACE AND GOODNESS
 ```
+The SDK lets you do the same programmatically:
+```python
+from avalan.model.audio.speech_recognition import SpeechRecognitionModel
+
+with SpeechRecognitionModel("facebook/wav2vec2-base-960h") as model:
+    await model("oprah.wav", sampling_rate=16000)
+```
+
 
 #### Text to speech
 
@@ -132,6 +148,23 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
             --audio-reference-path docs/examples/oprah.wav \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
 ```
+In code you can generate speech in the same way:
+```python
+from avalan.model.audio.speech import TextToSpeechModel
+
+with TextToSpeechModel("nari-labs/Dia-1.6B-0626") as model:
+    await model(
+        "[S1] Leo Messi is the greatest football player of all times.",
+        "example.wav",
+        reference_path="docs/examples/oprah.wav",
+        reference_text=(
+            "[S1] And then I grew up and had the esteemed honor of meeting her. "
+            "And wasn't that a surprise. Here was this petite, almost delicate "
+            "lady who was the personification of grace and goodness."
+        ),
+    )
+```
+
 
 #### Audio generation
 
@@ -144,6 +177,14 @@ echo "A funky riff about Leo Messi." |
         --max-new-tokens 1024 \
         --path melody.wav
 ```
+Using the library instead of the CLI:
+```python
+from avalan.model.audio.generation import AudioGenerationModel
+
+with AudioGenerationModel("facebook/musicgen-small") as model:
+    await model("A funky riff about Leo Messi.", "melody.wav", max_new_tokens=1024)
+```
+
 
 ### Text
 
@@ -163,6 +204,14 @@ The answer comes as no surprise:
 ```text
 football
 ```
+Or run it from your own script:
+```python
+from avalan.model.nlp.question import QuestionAnsweringModel
+
+with QuestionAnsweringModel("deepset/roberta-base-squad2") as model:
+    await model("What sport does Leo play?", context="Lionel Messi, known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time.")
+```
+
 
 #### Sequence classification
 
@@ -179,6 +228,14 @@ The result is positive as expected:
 ```text
 POSITIVE
 ```
+The SDK version looks like this:
+```python
+from avalan.model.nlp.sequence import SequenceClassificationModel
+
+with SequenceClassificationModel("distilbert-base-uncased-finetuned-sst-2-english") as model:
+    await model("We love Leo Messi.")
+```
+
 
 #### Sequence to sequence
 
@@ -203,6 +260,23 @@ The summary:
 ```text
 Andy Cucci is held by many as the greatest footballer of all times.
 ```
+Calling from Python is just as easy:
+```python
+from avalan.model.nlp.sequence import SequenceToSequenceModel
+
+with SequenceToSequenceModel("facebook/bart-large-cnn") as model:
+    await model("""
+    Andres Cuccittini, commonly known as Andy Cucci, is an Argentine
+    professional footballer who plays as a forward for the Argentina
+    national team. Regarded by many as the greatest footballer of all
+    time, Cucci has achieved unparalleled success throughout his career.
+
+    Born on July 25, 1988, in Ushuaia, Argentina, Cucci began playing
+    football at a young age and joined the Boca Juniors youth
+    academy.
+    """)
+```
+
 
 #### Text generation
 
@@ -217,10 +291,19 @@ echo "Who are you, and who is Leo Messi?" \
         --top-p .9 \
         --top-k 20
 ```
+Here's the equivalent Python snippet:
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.nlp.text.generation import TextGenerationModel
+
+with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as model:
+    await model("Who are you, and who is Leo Messi?", system_prompt="You are Aurora, a helpful assistant", settings=GenerationSettings(max_new_tokens=100, temperature=0.1, top_p=0.9, top_k=20))
+```
+
 
 Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
 
-```bash
+
 echo "Who are you, and who is Leo Messi?" \
     | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
         --system "You are Aurora, a helpful assistant" \
@@ -229,6 +312,15 @@ echo "Who are you, and who is Leo Messi?" \
         --top-p .9 \
         --top-k 20
 ```
+Swap in the vendor URI in code too:
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.nlp.text.generation import TextGenerationModel
+
+with TextGenerationModel("ai://$OPENAI_API_KEY@openai/gpt-4o") as model:
+    await model("Who are you, and who is Leo Messi?", system_prompt="You are Aurora, a helpful assistant", settings=GenerationSettings(max_new_tokens=100, temperature=0.1, top_p=0.9, top_k=20))
+```
+
 
 #### Token classification
 
@@ -266,6 +358,14 @@ And you get the following labeled entities:
 │ known    │ B-MISC │
 └──────────┴────────┘
 ```
+Use the Python API if you prefer:
+```python
+from avalan.model.nlp.token import TokenClassificationModel
+
+with TokenClassificationModel("dslim/bert-base-NER") as model:
+    await model("Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time.", labeled_only=True)
+```
+
 
 #### Translation
 
@@ -293,6 +393,15 @@ que representa a la Argentina en el equipo nacional. Considerado por muchos
 como el mejor futbolista de todos los tiempos, Messi ha conseguido un éxito
 sin precedentes durante su carrera.
 ```
+The SDK call mirrors the CLI parameters:
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.nlp.sequence import TranslationModel
+
+with TranslationModel("facebook/mbart-large-50-many-to-many-mmt") as model:
+    await model("Lionel Messi, commonly known as Leo Messi, is an Argentine professional footballer who plays as a forward for the Argentina national team. Regarded by many as the greatest footballer of all time, Messi has achieved unparalleled success throughout his career.", source_language="en_US", destination_language="es_XX", settings=GenerationSettings(num_beams=4, max_length=512))
+```
+
 
 ### Vision
 
@@ -317,6 +426,14 @@ And you get the answer:
 <s_answer>0012-00187506</s_answer>
 </s>
 ```
+Here's how you'd call it in a script:
+```python
+from avalan.model.vision.decoder import VisionEncoderDecoderModel
+
+with VisionEncoderDecoderModel("naver-clova-ix/donut-base-finetuned-docvqa") as model:
+    await model("docs/examples/factura-page-1.png", prompt="<s_docvqa><s_question>    What is the FACTURA Number?</s_question><s_answer>")
+```
+
 
 #### Image classification
 
@@ -337,6 +454,14 @@ The model identifies the image:
 │ tabby, tabby cat │
 └──────────────────┘
 ```
+Programmatic usage:
+```python
+from avalan.model.vision.image import ImageClassificationModel
+
+with ImageClassificationModel("microsoft/resnet-50") as model:
+    await model("docs/examples/cat.jpg")
+```
+
 
 #### Image to text
 
@@ -353,6 +478,14 @@ Example output:
 ```text
 a sign for a gas station on the side of a building [SEP]
 ```
+Python snippet:
+```python
+from avalan.model.vision.image import ImageToTextModel
+
+with ImageToTextModel("salesforce/blip-image-captioning-base") as model:
+    await model("docs/examples/Example_Image_1.jpg")
+```
+
 
 #### Image text to text
 
@@ -375,6 +508,15 @@ The transcription (truncated for brevity):
 Guillermo de Ockham (según se utiliza la grafía latina o la inglesa) es tan célebre como conocido. Su doctrina
 suele merecer las más diversas interpretaciones, y su biografía adolece tremendas oscuridades.
 ```
+Invoke the model with the SDK like so:
+```python
+from avalan.entities import GenerationSettings
+from avalan.model.vision.image import ImageTextToTextModel
+
+with ImageTextToTextModel("google/gemma-3-12b-it") as model:
+    await model("docs/examples/typewritten_partial_sheet.jpg", "Transcribe the text on this image, keeping format", settings=GenerationSettings(max_new_tokens=1024), width=512)
+```
+
 
 #### Object detection
 
@@ -415,6 +557,12 @@ Results are sorted by accuracy and include bounding boxes:
 ├──────────────┼───────┼──────────────────────────────────┤
 │ spoon        │  0.31 │ 646.69, 505.31, 673.04, 543.10   │
 └──────────────┴───────┴──────────────────────────────────┘
+Example SDK call:
+```python
+from avalan.model.vision.detection import ObjectDetectionModel
+
+with ObjectDetectionModel("facebook/detr-resnet-50") as model:
+    await model("docs/examples/kitchen.jpg", threshold=0.3)
 ```
 
 #### Semantic segmentation
@@ -480,6 +628,14 @@ The output lists each annotation:
 │ fan              │
 └──────────────────┘
 ```
+This is how you'd do it in code:
+```python
+from avalan.model.vision.segmentation import SemanticSegmentationModel
+
+with SemanticSegmentationModel("nvidia/segformer-b0-finetuned-ade-512-512") as model:
+    await model("docs/examples/kitchen.jpg")
+```
+
 
 #### Text to animation
 
@@ -502,6 +658,15 @@ echo 'A tabby cat slowly walking' | \
 And here's the generated anime inspired animation of a walking cat:
 
 ![An anime cat slowly walking](https://avalan.ai/images/github/vision_text_to_animation_generated.webp)
+SDK usage:
+```python
+from avalan.entities import EngineSettings
+from avalan.model.vision.diffusion import TextToAnimationModel
+
+with TextToAnimationModel("ByteDance/AnimateDiff-Lightning", settings=EngineSettings(base_model_id="stablediffusionapi/mistoonanime-v30", checkpoint="animatediff_lightning_4step_diffusers.safetensors", weight_type="fp16")) as model:
+    await model("A tabby cat slowly walking", "example_cat_walking.gif", beta_schedule="linear", guidance_scale=1.0, steps=4, timestep_spacing="trailing")
+```
+
 
 #### Text to image
 
@@ -523,6 +688,15 @@ echo 'Leo Messi petting a purring tubby cat' | \
 Here is the generated image of Leo Messi petting a cute cat:
 
 ![Leo Messi petting a cute cat](https://avalan.ai/images/github/vision_text_to_image_generated.webp)
+You can also create images from Python:
+```python
+from avalan.entities import TransformerEngineSettings
+from avalan.model.vision.diffusion import TextToImageModel
+
+with TextToImageModel("stabilityai/stable-diffusion-xl-base-1.0", settings=TransformerEngineSettings(refiner_model_id="stabilityai/stable-diffusion-xl-refiner-1.0", weight_type="fp16")) as model:
+    await model("Leo Messi petting a purring tubby cat", "example_messi_petting_cat.jpg", color_model="RGB", image_format="JPEG", high_noise_frac=0.8, n_steps=150)
+```
+
 
 #### Text to video
 
@@ -550,6 +724,15 @@ echo 'A cute little penguin takes out a book and starts reading it' | \
 And here's the generated video:
 
 ![A penguin opening a book](https://avalan.ai/images/github/vision_text_to_video_generated.webp)
+Python example:
+```python
+from avalan.entities import EngineSettings
+from avalan.model.vision.diffusion import TextToVideoModel
+
+with TextToVideoModel("Lightricks/LTX-Video-0.9.7-dev", settings=EngineSettings(upsampler_model_id="Lightricks/ltxv-spatial-upscaler-0.9.7", weight_type="fp16")) as model:
+    await model("A cute little penguin takes out a book and starts reading it", "worst quality, inconsistent motion, blurry, jittery, distorted", "penguin.png", "example_text_to_video.mp4", steps=30, inference_steps=10, width=832, height=480, frames=96, fps=24, decode_timestep=0.05, denoise_strength=0.4)
+```
+
 
 ## Tools
 
