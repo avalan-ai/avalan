@@ -8,12 +8,16 @@ from avalan.entities import (
     MessageRole,
     ToolCallContext,
     Token,
+    TokenDetail,
     TransformerEngineSettings,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
+from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.response.parsers.tool import ToolCallParser
+from avalan.entities import ReasoningToken, ToolCallToken
 
 from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
@@ -56,6 +60,55 @@ def _dummy_response(async_gen=True):
         return output_gen()
 
     return TextGenerationResponse(output_fn, use_async_generator=async_gen)
+
+
+def _complex_response():
+    async def gen():
+        rp = ReasoningParser()
+        tm = MagicMock()
+        tm.is_potential_tool_call.return_value = True
+        tm.get_calls.return_value = None
+        tp = ToolCallParser(tm, None)
+
+        sequence = [
+            "X",
+            "<think>",
+            "ra",
+            "rb",
+            "</think>",
+            "Y",
+            "<tool_call>",
+            "foo",
+            "bar",
+            "</tool_call>",
+            "Z",
+        ]
+
+        for s in sequence:
+            items = await rp.push(s)
+            for item in items:
+                parsed = (
+                    await tp.push(item) if isinstance(item, str) else [item]
+                )
+                for p in parsed:
+                    if isinstance(p, str):
+                        if p == "</think>":
+                            yield TokenDetail(id=3, token=p, probability=0.5)
+                        elif p in {"X", "Y"}:
+                            yield Token(id=1, token=p)
+                        elif p == "<think>" or p == "Z":
+                            yield p
+                    elif isinstance(p, ToolCallToken):
+                        if p.token == "</tool_call>":
+                            yield TokenDetail(
+                                id=4, token=p.token, probability=0.5
+                            )
+                        else:
+                            yield p
+                    else:
+                        yield p
+
+    return TextGenerationResponse(lambda: gen(), use_async_generator=True)
 
 
 class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
@@ -329,3 +382,41 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resp._tool_context.participant_id, pid)
         self.assertEqual(resp._tool_context.session_id, sid)
         self.assertEqual(resp._tool_context.calls, [])
+
+
+class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):
+    async def test_mixed_tokens(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _complex_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        tokens = []
+        async for t in resp:
+            tokens.append(t)
+
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, ReasoningToken)]),
+            2,
+        )
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, ToolCallToken)]),
+            3,
+        )
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, TokenDetail)]),
+            2,
+        )
+        self.assertGreaterEqual(
+            len([t for t in tokens if type(t) is Token]),
+            2,
+        )
+        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 2)
