@@ -1381,7 +1381,7 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ReasoningToken)]),
-            2,
+            3,
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ToolCallToken)]),
@@ -1389,7 +1389,7 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, TokenDetail)]),
-            2,
+            1,
         )
         self.assertGreaterEqual(
             len([t for t in tokens if type(t) is Token]),

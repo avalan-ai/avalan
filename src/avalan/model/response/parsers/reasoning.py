@@ -1,13 +1,8 @@
-"""Parser labeling reasoning tokens."""
-
-from typing import Any, Iterable
-
 from ....entities import ReasoningToken
+from typing import Any, Iterable
 
 
 class ReasoningParser:
-    """Label reasoning tokens inside ``<think>`` blocks or after prefixes."""
-
     def __init__(
         self,
         *,
@@ -33,7 +28,7 @@ class ReasoningParser:
             return [token_str]
         if token_str.strip() == self._end_tag:
             self._thinking = False
-            return [token_str]
+            return [ReasoningToken(token_str)]
         if any(token_str.startswith(p) for p in self._prefixes):
             self._thinking = True
             return [token_str]

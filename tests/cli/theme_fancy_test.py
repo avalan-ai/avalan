@@ -620,6 +620,42 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         self.assertIn("Answer", answer_text)
         self.assertGreaterEqual(answer_text.count("\n"), 1)
 
+    async def test_tokens_thinking_uses_full_height(self):
+        lines = [f"line{i}\n" for i in range(4)]
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                thinking_text_tokens=lines,
+                tool_text_tokens=[],
+                answer_text_tokens=[],
+                tokens=None,
+                input_token_count=0,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                elapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+            )
+            _, frame = await gen.__anext__()
+
+        self.assertEqual(len(frame.renderables), 1)
+        think_text = frame.renderables[0].renderable
+        self.assertIn("line0", think_text)
+        self.assertGreaterEqual(think_text.count("\n"), 3)
+
 
 class FancyThemeAdditionalTestCase(unittest.TestCase):
     def setUp(self) -> None:
