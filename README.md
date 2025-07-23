@@ -913,6 +913,8 @@ echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
 
 The response includes the model reasoning, and its final answer:
 
+![Reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning.webp)
+
 ### ReACT
 
 ReACT interleaves reasoning with tool use so an agent can think through steps and take actions in turn.
