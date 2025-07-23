@@ -20,6 +20,13 @@ class ReasoningParser:
         self._prefixes = prefixes or ["Think:"]
         self._thinking = False
 
+    def set_thinking(self, thinking: bool) -> None:
+        self._thinking = thinking
+
+    @property
+    def is_thinking(self) -> bool:
+        return self._thinking
+
     async def push(self, token_str: str) -> Iterable[Any]:
         if token_str.strip() == self._start_tag:
             self._thinking = True

@@ -549,6 +549,9 @@ async def _token_stream(
     last_current_dtoken: Token | None = None
     tool_running_spinner: Spinner | None = None
 
+    if start_thinking and response.can_think and not response.is_thinking:
+        response.set_thinking(start_thinking)
+
     async for token in response:
         if isinstance(token, Event):
             event = token

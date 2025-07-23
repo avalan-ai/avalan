@@ -901,7 +901,17 @@ Avalan supports several reasoning approaches for guiding agents through complex 
 
 ### Reasoning models
 
-Reasoning models that emit thinking tags are natively supported:
+Reasoning models that emit thinking tags are natively supported. Some of them, like `DeepSeek-R1-Distill-Qwen-14B`, assume the model starts thinking without a thinking tag, so we'll use `--start-thinking`:
+
+```bash
+echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+    avalan model run 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B' \
+        --temperature 0.6 \
+        --max-new-tokens 1024 \
+        --start-thinking
+```
+
+The response includes the model reasoning, and its final answer:
 
 ### ReACT
 
