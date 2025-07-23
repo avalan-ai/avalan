@@ -33,7 +33,6 @@ from logging import Logger
 from math import ceil, inf
 from numpy import ndarray
 from numpy.linalg import norm
-from os import linesep
 from re import sub
 from rich import box
 from rich.align import Align
@@ -1679,26 +1678,9 @@ class FancyTheme(Theme):
 
         pick_first = ceil(pick / 2) if pick > 1 else pick
         max_width = console_width - wrap_padding
-
-        think_wrapped, tool_wrapped, wrapped = [], [], []
-
-        thinking_output = "".join(thinking_text_tokens)
-        for line in thinking_output.splitlines():
-            wrapped_line = wrap(line, width=max_width)
-            think_wrapped.extend(wrapped_line)
-            think_wrapped.append(linesep)
-
-        tool_output = "".join(tool_text_tokens)
-        for line in tool_output.splitlines():
-            wrapped_line = wrap(line, width=max_width)
-            tool_wrapped.extend(wrapped_line)
-            tool_wrapped.append(linesep)
-
-        answer_output = "".join(answer_text_tokens)
-        for line in answer_output.splitlines():
-            wrapped_line = wrap(line, width=max_width)
-            wrapped.extend(wrapped_line)
-            wrapped.append(linesep)
+        think_wrapped = FancyTheme._wrap_lines(thinking_text_tokens, max_width, skip_blank_lines=True)
+        tool_wrapped = FancyTheme._wrap_lines(tool_text_tokens, max_width)
+        wrapped = FancyTheme._wrap_lines(answer_text_tokens, max_width)
 
         think_section = (
             think_wrapped[-(think_height - 2 * think_padding) :]
@@ -1706,7 +1688,7 @@ class FancyTheme(Theme):
             else think_wrapped
         )
         think_wrapped_output = (
-            " ".join(think_section).strip() if think_section else None
+            "\n".join(think_section).rstrip() if think_section else None
         )
 
         tool_section = (
@@ -1715,7 +1697,7 @@ class FancyTheme(Theme):
             else tool_wrapped
         )
         tool_wrapped_output = (
-            " ".join(tool_section).strip() if tool_section else None
+            "\n".join(tool_section).rstrip() if tool_section else None
         )
 
         wrapped_section = (
@@ -1724,7 +1706,7 @@ class FancyTheme(Theme):
             else wrapped
         )
         wrapped_output = (
-            " ".join(wrapped_section).strip() if wrapped_section else None
+            "\n".join(wrapped_section).rstrip() if wrapped_section else None
         )
 
         dtokens = (
@@ -2408,3 +2390,15 @@ class FancyTheme(Theme):
             if p == int(p)
             else format_string("%.1f%%", p, grouping=True)
         )
+
+    @staticmethod
+    def _wrap_lines(text_tokens: list[str], width: int, skip_blank_lines: bool = False) -> list[str]:
+        lines: list[str] = []
+        output = "".join(text_tokens)
+        for line in output.splitlines():
+            wrapped_line = wrap(line, width=width)
+            if wrapped_line:
+                lines.extend(wrapped_line)
+            elif not skip_blank_lines:
+                lines.append("")
+        return lines

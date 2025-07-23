@@ -901,7 +901,30 @@ Avalan supports several reasoning approaches for guiding agents through complex 
 
 ### Reasoning models
 
-Reasoning models that emit thinking tags are natively supported:
+Reasoning models that emit thinking tags are natively supported. Some of them, like `DeepSeek-R1-Distill-Qwen-14B`, assume the model starts thinking without a thinking tag, so we'll use `--start-thinking`:
+
+```bash
+echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+    avalan model run 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B' \
+        --temperature 0.6 \
+        --max-new-tokens 1024 \
+        --start-thinking
+```
+
+The response includes the model reasoning, and its final answer:
+
+![DeepSeek's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_deepseek.webp)
+
+Nvidia's Nemotron reasoning model solves the same problem easily and doesn't require the `--start-thinking` flag, since it automatically produces think tags. It does so more verbosely, though (**852** output tokens versus DeepSeek's **216** output tokens), since it detects ambiguity in the `and then that result` part of the prompt and ends up revisiting the essential principles of mathematics, to the point of realizing it's overthinking 🤓
+
+```bash
+echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+    avalan model run "nvidia/OpenReasoning-Nemotron-14B" \
+      --weight "bf16" \
+      --max-new-tokens 1024
+```
+
+![Nvidia's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_nvidia.webp)
 
 ### ReACT
 

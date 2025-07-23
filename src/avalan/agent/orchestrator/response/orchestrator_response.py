@@ -14,6 +14,7 @@ from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
+from ....model.response.parsers.tool import ToolCallParser
 from ....cli import CommandAbortException
 from queue import Queue
 from inspect import iscoroutine
@@ -42,6 +43,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _agent_id: UUID | None
     _participant_id: UUID | None
     _session_id: UUID | None
+    _parser_queue: Queue[Token | TokenDetail | Event] | None
+    _tool_parser: ToolCallParser | None
 
     def __init__(
         self,
@@ -57,6 +60,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         participant_id: UUID | None = None,
         session_id: UUID | None = None,
         tool_confirm: Callable[[ToolCall], str | None] | None = None,
+        enable_tool_parsing: bool = True,
     ) -> None:
         assert input and response and engine_agent and operation
         self._input = input
@@ -75,6 +79,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._session_id = session_id
         self._tool_confirm = tool_confirm
         self._tool_confirm_all = False
+        self._parser_queue = Queue()
+        self._tool_parser = (
+            ToolCallParser(self._tool_manager, self._event_manager)
+            if enable_tool_parsing and self._tool_manager
+            else None
+        )
 
     @property
     def input_token_count(self) -> int:
@@ -97,6 +107,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             self._response.add_done_callback(self._on_consumed)
         self._response_iterator = self._response.__aiter__()
         self._calls = Queue()
+        self._parser_queue = Queue()
         self._tool_context = ToolCallContext(
             input=self._input,
             agent_id=self._agent_id,
@@ -112,6 +123,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
     async def __anext__(self) -> Token | TokenDetail | Event:
         assert self._response_iterator
+
+        if not self._parser_queue.empty():
+            return self._parser_queue.get()
 
         if not self._tool_process_events.empty():
             event = self._tool_process_events.get()
@@ -252,6 +266,14 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         try:
             token = await self._response_iterator.__anext__()
         except StopAsyncIteration:
+            if self._tool_parser:
+                for item in await self._tool_parser.flush():
+                    if isinstance(item, Event):
+                        self._tool_process_events.put(item)
+                    else:
+                        self._parser_queue.put(item)
+                if not self._parser_queue.empty():
+                    return self._parser_queue.get()
             if self._event_manager and not self._finished:
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))
@@ -432,7 +454,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 return await self.__anext__()
             return item
 
-        return item
+        if isinstance(item, str) and self._tool_parser:
+            items = await self._tool_parser.push(item)
+        else:
+            items = [item]
+
+        for it in items:
+            if isinstance(it, Event):
+                if it.type == EventType.TOOL_PROCESS:
+                    self._tool_process_events.put(it)
+                else:
+                    self._parser_queue.put(it)
+            else:
+                self._parser_queue.put(it)
+
+        return self._parser_queue.get()
 
     async def _on_consumed(self) -> None:
         assert self._event_manager

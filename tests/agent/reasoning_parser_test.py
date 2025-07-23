@@ -12,9 +12,12 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         for t in ["a", "<think>", "b", "</think>", "c"]:
             tokens.extend(await parser.push(t))
         self.assertEqual(tokens[0], "a")
-        self.assertEqual(tokens[1], "<think>")
+        self.assertIsInstance(tokens[1], ReasoningToken)
+        self.assertEqual(tokens[1].token, "<think>")
         self.assertIsInstance(tokens[2], ReasoningToken)
-        self.assertEqual(tokens[3], "</think>")
+        self.assertEqual(tokens[2].token, "b")
+        self.assertIsInstance(tokens[3], ReasoningToken)
+        self.assertEqual(tokens[3].token, "</think>")
         self.assertEqual(tokens[4], "c")
 
     async def test_without_thinking_tags(self):
@@ -29,9 +32,13 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         tokens = []
         for t in ["Thought:", "d", "e"]:
             tokens.extend(await parser.push(t))
-        self.assertEqual(tokens[0], "Thought:")
+        self.assertIsInstance(tokens[0], ReasoningToken)
+        self.assertEqual(tokens[0].token, "Thought:")
         self.assertIsInstance(tokens[1], ReasoningToken)
+        self.assertEqual(tokens[1].token, "d")
         self.assertIsInstance(tokens[2], ReasoningToken)
+        self.assertEqual(tokens[2].token, "e")
+
 
     async def test_without_prefixes(self):
         parser = ReasoningParser(prefixes=["Thought:"])

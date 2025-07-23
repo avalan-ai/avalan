@@ -405,7 +405,7 @@ class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ReasoningToken)]),
-            2,
+            4,
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ToolCallToken)]),
@@ -413,10 +413,10 @@ class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, TokenDetail)]),
-            2,
+            1,
         )
         self.assertGreaterEqual(
             len([t for t in tokens if type(t) is Token]),
             2,
         )
-        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 2)
+        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 1)
