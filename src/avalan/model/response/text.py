@@ -3,6 +3,7 @@ from ...entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallToken,
 )
 from .parsers.reasoning import ReasoningParser
 from io import StringIO
@@ -73,6 +74,18 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     def input_token_count(self) -> int:
         return self._input_token_count
 
+    @property
+    def can_think(self) -> bool:
+        return bool(self._reasoning_parser)
+
+    @property
+    def is_thinking(self) -> bool:
+        return self.can_think and self._reasoning_parser.is_thinking
+
+    def set_thinking(self, thinking: bool) -> None:
+        if self._reasoning_parser:
+            self._reasoning_parser.set_thinking(thinking)
+
     async def _trigger_consumed(self) -> None:
         if self._consumed:
             return
@@ -98,8 +111,6 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         except StopAsyncIteration:
             await self._trigger_consumed()
             raise
-        self._buffer.write(token if isinstance(token, str) else token.token)
-        return token
 
         token_str = token if isinstance(token, str) else token.token
         self._buffer.write(token_str)
@@ -118,8 +129,8 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 parsed = ReasoningToken(
                     token=it.token, id=token_id, probability=it.probability
                 )
-            elif isinstance(token, Token):
-                parsed = Token(id=token.id, token=str(it))
+            elif isinstance(token, ToolCallToken):
+                parsed = ToolCallToken(token=str(it), id=token.id)
             elif isinstance(token, TokenDetail):
                 parsed = TokenDetail(
                     id=token.id,
@@ -129,6 +140,8 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                     probability_distribution=token.probability_distribution,
                     step=token.step,
                 )
+            elif isinstance(token, Token):
+                parsed = Token(id=token.id, token=str(it))
             else:
                 parsed = it
             self._parser_queue.put(parsed)
