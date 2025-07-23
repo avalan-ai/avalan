@@ -1,4 +1,4 @@
-from avalan.agent.orchestrator.response.parsers.reasoning import (
+from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
 from avalan.entities import ReasoningToken

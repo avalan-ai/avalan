@@ -11,10 +11,10 @@ from ..entities import (
 from ..model import (
     EngineResponse,
     ModelAlreadyLoadedException,
-    TextGenerationVendor,
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException,
 )
+from ..model.vendor import TextGenerationVendor
 from contextlib import ExitStack
 from diffusers import DiffusionPipeline
 from importlib.util import find_spec

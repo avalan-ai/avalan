@@ -1,6 +1,12 @@
 from avalan.cli.commands import get_model_settings
 from avalan.cli.commands import model as model_cmds
-from avalan.entities import Modality, ImageEntity
+from avalan.entities import (
+    Modality,
+    ImageEntity,
+    Token,
+    TokenDetail,
+    ToolCallToken,
+)
 from avalan.event.manager import EventManager
 from avalan.event import Event, EventType
 from types import SimpleNamespace
@@ -8,6 +14,9 @@ from argparse import Namespace
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch, call, ANY
 from avalan.model.manager import ModelManager as RealModelManager
+from avalan.model.response.text import TextGenerationResponse
+from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.response.parsers.tool import ToolCallParser
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
 
@@ -4285,6 +4294,155 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(stop_signal.is_set())
         self.assertEqual(captured, [["TOOL"], ["TOOL"]])
+
+
+class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
+    async def test_model_run_mixed_tokens(self):
+        async def complex_generator():
+            rp = ReasoningParser()
+            tm = MagicMock()
+            tm.is_potential_tool_call.return_value = True
+            tm.get_calls.return_value = None
+            tp = ToolCallParser(tm, None)
+            sequence = [
+                "X",
+                "<think>",
+                "ra",
+                "rb",
+                "</think>",
+                "Y",
+                "<tool_call>",
+                "foo",
+                "bar",
+                "</tool_call>",
+                "Z",
+            ]
+            for s in sequence:
+                items = await rp.push(s)
+                for item in items:
+                    parsed = (
+                        await tp.push(item)
+                        if isinstance(item, str)
+                        else [item]
+                    )
+                    for p in parsed:
+                        if isinstance(p, str):
+                            if p == "</think>":
+                                yield TokenDetail(
+                                    id=3, token=p, probability=0.5
+                                )
+                            elif p in {"X", "Y"}:
+                                yield Token(id=1, token=p)
+                            elif p == "<think>" or p == "Z":
+                                yield p
+                        elif isinstance(p, ToolCallToken):
+                            if p.token == "</tool_call>":
+                                yield TokenDetail(
+                                    id=4, token=p.token, probability=0.5
+                                )
+                            else:
+                                yield p
+                        else:
+                            yield p
+
+        response = TextGenerationResponse(
+            lambda: complex_generator(), use_async_generator=True
+        )
+
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=True,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+        )
+
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock(return_value=response)
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ),
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        tg_patch.assert_awaited_once()
+        resp_obj = tg_patch.await_args.kwargs["response"]
+        tokens = []
+        async for t in resp_obj:
+            tokens.append(t)
+
+        self.assertEqual(
+            len(
+                [t for t in tokens if isinstance(t, model_cmds.ReasoningToken)]
+            ),
+            2,
+        )
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, ToolCallToken)]),
+            3,
+        )
+        self.assertEqual(
+            len([t for t in tokens if isinstance(t, TokenDetail)]),
+            2,
+        )
+        self.assertGreaterEqual(
+            len([t for t in tokens if type(t) is Token]),
+            2,
+        )
+        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 2)
 
 
 if __name__ == "__main__":

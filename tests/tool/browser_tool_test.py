@@ -209,3 +209,49 @@ class BrowserToolReadTestCase(IsolatedAsyncioTestCase):
         tool._browser.close.assert_awaited_once()
         base_exit.assert_awaited_once_with(None, None, None)
         self.assertTrue(result)
+
+
+class BrowserToolCallSearchSkipTestCase(IsolatedAsyncioTestCase):
+    async def test_call_search_skips_empty_match(self):
+        partitions = [
+            TextPartition(
+                data="", embeddings=np.array([0.1, 0.2]), total_tokens=1
+            ),
+            TextPartition(
+                data="b", embeddings=np.array([0.2, 0.3]), total_tokens=1
+            ),
+        ]
+
+        class DummyPartitioner:
+            def __init__(self) -> None:
+                self.call_mock = AsyncMock(return_value=partitions)
+                self.sentence_model = AsyncMock(
+                    return_value=np.array([[0.1, 0.2]])
+                )
+
+            async def __call__(self, text: str):
+                return await self.call_mock(text)
+
+        partitioner = DummyPartitioner()
+
+        settings = BrowserToolSettings(search=True)
+        tool = BrowserTool(settings, MagicMock(), partitioner=partitioner)
+        tool._read = AsyncMock(return_value="html")
+
+        index = MagicMock()
+        index.add = MagicMock()
+        index.search = MagicMock(
+            return_value=(np.array([[0.05]]), np.array([[0]]))
+        )
+
+        with patch("avalan.tool.browser.IndexFlatL2", return_value=index):
+            ctx = ToolCallContext(
+                input=Message(role=MessageRole.USER, content="q")
+            )
+            result = await tool("http://t", context=ctx)
+
+        self.assertEqual(result, "html")
+        index.add.assert_called_once()
+        index.search.assert_called_once()
+        partitioner.call_mock.assert_awaited_once_with("html")
+        partitioner.sentence_model.assert_awaited_once_with(["q"])

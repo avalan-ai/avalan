@@ -1,5 +1,5 @@
 from ...compat import override
-from ...model import TextGenerationVendor
+from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.engine import Engine
 from diffusers import DiffusionPipeline

@@ -5,7 +5,7 @@ from ....entities import (
     Input,
     TransformerEngineSettings,
 )
-from ....model import TextGenerationVendorStream
+from ....model.vendor import TextGenerationVendorStream
 from ....model.nlp.text.generation import TextGenerationModel
 from ....tool.manager import ToolManager
 from dataclasses import replace

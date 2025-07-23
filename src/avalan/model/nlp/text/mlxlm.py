@@ -4,7 +4,7 @@ from ....entities import (
     Input,
     TransformerEngineSettings,
 )
-from ....model import TextGenerationVendorStream
+from ....model.vendor import TextGenerationVendorStream
 from ....model import TextGenerationModel
 from ....tool.manager import ToolManager
 from asyncio import to_thread

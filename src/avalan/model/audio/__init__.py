@@ -44,9 +44,7 @@ class BaseAudioModel(Engine, ABC):
 
         if wave_sampling_rate != sampling_rate:
             wave = resample(
-                wave.unsqueeze(0),
-                wave_sampling_rate,
-                sampling_rate
+                wave.unsqueeze(0), wave_sampling_rate, sampling_rate
             ).squeeze(0)
 
         return wave

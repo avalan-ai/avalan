@@ -2,7 +2,7 @@
 
 from typing import Any, Iterable
 
-from .....entities import ReasoningToken
+from ....entities import ReasoningToken
 
 
 class ReasoningParser:

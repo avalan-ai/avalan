@@ -1,10 +1,10 @@
-from avalan.model import (
-    TextGenerationResponse,
-    TextGenerationStream,
+from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import TextGenerationStream
+from avalan.model.vendor import (
     TextGenerationVendor,
     TextGenerationVendorStream,
-    InvalidJsonResponseException,
 )
+from avalan.model.response import InvalidJsonResponseException
 from avalan.entities import Message, MessageRole
 from unittest import IsolatedAsyncioTestCase
 

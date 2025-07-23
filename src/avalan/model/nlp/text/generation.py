@@ -11,7 +11,8 @@ from ....entities import (
     TokenDetail,
     TransformerEngineSettings,
 )
-from ....model import TextGenerationResponse, TextGenerationVendor
+from ....model.response.text import TextGenerationResponse
+from ....model.vendor import TextGenerationVendor
 from ....model.nlp import BaseNLPModel
 from ....model.engine import Engine
 from diffusers import DiffusionPipeline

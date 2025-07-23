@@ -13,7 +13,7 @@ from ..entities import (
     OperationTextParameters,
 )
 from ..memory.manager import MemoryManager
-from ..model import TextGenerationResponse
+from ..model.response.text import TextGenerationResponse
 from ..model.engine import Engine
 from ..tool.manager import ToolManager
 from ..model.manager import ModelManager
