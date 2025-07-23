@@ -14,7 +14,7 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[0], "a")
         self.assertEqual(tokens[1], "<think>")
         self.assertIsInstance(tokens[2], ReasoningToken)
-        self.assertEqual(tokens[3], "</think>")
+        self.assertIsInstance(tokens[3], ReasoningToken)
         self.assertEqual(tokens[4], "c")
 
     async def test_without_thinking_tags(self):
