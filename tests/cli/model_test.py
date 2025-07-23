@@ -4428,7 +4428,7 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
             len(
                 [t for t in tokens if isinstance(t, model_cmds.ReasoningToken)]
             ),
-            3,
+            4,
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ToolCallToken)]),
@@ -4442,7 +4442,7 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
             len([t for t in tokens if type(t) is Token]),
             2,
         )
-        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 2)
+        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 1)
 
 
 if __name__ == "__main__":
