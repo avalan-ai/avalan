@@ -9,3 +9,11 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
         await parser.push("a")
         await parser.push("</think>")
         self.assertEqual(await parser.flush(), [])
+
+    async def test_set_thinking_affects_state(self):
+        parser = ReasoningParser()
+        self.assertFalse(parser.is_thinking)
+        parser.set_thinking(True)
+        self.assertTrue(parser.is_thinking)
+        parser.set_thinking(False)
+        self.assertFalse(parser.is_thinking)
