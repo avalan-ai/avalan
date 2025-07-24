@@ -317,7 +317,6 @@ class EngineAgent(ABC):
         )
         output = await self._model_manager(
             self._engine_uri,
-            operation.modality,
             self._model,
             operation,
             self._tool,

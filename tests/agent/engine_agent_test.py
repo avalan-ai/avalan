@@ -5,7 +5,6 @@ from avalan.entities import (
     GenerationSettings,
     EngineMessage,
     EngineUri,
-    Modality,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
@@ -149,10 +148,9 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         manager.assert_awaited_once()
         args = manager.await_args.args
         self.assertEqual(args[0], agent.engine_uri)
-        self.assertIs(args[1], Modality.TEXT_GENERATION)
-        self.assertIs(args[2], engine)
+        self.assertIs(args[1], engine)
         self.assertEqual(
-            args[3].generation_settings,
+            args[2].generation_settings,
             replace(settings, top_p=0.7),
         )
         self.assertEqual(agent._last_output, "out")
@@ -173,7 +171,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         manager.assert_awaited_once()
         args = manager.await_args.args
         self.assertEqual(
-            args[3].generation_settings, replace(settings, top_p=0.7)
+            args[2].generation_settings, replace(settings, top_p=0.7)
         )
 
     async def test_run_kwargs_only_with_previous_response(self):
@@ -195,8 +193,8 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         )
         manager.assert_awaited_once()
         args = manager.await_args.args
-        self.assertEqual(args[3].generation_settings.temperature, 0.4)
-        self.assertFalse(args[3].generation_settings.do_sample)
+        self.assertEqual(args[2].generation_settings.temperature, 0.4)
+        self.assertFalse(args[2].generation_settings.do_sample)
 
     async def test_run_kwargs_only_no_previous_response(self):
         agent, engine, memory, manager = self._make_agent()
@@ -210,5 +208,5 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         )
         manager.assert_awaited_once()
         args = manager.await_args.args
-        self.assertEqual(args[3].generation_settings.temperature, 0.4)
-        self.assertFalse(args[3].generation_settings.do_sample)
+        self.assertEqual(args[2].generation_settings.temperature, 0.4)
+        self.assertFalse(args[2].generation_settings.do_sample)

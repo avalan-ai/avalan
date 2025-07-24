@@ -109,11 +109,12 @@ class ModelManager(ContextDecorator):
     async def __call__(
         self,
         engine_uri: EngineUri,
-        modality: Modality,
         model: ModelType,
         operation: Operation,
         tool: ToolManager | None = None,
     ):
+        modality = operation.modality
+
         stopping_criteria = (
             KeywordStoppingCriteria(
                 operation.parameters["text"].stop_on_keywords,

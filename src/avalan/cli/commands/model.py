@@ -190,9 +190,9 @@ async def model_run(
 
                 operation = replace(operation, input=input_string)
 
-            output = await manager(engine_uri, modality, model, operation)
+            output = await manager(engine_uri, model, operation)
 
-            if modality in {
+            if operation.modality in {
                 Modality.AUDIO_SPEECH_RECOGNITION,
                 Modality.TEXT_QUESTION_ANSWERING,
                 Modality.TEXT_SEQUENCE_CLASSIFICATION,
@@ -204,19 +204,19 @@ async def model_run(
             }:
                 console.print(output)
 
-            elif modality == Modality.AUDIO_CLASSIFICATION:
+            elif operation.modality == Modality.AUDIO_CLASSIFICATION:
                 console.print(theme.display_audio_labels(output))
 
-            elif modality == Modality.AUDIO_TEXT_TO_SPEECH:
+            elif operation.modality == Modality.AUDIO_TEXT_TO_SPEECH:
                 console.print(f"Audio generated in {output}")
 
-            elif modality == Modality.AUDIO_GENERATION:
+            elif operation.modality == Modality.AUDIO_GENERATION:
                 console.print(f"Audio generated in {output}")
 
-            elif modality == Modality.TEXT_TOKEN_CLASSIFICATION:
+            elif operation.modality == Modality.TEXT_TOKEN_CLASSIFICATION:
                 console.print(theme.display_token_labels([output]))
 
-            elif modality == Modality.TEXT_GENERATION:
+            elif operation.modality == Modality.TEXT_GENERATION:
                 await token_generation(
                     args=args,
                     console=console,
@@ -234,26 +234,28 @@ async def model_run(
                     tool_events_limit=args.display_tools_events,
                 )
 
-            elif modality == Modality.VISION_IMAGE_CLASSIFICATION:
+            elif operation.modality == Modality.VISION_IMAGE_CLASSIFICATION:
                 console.print(theme.display_image_entity(output))
 
-            elif modality == Modality.VISION_OBJECT_DETECTION:
+            elif operation.modality == Modality.VISION_OBJECT_DETECTION:
                 console.print(theme.display_image_entities(output, sort=True))
 
-            elif modality == Modality.VISION_SEMANTIC_SEGMENTATION:
+            elif operation.modality == Modality.VISION_SEMANTIC_SEGMENTATION:
                 console.print(theme.display_image_labels(output))
 
-            elif modality == Modality.VISION_TEXT_TO_IMAGE:
+            elif operation.modality == Modality.VISION_TEXT_TO_IMAGE:
                 console.print(output)
 
-            elif modality == Modality.VISION_TEXT_TO_ANIMATION:
+            elif operation.modality == Modality.VISION_TEXT_TO_ANIMATION:
                 console.print(output)
 
-            elif modality == Modality.VISION_TEXT_TO_VIDEO:
+            elif operation.modality == Modality.VISION_TEXT_TO_VIDEO:
                 console.print(output)
 
             else:
-                raise NotImplementedError(f"Modality {modality} not supported")
+                raise NotImplementedError(
+                    f"Modality {operation.modality} not supported"
+                )
 
 
 async def model_search(

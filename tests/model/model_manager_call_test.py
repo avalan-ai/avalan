@@ -450,7 +450,9 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
             with self.subTest(modality=modality):
                 model.called_with = None
                 result = await self.manager(
-                    self.engine_uri, modality, model, operation
+                    self.engine_uri,
+                    model,
+                    operation,
                 )
                 self.assertEqual(result, "ok")
                 self.assertEqual(model.called_with, expected)
@@ -465,5 +467,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(NotImplementedError):
             await self.manager(
-                self.engine_uri, Modality.EMBEDDING, model, operation
+                self.engine_uri,
+                model,
+                operation,
             )

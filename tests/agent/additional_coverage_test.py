@@ -9,7 +9,7 @@ from avalan.agent.orchestrator.orchestrators.json import (
 )
 from avalan.agent import (
     EngineEnvironment,
-    Operation,
+    EngineOperation,
     Specification,
     Role,
     OutputType,
@@ -103,7 +103,7 @@ class OrchestratorCoverageTestCase(unittest.IsolatedAsyncioTestCase):
             engine_uri=engine_uri,
             settings=TransformerEngineSettings(),
         )
-        self.operation = Operation(
+        self.operation = EngineOperation(
             specification=Specification(role=None, goal=None),
             environment=self.environment,
         )

@@ -2,6 +2,7 @@ from ..entities import (
     EngineSettings,
     EngineUri,
     GenerationSettings,
+    Modality,
     TransformerEngineSettings,
 )
 from dataclasses import dataclass, field
@@ -10,10 +11,6 @@ from enum import StrEnum
 
 class NoOperationAvailableException(Exception):
     pass
-
-
-class EngineType(StrEnum):
-    TEXT_GENERATION = "text_generation"
 
 
 class InputType(StrEnum):
@@ -52,10 +49,10 @@ class Specification:
 class EngineEnvironment:
     engine_uri: EngineUri
     settings: EngineSettings | TransformerEngineSettings
-    type: EngineType = EngineType.TEXT_GENERATION
 
 
 @dataclass(frozen=True, kw_only=True)
-class Operation:
+class EngineOperation:
     specification: Specification
     environment: EngineEnvironment
+    modality: Modality = Modality.TEXT_GENERATION
