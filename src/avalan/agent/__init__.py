@@ -52,7 +52,7 @@ class EngineEnvironment:
 
 
 @dataclass(frozen=True, kw_only=True)
-class EngineOperation:
+class AgentOperation:
     specification: Specification
     environment: EngineEnvironment
     modality: Modality = Modality.TEXT_GENERATION

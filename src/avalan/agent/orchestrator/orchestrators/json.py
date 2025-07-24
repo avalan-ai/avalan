@@ -2,7 +2,7 @@ from ....agent import (
     EngineEnvironment,
     EngineUri,
     Goal,
-    EngineOperation,
+    AgentOperation,
     OutputType,
     Role,
     Specification,
@@ -113,7 +113,7 @@ class JsonOrchestrator(Orchestrator):
             memory,
             tool,
             event_manager,
-            EngineOperation(
+            AgentOperation(
                 specification=specification,
                 environment=EngineEnvironment(
                     engine_uri=engine_uri, settings=settings

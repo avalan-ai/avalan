@@ -2,7 +2,7 @@ from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from avalan.agent import EngineEnvironment, EngineOperation, Specification
+from avalan.agent import EngineEnvironment, AgentOperation, Specification
 from avalan.entities import (
     EngineUri,
     Message,
@@ -28,7 +28,7 @@ class _DummyEngine:
         self.tokenizer = MagicMock()
 
 
-def _dummy_operation() -> EngineOperation:
+def _dummy_operation() -> AgentOperation:
     env = EngineEnvironment(
         engine_uri=EngineUri(
             host=None,
@@ -42,7 +42,7 @@ def _dummy_operation() -> EngineOperation:
         settings=TransformerEngineSettings(),
     )
     spec = Specification(role="assistant", goal=None)
-    return EngineOperation(specification=spec, environment=env)
+    return AgentOperation(specification=spec, environment=env)
 
 
 def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:

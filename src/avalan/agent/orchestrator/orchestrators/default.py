@@ -1,4 +1,4 @@
-from ....agent import EngineEnvironment, EngineOperation, Goal, Specification
+from ....agent import EngineEnvironment, AgentOperation, Goal, Specification
 from ....agent.orchestrator import Orchestrator
 from ....entities import EngineUri, Modality, TransformerEngineSettings
 from ....event.manager import EventManager
@@ -47,7 +47,7 @@ class DefaultOrchestrator(Orchestrator):
             memory,
             tool,
             event_manager,
-            EngineOperation(
+            AgentOperation(
                 specification=specification,
                 environment=EngineEnvironment(
                     engine_uri=engine_uri, settings=settings

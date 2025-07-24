@@ -2,7 +2,7 @@ from .. import (
     EngineEnvironment,
     InputType,
     NoOperationAvailableException,
-    EngineOperation,
+    AgentOperation,
 )
 from ..engine import EngineAgent
 from ...entities import (
@@ -32,7 +32,7 @@ from uuid import UUID, uuid4
 class Orchestrator:
     _id: UUID
     _name: str | None
-    _operations: list[EngineOperation]
+    _operations: list[AgentOperation]
     _renderer: Renderer
     _total_operations: int
     _logger: Logger
@@ -55,7 +55,7 @@ class Orchestrator:
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
-        operations: EngineOperation | list[EngineOperation],
+        operations: AgentOperation | list[AgentOperation],
         *,
         call_options: dict | None = None,
         exit_memory: bool = True,
@@ -70,7 +70,7 @@ class Orchestrator:
         self._event_manager = event_manager
         self._operations = (
             [operations]
-            if isinstance(operations, EngineOperation)
+            if isinstance(operations, AgentOperation)
             else operations
         )
         self._id = id or uuid4()
@@ -122,7 +122,7 @@ class Orchestrator:
         return self._name
 
     @property
-    def operations(self) -> list[EngineOperation]:
+    def operations(self) -> list[AgentOperation]:
         return self._operations
 
     @property

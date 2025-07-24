@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.agent import (
-    EngineOperation,
+    AgentOperation,
     Specification,
     EngineEnvironment,
     InputType,
@@ -42,7 +42,7 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.spec = Specification(
             role=None, goal=None, input_type=InputType.TEXT
         )
-        self.operation = EngineOperation(
+        self.operation = AgentOperation(
             specification=self.spec, environment=self.environment
         )
         self.logger = MagicMock()
@@ -153,7 +153,7 @@ class OrchestratorAenterTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             settings=TransformerEngineSettings(),
         )
-        op = EngineOperation(
+        op = AgentOperation(
             specification=Specification(role=None, goal=None), environment=env
         )
         model_manager = MagicMock(spec=ModelManager)
