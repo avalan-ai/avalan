@@ -49,7 +49,8 @@ works across engines such as transformers, vLLM and mlx-lm.
 > [!TIP]
 > You can choose your preferred backend using the `--backend` option. For example,
 > on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
-> compared to the default `transformers` backend:
+> compared to the default `transformers` backend with `mps`, and a much higher
+> throughput improvement compared to `cpu`:
 >
 > ```bash
 > echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
