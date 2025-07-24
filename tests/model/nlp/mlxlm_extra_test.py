@@ -2,7 +2,7 @@ import sys
 import importlib
 import types
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import avalan.model  # noqa: F401
 
@@ -36,7 +36,13 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
         stub = types.ModuleType("mlx_lm")
         stub.load = MagicMock(return_value=("model", "tokenizer"))
         stub.generate = MagicMock(return_value="out")
-        self.patch = patch.dict(sys.modules, {"mlx_lm": stub})
+        stub.stream_generate = MagicMock(return_value=iter([]))
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock(return_value="sampler")
+        self.patch = patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        )
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
@@ -72,7 +78,6 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 self.mod.MlxLmModel,
                 "_stream_generator",
-                new_callable=AsyncMock,
                 return_value=self.mod.MlxLmStream(iter(["x"])),
             ) as stream_mock,
         ):
@@ -83,32 +88,22 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
         stream_mock.assert_called_once()
         self.assertIsInstance(out, self.mod.MlxLmStream)
 
-    def test_build_params(self) -> None:
+    def test_build_sampler(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
         )
-        params = model._build_params(
-            GenerationSettings(
-                temperature=0.5,
-                top_p=0.1,
-                top_k=2,
-                max_new_tokens=3,
-                stop_strings=["a"],
+        with patch("avalan.model.nlp.text.mlxlm.make_sampler") as make_sampler:
+            model._build_sampler(
+                GenerationSettings(
+                    temperature=0.5,
+                    top_p=0.1,
+                    top_k=2,
+                )
             )
-        )
-        self.assertEqual(
-            params,
-            {
-                "temperature": 0.5,
-                "top_p": 0.1,
-                "top_k": 2,
-                "max_tokens": 3,
-                "stop": ["a"],
-            },
-        )
+            make_sampler.assert_called_once_with(temp=0.5, top_p=0.1, top_k=2)
 
 
 class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
@@ -116,7 +111,13 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         stub = types.ModuleType("mlx_lm")
         stub.load = MagicMock(return_value=("model", "tokenizer"))
         stub.generate = MagicMock(return_value="out")
-        self.patch = patch.dict(sys.modules, {"mlx_lm": stub})
+        stub.stream_generate = MagicMock(return_value=iter([]))
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock(return_value="sampler")
+        self.patch = patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        )
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
@@ -164,7 +165,12 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         )
         model._model = "m"
         model._tokenizer = "tok"
-        self.stub.generate.side_effect = lambda *a, **kw: iter(["a", "b"])
+        self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
+            [
+                MagicMock(text="a"),
+                MagicMock(text="b"),
+            ]
+        )
         chunks = []
         async for c in model._stream_generator("p", GenerationSettings()):
             chunks.append(c)
@@ -186,11 +192,8 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             "m",
             "tok",
             "p",
-            temperature=1.0,
-            top_p=1.0,
-            top_k=50,
+            sampler="sampler",
             max_tokens=None,
-            stop=None,
         )
 
     async def test_call_string_path(self) -> None:

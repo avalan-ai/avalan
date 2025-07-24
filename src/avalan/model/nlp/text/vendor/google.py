@@ -1,11 +1,11 @@
-from google.genai import Client
-from google.genai.types import GenerateContentResponse
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
 from .....compat import override
 from .....entities import GenerationSettings, Message, Token, TokenDetail
-from .....model.vendor import TextGenerationVendor, TextGenerationVendorStream
-from diffusers import DiffusionPipeline
-from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
+from diffusers import DiffusionPipeline
+from google.genai import Client
+from google.genai.types import GenerateContentResponse
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 

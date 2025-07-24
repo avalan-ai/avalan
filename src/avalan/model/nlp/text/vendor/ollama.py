@@ -1,3 +1,5 @@
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -6,8 +8,6 @@ from .....entities import (
     TokenDetail,
     TransformerEngineSettings,
 )
-from .....model.vendor import TextGenerationVendor, TextGenerationVendorStream
-from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from dataclasses import replace
