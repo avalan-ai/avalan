@@ -57,6 +57,40 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
                     )
                     self.assertIs(result, Model.return_value)
 
+    def test_load_engine_text_generation_mlxlm_backend(self):
+        with ModelManager(self.hub, self.logger) as manager:
+            uri = manager.parse_uri("ai://local/m")
+            settings = TransformerEngineSettings(backend="mlxlm")
+            manager._stack.enter_context = MagicMock()
+            with patch("avalan.model.nlp.text.mlxlm.MlxLmModel") as Model:
+                result = manager.load_engine(
+                    uri, settings, Modality.TEXT_GENERATION
+                )
+            Model.assert_called_once_with(
+                model_id="m", settings=settings, logger=self.logger
+            )
+            manager._stack.enter_context.assert_called_once_with(
+                Model.return_value
+            )
+            self.assertIs(result, Model.return_value)
+
+    def test_load_engine_text_generation_vllm_backend(self):
+        with ModelManager(self.hub, self.logger) as manager:
+            uri = manager.parse_uri("ai://local/m")
+            settings = TransformerEngineSettings(backend="vllm")
+            manager._stack.enter_context = MagicMock()
+            with patch("avalan.model.nlp.text.vllm.VllmModel") as Model:
+                result = manager.load_engine(
+                    uri, settings, Modality.TEXT_GENERATION
+                )
+            Model.assert_called_once_with(
+                model_id="m", settings=settings, logger=self.logger
+            )
+            manager._stack.enter_context.assert_called_once_with(
+                Model.return_value
+            )
+            self.assertIs(result, Model.return_value)
+
     def test_load_engine_question_answering_remote(self):
         with ModelManager(self.hub, self.logger) as manager:
             uri = manager.parse_uri("ai://openai/qa")

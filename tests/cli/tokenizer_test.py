@@ -44,6 +44,8 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
                 for key, value in kwargs.items():
                     setattr(self, key, value)
 
+            backend = "transformers"
+
         entities.Token = Token
         entities.TransformerEngineSettings = TransformerEngineSettings
         sys.modules["avalan.entities"] = entities
@@ -111,6 +113,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
             disable_loading_progress_bar=False,
             low_cpu_mem_usage=False,
             loader_class="auto",
+            backend="transformers",
             weight_type="auto",
             save=None,
             no_repl=False,

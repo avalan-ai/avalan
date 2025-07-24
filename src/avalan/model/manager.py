@@ -10,6 +10,7 @@ from ..entities import (
     OperationTextParameters,
     OperationVisionParameters,
     ParallelStrategy,
+    Backend,
     TextGenerationLoaderClass,
     TransformerEngineSettings,
     Vendor,
@@ -737,6 +738,7 @@ class ModelManager(ContextDecorator):
         device: str | None = None,
         disable_loading_progress_bar: bool = False,
         loader_class: TextGenerationLoaderClass | None = "auto",
+        backend: Backend = Backend.TRANSFORMERS,
         low_cpu_mem_usage: bool = False,
         parallel: ParallelStrategy | None = None,
         quiet: bool = False,
@@ -760,6 +762,7 @@ class ModelManager(ContextDecorator):
             disable_loading_progress_bar=quiet or disable_loading_progress_bar,
             low_cpu_mem_usage=low_cpu_mem_usage,
             loader_class=loader_class,
+            backend=backend,
             parallel=parallel,
             base_model_id=base_model_id or None,
             checkpoint=checkpoint or None,
@@ -841,7 +844,17 @@ class ModelManager(ContextDecorator):
                 case Modality.TEXT_TOKEN_CLASSIFICATION:
                     model = TokenClassificationModel(**model_load_args)
                 case _:
-                    model = TextGenerationModel(**model_load_args)
+                    match engine_settings.backend:
+                        case Backend.MLXLM:
+                            from ..model.nlp.text.mlxlm import MlxLmModel
+
+                            model = MlxLmModel(**model_load_args)
+                        case Backend.VLLM:
+                            from ..model.nlp.text.vllm import VllmModel
+
+                            model = VllmModel(**model_load_args)
+                        case _:
+                            model = TextGenerationModel(**model_load_args)
         elif (
             modality == Modality.TEXT_GENERATION
             and engine_uri.vendor == "openai"
