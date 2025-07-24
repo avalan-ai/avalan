@@ -190,10 +190,31 @@ class HuggingfaceHubTestCase(TestCase):
         self.hf_instance.list_models.return_value = [info]
         with patch.object(HuggingfaceHub, "_model", return_value="x") as m:
             models = list(
-                self.hub.models(filter="f", name="n", search="s", limit=1)
+                self.hub.models(
+                    filter="f",
+                    name=["n1", "n2"],
+                    search=["s"],
+                    library=["lib"],
+                    author="a",
+                    gated=True,
+                    language=["en"],
+                    task=["t"],
+                    tags=["tag"],
+                    limit=1,
+                )
             )
         self.hf_instance.list_models.assert_called_once_with(
-            model_name="n", filter="f", search="s", limit=1, full=True
+            model_name=["n1", "n2"],
+            filter="f",
+            search=["s"],
+            library=["lib"],
+            author="a",
+            gated=True,
+            language=["en"],
+            task=["t"],
+            tags=["tag"],
+            limit=1,
+            full=True,
         )
         m.assert_called_once_with(info)
         self.assertEqual(models, ["x"])

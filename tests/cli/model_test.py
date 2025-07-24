@@ -3624,7 +3624,19 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
 class CliModelSearchTestCase(IsolatedAsyncioTestCase):
     async def test_model_search(self):
-        args = Namespace(filter="f", search="q", limit=2)
+        args = Namespace(
+            filter=["f"],
+            search=["q"],
+            library=["lib"],
+            author="a",
+            gated=True,
+            open=False,
+            language=["en"],
+            name=["n"],
+            task=["t"],
+            tag=["tag"],
+            limit=2,
+        )
 
         console = MagicMock()
         status_cm = MagicMock()
@@ -3672,7 +3684,18 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
             spinner=theme.get_spinner.return_value,
             refresh_per_second=5,
         )
-        hub.models.assert_called_once_with(filter="f", search="q", limit=2)
+        hub.models.assert_called_once_with(
+            filter=["f"],
+            search=["q"],
+            library=["lib"],
+            author="a",
+            gated=True,
+            language=["en"],
+            name=["n"],
+            task=["t"],
+            tags=["tag"],
+            limit=2,
+        )
         hub.can_access.assert_has_calls(
             [call("m1"), call("m2")], any_order=True
         )
@@ -3681,6 +3704,63 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
         # Final update includes access results
         self.assertIn(("m1-True", "m2-False"), updates)
         self.assertEqual(live.update.call_count, 2)
+
+    async def test_model_search_open(self):
+        args = Namespace(
+            filter=None,
+            search=None,
+            library=None,
+            author=None,
+            gated=False,
+            open=True,
+            language=None,
+            name=None,
+            task=None,
+            tag=None,
+            limit=1,
+        )
+
+        console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.get_spinner.return_value = "sp"
+        theme.model.side_effect = lambda m, **kw: m.id
+
+        model = SimpleNamespace(id="m")
+        hub = MagicMock()
+        hub.models.return_value = [model]
+        hub.can_access.return_value = True
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+
+        with (
+            patch.object(model_cmds, "Live", return_value=live),
+            patch.object(model_cmds, "Group", side_effect=lambda *i: i),
+            patch.object(
+                model_cmds, "to_thread", side_effect=lambda f, *a, **k: f()
+            ),
+        ):
+            await model_cmds.model_search(args, console, theme, hub, 5)
+
+        hub.models.assert_called_once_with(
+            filter=None,
+            search=None,
+            library=None,
+            author=None,
+            gated=False,
+            language=None,
+            name=None,
+            task=None,
+            tags=None,
+            limit=1,
+        )
 
 
 class CliModelInternalTestCase(IsolatedAsyncioTestCase):

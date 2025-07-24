@@ -282,6 +282,13 @@ async def model_search(
             for model in hub.models(
                 filter=args.filter or None,
                 search=args.search or None,
+                library=args.library or None,
+                author=args.author,
+                gated=True if args.gated else False if args.open else None,
+                language=args.language or None,
+                name=args.name or None,
+                task=args.task or None,
+                tags=args.tag or None,
                 limit=args.limit,
             )
         ]

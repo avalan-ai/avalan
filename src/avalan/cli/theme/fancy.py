@@ -1733,13 +1733,13 @@ class FancyTheme(Theme):
                 [
                     _f(
                         "input_token_count",
-                        _("{total_tokens} input tokens").format(
+                        _("{total_tokens} tokens in").format(
                             total_tokens=input_token_count
                         ),
                     ),
                     _f(
                         "total_tokens",
-                        _("{total_tokens} output tokens").format(
+                        _("{total_tokens} token out").format(
                             total_tokens=total_tokens
                         ),
                     ),
