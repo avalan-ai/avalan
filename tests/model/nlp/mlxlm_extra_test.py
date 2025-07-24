@@ -8,6 +8,7 @@ import avalan.model  # noqa: F401
 
 
 from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.model.response.text import TextGenerationResponse
 
 
 class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
@@ -73,7 +74,7 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 self.mod.TextGenerationModel,
                 "_tokenize_input",
-                return_value={"input_ids": [1]},
+                return_value={"input_ids": [[1]]},
             ) as tok_mock,
             patch.object(
                 self.mod.MlxLmModel,
@@ -81,29 +82,40 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
                 return_value=self.mod.MlxLmStream(iter(["x"])),
             ) as stream_mock,
         ):
-            out = await model(
+            resp = await model(
                 "in", settings=GenerationSettings(use_async_generator=True)
             )
         tok_mock.assert_called_once()
-        stream_mock.assert_called_once()
-        self.assertIsInstance(out, self.mod.MlxLmStream)
+        stream_mock.assert_not_called()
+        self.assertIsInstance(resp, TextGenerationResponse)
+        self.assertIs(resp._output_fn, stream_mock)
+        self.assertEqual(resp._kwargs["inputs"], {"input_ids": [[1]]})
+        self.assertFalse(resp._kwargs["settings"].do_sample)
+        self.assertTrue(resp._use_async_generator)
 
-    def test_build_sampler(self) -> None:
+    def test_get_sampler_and_prompt(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
         )
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "prompt"
+        inputs = {"input_ids": [[1]]}
         with patch("avalan.model.nlp.text.mlxlm.make_sampler") as make_sampler:
-            model._build_sampler(
+            sampler, prompt = model._get_sampler_and_prompt(
+                inputs,
                 GenerationSettings(
                     temperature=0.5,
                     top_p=0.1,
                     top_k=2,
-                )
+                ),
+                True,
             )
             make_sampler.assert_called_once_with(temp=0.5, top_p=0.1, top_k=2)
+        self.assertEqual(prompt, "prompt")
+        self.assertEqual(sampler, make_sampler.return_value)
 
 
 class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
@@ -164,7 +176,8 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             ),
         )
         model._model = "m"
-        model._tokenizer = "tok"
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "p"
         self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
             [
                 MagicMock(text="a"),
@@ -172,7 +185,9 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             ]
         )
         chunks = []
-        async for c in model._stream_generator("p", GenerationSettings()):
+        async for c in model._stream_generator(
+            {"input_ids": [[1]]}, GenerationSettings(), False
+        ):
             chunks.append(c)
         self.assertEqual(chunks, ["a", "b"])
 
@@ -184,13 +199,16 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             ),
         )
         model._model = "m"
-        model._tokenizer = "tok"
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "p"
         self.stub.generate.return_value = "text"
-        out = model._string_output("p", GenerationSettings())
+        out = model._string_output(
+            {"input_ids": [[1]]}, GenerationSettings(), False
+        )
         self.assertEqual(out, "text")
         self.stub.generate.assert_called_with(
             "m",
-            "tok",
+            model._tokenizer,
             "p",
             sampler="sampler",
             max_tokens=None,
@@ -210,21 +228,23 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 self.mod.TextGenerationModel,
                 "_tokenize_input",
-                return_value={"input_ids": [1]},
+                return_value={"input_ids": [[1]]},
             ) as tok_mock,
             patch.object(
                 self.mod.MlxLmModel, "_string_output", return_value="out"
             ) as str_mock,
         ):
-            result = await model(
+            resp = await model(
                 "hi",
                 settings=GenerationSettings(use_async_generator=False),
             )
         tok_mock.assert_called_once()
-        str_mock.assert_called_once_with(
-            "p", GenerationSettings(use_async_generator=False)
-        )
-        self.assertEqual(result, "out")
+        str_mock.assert_not_called()
+        self.assertIsInstance(resp, TextGenerationResponse)
+        self.assertIs(resp._output_fn, str_mock)
+        self.assertEqual(resp._kwargs["inputs"], {"input_ids": [[1]]})
+        self.assertFalse(resp._kwargs["settings"].do_sample)
+        self.assertFalse(resp._use_async_generator)
 
     def test_supports_sample_generation(self) -> None:
         model = self.mod.MlxLmModel(
