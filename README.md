@@ -71,6 +71,20 @@ task you need:
   - 🖌️ [Text to image](#text-to-image): Generate images from text
   - 🎥 [Text to video](#text-to-video): Produce videos from text prompts
 
+> [!TIP]
+> You can choose your preferred backend using the `--backend` option. For example,
+> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
+> compared to the default `transformers` backend:
+>
+> ```bash
+> echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+>     avalan model run 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B' \
+>         --temperature 0.6 \
+>         --max-new-tokens 1024 \
+>         --start-thinking \
+>         --backend mlxlm
+> ```
+
 ### Audio
 
 #### Audio classification
