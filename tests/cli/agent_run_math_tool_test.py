@@ -3,7 +3,11 @@ from argparse import Namespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.cli.commands import agent as agent_cmds
-from avalan.agent import Specification, EngineEnvironment, Operation as AgentOperation
+from avalan.agent import (
+    Specification,
+    EngineEnvironment,
+    EngineOperation as AgentOperation,
+)
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
     EngineUri,
@@ -31,18 +35,29 @@ class DummyEngine:
     async def __call__(self, input, *, tool=None):
         DummyEngine.last_tool = tool
         if isinstance(input, Message):
+
             async def gen():
                 yield "<tool_call>"
                 yield (
-                    '{"name": "math.calculator", "arguments": {"expression": "(4 + 6) * 5 / 2"}}'
+                    '{"name": "math.calculator", "arguments": {"expression":'
+                    ' "(4 + 6) * 5 / 2"}}'
                 )
                 yield "</tool_call>"
-            return TextGenerationResponse(lambda: gen(), use_async_generator=True)
+
+            return TextGenerationResponse(
+                lambda: gen(), use_async_generator=True
+            )
         else:
-            result = input[-1].content if isinstance(input, list) else str(input)
+            result = (
+                input[-1].content if isinstance(input, list) else str(input)
+            )
+
             async def gen():
                 yield f"The result is {result}."
-            return TextGenerationResponse(lambda: gen(), use_async_generator=True)
+
+            return TextGenerationResponse(
+                lambda: gen(), use_async_generator=True
+            )
 
     def input_token_count(self, *_a, **_k):
         return 0
@@ -52,7 +67,7 @@ class DummyModelManager:
     def __init__(self) -> None:
         self.passed_tool = None
 
-    async def __call__(self, engine_uri, modality, model, operation, tool):
+    async def __call__(self, engine_uri, model, operation, tool):
         self.passed_tool = tool
         return await model(operation.input, tool=tool)
 
@@ -72,7 +87,6 @@ class DummyAgent(EngineAgent):
         self._last_operation = operation
         return await self._model_manager(
             self._engine_uri,
-            operation.modality,
             self._model,
             operation,
             self._tool,
@@ -168,7 +182,10 @@ def make_args() -> Namespace:
         run_skip_special_tokens=False,
         engine_uri="NousResearch/Hermes-3-Llama-3.1-8B",
         name="Tool",
-        role="You are a helpful assistant named Tool, that can resolve user requests using tools.",
+        role=(
+            "You are a helpful assistant named Tool, that can resolve user"
+            " requests using tools."
+        ),
         task=None,
         instructions=None,
         memory_recent=True,
@@ -214,11 +231,28 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
 
         with (
-            patch.object(agent_cmds, "AsyncExitStack", return_value=dummy_stack),
-            patch.object(agent_cmds.OrchestratorLoader, "from_settings", new=AsyncMock(return_value=orch)),
-            patch.object(agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()),
-            patch.object(agent_cmds, "get_input", return_value="What is (4 + 6) and then that result times 5, divided by 2?"),
-            patch.object(agent_cmds, "token_generation", new_callable=AsyncMock) as tg_patch,
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=(
+                    "What is (4 + 6) and then that result times 5, divided"
+                    " by 2?"
+                ),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
         ):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
@@ -230,7 +264,9 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(
             any(
-                isinstance(t, Event) and t.type == EventType.TOOL_RESULT and t.payload["result"].result == "25"
+                isinstance(t, Event)
+                and t.type == EventType.TOOL_RESULT
+                and t.payload["result"].result == "25"
                 for t in tokens
             )
         )

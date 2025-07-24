@@ -1,6 +1,6 @@
-from ....agent import EngineEnvironment, Goal, Operation, Specification
+from ....agent import EngineEnvironment, EngineOperation, Goal, Specification
 from ....agent.orchestrator import Orchestrator
-from ....entities import EngineUri, TransformerEngineSettings
+from ....entities import EngineUri, Modality, TransformerEngineSettings
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
@@ -47,11 +47,12 @@ class DefaultOrchestrator(Orchestrator):
             memory,
             tool,
             event_manager,
-            Operation(
+            EngineOperation(
                 specification=specification,
                 environment=EngineEnvironment(
                     engine_uri=engine_uri, settings=settings
                 ),
+                modality=Modality.TEXT_GENERATION,
             ),
             call_options=call_options,
             id=id,

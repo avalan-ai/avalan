@@ -1,9 +1,8 @@
 from .. import (
     EngineEnvironment,
-    EngineType,
     InputType,
     NoOperationAvailableException,
-    Operation,
+    EngineOperation,
 )
 from ..engine import EngineAgent
 from ...entities import (
@@ -19,7 +18,7 @@ from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
 from ...model.engine import Engine
 from ...model.manager import ModelManager
-from ...entities import Modality
+from ...entities import Modality as Modality
 from ...tool.manager import ToolManager
 from contextlib import ExitStack
 from dataclasses import asdict
@@ -33,7 +32,7 @@ from uuid import UUID, uuid4
 class Orchestrator:
     _id: UUID
     _name: str | None
-    _operations: list[Operation]
+    _operations: list[EngineOperation]
     _renderer: Renderer
     _total_operations: int
     _logger: Logger
@@ -56,7 +55,7 @@ class Orchestrator:
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
-        operations: Operation | list[Operation],
+        operations: EngineOperation | list[EngineOperation],
         *,
         call_options: dict | None = None,
         exit_memory: bool = True,
@@ -70,7 +69,9 @@ class Orchestrator:
         self._tool = tool
         self._event_manager = event_manager
         self._operations = (
-            [operations] if isinstance(operations, Operation) else operations
+            [operations]
+            if isinstance(operations, EngineOperation)
+            else operations
         )
         self._id = id or uuid4()
         self._exit_memory = exit_memory
@@ -121,7 +122,7 @@ class Orchestrator:
         return self._name
 
     @property
-    def operations(self) -> list[Operation]:
+    def operations(self) -> list[EngineOperation]:
         return self._operations
 
     @property
@@ -242,14 +243,10 @@ class Orchestrator:
             environment_hash = dumps(asdict(environment))
             if environment_hash not in self._engine_agents:
                 model_ids.append(environment.engine_uri.model_id)
-                engine = (
-                    self._model_manager.load_engine(
-                        environment.engine_uri,
-                        environment.settings,
-                        Modality.TEXT_GENERATION,
-                    )
-                    if environment.type == EngineType.TEXT_GENERATION
-                    else None
+                engine = self._model_manager.load_engine(
+                    environment.engine_uri,
+                    environment.settings,
+                    operation.modality,
                 )
                 if not engine:
                     raise NotImplementedError()

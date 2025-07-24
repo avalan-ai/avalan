@@ -1074,9 +1074,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.passed_tool = None
 
-            async def __call__(
-                self, engine_uri, modality, model, operation, tool
-            ):
+            async def __call__(self, engine_uri, model, operation, tool):
                 self.passed_tool = tool
                 return await model(None, tool=tool)
 
@@ -1119,7 +1117,6 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 )
                 return await self._model_manager(
                     engine_uri,
-                    operation.modality,
                     engine,
                     operation,
                     self._tool,

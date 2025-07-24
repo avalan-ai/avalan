@@ -1,7 +1,7 @@
 from avalan.agent import (
     EngineEnvironment,
     EngineUri,
-    Operation,
+    EngineOperation,
     Specification,
 )
 from avalan.agent.orchestrator import Orchestrator
@@ -48,7 +48,7 @@ class RendererPropertyTestCase(TestCase):
         self.settings = TransformerEngineSettings()
 
     def test_renderer_on_orchestrator(self):
-        op = Operation(
+        op = EngineOperation(
             specification=Specification(role=None, goal=None),
             environment=EngineEnvironment(
                 engine_uri=self.engine_uri, settings=self.settings

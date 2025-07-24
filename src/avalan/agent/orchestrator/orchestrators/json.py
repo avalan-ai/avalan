@@ -2,13 +2,13 @@ from ....agent import (
     EngineEnvironment,
     EngineUri,
     Goal,
-    Operation,
+    EngineOperation,
     OutputType,
     Role,
     Specification,
 )
+from ....entities import Input, Modality, TransformerEngineSettings
 from ....agent.orchestrator import Orchestrator
-from ....entities import Input, TransformerEngineSettings
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
@@ -113,11 +113,12 @@ class JsonOrchestrator(Orchestrator):
             memory,
             tool,
             event_manager,
-            Operation(
+            EngineOperation(
                 specification=specification,
                 environment=EngineEnvironment(
                     engine_uri=engine_uri, settings=settings
                 ),
+                modality=Modality.TEXT_GENERATION,
             ),
             call_options=call_options,
         )

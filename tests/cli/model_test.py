@@ -1458,7 +1458,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             modality=Modality.AUDIO_CLASSIFICATION,
         )
         manager.assert_awaited_once()
-        operation = manager.await_args_list[0].args[3]
+        operation = manager.await_args_list[0].args[2]
         self.assertEqual(operation.parameters["audio"].path, "audio.wav")
         self.assertEqual(operation.parameters["audio"].sampling_rate, 16_000)
         theme.display_audio_labels.assert_called_once_with(
@@ -1608,9 +1608,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -1709,9 +1709,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -1808,9 +1808,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -1903,9 +1903,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2008,9 +2008,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2120,9 +2120,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2223,9 +2223,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2324,9 +2324,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2424,9 +2424,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2520,9 +2520,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2621,9 +2621,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2726,9 +2726,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2832,9 +2832,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -2938,9 +2938,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -3050,9 +3050,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -3168,9 +3168,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -3287,9 +3287,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect
@@ -3407,9 +3407,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def call_side_effect(engine_uri, modality, model, operation):
+        async def call_side_effect(engine_uri, model, operation):
             return await RealModelManager.__call__(
-                manager, engine_uri, modality, model, operation
+                manager, engine_uri, model, operation
             )
 
         manager.side_effect = call_side_effect

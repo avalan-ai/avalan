@@ -1,4 +1,4 @@
-from ... import Operation
+from ... import EngineOperation
 from ...engine import EngineAgent
 from ....entities import (
     Input,
@@ -29,7 +29,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _response: TextGenerationResponse
     _response_iterator: AsyncIterator[Token | TokenDetail | Event] | None
     _engine_agent: EngineAgent
-    _operation: Operation
+    _operation: EngineOperation
     _engine_args: dict
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
@@ -51,7 +51,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         input: Input,
         response: TextGenerationResponse,
         engine_agent: EngineAgent,
-        operation: Operation,
+        operation: EngineOperation,
         engine_args: dict,
         event_manager: EventManager | None = None,
         tool: ToolManager | None = None,
