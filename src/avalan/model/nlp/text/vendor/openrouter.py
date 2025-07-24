@@ -1,6 +1,6 @@
-from .....model.vendor import TextGenerationVendor
-from diffusers import DiffusionPipeline
+from ....vendor import TextGenerationVendor
 from .....model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
+from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
 
 

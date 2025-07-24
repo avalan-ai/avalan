@@ -1,5 +1,5 @@
-from anthropic import AsyncAnthropic
-from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -7,10 +7,10 @@ from .....entities import (
     Token,
     TokenDetail,
 )
-from .....model.vendor import TextGenerationVendor, TextGenerationVendorStream
-from diffusers import DiffusionPipeline
-from .....model.nlp.text.vendor import TextGenerationVendorModel
 from .....tool.manager import ToolManager
+from anthropic import AsyncAnthropic
+from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
+from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 

@@ -304,7 +304,9 @@ class Engine(ABC):
 
             self._loaded_tokenizer = True
 
+        is_mlx = False
         is_sentence_transformer = False
+
         if self._settings.auto_load_model:
             _l(
                 "Loading pretrained model %s from cache %s",
@@ -312,9 +314,6 @@ class Engine(ABC):
                 self._settings.cache_dir,
             )
             self._model = self._load_model()
-
-            is_mlx = False
-            is_sentence_transformer = False
 
             if not isinstance(self._model, PreTrainedModel) and not isinstance(
                 self._model, TextGenerationVendor
@@ -372,12 +371,12 @@ class Engine(ABC):
                 str(param.dtype).replace("torch.", "")
                 for param in self._model.parameters()
             }
-            if self._model and hasattr(self._model, "parameters")
+            if not is_mlx and self._model and hasattr(self._model, "parameters")
             else None
         )
         self._parameter_count = (
             sum(p.numel() for p in self._model.parameters())
-            if self._model and hasattr(self._model, "parameters")
+            if not is_mlx and self._model and hasattr(self._model, "parameters")
             else None
         )
 

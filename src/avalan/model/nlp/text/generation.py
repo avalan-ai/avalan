@@ -405,8 +405,9 @@ class TextGenerationModel(BaseNLPModel):
                 return_tensors=tensor_format,
             )
 
-        _l(f"Translating inputs to {self._model.device}")
-        inputs = inputs.to(self._model.device)
+        if hasattr(self._model, "device"):
+            _l(f"Translating inputs to {self._model.device}")
+            inputs = inputs.to(self._model.device)
         return inputs
 
     def _messages(

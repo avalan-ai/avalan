@@ -69,7 +69,11 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
-from transformers.utils import logging as hf_logging
+from transformers.utils import (
+    is_flash_attn_2_available,
+    is_torch_flex_attn_available,
+    logging as hf_logging,
+)
 from typing import get_args, Optional, get_origin, get_args as get_type_args
 from dataclasses import fields
 from ..tool.browser import BrowserToolSettings
@@ -102,12 +106,29 @@ class CLI:
         return device_count() if is_available() else 1
 
     @staticmethod
+    def _default_attention(device: str) -> AttentionImplementation | None:
+        try:
+            if device.startswith("cuda") and is_available():
+                if is_flash_attn_2_available():
+                    return "flash_attention_2"
+                if is_torch_flex_attn_available():
+                    return "flex_attention"
+            from torch.backends import mps
+
+            if device.startswith("mps") and mps.is_available():
+                return "sdpa"
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def _create_parser(
         default_device: str,
         cache_dir: str,
         default_locales_path: str,
         default_locale: str,
     ):
+        default_attention = CLI._default_attention(default_device)
         global_parser = ArgumentParser(add_help=False)
         global_parser.add_argument(
             "--cache-dir",
@@ -940,8 +961,10 @@ class CLI:
             "--attention",
             type=str,
             choices=get_args(AttentionImplementation),
+            default=default_attention,
             help=(
-                "Attention implementation to use (defaults to best available)"
+                "Attention implementation to use "
+                f"(defaults to best available: {default_attention})"
             ),
         )
         model_run_parser.add_argument(

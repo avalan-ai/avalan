@@ -1,17 +1,18 @@
+from ...vendor import TextGenerationVendorStream
+from .generation import TextGenerationModel
 from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings,
 )
-from ....model.vendor import TextGenerationVendorStream
-from ....model import TextGenerationModel
 from ....tool.manager import ToolManager
 from asyncio import to_thread
 from dataclasses import replace
 from logging import Logger
-from mlx_lm import load, generate
-from typing import AsyncGenerator
+from mlx_lm import generate, load, stream_generate
+from mlx_lm.sample_utils import make_sampler
+from typing import AsyncGenerator, Callable, Literal
 
 
 class MlxLmStream(TextGenerationVendorStream):
@@ -32,8 +33,6 @@ class MlxLmStream(TextGenerationVendorStream):
 
 
 class MlxLmModel(TextGenerationModel):
-    """Text generation model using the ``mlx_lm`` backend."""
-
     def __init__(
         self,
         model_id: str,
@@ -50,41 +49,41 @@ class MlxLmModel(TextGenerationModel):
         return False
 
     def _load_model(self):
-        assert load, "mlx-lm is not available"
         model, tokenizer = load(self._model_id)
         self._tokenizer = tokenizer
         self._loaded_tokenizer = True
         return model
-
-    def _build_params(self, settings: GenerationSettings) -> dict:
-        return {
-            "temperature": settings.temperature,
-            "top_p": settings.top_p,
-            "top_k": settings.top_k,
-            "max_tokens": settings.max_new_tokens,
-            "stop": settings.stop_strings,
-        }
 
     async def _stream_generator(
         self,
         prompt: str,
         settings: GenerationSettings,
     ) -> AsyncGenerator[str, None]:
-        params = self._build_params(settings)
-        iterator = generate(
-            self._model, self._tokenizer, prompt, stream=True, **params
+        sampler = MlxLmModel._build_sampler(settings)
+        iterator = stream_generate(
+            self._model,
+            self._tokenizer,
+            prompt,
+            sampler=sampler,
+            max_tokens=settings.max_new_tokens
         )
         stream = MlxLmStream(iter(iterator))
         async for chunk in stream:
-            yield chunk
+            yield chunk.text
 
     def _string_output(
         self,
         prompt: str,
         settings: GenerationSettings,
     ) -> str:
-        params = self._build_params(settings)
-        return generate(self._model, self._tokenizer, prompt, **params)
+        sampler = MlxLmModel._build_sampler(settings)
+        return generate(
+            self._model,
+            self._tokenizer,
+            prompt,
+            sampler=sampler,
+            max_tokens=settings.max_new_tokens
+        )
 
     @override
     async def __call__(
@@ -93,6 +92,7 @@ class MlxLmModel(TextGenerationModel):
         system_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        tensor_format: Literal["pt"] = "pt",
         tool: ToolManager | None = None,
     ) -> TextGenerationVendorStream | str:
         settings = settings or GenerationSettings()
@@ -100,7 +100,7 @@ class MlxLmModel(TextGenerationModel):
             input,
             system_prompt,
             context=None,
-            tensor_format="pt",
+            tensor_format=tensor_format,
             tool=tool,
             chat_template_settings=settings.chat_template_settings,
         )
@@ -110,5 +110,14 @@ class MlxLmModel(TextGenerationModel):
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:
-            return await self._stream_generator(prompt, generation_settings)
+            return self._stream_generator(prompt, generation_settings)
         return self._string_output(prompt, generation_settings)
+
+    @staticmethod
+    def _build_sampler(settings: GenerationSettings) -> Callable:
+        sampler_settings = {
+            "temp": settings.temperature,
+            "top_p": settings.top_p,
+            "top_k": settings.top_k,
+        }
+        return make_sampler(**sampler_settings)
