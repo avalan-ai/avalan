@@ -6,7 +6,7 @@ from avalan.cli.commands import agent as agent_cmds
 from avalan.agent import (
     Specification,
     EngineEnvironment,
-    EngineOperation as AgentOperation,
+    AgentOperation,
 )
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
