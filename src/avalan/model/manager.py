@@ -19,6 +19,7 @@ from ..entities import (
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..model.nlp.text.generation import TextGenerationModel
+from ..model.nlp.text.mlxlm import MlxLmModel
 from ..model.nlp.question import QuestionAnsweringModel
 from ..model.nlp.sequence import (
     SequenceClassificationModel,
@@ -205,7 +206,8 @@ class ModelManager(ContextDecorator):
             case Modality.TEXT_GENERATION:
                 assert operation.input and operation.parameters["text"]
 
-                if engine_uri.is_local:
+                is_mlx = isinstance(model, MlxLmModel)
+                if engine_uri.is_local and not is_mlx:
                     result = await model(
                         operation.input,
                         system_prompt=operation.parameters[

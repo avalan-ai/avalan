@@ -1,4 +1,5 @@
 from ...vendor import TextGenerationVendorStream
+from ....model.response.text import TextGenerationResponse
 from .generation import TextGenerationModel
 from ....compat import override
 from ....entities import (
@@ -12,6 +13,7 @@ from dataclasses import replace
 from logging import Logger
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
+from torch import Tensor
 from typing import AsyncGenerator, Callable, Literal
 
 
@@ -56,10 +58,15 @@ class MlxLmModel(TextGenerationModel):
 
     async def _stream_generator(
         self,
-        prompt: str,
+        inputs: dict[str, Tensor] | Tensor,
         settings: GenerationSettings,
+        skip_special_tokens: bool,
     ) -> AsyncGenerator[str, None]:
-        sampler = MlxLmModel._build_sampler(settings)
+        sampler, prompt = self._get_sampler_and_prompt(
+            inputs,
+            settings,
+            skip_special_tokens
+        )
         iterator = stream_generate(
             self._model,
             self._tokenizer,
@@ -73,10 +80,15 @@ class MlxLmModel(TextGenerationModel):
 
     def _string_output(
         self,
-        prompt: str,
+        inputs: dict[str, Tensor] | Tensor,
         settings: GenerationSettings,
+        skip_special_tokens: bool,
     ) -> str:
-        sampler = MlxLmModel._build_sampler(settings)
+        sampler, prompt = self._get_sampler_and_prompt(
+            inputs,
+            settings,
+            skip_special_tokens
+        )
         return generate(
             self._model,
             self._tokenizer,
@@ -92,9 +104,10 @@ class MlxLmModel(TextGenerationModel):
         system_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        skip_special_tokens: bool = False,
         tensor_format: Literal["pt"] = "pt",
         tool: ToolManager | None = None,
-    ) -> TextGenerationVendorStream | str:
+    ) -> TextGenerationResponse:
         settings = settings or GenerationSettings()
         inputs = super()._tokenize_input(
             input,
@@ -104,20 +117,36 @@ class MlxLmModel(TextGenerationModel):
             tool=tool,
             chat_template_settings=settings.chat_template_settings,
         )
-        prompt = self._tokenizer.decode(
-            inputs["input_ids"][0],
-            skip_special_tokens=False,
-        )
         generation_settings = replace(settings, do_sample=False)
-        if settings.use_async_generator:
-            return self._stream_generator(prompt, generation_settings)
-        return self._string_output(prompt, generation_settings)
+        output_fn = self._stream_generator if settings.use_async_generator else self._string_output
 
-    @staticmethod
-    def _build_sampler(settings: GenerationSettings) -> Callable:
+        return TextGenerationResponse(
+            output_fn,
+            inputs=inputs,
+            settings=generation_settings,
+            skip_special_tokens=skip_special_tokens,
+            use_async_generator=settings.use_async_generator,
+        )
+
+    def _get_sampler_and_prompt(
+        self,
+        inputs: dict[str, Tensor] | Tensor,
+        settings: GenerationSettings,
+        skip_special_tokens: bool
+    ) -> tuple[Callable, str]:
         sampler_settings = {
             "temp": settings.temperature,
             "top_p": settings.top_p,
             "top_k": settings.top_k,
         }
-        return make_sampler(**sampler_settings)
+        sampler_settings = {
+            k: v
+            for k, v in sampler_settings.items()
+            if v is not None
+        }
+        sampler = make_sampler(**sampler_settings)
+        prompt = self._tokenizer.decode(
+            inputs["input_ids"][0],
+            skip_special_tokens=skip_special_tokens,
+        )
+        return sampler, prompt
