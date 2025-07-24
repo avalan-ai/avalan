@@ -54,11 +54,13 @@ class ModelManagerExtraTestCase(TestCase):
                 quiet=True,
                 attention="sd",
                 trust_remote_code=True,
+                backend="mlxlm",
             )
         args = get_mock.call_args.args[1]
         self.assertTrue(args["disable_loading_progress_bar"])
         self.assertEqual(args["base_url"], "url")
         self.assertEqual(args["attention"], "sd")
+        self.assertEqual(args["backend"], "mlxlm")
         self.assertTrue(args["trust_remote_code"])
         load_mock.assert_called_once_with(
             uri, get_mock.return_value, Modality.TEXT_GENERATION

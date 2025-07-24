@@ -43,6 +43,7 @@ async def tokenize(
             disable_loading_progress_bar=args.disable_loading_progress_bar,
             low_cpu_mem_usage=args.low_cpu_mem_usage,
             loader_class=args.loader_class,
+            backend=args.backend,
             weight_type=args.weight_type,
         ),
         logger=logger,

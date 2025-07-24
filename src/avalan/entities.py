@@ -21,6 +21,13 @@ ImageTextGenerationLoaderClass = Literal["gemma3", "qwen2"]
 
 TextGenerationLoaderClass = Literal["auto", "gemma3", "mistral3"]
 
+
+class Backend(StrEnum):
+    TRANSFORMERS = "transformers"
+    MLXLM = "mlxlm"
+    VLLM = "vllm"
+
+
 ToolValue = bool | float | int | str | None
 
 Vendor = Literal[
@@ -770,6 +777,7 @@ class TextPartition:
 @dataclass(frozen=True, kw_only=True)
 class TransformerEngineSettings(EngineSettings):
     attention: AttentionImplementation | None = None
+    backend: Backend = Backend.TRANSFORMERS
     loader_class: TextGenerationLoaderClass | None = "auto"
     local_files_only: bool = False
     low_cpu_mem_usage: bool = False

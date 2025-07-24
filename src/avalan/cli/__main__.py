@@ -38,6 +38,7 @@ from ..entities import (
     BetaSchedule,
     TimestepSpacing,
     TextGenerationLoaderClass,
+    Backend,
     User,
     WeightType,
 )
@@ -201,6 +202,13 @@ class CLI:
             default="auto",
             choices=get_args(TextGenerationLoaderClass),
             help='Loader class to use (defaults to "auto")',
+        )
+        global_parser.add_argument(
+            "--backend",
+            type=str,
+            default=Backend.TRANSFORMERS.value,
+            choices=[b.value for b in Backend],
+            help='Backend to use (defaults to "transformers")',
         )
         global_parser.add_argument(
             "--locales",

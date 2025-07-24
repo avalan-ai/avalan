@@ -31,6 +31,7 @@ def get_model_settings(
         disable_loading_progress_bar=args.disable_loading_progress_bar,
         modality=modality,
         loader_class=args.loader_class,
+        backend=args.backend,
         low_cpu_mem_usage=args.low_cpu_mem_usage,
         quiet=args.quiet,
         revision=args.revision,

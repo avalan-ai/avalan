@@ -44,8 +44,23 @@ Take a quick look at which models and modalities you can use in [Models](#models
 
 Avalan makes text, audio, and vision models available from the CLI or in your
 own code. You can run millions of open models, or call all popular vendor models. It
-works across engines such as transformers, vLLM and mlx-lm. The examples below
-show each modality in action. Use the table of contents below to jump to the
+works across engines such as transformers, vLLM and mlx-lm.
+
+> [!TIP]
+> You can choose your preferred backend using the `--backend` option. For example,
+> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
+> compared to the default `transformers` backend:
+>
+> ```bash
+> echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+>     avalan model run 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B' \
+>         --temperature 0.6 \
+>         --max-new-tokens 1024 \
+>         --start-thinking \
+>         --backend mlxlm
+> ```
+
+The following examples show each modality in action. Use the table of contents below to jump to the
 task you need:
 
 * 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
