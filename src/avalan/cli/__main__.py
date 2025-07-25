@@ -896,7 +896,7 @@ class CLI:
         memory_doc_index_parser.add_argument(
             "--encoding",
             type=str,
-            default="utf-8",
+            default="utf8",
             help="File encoding used when reading a local file",
         )
         memory_doc_index_parser.add_argument(
