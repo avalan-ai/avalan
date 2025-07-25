@@ -11,8 +11,8 @@ license = { text = "MIT" }
 authors = [
   { name = "The Avalan Team", email = "avalan@avalan.ai" },
 ]
-# the upper 3.14 python version limit is because of RestrictedPython
-# @see https://github.com/zopefoundation/RestrictedPython/issues/298
+# the upper 3.12 python version limit is because of vllm
+# @see https://github.com/vllm-project/vllm/issues/12083
 requires-python = ">=3.10,<=3.12"
 dependencies = [
   "packaging (==25.0)",
