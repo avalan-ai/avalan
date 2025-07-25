@@ -32,7 +32,7 @@ from avalan.memory.permanent import Memory, MemoryType
 from avalan.memory.partitioner.text import TextPartition
 
 from avalan.cli.theme.fancy import FancyTheme
-from avalan.event import Event, EventType
+from avalan.event import Event, EventStats, EventType
 
 
 class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
@@ -108,6 +108,94 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             _, frame = await gen.__anext__()
         self.assertEqual(len(frame.renderables), 2)
         self.assertIn("tool", frame.renderables[0].renderable)
+
+    async def test_progress_title_pluralization_singular(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        es = EventStats()
+        es.triggers = {
+            EventType.TOOL_EXECUTE: 1,
+            EventType.TOOL_RESULT: 1,
+        }
+        es.total_triggers = 1
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                thinking_text_tokens=[],
+                tool_text_tokens=[],
+                answer_text_tokens=["a"],
+                tokens=None,
+                input_token_count=1,
+                total_tokens=1,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                elapsed=1.0,
+                console_width=80,
+                logger=MagicMock(),
+                event_stats=es,
+            )
+            _, frame = await gen.__anext__()
+        subtitle = frame.renderables[0].subtitle
+        self.assertIn("1 token in", subtitle)
+        self.assertIn("1 token out", subtitle)
+        self.assertIn("1 event", subtitle)
+        self.assertIn("1 tool call", subtitle)
+        self.assertIn("1 result", subtitle)
+
+    async def test_progress_title_pluralization_plural(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        es = EventStats()
+        es.triggers = {
+            EventType.TOOL_EXECUTE: 2,
+            EventType.TOOL_RESULT: 2,
+        }
+        es.total_triggers = 2
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                thinking_text_tokens=[],
+                tool_text_tokens=[],
+                answer_text_tokens=["a"],
+                tokens=None,
+                input_token_count=2,
+                total_tokens=2,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=0.0,
+                elapsed=1.0,
+                console_width=80,
+                logger=MagicMock(),
+                event_stats=es,
+            )
+            _, frame = await gen.__anext__()
+        subtitle = frame.renderables[0].subtitle
+        self.assertIn("2 tokens in", subtitle)
+        self.assertIn("2 tokens out", subtitle)
+        self.assertIn("2 events", subtitle)
+        self.assertIn("2 tool calls", subtitle)
+        self.assertIn("2 results", subtitle)
 
 
 class FancyThemeTestCase(IsolatedAsyncioTestCase):
