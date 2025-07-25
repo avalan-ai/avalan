@@ -1733,15 +1733,19 @@ class FancyTheme(Theme):
                 [
                     _f(
                         "input_token_count",
-                        _("{total_tokens} tokens in").format(
-                            total_tokens=input_token_count
-                        ),
+                        _n(
+                            "{total_tokens} token in",
+                            "{total_tokens} tokens in",
+                            input_token_count,
+                        ).format(total_tokens=input_token_count),
                     ),
                     _f(
                         "total_tokens",
-                        _("{total_tokens} token out").format(
-                            total_tokens=total_tokens
-                        ),
+                        _n(
+                            "{total_tokens} token out",
+                            "{total_tokens} tokens out",
+                            total_tokens,
+                        ).format(total_tokens=total_tokens),
                     ),
                     (
                         _f(
@@ -1768,9 +1772,11 @@ class FancyTheme(Theme):
                     (
                         _f(
                             "events",
-                            _("{total} events").format(
-                                total=event_stats.total_triggers
-                            ),
+                            _n(
+                                "{total} event",
+                                "{total} events",
+                                event_stats.total_triggers,
+                            ).format(total=event_stats.total_triggers),
                         )
                         if event_stats
                         else None
@@ -1778,7 +1784,11 @@ class FancyTheme(Theme):
                     (
                         _f(
                             "tool_calls",
-                            _("{total} tool calls").format(
+                            _n(
+                                "{total} tool call",
+                                "{total} tool calls",
+                                event_stats.triggers[EventType.TOOL_EXECUTE],
+                            ).format(
                                 total=event_stats.triggers[
                                     EventType.TOOL_EXECUTE
                                 ]
@@ -1792,7 +1802,11 @@ class FancyTheme(Theme):
                     (
                         _f(
                             "tool_call_results",
-                            _("{total} results").format(
+                            _n(
+                                "{total} result",
+                                "{total} results",
+                                event_stats.triggers[EventType.TOOL_RESULT],
+                            ).format(
                                 total=event_stats.triggers[
                                     EventType.TOOL_RESULT
                                 ]
