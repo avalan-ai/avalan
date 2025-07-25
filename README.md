@@ -42,14 +42,14 @@ Take a quick look at how to setup avalan in [Install](#install), which models an
 
 ## Models
 
-Avalan makes text, audio, and vision models available from the CLI or in your
-own code. You can run millions of open models, or call all popular vendor models. It
-works across engines such as transformers, vLLM and mlx-lm.
+Avalan provides text, audio and vision models that you can access from the CLI
+or your own code. Run millions of [open models](#open-models) or call any
+[vendor model](#vendor-models).
 
-### Working with vendor models
+### Vendor models
 
-You can use all popular vendor models using [engine URIs](docs/ai_uri.md). The
-example below uses OpenAI's GPT-4o:
+Avalan supports all popular vendor models through
+[engine URIs](docs/ai_uri.md). The example below uses OpenAI's GPT-4o:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
@@ -61,12 +61,13 @@ echo "Who are you, and who is Leo Messi?" \
         --top-k 20
 ```
 
-### Finding and installing models
+### Open models
 
-You can look for models with `avalan model search`, and search for terms with
-`--search` as well as filter with `--filter`. Let's look for up to three
-text generation models that can run with the `mlxlm` backend and which name
-matches the term `DeepSeek-R1` and the author is the MLX community:
+Open models run across engines such as transformers, vLLM and mlx-lm.
+Search through millions of them with `avalan model search` using different
+filters. The following command looks for up to three text-generation models that
+run with the `mlxlm` backend, match the term `DeepSeek-R1`, and were published by
+the MLX community:
 
 ```bash
 avalan model search --name DeepSeek-R1 \
@@ -74,16 +75,9 @@ avalan model search --name DeepSeek-R1 \
     --task text-generation \
     --author "mlx-community" \
     --limit 3
-```
+``
 
-> [!TIP]
-> You can choose your preferred backend using the `--backend` option. For example,
-> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
-> compared to the default `transformers` backend. On devices with access to
-> Nvidia GPUs, models that run on the backend `vllm` are also orders of
-> magnitude faster.
-
-We get the following three models matching our search:
+The command returns three matching models:
 
 ```text
 ┌───── 📛 mlx-community/DeepSeek-R1-Distill-Qwen-14B 🧮 N/A params ─────┐
@@ -100,13 +94,13 @@ We get the following three models matching our search:
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Let's install the first one:
+Install the first model:
 
 ```bash
 avalan model install mlx-community/DeepSeek-R1-Distill-Qwen-14B
 ```
 
-It's now ready to be used:
+The model is now ready to use:
 
 ```text
 ┌──── 📛 mlx-community/DeepSeek-R1-Distill-Qwen-14B 🧮 14.8B params ────┐
@@ -122,7 +116,14 @@ It's now ready to be used:
 Distill-Qwen-14B/snapshots/68570f64bcc30966595926e3b7d200a9d77fb1e8
 ```
 
-Let's test the model we just installed, specifying `mlxlm` as the backend:
+Test the model we just installed, specifying `mlxlm` as the backend:
+
+> [!TIP]
+> You can choose your preferred backend using the `--backend` option. For example,
+> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
+> compared to the default `transformers` backend. On devices with access to
+> Nvidia GPUs, models that run on the backend `vllm` are also orders of
+> magnitude faster.
 
 ```bash
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
@@ -133,7 +134,7 @@ echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
         --backend mlxlm
 ```
 
-We get the model reasoning and it's correct final answer:
+The output shows the reasoning and the correct final answer:
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -1245,13 +1246,13 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 
 # Install
 
-On macOS you can install avalan with Homebrew:
+On macOS, install avalan with Homebrew:
 
 ```bash
 brew tap avalan-ai/avalan
 ```
 
-On other environments, use [poetry](https://python-poetry.org/) to install
+In other environments, use [Poetry](https://python-poetry.org/) to install
 avalan with the `all` extra:
 
 ```bash
@@ -1259,33 +1260,31 @@ poetry install avalan --extras all
 ```
 
 > [!TIP]
-> If you are running with access to Nvidia GPUS, add the `nvidia` extra
-> to benefit from the `vllm` backend and quantized models:
+> If you have access to Nvidia GPUs, add the `nvidia` extra to benefit from the
+> `vllm` backend and quantized models:
 >
 > ```bash
 > poetry install avalan --extras all --extras nvidia
 > ```
 
 > [!TIP]
-> If you are running on Silicon Macs, add the `apple` extra
-> to benefit from the `mlxlm` backend:
+> If you are running on Apple Silicon Macs, add the `apple` extra to benefit
+> from the `mlxlm` backend:
 >
 > ```bash
 > poetry install avalan --extras all --extras apple
 > ```
 
 > [!TIP]
-> On macOS, sentencepiece may have issues during installation. If so,
-> ensure Xcode CLI is installed, and install needed Homebrew packages
-> with:
+> On macOS, sentencepiece may fail to build. Ensure the Xcode CLI is installed
+> and install the required Homebrew packages:
 >
 > `xcode-select --install`
 > `brew install cmake pkg-config protobuf sentencepiece`
 
 > [!TIP]
-> If you are going to be using transformer loading classes that haven't yet
-> made it into a transformers package released version, install transformers
-> development edition:
+> If you need transformer loading classes that are not yet released, install
+> the development version of transformers:
 > `poetry install git+https://github.com/huggingface/transformers --no-cache`
 
 
