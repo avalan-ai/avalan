@@ -17,10 +17,10 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
   "packaging (==25.0)",
   "humanize (==4.12.3)",
-  "rich (==14.0.0)",
+  "rich (==14.1.0)",
   "torch (==2.7.1)",
-  "transformers (==4.53.1)",
-  "pandas (==2.3.0)"
+  "transformers (==4.53.3)",
+  "pandas (==2.3.1)"
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
