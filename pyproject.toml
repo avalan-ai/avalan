@@ -84,7 +84,7 @@ test = [
   "litellm==1.74.8",
   "markitdown[pdf]==0.1.2",
   "markdownify==1.1.0",
-  "mlx-lm==0.25.3",
+  "mlx-lm==0.26.0",
   "mcp==1.12.2",
   "pgvector==0.4.1",
   "pillow==11.3.0",
