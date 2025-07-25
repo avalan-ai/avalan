@@ -43,10 +43,9 @@ Take a quick look at how to setup avalan in [Install](#install), which models an
 ## Models
 
 Avalan makes text, audio, and vision models available from the CLI or in your
-own code. You can run millions of open models, or call all popular vendor models. It
-works across engines such as transformers, vLLM and mlx-lm.
+own code. You can run millions of [open models](#open-models), or call all popular [vendor models](#vendor-models). 
 
-### Working with vendor models
+### Vendor models
 
 You can use all popular vendor models using [engine URIs](docs/ai_uri.md). The
 example below uses OpenAI's GPT-4o:
@@ -61,10 +60,11 @@ echo "Who are you, and who is Leo Messi?" \
         --top-k 20
 ```
 
-### Finding and installing models
+### Open models
 
-You can look for models with `avalan model search`, and search for terms with
-`--search` as well as filter with `--filter`. Let's look for up to three
+Open models work across engines such as transformers, vLLM and mlx-lm.
+You can look among millions of open models with `avalan model search`, and search 
+using different filters. Let's look for up to three
 text generation models that can run with the `mlxlm` backend and which name
 matches the term `DeepSeek-R1` and the author is the MLX community:
 
@@ -74,14 +74,7 @@ avalan model search --name DeepSeek-R1 \
     --task text-generation \
     --author "mlx-community" \
     --limit 3
-```
-
-> [!TIP]
-> You can choose your preferred backend using the `--backend` option. For example,
-> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
-> compared to the default `transformers` backend. On devices with access to
-> Nvidia GPUs, models that run on the backend `vllm` are also orders of
-> magnitude faster.
+``
 
 We get the following three models matching our search:
 
@@ -123,6 +116,13 @@ Distill-Qwen-14B/snapshots/68570f64bcc30966595926e3b7d200a9d77fb1e8
 ```
 
 Let's test the model we just installed, specifying `mlxlm` as the backend:
+
+> [!TIP]
+> You can choose your preferred backend using the `--backend` option. For example,
+> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
+> compared to the default `transformers` backend. On devices with access to
+> Nvidia GPUs, models that run on the backend `vllm` are also orders of
+> magnitude faster.
 
 ```bash
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
