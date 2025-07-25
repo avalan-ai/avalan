@@ -1739,7 +1739,7 @@ class FancyTheme(Theme):
                     ),
                     _f(
                         "total_tokens",
-                        _("{total_tokens} token out").format(
+                        _("{total_tokens} tokens out").format(
                             total_tokens=total_tokens
                         ),
                     ),
