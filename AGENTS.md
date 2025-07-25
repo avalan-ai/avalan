@@ -57,9 +57,7 @@ make lint
 
 ## Testing and coverage
 
-When adding or modifying code make sure you add unit tests for it, aiming for full coverag, so test varying parameter values and include negative testing.
-
-When you add or modify tests, always do your best to reach full coverage, particularly if coverage is mentioned on the task request.
+When adding or modifying code make sure you add unit tests for it, aiming to maintain **100% test coverage**, so test varying parameter values, and include negative testing.
 
 To get information about test coverage, use the `test-coverage` target from the `Makefile`. If you run it without arguments, like so:
 
