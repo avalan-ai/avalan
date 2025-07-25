@@ -2,6 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import ReasoningSettings, ReasoningToken
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model import ReasoningTokenLimitExceeded
 
 
 class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
@@ -22,3 +23,14 @@ class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(outputs[4].token, "</think>")
         self.assertEqual(outputs[5], "d")
         self.assertFalse(parser.is_thinking)
+
+    async def test_token_limit_raises_when_stop_enabled(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(
+                max_new_tokens=1, stop_on_max_new_tokens=True
+            )
+        )
+        await parser.push("<think>")
+        await parser.push("a")
+        with self.assertRaises(ReasoningTokenLimitExceeded):
+            await parser.push("b")

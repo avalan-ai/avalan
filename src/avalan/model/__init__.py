@@ -35,3 +35,7 @@ class TokenizerAlreadyLoadedException(Exception):
 
 class TokenizerNotSupportedException(Exception):
     pass
+
+
+class ReasoningTokenLimitExceeded(Exception):
+    """Raised when reasoning token limit is exceeded."""

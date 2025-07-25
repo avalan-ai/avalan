@@ -86,3 +86,27 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
             2,
         )
         self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 1)
+
+    async def test_reasoning_limit_stop_iteration(self):
+        async def gen():
+            for t in ("<think>", "a", "b"):
+                yield t
+
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(
+                max_new_tokens=2, stop_on_max_new_tokens=True
+            )
+        )
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        tokens: list[object] = []
+        async for t in resp:
+            tokens.append(t)
+
+        self.assertEqual(len(tokens), 2)
+        self.assertTrue(all(isinstance(t, ReasoningToken) for t in tokens))

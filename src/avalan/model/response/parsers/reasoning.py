@@ -1,4 +1,5 @@
 from ....entities import ReasoningSettings, ReasoningToken
+from ... import ReasoningTokenLimitExceeded
 from typing import Any, Iterable
 
 
@@ -46,6 +47,8 @@ class ReasoningParser:
             ):
                 self._token_count += 1
                 return [ReasoningToken(token_str)]
+            if self._settings.stop_on_max_new_tokens:
+                raise ReasoningTokenLimitExceeded
             return [token_str]
         return [token_str]
 

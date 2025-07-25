@@ -7,6 +7,7 @@ from ...entities import (
     ToolCallToken,
 )
 from .parsers.reasoning import ReasoningParser
+from .. import ReasoningTokenLimitExceeded
 from io import StringIO
 from queue import Queue
 from inspect import iscoroutine
@@ -124,7 +125,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         if not self._reasoning_parser:
             return token
 
-        items = await self._reasoning_parser.push(token_str)
+        try:
+            items = await self._reasoning_parser.push(token_str)
+        except ReasoningTokenLimitExceeded:
+            await self._trigger_consumed()
+            raise StopAsyncIteration
         for it in items:
             if isinstance(it, ReasoningToken):
                 token_id = (
