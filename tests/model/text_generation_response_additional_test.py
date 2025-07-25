@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from unittest import IsolatedAsyncioTestCase
 from avalan.model.response.text import TextGenerationResponse
+from avalan.entities import GenerationSettings, ReasoningSettings
 
 
 @dataclass
@@ -10,9 +11,12 @@ class Example:
 
 class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
     async def test_to_entity(self):
+        settings = GenerationSettings()
         resp = TextGenerationResponse(
-            lambda: '{"value": "ok"}',
+            lambda **_: '{"value": "ok"}',
             use_async_generator=False,
+            generation_settings=settings,
+            settings=settings,
         )
         result = await resp.to(Example)
         self.assertEqual(result, Example(value="ok"))
@@ -22,10 +26,12 @@ class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
             for t in ("<think>", "a", "</think>"):
                 yield t
 
+        gs = GenerationSettings(reasoning=ReasoningSettings(enabled=False))
         resp = TextGenerationResponse(
-            lambda: gen(),
+            lambda **_: gen(),
             use_async_generator=True,
-            enable_reasoning_parser=False,
+            generation_settings=gs,
+            settings=gs,
         )
 
         tokens = []

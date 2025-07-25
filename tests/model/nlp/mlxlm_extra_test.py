@@ -89,7 +89,7 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
         stream_mock.assert_not_called()
         self.assertIsInstance(resp, TextGenerationResponse)
         self.assertIs(resp._output_fn, stream_mock)
-        self.assertEqual(resp._kwargs["inputs"], {"input_ids": [[1]]})
+        self.assertEqual(resp.input_token_count, 1)
         self.assertFalse(resp._kwargs["settings"].do_sample)
         self.assertTrue(resp._use_async_generator)
 
@@ -242,7 +242,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         str_mock.assert_not_called()
         self.assertIsInstance(resp, TextGenerationResponse)
         self.assertIs(resp._output_fn, str_mock)
-        self.assertEqual(resp._kwargs["inputs"], {"input_ids": [[1]]})
+        self.assertEqual(resp.input_token_count, 1)
         self.assertFalse(resp._kwargs["settings"].do_sample)
         self.assertFalse(resp._use_async_generator)
 

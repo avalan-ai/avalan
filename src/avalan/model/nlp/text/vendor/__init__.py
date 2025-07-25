@@ -94,8 +94,10 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
             tool=tool,
             use_async_generator=settings.use_async_generator,
         )
+        gen_settings = settings or GenerationSettings()
         return TextGenerationResponse(
             streamer,
-            settings=settings or GenerationSettings(),
-            use_async_generator=settings.use_async_generator,
+            generation_settings=gen_settings,
+            settings=gen_settings,
+            use_async_generator=gen_settings.use_async_generator,
         )

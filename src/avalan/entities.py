@@ -224,6 +224,12 @@ class EngineUri:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ReasoningSettings:
+    max_new_tokens: int | None = None
+    enabled: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
 class GenerationSettings:
     # Generation length ------------------------------------------------------
     # The minimum numbers of tokens to generate, ignoring the number of tokens
@@ -353,6 +359,7 @@ class GenerationSettings:
             "return_dict": True,
         }
     )
+    reasoning: ReasoningSettings = field(default_factory=ReasoningSettings)
 
 
 @dataclass(frozen=True, kw_only=True)

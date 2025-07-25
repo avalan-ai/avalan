@@ -2,6 +2,7 @@ from ..entities import (
     AttentionImplementation,
     EngineUri,
     GenerationSettings,
+    ReasoningSettings,
     Input,
     Modality,
     Operation,
@@ -488,6 +489,10 @@ class ModelManager(ContextDecorator):
             top_k=args.top_k,
             top_p=args.top_p,
             use_cache=args.use_cache,
+            reasoning=ReasoningSettings(
+                max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
+                enabled=not getattr(args, "no_reasoning", False),
+            ),
         )
         system_prompt = args.system or None
 
