@@ -1,6 +1,6 @@
 from typing import Literal
 
-Encoding = Literal["utf-8"]
+Encoding = Literal["utf8"]
 
 
 class PartitionerException(BaseException):

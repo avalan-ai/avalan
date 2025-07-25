@@ -17,7 +17,7 @@ class CodePartitionerTestCase(TestCase):
                 "python",
                 "ai.avalan.tests.memory.partitioner",
                 256,
-                "utf-8",
+                "utf8",
                 """
 #!shebang
 # License blah blah (Apache 2.0)
@@ -251,7 +251,7 @@ c = 3
         partitioner = CodePartitioner(logger=logger_mock)
 
         with self.assertRaises(PartitionerException) as cm:
-            partitioner.partition("python", "def foo(", "utf-8", 32)
+            partitioner.partition("python", "def foo(", "utf8", 32)
 
         self.assertEqual(str(cm.exception), 'ERROR: "def foo(" at 0,0')
 
@@ -260,12 +260,12 @@ c = 3
         partitioner = CodePartitioner(logger=logger_mock)
 
         first_partitions, _ = partitioner.partition(
-            "python", "a = 1\n", "utf-8", 32
+            "python", "a = 1\n", "utf8", 32
         )
         parser_first = partitioner._parsers["python"][0]
 
         second_partitions, _ = partitioner.partition(
-            "python", "b = 2\n", "utf-8", 32
+            "python", "b = 2\n", "utf8", 32
         )
 
         self.assertIs(partitioner._parsers["python"][0], parser_first)
