@@ -11,9 +11,9 @@ license = { text = "MIT" }
 authors = [
   { name = "The Avalan Team", email = "avalan@avalan.ai" },
 ]
-# the upper 3.12 python version limit is because of vllm
+# the upper 3.13 python version limit is because of vllm
 # @see https://github.com/vllm-project/vllm/issues/12083
-requires-python = ">=3.10,<=3.12"
+requires-python = ">=3.10,<3.13"
 dependencies = [
   "packaging (==25.0)",
   "humanize (==4.12.3)",
