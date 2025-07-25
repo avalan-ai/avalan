@@ -123,7 +123,8 @@ translation = [
 vendors = [
   "anthropic==0.59.0",
   "google-genai==1.27.0",
-  "openai==1.97.1",
+  # version limited because of vllm
+  "openai==1.90.0",
   "litellm==1.74.8",
   "pillow==11.3.0",
   "tiktoken==0.9.0",
@@ -162,7 +163,8 @@ all = [
   "markitdown[pdf]==0.1.2",
   "markdownify==1.1.0",
   "mcp==1.12.2",
-  "openai==1.97.1",
+  # version limited because of vllm
+  "openai==1.90.0",
   "litellm==1.74.8",
   "pillow==11.3.0",
   "diffusers==0.34.0",
