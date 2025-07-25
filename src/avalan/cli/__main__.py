@@ -1369,13 +1369,61 @@ class CLI:
         model_search_parser.add_argument(
             "--search",
             type=str,
+            action="append",
             required=False,
             help="Search for models matching given expression",
         )
         model_search_parser.add_argument(
             "--filter",
             type=str,
+            action="append",
             help="Filter models on this (e.g: text-classification)",
+        )
+        model_search_parser.add_argument(
+            "--library",
+            type=str,
+            action="append",
+            help="Filter by library",
+        )
+        model_search_parser.add_argument(
+            "--author",
+            type=str,
+            help="Filter by author",
+        )
+        gated_group = model_search_parser.add_mutually_exclusive_group()
+        gated_group.add_argument(
+            "--gated",
+            action="store_true",
+            help="Only gated models",
+        )
+        gated_group.add_argument(
+            "--open",
+            action="store_true",
+            help="Only open models",
+        )
+        model_search_parser.add_argument(
+            "--language",
+            type=str,
+            action="append",
+            help="Filter by language",
+        )
+        model_search_parser.add_argument(
+            "--name",
+            type=str,
+            action="append",
+            help="Filter by model name",
+        )
+        model_search_parser.add_argument(
+            "--task",
+            type=str,
+            action="append",
+            help="Filter by task",
+        )
+        model_search_parser.add_argument(
+            "--tag",
+            type=str,
+            action="append",
+            help="Filter by tag",
         )
         model_search_parser.add_argument(
             "--limit",

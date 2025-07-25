@@ -169,9 +169,16 @@ class HuggingfaceHub:
 
     def models(
         self,
-        filter: str | None = None,
-        name: str | None = None,
-        search: str | None = None,
+        filter: str | list[str] | None = None,
+        name: str | list[str] | None = None,
+        search: str | list[str] | None = None,
+        *,
+        library: str | list[str] | None = None,
+        author: str | None = None,
+        gated: bool | None = None,
+        language: str | list[str] | None = None,
+        task: str | list[str] | None = None,
+        tags: str | list[str] | None = None,
         limit: int | None = None,
     ) -> Iterable[Model]:
         yield from (
@@ -180,6 +187,12 @@ class HuggingfaceHub:
                 model_name=name,
                 filter=filter,
                 search=search,
+                library=library,
+                author=author,
+                gated=gated,
+                language=language,
+                task=task,
+                tags=tags,
                 limit=limit,
                 full=True,
             )
