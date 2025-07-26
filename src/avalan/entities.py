@@ -227,6 +227,7 @@ class EngineUri:
 class ReasoningSettings:
     max_new_tokens: int | None = None
     enabled: bool = True
+    stop_on_max_new_tokens: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)

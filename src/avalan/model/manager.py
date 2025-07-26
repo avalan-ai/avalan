@@ -492,6 +492,11 @@ class ModelManager(ContextDecorator):
             reasoning=ReasoningSettings(
                 max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
                 enabled=not getattr(args, "no_reasoning", False),
+                stop_on_max_new_tokens=getattr(
+                    args,
+                    "reasoning_stop_on_max_new_tokens",
+                    False,
+                ),
             ),
         )
         system_prompt = args.system or None
