@@ -1042,7 +1042,7 @@ The response includes the model reasoning, and its final answer:
 Nvidia's Nemotron reasoning model solves the same problem easily and doesn't require the `--start-thinking` flag, since it automatically produces think tags. It does so more verbosely, though (**852** output tokens versus DeepSeek's **216** output tokens), since it detects ambiguity in the `and then that result` part of the prompt and ends up revisiting the essential principles of mathematics, to the point of realizing it's overthinking 🤓
 
 > [!TIP]
-> Endless reasoning rants can be stopped by using `--reasoning-max-new-tokens` and `--reasoning-stop-on-max-new-tokens`.
+> Endless reasoning rants can be stopped by setting `--reasoning-max-new-tokens` to the maximum number of reasoning tokens allowed, and adding `--reasoning-stop-on-max-new-tokens` to finish generation when that limit is reached.
 
 ```bash
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
