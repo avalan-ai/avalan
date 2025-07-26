@@ -9,6 +9,7 @@ from avalan.entities import (
     MessageRole,
     Token,
     TransformerEngineSettings,
+    GenerationSettings,
 )
 from avalan.model import TextGenerationResponse
 from unittest import IsolatedAsyncioTestCase
@@ -43,8 +44,12 @@ def _dummy_response() -> TextGenerationResponse:
         yield "a"
         yield Token(id=1, token="b")
 
+    settings = GenerationSettings()
     return TextGenerationResponse(
-        lambda: output_gen(), use_async_generator=True
+        lambda **_: output_gen(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
     )
 
 

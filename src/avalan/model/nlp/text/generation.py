@@ -170,6 +170,7 @@ class TextGenerationModel(BaseNLPModel):
         return TextGenerationResponse(
             output_fn,
             inputs=inputs,
+            generation_settings=generation_settings,
             pick=pick,
             settings=generation_settings,
             stopping_criterias=stopping_criterias,

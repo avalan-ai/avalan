@@ -17,7 +17,12 @@ from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallParser
-from avalan.entities import ReasoningToken, ToolCallToken
+from avalan.entities import (
+    ReasoningToken,
+    ToolCallToken,
+    GenerationSettings,
+    ReasoningSettings,
+)
 
 from unittest import IsolatedAsyncioTestCase
 from dataclasses import dataclass
@@ -56,15 +61,21 @@ def _dummy_response(async_gen=True):
         yield "a"
         yield Token(id=5, token="b")
 
-    def output_fn():
+    def output_fn(**_):
         return output_gen()
 
-    return TextGenerationResponse(output_fn, use_async_generator=async_gen)
+    settings = GenerationSettings()
+    return TextGenerationResponse(
+        output_fn,
+        use_async_generator=async_gen,
+        generation_settings=settings,
+        settings=settings,
+    )
 
 
 def _complex_response():
     async def gen():
-        rp = ReasoningParser()
+        rp = ReasoningParser(reasoning_settings=ReasoningSettings())
         tm = MagicMock()
         tm.is_potential_tool_call.return_value = True
         tm.get_calls.return_value = None
@@ -108,7 +119,13 @@ def _complex_response():
                     else:
                         yield p
 
-    return TextGenerationResponse(lambda: gen(), use_async_generator=True)
+    settings = GenerationSettings()
+    return TextGenerationResponse(
+        lambda **_: gen(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
+    )
 
 
 class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
@@ -176,6 +193,8 @@ def _string_response(text: str, *, async_gen: bool = False, inputs=None):
         output_fn,
         use_async_generator=async_gen,
         inputs=inputs or {"input_ids": [[1, 2, 3]]},
+        generation_settings=GenerationSettings(),
+        settings=GenerationSettings(),
     )
 
 
@@ -237,8 +256,12 @@ class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
             yield "h"
             yield "i"
 
+        settings = GenerationSettings()
         response = TextGenerationResponse(
-            lambda: gen(), use_async_generator=True
+            lambda **_: gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
         )
 
         resp = OrchestratorResponse(
@@ -267,8 +290,12 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             yield "o"
             yield "k"
 
+        settings = GenerationSettings()
         response = TextGenerationResponse(
-            lambda: gen(), use_async_generator=True
+            lambda **_: gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
         )
 
         TextGenerationResponse._buffer = StringIO()
@@ -298,8 +325,12 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             yield "l"
             yield "l"
 
+        settings = GenerationSettings()
         outer_response = TextGenerationResponse(
-            lambda: outer_gen(), use_async_generator=True
+            lambda **_: outer_gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
         )
 
         tool = AsyncMock(spec=ToolManager)
@@ -324,8 +355,12 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         async def inner_gen():
             yield "r"
 
+        inner_settings = GenerationSettings()
         inner_response = TextGenerationResponse(
-            lambda: inner_gen(), use_async_generator=True
+            lambda **_: inner_gen(),
+            use_async_generator=True,
+            generation_settings=inner_settings,
+            settings=inner_settings,
         )
         agent.return_value = inner_response
 

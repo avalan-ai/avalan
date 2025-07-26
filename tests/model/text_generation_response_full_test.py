@@ -1,4 +1,5 @@
 from avalan.model.response.text import TextGenerationResponse
+from avalan.entities import GenerationSettings, ReasoningSettings
 from unittest import IsolatedAsyncioTestCase
 
 
@@ -8,7 +9,13 @@ async def _gen():
 
 class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_parser_queue_precedence(self):
-        resp = TextGenerationResponse(lambda: _gen(), use_async_generator=True)
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: _gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
         resp.__aiter__()
         resp._parser_queue.put("x")
         first = await resp.__anext__()
@@ -17,7 +24,13 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(second, "a")
 
     async def test_set_thinking_and_properties(self):
-        resp = TextGenerationResponse(lambda: _gen(), use_async_generator=True)
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: _gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
         self.assertTrue(resp.can_think)
         self.assertFalse(resp.is_thinking)
         resp.set_thinking(True)
@@ -29,10 +42,12 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         async def gen():
             yield "b"
 
+        gs = GenerationSettings(reasoning=ReasoningSettings(enabled=False))
         resp = TextGenerationResponse(
-            lambda: gen(),
+            lambda **_: gen(),
             use_async_generator=True,
-            enable_reasoning_parser=False,
+            generation_settings=gs,
+            settings=gs,
         )
         it = resp.__aiter__()
         token = await it.__anext__()

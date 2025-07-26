@@ -1,4 +1,5 @@
 from avalan.model.response.text import TextGenerationResponse
+from avalan.entities import GenerationSettings
 from avalan.model.stream import TextGenerationStream
 from avalan.model.vendor import (
     TextGenerationVendor,
@@ -25,6 +26,8 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
             lambda **_: gen(),
             use_async_generator=True,
             inputs={"input_ids": [[1, 2, 3]]},
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
         )
         resp.add_done_callback(done)
 
@@ -37,14 +40,18 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
 
     async def test_to_json_valid_and_invalid(self):
         resp = TextGenerationResponse(
-            lambda: 'prefix ```json\n{"a": 1}\n``` suffix',
+            lambda **_: 'prefix ```json\n{"a": 1}\n``` suffix',
             use_async_generator=False,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
         )
         self.assertEqual(await resp.to_json(), '{"a": 1}')
 
         invalid = TextGenerationResponse(
-            lambda: '```json {"a": } ```',
+            lambda **_: '```json {"a": } ```',
             use_async_generator=False,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
         )
         with self.assertRaises(InvalidJsonResponseException):
             await invalid.to_json()

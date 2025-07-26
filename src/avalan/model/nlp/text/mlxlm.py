@@ -123,6 +123,7 @@ class MlxLmModel(TextGenerationModel):
         return TextGenerationResponse(
             output_fn,
             inputs=inputs,
+            generation_settings=generation_settings,
             settings=generation_settings,
             skip_special_tokens=skip_special_tokens,
             use_async_generator=settings.use_async_generator,

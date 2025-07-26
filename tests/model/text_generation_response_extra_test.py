@@ -1,13 +1,20 @@
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallParser
-from avalan.entities import ReasoningToken, ToolCallToken, Token, TokenDetail
+from avalan.entities import (
+    GenerationSettings,
+    ReasoningSettings,
+    ReasoningToken,
+    ToolCallToken,
+    Token,
+    TokenDetail,
+)
 from unittest.mock import MagicMock
 from unittest import IsolatedAsyncioTestCase
 
 
 async def _complex_generator():
-    rp = ReasoningParser()
+    rp = ReasoningParser(reasoning_settings=ReasoningSettings())
     tm = MagicMock()
     tm.is_potential_tool_call.return_value = True
     tm.get_calls.return_value = None
@@ -50,8 +57,12 @@ async def _complex_generator():
 
 class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
     async def test_mixed_tokens(self):
+        settings = GenerationSettings()
         resp = TextGenerationResponse(
-            lambda: _complex_generator(), use_async_generator=True
+            lambda **_: _complex_generator(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
         )
 
         tokens = []

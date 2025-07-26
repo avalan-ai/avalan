@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, AsyncMock, patch, call, ANY
 from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.entities import GenerationSettings, ReasoningSettings
 from avalan.model.response.parsers.tool import ToolCallParser
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
@@ -4381,7 +4382,7 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
     async def test_model_run_mixed_tokens(self):
         async def complex_generator():
-            rp = ReasoningParser()
+            rp = ReasoningParser(reasoning_settings=ReasoningSettings())
             tm = MagicMock()
             tm.is_potential_tool_call.return_value = True
             tm.get_calls.return_value = None
@@ -4427,8 +4428,12 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
                         else:
                             yield p
 
+        settings = GenerationSettings()
         response = TextGenerationResponse(
-            lambda: complex_generator(), use_async_generator=True
+            lambda **_: complex_generator(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
         )
 
         args = Namespace(

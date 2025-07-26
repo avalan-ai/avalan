@@ -1329,6 +1329,23 @@ class CLI:
             help="If specified, assume model response starts with reasoning",
         )
         model_run_parser.add_argument(
+            "--no-reasoning",
+            action="store_true",
+            default=False,
+            help="Disable reasoning parser",
+        )
+        model_run_parser.add_argument(
+            "--reasoning-max-new-tokens",
+            type=int,
+            help="Maximum number of reasoning tokens",
+        )
+        model_run_parser.add_argument(
+            "--reasoning-stop-on-max-new-tokens",
+            action="store_true",
+            default=False,
+            help="Stop reasoning when maximum tokens are produced",
+        )
+        model_run_parser.add_argument(
             "--stop_on_keyword",
             type=str,
             action="append",

@@ -1,11 +1,12 @@
 from . import InvalidJsonResponseException
 from ...entities import (
+    GenerationSettings,
     ReasoningToken,
     Token,
     TokenDetail,
     ToolCallToken,
 )
-from .parsers.reasoning import ReasoningParser
+from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
 from io import StringIO
 from queue import Queue
 from inspect import iscoroutine
@@ -45,23 +46,28 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         output_fn: OutputFunction,
         *args,
         use_async_generator: bool,
-        enable_reasoning_parser: bool = True,
+        inputs: dict | None = None,
+        generation_settings: GenerationSettings | None = None,
         **kwargs,
     ):
         self._args = args
         self._kwargs = kwargs
         self._output_fn = output_fn
         self._use_async_generator = use_async_generator
-        self._parser_queue = Queue()
-        self._reasoning_parser = (
-            ReasoningParser() if enable_reasoning_parser else None
-        )
+        self._generation_settings = generation_settings
+        if generation_settings and generation_settings.reasoning.enabled:
+            self._parser_queue = Queue()
+            self._reasoning_parser = ReasoningParser(
+                reasoning_settings=generation_settings.reasoning
+            )
+        else:
+            self._parser_queue = None
+            self._reasoning_parser = None
 
-        if "inputs" in self._kwargs:
-            inputs = self._kwargs["inputs"]
+        if inputs is not None:
             self._input_token_count = (
                 len(inputs["input_ids"][0])
-                if inputs and "input_ids" in inputs
+                if isinstance(inputs, dict) and "input_ids" in inputs
                 else 0
             )
 
@@ -118,7 +124,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         if not self._reasoning_parser:
             return token
 
-        items = await self._reasoning_parser.push(token_str)
+        try:
+            items = await self._reasoning_parser.push(token_str)
+        except ReasoningTokenLimitExceeded:
+            await self._trigger_consumed()
+            raise StopAsyncIteration
         for it in items:
             if isinstance(it, ReasoningToken):
                 token_id = (
