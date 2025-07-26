@@ -789,6 +789,7 @@ class TransformerEngineSettings(EngineSettings):
     loader_class: TextGenerationLoaderClass | None = "auto"
     local_files_only: bool = False
     low_cpu_mem_usage: bool = False
+    output_hidden_states: bool = False
     special_tokens: list[str] | None = None
     state_dict: dict[str, Tensor] = None
     tokens: list[str] | None = None

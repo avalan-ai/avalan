@@ -88,6 +88,7 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
                         "token": None,
                         "model_kwargs": {
                             "attn_implementation": None,
+                            "output_hidden_states": False,
                             "torch_dtype": "auto",
                             "low_cpu_mem_usage": True,
                             "device_map": Engine.get_default_device(),

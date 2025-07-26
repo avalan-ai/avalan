@@ -28,12 +28,14 @@ class GetModelSettingsTestCase(unittest.TestCase):
             tokenizer_subfolder="tok_sub",
             trust_remote_code=True,
             weight_type="fp16",
+            output_hidden_states=False,
         )
 
         result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
         expected = {
             "engine_uri": engine_uri,
             "attention": "flash",
+            "output_hidden_states": False,
             "base_url": "http://localhost:9001/v1",
             "device": "cpu",
             "parallel": "colwise",

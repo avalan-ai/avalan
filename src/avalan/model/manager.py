@@ -754,6 +754,7 @@ class ModelManager(ContextDecorator):
         low_cpu_mem_usage: bool = False,
         parallel: ParallelStrategy | None = None,
         quiet: bool = False,
+        output_hidden_states: bool = False,
         base_model_id: str | None = None,
         checkpoint: str | None = None,
         refiner_model_id: str | None = None,
@@ -787,6 +788,7 @@ class ModelManager(ContextDecorator):
             tokenizer_subfolder=tokenizer_subfolder or None,
             tokens=tokens or None,
             weight_type=weight_type,
+            output_hidden_states=output_hidden_states,
         )
         if modality != Modality.EMBEDDING:
             engine_settings_args.update(

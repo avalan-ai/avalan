@@ -75,6 +75,7 @@ class SequenceToSequenceModelInstantiationTestCase(TestCase):
                 cache_dir=None,
                 subfolder="",
                 attn_implementation=None,
+                output_hidden_states=False,
                 trust_remote_code=False,
                 torch_dtype="auto",
                 state_dict=None,

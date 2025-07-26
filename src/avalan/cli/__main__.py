@@ -976,6 +976,12 @@ class CLI:
             ),
         )
         model_run_parser.add_argument(
+            "--output-hidden-states",
+            action="store_true",
+            default=False,
+            help="Return hidden states for each layer",
+        )
+        model_run_parser.add_argument(
             "--path",
             type=str,
             help=(
