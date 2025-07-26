@@ -49,6 +49,7 @@ class CliModelTestCase(TestCase):
             trust_remote_code=True,
             weight_type="fp16",
             tool_events=2,
+            output_hidden_states=False,
         )
 
         result = get_model_settings(args, self.hub, self.logger, engine_uri)
@@ -56,6 +57,7 @@ class CliModelTestCase(TestCase):
             "engine_uri": engine_uri,
             "base_url": "http://localhost:9001/v1",
             "attention": "flash",
+            "output_hidden_states": False,
             "device": "cpu",
             "parallel": None,
             "disable_loading_progress_bar": True,

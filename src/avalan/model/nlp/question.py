@@ -27,6 +27,7 @@ class QuestionAnsweringModel(BaseNLPModel):
             cache_dir=self._settings.cache_dir,
             subfolder=self._settings.subfolder or "",
             attn_implementation=self._settings.attention,
+            output_hidden_states=self._settings.output_hidden_states,
             trust_remote_code=self._settings.trust_remote_code,
             torch_dtype=Engine.weight(self._settings.weight_type),
             state_dict=self._settings.state_dict,

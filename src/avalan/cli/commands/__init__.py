@@ -27,6 +27,7 @@ def get_model_settings(
         base_url=getattr(args, "base_url", None),
         engine_uri=engine_uri,
         attention=getattr(args, "attention", None),
+        output_hidden_states=getattr(args, "output_hidden_states", False),
         device=args.device,
         disable_loading_progress_bar=args.disable_loading_progress_bar,
         modality=modality,
