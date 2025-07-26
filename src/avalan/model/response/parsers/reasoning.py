@@ -1,10 +1,9 @@
-from typing import Any, Iterable
-
 from ....entities import ReasoningSettings, ReasoningToken
+from typing import Any, Iterable
 
 
 class ReasoningTokenLimitExceeded(Exception):
-    """Raised when the reasoning token limit is reached."""
+    pass
 
 
 class ReasoningParser:
@@ -30,31 +29,35 @@ class ReasoningParser:
     def is_thinking(self) -> bool:
         return self._thinking
 
-    async def push(self, token_str: str) -> Iterable[Any]:
-        token_clean = token_str.strip()
-        if token_clean == self._start_tag:
-            self._thinking = True
+    async def push(self, token: str) -> Iterable[Any]:
+        token_clean = token.strip()
+
+        def wrap(t: str) -> list[Any]:
             self._token_count += 1
-            return [ReasoningToken(token_str)]
-        if token_clean == self._end_tag:
-            self._thinking = False
-            self._token_count += 1
-            return [ReasoningToken(token_str)]
-        if any(token_clean.startswith(p) for p in self._prefixes):
-            self._thinking = True
-            self._token_count += 1
-            return [ReasoningToken(token_str)]
+            return [ReasoningToken(t)]
+
+        if (
+            token_clean in (self._start_tag, self._end_tag)
+            or any(
+                token_clean.startswith(p) 
+                for p in self._prefixes
+            )
+        ):
+            self._thinking = token_clean != self._end_tag
+            return wrap(token)
+
         if self._thinking:
-            if (
-                self._settings.max_new_tokens is None
-                or self._token_count < self._settings.max_new_tokens
-            ):
-                self._token_count += 1
-                return [ReasoningToken(token_str)]
+            within_budget = (
+                self._settings.max_new_tokens is None or
+                self._token_count < self._settings.max_new_tokens
+            )
+            if within_budget:
+                return wrap(token)
             if self._settings.stop_on_max_new_tokens:
                 raise ReasoningTokenLimitExceeded
-            return [token_str]
-        return [token_str]
+            return [token]
+
+        return [token]
 
     async def flush(self) -> Iterable[Any]:
         return []
