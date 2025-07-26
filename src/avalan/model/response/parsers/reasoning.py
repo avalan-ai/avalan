@@ -2,6 +2,10 @@ from ....entities import ReasoningSettings, ReasoningToken
 from typing import Any, Iterable
 
 
+class ReasoningTokenLimitedException(Exception):
+    """Raised when the reasoning token limit is reached."""
+
+
 class ReasoningParser:
     def __init__(
         self,
