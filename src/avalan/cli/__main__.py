@@ -83,6 +83,8 @@ from warnings import filterwarnings
 
 
 class CLI:
+    """Command line interface entry point."""
+
     _REFRESH_RATE = 4
 
     def __init__(self, logger: Logger):
@@ -1531,9 +1533,22 @@ class CLI:
         return parser
 
     @staticmethod
+    def _get_translator(
+        app_name: str, locales_path: str, locale: str
+    ) -> object:
+        """Return translation object for ``locale`` or ``gettext`` fallback."""
+        try:
+            return translation(
+                app_name, localedir=locales_path, languages=[locale]
+            )
+        except FileNotFoundError:
+            return gettext
+
+    @staticmethod
     def _extract_chat_template_settings(
         argv: list[str],
     ) -> tuple[list[str], dict[str, bool]]:
+        """Return ``argv`` without chat options and extracted flags."""
         options: dict[str, bool] = {}
         new_argv: list[str] = []
         for arg in argv:
@@ -1644,6 +1659,7 @@ class CLI:
     def _add_tool_settings_arguments(
         parser: ArgumentParser, *, prefix: str, settings_cls: type
     ) -> ArgumentParser:
+        """Add dataclass based tool options to ``parser``."""
         group = parser.add_argument_group(f"{prefix} tool settings")
 
         for field in fields(settings_cls):
@@ -1676,6 +1692,7 @@ class CLI:
 
     @staticmethod
     def _needs_hf_token(args: Namespace) -> bool:
+        """Return ``True`` if the command needs hub authentication."""
         command = args.command
         if command == "model" and (args.model_command or "display") == "run":
             engine_uri = ModelManager.parse_uri(args.model)
@@ -1722,13 +1739,7 @@ class CLI:
         for key, value in chat_opts.items():
             setattr(args, f"run_chat_{key}", value)
 
-        current_locale, _ = getlocale()
-        try:
-            translator = translation(
-                self._name, localedir=args.locales, languages=[args.locale]
-            )
-        except FileNotFoundError:
-            translator = gettext
+        translator = CLI._get_translator(self._name, args.locales, args.locale)
 
         assert self._logger is not None and isinstance(self._logger, Logger)
         theme = FancyTheme(translator.gettext, translator.ngettext)
@@ -1773,8 +1784,15 @@ class CLI:
                 pass
 
     def _help(
-        self, console: Console, parser: ArgumentParser, path: list[str] = []
+        self,
+        console: Console,
+        parser: ArgumentParser,
+        path: list[str] | None = None,
     ) -> None:
+        """Recursively output help information for ``parser``."""
+        if path is None:
+            path = []
+
         prog = parser.prog
         is_root_command = not path
         console.print(
@@ -1958,6 +1976,7 @@ class CLI:
 
 
 def main() -> None:
+    """Entry point for the ``avalan`` CLI."""
     basicConfig(
         level=INFO,
         format="%(message)s",
