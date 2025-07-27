@@ -1,10 +1,5 @@
-from argparse import ArgumentParser, Namespace, _SubParsersAction
-import sys
-from asyncio import run as run_in_loop
-from asyncio.exceptions import CancelledError
-from torch.cuda import device_count, is_available, set_device
-from torch.distributed import destroy_process_group
 from .. import license, name, site, version
+from ..agent.loader import OrchestratorLoader
 from ..cli import CommandAbortException, has_input
 from ..cli.commands.agent import (
     agent_message_search,
@@ -46,8 +41,12 @@ from ..memory.permanent import VectorFunction
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
-from ..agent.loader import OrchestratorLoader
+from ..tool.browser import BrowserToolSettings
 from ..utils import logger_replace
+from argparse import ArgumentParser, Namespace, _SubParsersAction
+from asyncio import run as run_in_loop
+from asyncio.exceptions import CancelledError
+from dataclasses import fields
 import gettext
 from gettext import translation
 from importlib.util import find_spec
@@ -63,26 +62,38 @@ from logging import (
     WARNING,
 )
 from os import getenv, environ
-from subprocess import run
 from os.path import join
 from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
+from subprocess import run
+from sys import argv, executable
+from torch.cuda import device_count, is_available, set_device
+from torch.distributed import destroy_process_group
 from transformers.utils import (
     is_flash_attn_2_available,
     is_torch_flex_attn_available,
     logging as hf_logging,
 )
-from typing import get_args, Optional, get_origin, get_args as get_type_args
-from dataclasses import fields
-from ..tool.browser import BrowserToolSettings
+from typing import get_args, Optional, get_origin
 from uuid import uuid4
 from warnings import filterwarnings
 
+_CUDA_AVAILABLE = is_available()
+_DEVICE_COUNT = device_count() if _CUDA_AVAILABLE else 1
+
 
 class CLI:
+    __slots__ = (
+        "_name",
+        "_site",
+        "_version",
+        "_license",
+        "_logger",
+        "_parser",
+    )
     _REFRESH_RATE = 4
 
     def __init__(self, logger: Logger):
@@ -91,7 +102,6 @@ class CLI:
         self._version = version()
         self._license = license()
         self._logger = logger
-
         cache_dir = HuggingfaceHub.DEFAULT_CACHE_DIR
         default_locale, _ = getlocale()
         default_locales_path = join(
@@ -104,12 +114,12 @@ class CLI:
 
     @staticmethod
     def _default_parallel_count() -> int:
-        return device_count() if is_available() else 1
+        return _DEVICE_COUNT
 
     @staticmethod
     def _default_attention(device: str) -> AttentionImplementation | None:
         try:
-            if device.startswith("cuda") and is_available():
+            if device.startswith("cuda") and _CUDA_AVAILABLE:
                 if is_flash_attn_2_available():
                     return "flash_attention_2"
                 if is_torch_flex_attn_available():
@@ -280,21 +290,16 @@ class CLI:
             action="store_true",
             help="Display this program's version, and exit",
         )
-
         global_parser.add_argument(
             "--weight-type",
             type=str,
             choices=get_args(WeightType),
             help="Weight type to use (defaults to best available)",
         )
-
         parser = ArgumentParser(
             description="Avalan CLI", parents=[global_parser]
         )
-
         command_parsers = parser.add_subparsers(dest="command")
-
-        # Memory options shared by commands: memory embeddings, memory document
         memory_partitions_parser = ArgumentParser(add_help=False)
         memory_partitions_display_group = (
             memory_partitions_parser.add_mutually_exclusive_group()
@@ -338,8 +343,6 @@ class CLI:
             type=int,
             help="Number of tokens per window when partitioning",
         )
-
-        # Model options shared by commands: memory embeddings, model
         model_options_parser = ArgumentParser(add_help=False)
         model_options_parser.add_argument(
             "model",
@@ -381,8 +384,6 @@ class CLI:
                 "if model is loaded"
             ),
         )
-
-        # Inference options shared by commands: agent run, model run
         model_inference_display_parser = ArgumentParser(add_help=False)
         model_inference_display_parser.add_argument(
             "--display-events",
@@ -396,7 +397,7 @@ class CLI:
             "--display-pause",
             type=int,
             nargs="?",
-            const=500,  # 500 is the default if argument present but no value
+            const=500,
             default=None,
             help=(
                 "Pause (in ms.) when cycling through selected tokens as "
@@ -435,7 +436,7 @@ class CLI:
             "--display-time-to-n-token",
             type=int,
             nargs="?",
-            const=256,  # 256 is the default if argument present but no value
+            const=256,
             default=None,
             help=(
                 "Display the time it takes to reach the given Nth token "
@@ -446,7 +447,7 @@ class CLI:
             "--display-tokens",
             type=int,
             nargs="?",
-            const=15,  # 15 is the default if argument present but no value
+            const=15,
             default=None,
             help="How many tokens with full information to display at a time",
         )
@@ -464,8 +465,6 @@ class CLI:
             default=2,
             help="How many tool events to show on tool call panel",
         )
-
-        # Agent command
         agent_parser = command_parsers.add_parser(
             name="agent",
             description="Manage AI agents",
@@ -474,7 +473,6 @@ class CLI:
         agent_command_parsers = agent_parser.add_subparsers(
             dest="agent_command"
         )
-
         agent_message_parser = agent_command_parsers.add_parser(
             name="message",
             description="Manage AI agent messages",
@@ -483,7 +481,6 @@ class CLI:
         agent_message_command_parsers = agent_message_parser.add_subparsers(
             dest="agent_message_command"
         )
-
         agent_message_search_parser = agent_message_command_parsers.add_parser(
             name="search",
             description="Search within an agent's message memory",
@@ -529,7 +526,6 @@ class CLI:
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
-
         agent_run_parser = agent_command_parsers.add_parser(
             name="run",
             description="Run an AI agent",
@@ -573,7 +569,6 @@ class CLI:
             type=str,
             help="Continue the conversation on the given session",
         )
-
         agent_run_parser.add_argument(
             "--skip-load-recent-messages",
             default=False,
@@ -619,14 +614,12 @@ class CLI:
             action="store_true",
             help="Confirm tool calls before execution",
         )
-
         CLI._add_agent_settings_arguments(agent_run_parser)
         CLI._add_tool_settings_arguments(
             agent_run_parser,
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
-
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
             description="Serve an AI agent as an API endpoint",
@@ -668,22 +661,18 @@ class CLI:
             default=False,
             help="Hot reload on code changes",
         )
-
         CLI._add_agent_settings_arguments(agent_serve_parser)
         CLI._add_tool_settings_arguments(
             agent_serve_parser,
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
-
         agent_init_parser = agent_command_parsers.add_parser(
             name="init",
             description="Create an agent definition",
             parents=[global_parser],
         )
         CLI._add_agent_settings_arguments(agent_init_parser)
-
-        # Cache command
         cache_parser = command_parsers.add_parser(
             name="cache",
             description="Manage models cache",
@@ -749,8 +738,6 @@ class CLI:
                 "summary"
             ),
         )
-
-        # Deploy command
         deploy_parser = command_parsers.add_parser(
             name="deploy",
             description="Manage AI deployments",
@@ -769,8 +756,6 @@ class CLI:
             type=str,
             help="Deployment to run",
         )
-
-        # Flow command
         flow_parser = command_parsers.add_parser(
             name="flow", description="Manage AI flows", parents=[global_parser]
         )
@@ -783,8 +768,6 @@ class CLI:
             type=str,
             help="Flow to run",
         )
-
-        # Memory command
         memory_parser = command_parsers.add_parser(
             name="memory", description="Manage memory", parents=[global_parser]
         )
@@ -825,7 +808,6 @@ class CLI:
             default=DistanceType.L2,
             help="Sort comparison results using the given similarity measure",
         )
-
         memory_search_parser = memory_command_parsers.add_parser(
             name="search",
             description="Search memories",
@@ -922,8 +904,6 @@ class CLI:
             required=True,
             help="Namespace for the memory entry",
         )
-
-        # Model command
         model_parser = command_parsers.add_parser(
             name="model",
             description=(
@@ -933,7 +913,6 @@ class CLI:
         model_command_parsers = model_parser.add_subparsers(
             dest="model_command"
         )
-
         model_display_parser = model_command_parsers.add_parser(
             name="display",
             description="Show information about a model",
@@ -950,7 +929,6 @@ class CLI:
             default=False,
             action="store_true",
         )
-
         model_command_parsers.add_parser(
             name="install",
             description="Install a model",
@@ -1467,8 +1445,6 @@ class CLI:
                 "and data that would be deleted is shown, yet not deleted"
             ),
         )
-
-        # Tokenizer command
         tokenizer_parser = command_parsers.add_parser(
             name="tokenizer",
             description=(
@@ -1503,8 +1479,6 @@ class CLI:
             action="append",
             help="Token to add to tokenizer",
         )
-
-        # Train command
         train_parser = command_parsers.add_parser(
             name="train", description="Training", parents=[global_parser]
         )
@@ -1521,27 +1495,23 @@ class CLI:
             type=str,
             help="Training to run",
         )
-
         parser.add_argument(
             "--help-full",
             action="store_true",
             help="Show help for all commands and subcommands",
         )
-
         return parser
 
     @staticmethod
     def _extract_chat_template_settings(
         argv: list[str],
     ) -> tuple[list[str], dict[str, bool]]:
-        options: dict[str, bool] = {}
-        new_argv: list[str] = []
-        for arg in argv:
-            if arg.startswith("--run-chat-"):
-                key = arg[len("--run-chat-") :].replace("-", "_")
-                options[key] = True
-            else:
-                new_argv.append(arg)
+        options = {
+            arg[len("--run-chat-") :].replace("-", "_"): True
+            for arg in argv
+            if arg.startswith("--run-chat-")
+        }
+        new_argv = [arg for arg in argv if not arg.startswith("--run-chat-")]
         return new_argv, options
 
     @staticmethod
@@ -1645,33 +1615,27 @@ class CLI:
         parser: ArgumentParser, *, prefix: str, settings_cls: type
     ) -> ArgumentParser:
         group = parser.add_argument_group(f"{prefix} tool settings")
-
         for field in fields(settings_cls):
             option = f"--tool-{prefix}-{field.name.replace('_', '-')}"
             dest = f"tool_{prefix}_{field.name}"
-
             ftype = field.type
             origin = get_origin(ftype)
-            args = get_type_args(ftype)
+            type_args = get_args(ftype)
             if origin is not None:
-                if origin is list or origin is tuple:
-                    ftype = args[0]
-                elif origin is Optional or type(None) in args:
-                    ftype = next((a for a in args if a is not type(None)), str)
+                if origin in (list, tuple):
+                    ftype = type_args[0]
+                elif origin is Optional or type(None) in type_args:
+                    ftype = next((a for a in type_args if a is not type(None)), str)
                 elif origin.__name__ == "Literal":
-                    ftype = type(args[0])
-
+                    ftype = type(type_args[0])
             if ftype is bool or isinstance(field.default, bool):
-                group.add_argument(
-                    option, dest=dest, action="store_true", default=None
-                )
+                group.add_argument(option, dest=dest, action="store_true", default=None)
             elif ftype is int or isinstance(field.default, int):
                 group.add_argument(option, dest=dest, type=int, default=None)
             elif ftype is float or isinstance(field.default, float):
                 group.add_argument(option, dest=dest, type=float, default=None)
             else:
                 group.add_argument(option, dest=dest, type=str, default=None)
-
         return group
 
     @staticmethod
@@ -1690,15 +1654,13 @@ class CLI:
         return True
 
     async def __call__(self) -> None:
-        argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
+        argv, chat_opts = self._extract_chat_template_settings(argv[1:])
         args = self._parser.parse_args(argv)
-
         if args.parallel and not args.quiet:
             args.quiet = True
-
         if args.parallel and "LOCAL_RANK" not in environ:
             cmd = [
-                sys.executable,
+                executable,
                 "-m",
                 "torch.distributed.run",
                 "--nproc-per-node",
@@ -1708,20 +1670,16 @@ class CLI:
             ] + argv
             run(cmd, check=True)
             return
-
         if args.parallel and "LOCAL_RANK" in environ:
             rank = int(environ["LOCAL_RANK"])
             if args.device.startswith("cuda") and ":" not in args.device:
                 args.device = f"cuda:{rank}"
                 set_device(rank)
-
         if args.version:
             print(f"{self._name} {self._version}")
             return
-
         for key, value in chat_opts.items():
             setattr(args, f"run_chat_{key}", value)
-
         current_locale, _ = getlocale()
         try:
             translator = translation(
@@ -1729,20 +1687,16 @@ class CLI:
             )
         except FileNotFoundError:
             translator = gettext
-
         assert self._logger is not None and isinstance(self._logger, Logger)
         theme = FancyTheme(translator.gettext, translator.ngettext)
         _ = theme._
         console = Console(
             theme=Theme(styles=theme.get_styles()), record=args.record
         )
-
         if args.help_full:
             return self._help(console, self._parser)
-
         access_token = args.hf_token
         requires_token = self._needs_hf_token(args)
-
         if requires_token:
             if not access_token:
                 prompt_kwargs = {}
@@ -1757,9 +1711,7 @@ class CLI:
             assert access_token
         else:
             access_token = access_token or "anonymous"
-
         hub = HuggingfaceHub(access_token, args.cache_dir, self._logger)
-
         try:
             await self._main(args, theme, console, hub)
         except (CancelledError, KeyboardInterrupt, CommandAbortException):
@@ -1769,7 +1721,6 @@ class CLI:
             try:
                 destroy_process_group()
             except AssertionError:
-                # Process group might be dead already
                 pass
 
     def _help(
@@ -1800,21 +1751,16 @@ class CLI:
     ) -> None:
         user: User | None = None
         _ = theme._
-
         verbosity = args.verbose or 0
         log_level = (
             DEBUG if verbosity >= 2 else INFO if verbosity >= 1 else WARNING
         )
         previous_log_level = self._logger.getEffectiveLevel()
-
         self._logger.setLevel(log_level)
-
         if find_spec("sentence_transformers"):
             logger_replace(self._logger, ["sentence_transformers"])
-
         if find_spec("httpx"):
             logger_replace(self._logger, ["httpx"])
-
         filterwarnings(
             "ignore",
             message=r".*`do_sample` is set to `False`. "
@@ -1831,12 +1777,10 @@ class CLI:
 
         hf_logger = hf_logging.get_logger("transformers.modeling_utils")
         hf_logger.addFilter(_SilencingFilter())
-
         filterwarnings(
             "ignore",
             message=r".*Some weights of Wav2Vec2ForCTC were not initialized.*",
         )
-
         suggest_login = suggest_login and not has_input(console)
         if args.login or (
             suggest_login
@@ -1849,7 +1793,6 @@ class CLI:
             ):
                 hub.login()
                 user = hub.user()
-
         if not args.quiet:
             console.print(
                 theme.welcome(
@@ -1860,7 +1803,6 @@ class CLI:
                     user,
                 )
             )
-
         match args.command:
             case "agent":
                 subcommand = args.agent_command or "run"
@@ -1950,10 +1892,8 @@ class CLI:
                 match subcommand:
                     case "run":
                         await deploy_run(args, self._logger)
-
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)
-
         self._logger.setLevel(previous_log_level)
 
 
@@ -1965,10 +1905,9 @@ def main() -> None:
         handlers=[RichHandler(rich_tracebacks=True)],
     )
     logger = getLogger(name())
-
     cli = CLI(logger)
     run_in_loop(cli())
 
 
 if __name__ == "__main__":
-    main()  # pragma: no cover
+    main()
