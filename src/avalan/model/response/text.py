@@ -46,7 +46,6 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         output_fn: OutputFunction,
         *args,
         use_async_generator: bool,
-        inputs: dict | None = None,
         generation_settings: GenerationSettings | None = None,
         **kwargs,
     ):
@@ -64,10 +63,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             self._parser_queue = None
             self._reasoning_parser = None
 
-        if inputs is not None:
+        if "inputs" in kwargs:
+            inputs = kwargs["inputs"]
             self._input_token_count = (
                 len(inputs["input_ids"][0])
-                if isinstance(inputs, dict) and "input_ids" in inputs
+                if inputs and "input_ids" in inputs
                 else 0
             )
 
