@@ -14,9 +14,7 @@ and `pytest` for testing.
 - Use assertions to ensure argument validity.
 - Do not ignore exceptions unless instructed.
 - Don't use `from __future__ import annotations`.
-- Don't use inline imports unless instructed, imports should always be at the top.
-- Favor always `from module import something`, looking to avoid module references outside the import area.
-- Keep imports in alphabetical order of the imported modules.
+- Make sure you use `from X import Y` type of imports, don't use inline imports, and sort imports by package name alphabetically, leaving relative imports at the top, also sorted alphabetically.
 - Do not declare `__all__` lists.
 
 ### Coding Standards
