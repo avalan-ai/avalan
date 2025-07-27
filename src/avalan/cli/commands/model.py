@@ -1,7 +1,4 @@
-from dataclasses import replace
-
 from ...agent.orchestrator import Orchestrator
-from ...event import Event, EventType, TOOL_TYPES
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
 from ...entities import (
@@ -11,16 +8,17 @@ from ...entities import (
     Token,
     ToolCallToken,
 )
-from ...event import EventStats
-from ...model.response.text import TextGenerationResponse
+from ...entities import GenerationSettings  # noqa: F401
+from ...event import Event, EventStats, EventType, TOOL_TYPES
+from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
-from ...entities import GenerationSettings  # noqa: F401
-from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
+from ...model.response.text import TextGenerationResponse
 from ...secrets import KeyringSecrets
 from . import get_model_settings
+from dataclasses import replace
 from argparse import Namespace
 from asyncio import (
     as_completed,
@@ -537,6 +535,7 @@ async def _token_stream(
     tool_events: list[Event] = []
     tool_event_calls: list[Event] = []
     tool_event_results: list[Event] = []
+    completed_call_ids: set[str] = set()
     total_tokens = 0
     frame_minimum_pause_ms = (
         100 if display_pause > 0 and display_tokens > 0 else 0
@@ -554,7 +553,6 @@ async def _token_stream(
     )
     ttft: float | None = None
     ttnt: float | None = None
-    token_frame_list: list[tuple[Token | None, RenderableType]] = None
     last_current_dtoken: Token | None = None
     tool_running_spinner: Spinner | None = None
 
@@ -576,6 +574,8 @@ async def _token_stream(
                     input_token_count = inner_response.input_token_count
             elif event.type == EventType.TOOL_RESULT:
                 tool_event_results.append(event)
+                if "call" in event.payload:
+                    completed_call_ids.add(event.payload["call"].id)
             else:
                 tool_event_calls.append(event)
 
@@ -594,12 +594,7 @@ async def _token_stream(
                 c.name
                 for e in tool_event_calls
                 for c in e.payload
-                if c.id
-                not in {
-                    r.payload["call"].id
-                    for r in tool_event_results
-                    if r.type == EventType.TOOL_RESULT and "call" in r.payload
-                }
+                if c.id not in completed_call_ids
             ]
 
             tool_running_spinner = (
@@ -619,7 +614,7 @@ async def _token_stream(
                 else None
             )
 
-        total_tokens = total_tokens + 1
+        total_tokens += 1
         elapsed = perf_counter() - start
         if ttft is None:
             ttft = elapsed
@@ -687,9 +682,6 @@ async def _token_stream(
             token_frame async for token_frame in token_frames_promise
         ]
 
-        # We prioritize a single selected dtoken at a time, it being
-        # the leftmost  selected which is also guaranteed by setting
-        # minimum_frames=1 when calling theme.tokens()
         token_frames = [token_frame_list[0]]
 
         for current_dtoken, frame in token_frames:
@@ -712,21 +704,21 @@ async def _token_stream(
             ):
                 await sleep(display_pause / 1000)
 
-    if (
-        dtokens_pick > 0
-        and args.display_probabilities
-        and token_frame_list
-        and len(token_frame_list) > 0
-    ):
-        for current_dtoken, frame in token_frame_list[1:]:
-            _render_frame(
-                args, console, live, frame, group, tokens_group_index
-            )
+        if (
+            dtokens_pick > 0
+            and args.display_probabilities
+            and token_frame_list
+            and len(token_frame_list) > 0
+        ):
+            for current_dtoken, frame in token_frame_list[1:]:
+                _render_frame(
+                    args, console, live, frame, group, tokens_group_index
+                )
 
-            if current_dtoken and display_pause > 0:
-                await sleep(display_pause / 1000)
-            elif frame_minimum_pause_ms > 0:
-                await sleep(frame_minimum_pause_ms / 1000)
+                if current_dtoken and display_pause > 0:
+                    await sleep(display_pause / 1000)
+                elif frame_minimum_pause_ms > 0:
+                    await sleep(frame_minimum_pause_ms / 1000)
 
     if stop_signal:
         stop_signal.set()
