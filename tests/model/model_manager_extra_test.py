@@ -79,3 +79,35 @@ class ModelManagerExtraTestCase(TestCase):
         uri = manager.parse_uri("ai://tok@openai/gpt-4o")
         with self.assertRaises(NotImplementedError):
             manager.load(uri, modality="invalid")  # type: ignore[arg-type]
+
+    def test_load_output_hidden_states(self):
+        uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        manager = ModelManager(self.hub, self.logger)
+        for modality in (Modality.TEXT_GENERATION, Modality.EMBEDDING):
+            for value in (True, False, None):
+                with self.subTest(modality=modality, value=value):
+                    with (
+                        patch.object(manager, "get_engine_settings") as ges,
+                        patch.object(manager, "load_engine") as le,
+                    ):
+                        manager._stack.enter_context = MagicMock()
+                        ges.return_value = TransformerEngineSettings()
+                        le.return_value = "model"
+                        result = manager.load(
+                            uri, modality=modality, output_hidden_states=value
+                        )
+                    args = ges.call_args.args[1]
+                    if value is None:
+                        self.assertNotIn("output_hidden_states", args)
+                    else:
+                        self.assertEqual(args["output_hidden_states"], value)
+                    le.assert_called_once_with(uri, ges.return_value, modality)
+                    self.assertEqual(result, "model")
