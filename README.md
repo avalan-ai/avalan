@@ -75,7 +75,7 @@ avalan model search --name DeepSeek-R1 \
     --task text-generation \
     --author "mlx-community" \
     --limit 3
-``
+```
 
 The command returns three matching models:
 
