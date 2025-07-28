@@ -1047,7 +1047,8 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 model_cmds, "ModelManager", return_value=manager
             ) as mm_patch,
             patch(
-                "avalan.cli.commands.model.ModelManager.get_operation_from_arguments",
+                "avalan.cli.commands.model.ModelManager."
+                "get_operation_from_arguments",
                 new=RealModelManager.get_operation_from_arguments,
             ),
             patch.object(
@@ -1074,6 +1075,81 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once()
         tg_patch.assert_awaited_once()
+
+    async def test_model_run_sets_output_hidden_states(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            output_hidden_states=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        hub = MagicMock()
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = MagicMock(
+            config=MagicMock(__repr__=lambda self=None: "cfg")
+        )
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        with (
+            patch.object(
+                model_cmds,
+                "ModelManager",
+                return_value=manager,
+            ) as mm,
+            patch(
+                "avalan.cli.commands.model.ModelManager.get_operation_from_arguments",
+                new=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                    "output_hidden_states": True,
+                },
+            ) as gms,
+            patch.object(model_cmds, "get_input", return_value=None),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        mm.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms.assert_called_once_with(args, hub, logger, engine_uri)
+        self.assertTrue(manager.load.call_args.kwargs["output_hidden_states"])
 
     async def test_run_audio_text_to_speech(self):
         base_args = dict(

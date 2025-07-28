@@ -5,7 +5,7 @@ from ...agent.orchestrator.response.orchestrator_response import (
 )
 from ...cli import get_input, has_input, confirm_tool_call
 from ...cli.commands.model import token_generation
-from ...entities import OrchestratorSettings, ToolCall
+from ...entities import Backend, OrchestratorSettings, ToolCall
 from ...event import EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
@@ -84,7 +84,9 @@ def get_orchestrator_settings(
             if v is not None
         },
         uri=engine_uri,
-        engine_config=None,
+        engine_config={
+            "backend": getattr(args, "backend", Backend.TRANSFORMERS.value)
+        },
         call_options={
             "max_new_tokens": call_tokens,
             "skip_special_tokens": args.run_skip_special_tokens,

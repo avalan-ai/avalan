@@ -27,7 +27,7 @@ from avalan.event import Event, EventType
 from avalan.memory.permanent import VectorFunction
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.entities import GenerationSettings, ReasoningSettings
+from avalan.entities import OrchestratorSettings, ReasoningSettings
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
 
@@ -47,6 +47,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             tool_events=2,
             tool=None,
             run_max_new_tokens=100,
+            backend="transformers",
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -190,6 +191,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             prefix_openai="oa",
             prefix_mcp="mcp",
             reload=False,
+            backend="transformers",
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -228,6 +230,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             prefix_openai="oa",
             prefix_mcp="mcp",
             reload=False,
+            backend="transformers",
             engine_uri="uri",
             role="assistant",
             name=None,
@@ -295,6 +298,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             prefix_openai="oa",
             prefix_mcp="mcp",
             reload=False,
+            backend="transformers",
             engine_uri=None,
             role=None,
             name=None,
@@ -344,6 +348,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             run_max_new_tokens=None,
             run_skip_special_tokens=True,
             tool=None,
+            backend="transformers",
             no_repl=False,
             quiet=False,
         )
@@ -392,6 +397,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             tool_browser_engine=None,
             tool_browser_search=None,
             tool_browser_search_context=None,
+            backend="transformers",
             no_repl=False,
             quiet=False,
         )
@@ -431,6 +437,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             tool_browser_engine="chromium",
             tool_browser_search=True,
             tool_browser_search_context=5,
+            backend="transformers",
             no_repl=False,
             quiet=False,
         )
@@ -496,6 +503,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             tools_confirm=False,
+            backend="transformers",
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -709,6 +717,64 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         browser_settings = fs_patch.call_args.kwargs["browser_settings"]
         self.assertIsNone(browser_settings)
         ff_patch.assert_not_called()
+
+    async def test_run_sets_hidden_states(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.output_hidden_states = True
+
+        orch_settings = OrchestratorSettings(
+            agent_id=uuid4(),
+            orchestrator_type=None,
+            agent_config={"role": "assistant"},
+            uri="engine",
+            engine_config={"output_hidden_states": True},
+            call_options={},
+            template_vars=None,
+            memory_permanent_message=None,
+            permanent_memory=None,
+            memory_recent=True,
+            sentence_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            sentence_model_engine_config=None,
+            sentence_model_max_tokens=500,
+            sentence_model_overlap_size=125,
+            sentence_model_window_size=250,
+            json_config=None,
+            tools=[],
+            log_events=True,
+        )
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+            patch.object(
+                agent_cmds,
+                "get_orchestrator_settings",
+                return_value=orch_settings,
+            ) as gos_patch,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        gos_patch.assert_called_once()
+        settings = fs_patch.call_args.args[0]
+        self.assertTrue(settings.engine_config["output_hidden_states"])
 
     async def test_run_with_browser_settings(self):
         self.args.specifications_file = None
@@ -1193,6 +1259,7 @@ class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
             run_max_new_tokens=10,
             run_skip_special_tokens=True,
             tool=None,
+            backend="transformers",
             no_repl=False,
             quiet=False,
         )
