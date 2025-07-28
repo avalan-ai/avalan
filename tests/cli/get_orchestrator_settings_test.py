@@ -14,6 +14,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             task=None,
             instructions=None,
             engine_uri="ai://m",
+            backend="transformers",
             run_max_new_tokens=10,
             run_skip_special_tokens=False,
             memory_recent=None,
@@ -31,6 +32,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertTrue(result.memory_recent)
         self.assertEqual(result.uri, "ai://m")
         self.assertEqual(result.call_options["max_new_tokens"], 10)
+        self.assertEqual(result.engine_config, {"backend": "transformers"})
         self.assertEqual(result.agent_config, {"name": "a", "role": "r"})
         self.assertEqual(result.tools, [])
         self.assertEqual(
@@ -45,6 +47,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             task="t",
             instructions="i",
             engine_uri="old",
+            backend="transformers",
             run_max_new_tokens=5,
             run_skip_special_tokens=True,
             memory_recent=False,
@@ -83,6 +86,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.permanent_memory, {"ns": "dsn2"})
         self.assertEqual(result.tools, ["b"])
         self.assertEqual(result.sentence_model_id, "m")
+        self.assertEqual(result.engine_config, {"backend": "transformers"})
 
     def test_chat_template_settings(self):
         args = Namespace(
@@ -91,6 +95,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             task=None,
             instructions=None,
             engine_uri="ai://m",
+            backend="transformers",
             run_max_new_tokens=10,
             run_skip_special_tokens=False,
             memory_recent=None,
@@ -109,3 +114,4 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertTrue(
             result.call_options["chat_template_settings"]["enable_thinking"]
         )
+        self.assertEqual(result.engine_config, {"backend": "transformers"})
