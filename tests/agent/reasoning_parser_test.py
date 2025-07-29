@@ -41,7 +41,6 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(tokens[2], ReasoningToken)
         self.assertEqual(tokens[2].token, "e")
 
-
     async def test_without_prefixes(self):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(), prefixes=["Thought:"]

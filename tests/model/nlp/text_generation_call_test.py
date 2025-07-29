@@ -36,7 +36,9 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             chat_template_settings=settings.chat_template_settings,
         )
         self.assertIs(response._output_fn, string_output)
-        self.assertEqual(response.input_token_count, len(tok_inputs["input_ids"][0]))
+        self.assertEqual(
+            response.input_token_count, len(tok_inputs["input_ids"][0])
+        )
         self.assertTrue(response._kwargs["settings"].do_sample)
         self.assertEqual(
             response._kwargs["settings"].pad_token_id,

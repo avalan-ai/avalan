@@ -2,6 +2,7 @@ from avalan.server.entities import ChatCompletionRequest, ChatMessage
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import MessageRole
 from avalan.model import TextGenerationResponse
+from logging import Logger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 import importlib
@@ -22,6 +23,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         sys.modules.pop("avalan.server.routers.chat", None)
 
     async def test_create_chat_completion_non_stream(self) -> None:
+        logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
             lambda: "ok", use_async_generator=False
@@ -31,7 +33,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
         with patch("avalan.server.routers.chat.time", return_value=1):
-            resp = await self.chat.create_chat_completion(req, orch)
+            resp = await self.chat.create_chat_completion(req, logger, orch)
         self.assertEqual(resp.object, "chat.completion")
         self.assertEqual(resp.choices[0].message.content, "ok")
         orch.assert_awaited_once()
@@ -46,13 +48,14 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 )()
             },
         )()
-        self.assertEqual(self.chat.dependency_get_orchestrator(req), 1)
+        self.assertEqual(self.chat.di_get_orchestrator(req), 1)
 
     async def test_create_chat_completion_stream(self) -> None:
         async def output_gen():
             yield "a"
             yield "b"
 
+        logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
             lambda: output_gen(), use_async_generator=True
@@ -63,7 +66,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             stream=True,
         )
         with patch("avalan.server.routers.chat.time", return_value=1):
-            resp = await self.chat.create_chat_completion(req, orch)
+            resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
         self.assertIn('"content":"b"', chunks[1])
@@ -78,6 +81,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             yield Event(type=EventType.TOOL_RESULT, payload={})
             yield "b"
 
+        logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = output_gen()
         req = ChatCompletionRequest(
@@ -86,7 +90,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             stream=True,
         )
         with patch("avalan.server.routers.chat.time", return_value=1):
-            resp = await self.chat.create_chat_completion(req, orch)
+            resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
         self.assertIn('"content":"b"', chunks[1])

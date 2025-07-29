@@ -63,16 +63,14 @@ class MlxLmModel(TextGenerationModel):
         skip_special_tokens: bool,
     ) -> AsyncGenerator[str, None]:
         sampler, prompt = self._get_sampler_and_prompt(
-            inputs,
-            settings,
-            skip_special_tokens
+            inputs, settings, skip_special_tokens
         )
         iterator = stream_generate(
             self._model,
             self._tokenizer,
             prompt,
             sampler=sampler,
-            max_tokens=settings.max_new_tokens
+            max_tokens=settings.max_new_tokens,
         )
         stream = MlxLmStream(iter(iterator))
         async for chunk in stream:
@@ -85,16 +83,14 @@ class MlxLmModel(TextGenerationModel):
         skip_special_tokens: bool,
     ) -> str:
         sampler, prompt = self._get_sampler_and_prompt(
-            inputs,
-            settings,
-            skip_special_tokens
+            inputs, settings, skip_special_tokens
         )
         return generate(
             self._model,
             self._tokenizer,
             prompt,
             sampler=sampler,
-            max_tokens=settings.max_new_tokens
+            max_tokens=settings.max_new_tokens,
         )
 
     @override
@@ -118,7 +114,11 @@ class MlxLmModel(TextGenerationModel):
             chat_template_settings=settings.chat_template_settings,
         )
         generation_settings = replace(settings, do_sample=False)
-        output_fn = self._stream_generator if settings.use_async_generator else self._string_output
+        output_fn = (
+            self._stream_generator
+            if settings.use_async_generator
+            else self._string_output
+        )
 
         return TextGenerationResponse(
             output_fn,
@@ -133,7 +133,7 @@ class MlxLmModel(TextGenerationModel):
         self,
         inputs: dict[str, Tensor] | Tensor,
         settings: GenerationSettings,
-        skip_special_tokens: bool
+        skip_special_tokens: bool,
     ) -> tuple[Callable, str]:
         sampler_settings = {
             "temp": settings.temperature,
@@ -141,9 +141,7 @@ class MlxLmModel(TextGenerationModel):
             "top_k": settings.top_k,
         }
         sampler_settings = {
-            k: v
-            for k, v in sampler_settings.items()
-            if v is not None
+            k: v for k, v in sampler_settings.items() if v is not None
         }
         sampler = make_sampler(**sampler_settings)
         prompt = self._tokenizer.decode(

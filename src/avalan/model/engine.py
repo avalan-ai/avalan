@@ -371,12 +371,16 @@ class Engine(ABC):
                 str(param.dtype).replace("torch.", "")
                 for param in self._model.parameters()
             }
-            if not is_mlx and self._model and hasattr(self._model, "parameters")
+            if not is_mlx
+            and self._model
+            and hasattr(self._model, "parameters")
             else None
         )
         self._parameter_count = (
             sum(p.numel() for p in self._model.parameters())
-            if not is_mlx and self._model and hasattr(self._model, "parameters")
+            if not is_mlx
+            and self._model
+            and hasattr(self._model, "parameters")
             else None
         )
 

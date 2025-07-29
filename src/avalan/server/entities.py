@@ -14,8 +14,7 @@ class ContentImage(BaseModel):
 
 
 ContentPart = Annotated[
-    ContentText | ContentImage,
-    Field(discriminator="type")
+    ContentText | ContentImage, Field(discriminator="type")
 ]
 
 

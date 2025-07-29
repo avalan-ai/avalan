@@ -1161,7 +1161,9 @@ class FancyThemeMoreTests(unittest.TestCase):
 
 class FancyThemeWrapLinesTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        self.theme = FancyTheme(
+            lambda s: s, lambda s, p, n: s if n == 1 else p
+        )
 
     def test_parameter_count_values(self):
         self.assertEqual(self.theme._parameter_count(10_000), "10.0 thousand")
@@ -1172,7 +1174,9 @@ class FancyThemeWrapLinesTestCase(unittest.TestCase):
         self.assertEqual(result, ["a", "", "b"])
 
     def test_wrap_lines_skip_blank_lines(self):
-        result = FancyTheme._wrap_lines(["a\n\nb"], width=10, skip_blank_lines=True)
+        result = FancyTheme._wrap_lines(
+            ["a\n\nb"], width=10, skip_blank_lines=True
+        )
         self.assertEqual(result, ["a", "b"])
 
 
