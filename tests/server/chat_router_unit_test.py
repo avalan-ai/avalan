@@ -1,6 +1,15 @@
-from avalan.server.entities import ChatCompletionRequest, ChatMessage
+from avalan.server.entities import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ContentImage,
+    ContentText,
+)
 from avalan.agent.orchestrator import Orchestrator
-from avalan.entities import MessageRole
+from avalan.entities import (
+    MessageContentImage,
+    MessageContentText,
+    MessageRole,
+)
 from avalan.model import TextGenerationResponse
 from logging import Logger
 from unittest import IsolatedAsyncioTestCase
@@ -96,3 +105,110 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn('"content":"b"', chunks[1])
         self.assertEqual(len(chunks), 3)
         orch.assert_awaited_once()
+
+    async def test_message_content_string(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        with patch("avalan.server.routers.chat.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        orch.assert_awaited_once()
+        messages = orch.await_args.args[0]
+        self.assertEqual(len(messages), 1)
+        msg = messages[0]
+        self.assertIsInstance(msg.content, MessageContentText)
+        self.assertEqual(msg.content.text, "hi")
+
+    async def test_message_content_image(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=[
+                        ContentImage(
+                            type="image_url", image_url={"url": "img"}
+                        )
+                    ],
+                )
+            ],
+        )
+        with patch("avalan.server.routers.chat.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        orch.assert_awaited_once()
+        msg = orch.await_args.args[0][0]
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 1)
+        self.assertIsInstance(msg.content[0], MessageContentImage)
+        self.assertEqual(msg.content[0].image_url, {"url": "img"})
+
+    async def test_message_content_text_object(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=[ContentText(type="text", text="hello")],
+                )
+            ],
+        )
+        with patch("avalan.server.routers.chat.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        msg = orch.await_args.args[0][0]
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 1)
+        self.assertIsInstance(msg.content[0], MessageContentText)
+        self.assertEqual(msg.content[0].text, "hello")
+
+    async def test_message_content_list(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=[
+                        ContentText(type="text", text="hi"),
+                        ContentImage(
+                            type="image_url", image_url={"url": "img"}
+                        ),
+                    ],
+                )
+            ],
+        )
+        with patch("avalan.server.routers.chat.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        msg = orch.await_args.args[0][0]
+        self.assertIsInstance(msg.content, list)
+        self.assertIsInstance(msg.content[0], MessageContentText)
+        self.assertEqual(msg.content[0].text, "hi")
+        self.assertIsInstance(msg.content[1], MessageContentImage)
+        self.assertEqual(msg.content[1].image_url, {"url": "img"})
