@@ -212,3 +212,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(msg.content[0].text, "hi")
         self.assertIsInstance(msg.content[1], MessageContentImage)
         self.assertEqual(msg.content[1].image_url, {"url": "img"})
+
+    async def test_to_message_content_invalid_type(self) -> None:
+        with self.assertRaises(TypeError):
+            self.chat._to_message_content(123)
