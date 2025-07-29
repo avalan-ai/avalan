@@ -1678,7 +1678,9 @@ class FancyTheme(Theme):
 
         pick_first = ceil(pick / 2) if pick > 1 else pick
         max_width = console_width - wrap_padding
-        think_wrapped = FancyTheme._wrap_lines(thinking_text_tokens, max_width, skip_blank_lines=True)
+        think_wrapped = FancyTheme._wrap_lines(
+            thinking_text_tokens, max_width, skip_blank_lines=True
+        )
         tool_wrapped = FancyTheme._wrap_lines(tool_text_tokens, max_width)
         wrapped = FancyTheme._wrap_lines(answer_text_tokens, max_width)
 
@@ -2406,7 +2408,9 @@ class FancyTheme(Theme):
         )
 
     @staticmethod
-    def _wrap_lines(text_tokens: list[str], width: int, skip_blank_lines: bool = False) -> list[str]:
+    def _wrap_lines(
+        text_tokens: list[str], width: int, skip_blank_lines: bool = False
+    ) -> list[str]:
         lines: list[str] = []
         output = "".join(text_tokens)
         for line in output.splitlines():

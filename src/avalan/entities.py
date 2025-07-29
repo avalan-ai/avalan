@@ -420,9 +420,24 @@ class ImageEntity:
 
 
 @dataclass(frozen=True, kw_only=True)
+class MessageContentText:
+    type: Literal["text"]
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class MessageContentImage:
+    type: Literal["image_url"]
+    image_url: dict[str, str]
+
+
+MessageContent = MessageContentText | MessageContentImage
+
+
+@dataclass(frozen=True, kw_only=True)
 class Message:
     role: MessageRole
-    content: str
+    content: str | MessageContent | list[MessageContent]
     name: str | None = None
     arguments: dict | None = None
 

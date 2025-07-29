@@ -1,5 +1,6 @@
 from ..agent.orchestrator import Orchestrator
 from ..utils import logger_replace
+from fastapi import APIRouter, FastAPI, Request
 from logging import Logger
 
 
@@ -15,7 +16,6 @@ def agents_server(
     logger: Logger,
 ):
     from ..server.routers import chat
-    from fastapi import FastAPI, APIRouter
     from mcp.server.lowlevel.server import Server as MCPServer
     from mcp.server.sse import SseServerTransport
     from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
@@ -24,7 +24,7 @@ def agents_server(
 
     logger.debug("Creating %s server", name)
     app = FastAPI(title=name, version=version)
-    app.state.orchestrator = orchestrators[0]
+    di_set(app, logger=logger, orchestrator=orchestrators[0])
 
     logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)
@@ -90,3 +90,16 @@ def agents_server(
         ],
     )
     return server
+
+
+def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
+    app.state.logger = logger
+    app.state.orchestrator = orchestrator
+
+
+def di_get_logger(request: Request) -> Logger:
+    return request.app.state.logger
+
+
+def di_get_orchestrator(request: Request) -> Orchestrator:
+    return request.app.state.orchestrator

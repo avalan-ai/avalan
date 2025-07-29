@@ -62,37 +62,41 @@ class AgentsServerTestCase(TestCase):
         }
 
         with patch.dict(sys.modules, modules):
-            logger = MagicMock()
-            orch = MagicMock()
-            app = MagicMock()
-            FastAPI.return_value = app
-            mcp_router = MagicMock()
-            mcp_router.get.return_value = lambda f: f
-            APIRouter.return_value = mcp_router
-            sse_instance = MagicMock()
-            sse_instance.handle_post_message = MagicMock()
-            SseServerTransport.return_value = sse_instance
-            mcp_server = MagicMock()
-            mcp_server.list_tools.return_value = lambda f: f
-            mcp_server.call_tool.return_value = lambda f: f
-            MCPServer.return_value = mcp_server
-            config_instance = MagicMock()
-            Config.return_value = config_instance
-            server_instance = MagicMock()
-            Server.return_value = server_instance
+            with (
+                patch("avalan.server.FastAPI", FastAPI),
+                patch("avalan.server.APIRouter", APIRouter),
+            ):
+                logger = MagicMock()
+                orch = MagicMock()
+                app = MagicMock()
+                FastAPI.return_value = app
+                mcp_router = MagicMock()
+                mcp_router.get.return_value = lambda f: f
+                APIRouter.return_value = mcp_router
+                sse_instance = MagicMock()
+                sse_instance.handle_post_message = MagicMock()
+                SseServerTransport.return_value = sse_instance
+                mcp_server = MagicMock()
+                mcp_server.list_tools.return_value = lambda f: f
+                mcp_server.call_tool.return_value = lambda f: f
+                MCPServer.return_value = mcp_server
+                config_instance = MagicMock()
+                Config.return_value = config_instance
+                server_instance = MagicMock()
+                Server.return_value = server_instance
 
-            with patch("avalan.server.logger_replace") as lr:
-                result = agents_server(
-                    name="srv",
-                    version="v",
-                    orchestrators=[orch],
-                    host="h",
-                    port=1,
-                    reload=False,
-                    prefix_mcp="/m",
-                    prefix_openai="/o",
-                    logger=logger,
-                )
+                with patch("avalan.server.logger_replace") as lr:
+                    result = agents_server(
+                        name="srv",
+                        version="v",
+                        orchestrators=[orch],
+                        host="h",
+                        port=1,
+                        reload=False,
+                        prefix_mcp="/m",
+                        prefix_openai="/o",
+                        logger=logger,
+                    )
 
         self.assertIs(result, server_instance)
         FastAPI.assert_called_once_with(title="srv", version="v")

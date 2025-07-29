@@ -36,20 +36,16 @@ class ReasoningParser:
             self._token_count += 1
             return [ReasoningToken(t)]
 
-        if (
-            token_clean in (self._start_tag, self._end_tag)
-            or any(
-                token_clean.startswith(p) 
-                for p in self._prefixes
-            )
+        if token_clean in (self._start_tag, self._end_tag) or any(
+            token_clean.startswith(p) for p in self._prefixes
         ):
             self._thinking = token_clean != self._end_tag
             return wrap(token)
 
         if self._thinking:
             within_budget = (
-                self._settings.max_new_tokens is None or
-                self._token_count < self._settings.max_new_tokens
+                self._settings.max_new_tokens is None
+                or self._token_count < self._settings.max_new_tokens
             )
             if within_budget:
                 return wrap(token)
