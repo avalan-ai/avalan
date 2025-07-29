@@ -77,51 +77,55 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
 
         captured = {}
         with patch.dict(sys.modules, modules):
-            logger = MagicMock()
-            orch = MagicMock()
-            app = MagicMock()
-            FastAPI.return_value = app
-            mcp_router = MagicMock()
+            with (
+                patch("avalan.server.FastAPI", FastAPI),
+                patch("avalan.server.APIRouter", APIRouter),
+            ):
+                logger = MagicMock()
+                orch = MagicMock()
+                app = MagicMock()
+                FastAPI.return_value = app
+                mcp_router = MagicMock()
 
-            def capture_get(path):
-                def decorator(f):
-                    captured["list_fn"] = f
-                    return f
+                def capture_get(path):
+                    def decorator(f):
+                        captured["list_fn"] = f
+                        return f
 
-                return decorator
+                    return decorator
 
-            mcp_router.get.side_effect = capture_get
-            APIRouter.return_value = mcp_router
-            sse_instance = MagicMock()
-            sse_instance.handle_post_message = MagicMock()
-            SseServerTransport.return_value = sse_instance
-            mcp_server = MagicMock()
+                mcp_router.get.side_effect = capture_get
+                APIRouter.return_value = mcp_router
+                sse_instance = MagicMock()
+                sse_instance.handle_post_message = MagicMock()
+                SseServerTransport.return_value = sse_instance
+                mcp_server = MagicMock()
 
-            def list_tools():
-                def decorator(fn):
-                    captured["list_fn"] = fn
-                    return fn
+                def list_tools():
+                    def decorator(fn):
+                        captured["list_fn"] = fn
+                        return fn
 
-                return decorator
+                    return decorator
 
-            mcp_server.list_tools.side_effect = list_tools
-            mcp_server.call_tool.return_value = lambda f: f
-            MCPServer.return_value = mcp_server
-            Config.return_value = MagicMock()
-            Server.return_value = MagicMock()
+                mcp_server.list_tools.side_effect = list_tools
+                mcp_server.call_tool.return_value = lambda f: f
+                MCPServer.return_value = mcp_server
+                Config.return_value = MagicMock()
+                Server.return_value = MagicMock()
 
-            with patch("avalan.server.logger_replace"):
-                agents_server(
-                    name="srv",
-                    version="v",
-                    orchestrators=[orch],
-                    host="h",
-                    port=1,
-                    reload=False,
-                    prefix_mcp="/m",
-                    prefix_openai="/o",
-                    logger=logger,
-                )
+                with patch("avalan.server.logger_replace"):
+                    agents_server(
+                        name="srv",
+                        version="v",
+                        orchestrators=[orch],
+                        host="h",
+                        port=1,
+                        reload=False,
+                        prefix_mcp="/m",
+                        prefix_openai="/o",
+                        logger=logger,
+                    )
 
         self.list_tools = captured["list_fn"]
         self.Tool = Tool
@@ -204,46 +208,55 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
 
         captured = {}
         with patch.dict(sys.modules, modules):
-            logger = MagicMock()
-            orch = MagicMock()
-            app = MagicMock()
-            FastAPI.return_value = app
-            mcp_router = MagicMock()
+            with (
+                patch("avalan.server.FastAPI", FastAPI),
+                patch("avalan.server.APIRouter", APIRouter),
+            ):
+                logger = MagicMock()
+                orch = MagicMock()
+                app = MagicMock()
+                FastAPI.return_value = app
+                mcp_router = MagicMock()
 
-            def capture_get(path):
-                def decorator(fn):
-                    captured["sse_fn"] = fn
-                    return fn
+                def capture_get(path):
+                    def decorator(fn):
+                        captured["sse_fn"] = fn
+                        return fn
 
-                return decorator
+                    return decorator
 
-            mcp_router.get.side_effect = capture_get
-            APIRouter.return_value = mcp_router
-            sse_instance = MagicMock()
-            sse_instance.handle_post_message = MagicMock()
-            sse_instance.connect_sse.return_value = DummyContext(["in", "out"])
-            SseServerTransport.return_value = sse_instance
-            mcp_server = MagicMock()
-            mcp_server.list_tools.return_value = lambda f: f
-            mcp_server.call_tool.return_value = lambda f: f
-            mcp_server.create_initialization_options.return_value = "opts"
-            mcp_server.run = AsyncMock()
-            MCPServer.return_value = mcp_server
-            Config.return_value = MagicMock()
-            Server.return_value = MagicMock()
-
-            with patch("avalan.server.logger_replace"):
-                agents_server(
-                    name="srv",
-                    version="v",
-                    orchestrators=[orch],
-                    host="h",
-                    port=1,
-                    reload=False,
-                    prefix_mcp="/m",
-                    prefix_openai="/o",
-                    logger=logger,
+                mcp_router.get.side_effect = capture_get
+                APIRouter.return_value = mcp_router
+                sse_instance = MagicMock()
+                sse_instance.handle_post_message = MagicMock()
+                sse_instance.connect_sse.return_value = DummyContext(
+                    [
+                        "in",
+                        "out",
+                    ]
                 )
+                SseServerTransport.return_value = sse_instance
+                mcp_server = MagicMock()
+                mcp_server.list_tools.return_value = lambda f: f
+                mcp_server.call_tool.return_value = lambda f: f
+                mcp_server.create_initialization_options.return_value = "opts"
+                mcp_server.run = AsyncMock()
+                MCPServer.return_value = mcp_server
+                Config.return_value = MagicMock()
+                Server.return_value = MagicMock()
+
+                with patch("avalan.server.logger_replace"):
+                    agents_server(
+                        name="srv",
+                        version="v",
+                        orchestrators=[orch],
+                        host="h",
+                        port=1,
+                        reload=False,
+                        prefix_mcp="/m",
+                        prefix_openai="/o",
+                        logger=logger,
+                    )
 
         self.sse_handler = captured["sse_fn"]
         self.sse_instance = sse_instance
