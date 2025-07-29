@@ -41,6 +41,7 @@ documentation = "https://github.com/avalan-ai/avalan#readme"
 "Bug Tracker" = "https://github.com/avalan-ai/avalan/issues"
 
 [project.scripts]
+avl = "avalan.cli.__main__:main"
 avalan = "avalan.cli.__main__:main"
 
 [project.optional-dependencies]
