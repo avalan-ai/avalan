@@ -1,10 +1,27 @@
 from ..entities import MessageRole
 from pydantic import BaseModel, Field
+from typing import Annotated, Literal
+
+
+class ContentText(BaseModel):
+    type: Literal["text"]
+    text: str
+
+
+class ContentImage(BaseModel):
+    type: Literal["image_url"]
+    image_url: dict[str, str]
+
+
+ContentPart = Annotated[
+    ContentText | ContentImage,
+    Field(discriminator="type")
+]
 
 
 class ChatMessage(BaseModel):
     role: MessageRole
-    content: str
+    content: str | list[ContentPart]
 
 
 class ChatCompletionRequest(BaseModel):
