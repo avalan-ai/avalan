@@ -1,6 +1,6 @@
 from ..agent.orchestrator import Orchestrator
 from ..utils import logger_replace
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request  # noqa: F401
 from logging import Logger
 
 
@@ -16,6 +16,11 @@ def agents_server(
     logger: Logger,
 ):
     from ..server.routers import chat
+    from importlib import import_module
+
+    fastapi_mod = import_module("fastapi")
+    APIRouter = fastapi_mod.APIRouter  # noqa: F811
+    FastAPI = fastapi_mod.FastAPI  # noqa: F811
     from mcp.server.lowlevel.server import Server as MCPServer
     from mcp.server.sse import SseServerTransport
     from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
