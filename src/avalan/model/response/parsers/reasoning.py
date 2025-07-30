@@ -22,6 +22,8 @@ class ReasoningParser:
         self._thinking = False
         self._token_count = 0
         self._pending_tag: list[str] = []
+        self._pending_length = 0
+        self._max_tag_len = max(len(self._start_tag), len(self._end_tag))
 
     def set_thinking(self, thinking: bool) -> None:
         self._thinking = thinking
@@ -43,6 +45,7 @@ class ReasoningParser:
                 for t in self._pending_tag:
                     result.extend(wrap(t) if as_reasoning else [t])
                 self._pending_tag.clear()
+                self._pending_length = 0
             return result
 
         expecting_tag = self._end_tag if self._thinking else self._start_tag
@@ -54,6 +57,10 @@ class ReasoningParser:
             )
             if expecting_tag.startswith(candidate):
                 self._pending_tag.append(token)
+                self._pending_length += len(token_clean)
+                while self._pending_length > len(expecting_tag):
+                    removed = self._pending_tag.pop(0)
+                    self._pending_length -= len(removed.strip())
                 if candidate == expecting_tag:
                     self._thinking = expecting_tag == self._start_tag
                     result.extend(flush_pending(True))
@@ -72,6 +79,10 @@ class ReasoningParser:
 
         if expecting_tag.startswith(token_clean):
             self._pending_tag.append(token)
+            self._pending_length += len(token_clean)
+            while self._pending_length > len(expecting_tag):
+                removed = self._pending_tag.pop(0)
+                self._pending_length -= len(removed.strip())
             if token_clean == expecting_tag:
                 self._thinking = expecting_tag == self._start_tag
                 result.extend(flush_pending(True))
