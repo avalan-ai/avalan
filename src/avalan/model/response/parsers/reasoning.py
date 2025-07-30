@@ -106,4 +106,15 @@ class ReasoningParser:
         return result
 
     async def flush(self) -> Iterable[Any]:
-        return []
+        result: list[Any] = []
+        if self._pending_tag:
+            as_reasoning = self._thinking
+            for t in self._pending_tag:
+                if as_reasoning:
+                    self._token_count += 1
+                    result.append(ReasoningToken(t))
+                else:
+                    result.append(t)
+            self._pending_tag.clear()
+            self._pending_length = 0
+        return result
