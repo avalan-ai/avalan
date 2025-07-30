@@ -126,7 +126,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
             if (
                 not self._reasoning_parser
-                or self._reasoning_parser.is_thinking_budget_exhausted
+                or (
+                    self._reasoning_parser.is_thinking_budget_exhausted
+                    and not self._reasoning_parser.is_thinking
+                )
             ):
                 return token
 
