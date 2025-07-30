@@ -2,6 +2,7 @@ from ..entities import (
     AttentionImplementation,
     EngineUri,
     GenerationSettings,
+    ChatSettings,
     ReasoningSettings,
     Input,
     Modality,
@@ -489,6 +490,11 @@ class ModelManager(ContextDecorator):
             top_k=args.top_k,
             top_p=args.top_p,
             use_cache=args.use_cache,
+            chat_settings=ChatSettings(
+                enable_thinking=not getattr(
+                    args, "chat_disable_thinking", False
+                )
+            ),
             reasoning=ReasoningSettings(
                 max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
                 enabled=not getattr(args, "no_reasoning", False),

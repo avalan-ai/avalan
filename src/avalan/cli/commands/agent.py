@@ -60,7 +60,7 @@ def get_orchestrator_settings(
         else args.run_max_new_tokens
     )
 
-    chat_template_settings = {
+    chat_settings = {
         k[len("run_chat_") :]: v
         for k, v in vars(args).items()
         if k.startswith("run_chat_") and v is not None
@@ -93,11 +93,7 @@ def get_orchestrator_settings(
             "temperature": temperature,
             "top_k": top_k,
             "top_p": top_p,
-            **(
-                {"chat_template_settings": chat_template_settings}
-                if chat_template_settings
-                else {}
-            ),
+            **({"chat_settings": chat_settings} if chat_settings else {}),
         },
         template_vars=None,
         memory_permanent_message=(

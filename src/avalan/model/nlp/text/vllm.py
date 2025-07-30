@@ -8,7 +8,7 @@ from ....entities import (
 from ....model.vendor import TextGenerationVendorStream
 from ....model.nlp.text.generation import TextGenerationModel
 from ....tool.manager import ToolManager
-from dataclasses import replace
+from dataclasses import asdict, replace
 from logging import Logger
 from typing import AsyncGenerator
 
@@ -120,7 +120,7 @@ class VllmModel(TextGenerationModel):
             input,
             system_prompt,
             tool,
-            settings.chat_template_settings,
+            asdict(settings.chat_settings),
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:

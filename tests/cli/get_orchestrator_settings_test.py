@@ -88,7 +88,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.sentence_model_id, "m")
         self.assertEqual(result.engine_config, {"backend": "transformers"})
 
-    def test_chat_template_settings(self):
+    def test_chat_settings(self):
         args = Namespace(
             name="a",
             role="r",
@@ -112,6 +112,6 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         uid = UUID("00000000-0000-0000-0000-000000000003")
         result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
         self.assertTrue(
-            result.call_options["chat_template_settings"]["enable_thinking"]
+            result.call_options["chat_settings"]["enable_thinking"]
         )
         self.assertEqual(result.engine_config, {"backend": "transformers"})
