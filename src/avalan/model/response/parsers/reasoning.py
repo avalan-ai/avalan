@@ -7,27 +7,38 @@ class ReasoningTokenLimitExceeded(Exception):
 
 
 class ReasoningParser:
+    _settings: ReasoningSettings
+    _start_tag: str
+    _end_tag: str
+    _prefixes: tuple[str, ...]
+    _thinking: bool
+    _thinking_turns: int
+    _max_thinking_turns: int
+    _thinking_budget_exhausted: bool
+    _token_count: int
+    _pending_tokens: list[str]
+    _pending_str: str
+
     def __init__(
         self,
         *,
-        end_tag: str = "</think>",
-        prefixes: list[str] | None = None,
         reasoning_settings: ReasoningSettings,
         start_tag: str = "<think>",
+        end_tag: str = "</think>",
+        prefixes: list[str] | None = None,
         max_thinking_turns: int = 1,
     ) -> None:
         self._settings = reasoning_settings
         self._start_tag = start_tag
         self._end_tag = end_tag
-        self._prefixes = prefixes or ["Think:"]
+        self._prefixes = tuple(prefixes or ["Think:"])
         self._thinking = False
         self._thinking_turns = 0
-        self._max_thinking_turns = 1
+        self._max_thinking_turns = max_thinking_turns
         self._thinking_budget_exhausted = False
         self._token_count = 0
-        self._pending_tag: list[str] = []
-        self._pending_length = 0
-        self._max_tag_len = max(len(self._start_tag), len(self._end_tag))
+        self._pending_tokens = []
+        self._pending_str = ""
 
     def set_thinking(self, thinking: bool) -> None:
         self._thinking = thinking
@@ -48,44 +59,36 @@ class ReasoningParser:
         expecting_tag = self._end_tag if self._thinking else self._start_tag
         result: list[Any] = []
 
-        if self._pending_tag:
-            candidate = (
-                "".join(t.strip() for t in self._pending_tag) + token_clean
-            )
+        if self._pending_tokens:
+            candidate = self._pending_str + token_clean
             if expecting_tag.startswith(candidate):
-                self._pending_tag.append(token)
-                self._pending_length += len(token_clean)
-                while self._pending_length > len(expecting_tag):
-                    removed = self._pending_tag.pop(0)
-                    self._pending_length -= len(removed.strip())
+                self._pending_tokens.append(token)
+                self._pending_str += token_clean
+                while len(self._pending_str) > len(expecting_tag):
+                    removed = self._pending_tokens.pop(0)
+                    removed_clean = removed.strip()
+                    self._pending_str = self._pending_str[len(removed_clean) :]
                 if candidate == expecting_tag:
-                    return self._set_thinking(
-                        result=result,
-                        is_start=(expecting_tag == self._start_tag),
-                    )
+                    return self._set_thinking(result, expecting_tag == self._start_tag)
                 return result
             result.extend(self._flush_pending(False))
 
         if token_clean in (self._start_tag, self._end_tag) or (
-            not self._thinking
-            and any(token_clean.startswith(p) for p in self._prefixes)
+            not self._thinking and token_clean.startswith(self._prefixes)
         ):
             return self._set_thinking(
-                token=token,
-                result=result,
-                is_start=(token_clean != self._end_tag),
+                result, token_clean != self._end_tag, token=token
             )
 
         if expecting_tag.startswith(token_clean):
-            self._pending_tag.append(token)
-            self._pending_length += len(token_clean)
-            while self._pending_length > len(expecting_tag):
-                removed = self._pending_tag.pop(0)
-                self._pending_length -= len(removed.strip())
+            self._pending_tokens.append(token)
+            self._pending_str += token_clean
+            while len(self._pending_str) > len(expecting_tag):
+                removed = self._pending_tokens.pop(0)
+                removed_clean = removed.strip()
+                self._pending_str = self._pending_str[len(removed_clean) :]
             if token_clean == expecting_tag:
-                return self._set_thinking(
-                    result=result, is_start=(expecting_tag == self._start_tag)
-                )
+                return self._set_thinking(result, expecting_tag == self._start_tag)
             return result
 
         if self._thinking:
@@ -106,16 +109,16 @@ class ReasoningParser:
 
     async def flush(self) -> Iterable[Any]:
         result: list[Any] = []
-        if self._pending_tag:
+        if self._pending_tokens:
             as_reasoning = self._thinking
-            for t in self._pending_tag:
+            for t in self._pending_tokens:
                 if as_reasoning:
                     self._token_count += 1
                     result.append(ReasoningToken(t))
                 else:
                     result.append(t)
-            self._pending_tag.clear()
-            self._pending_length = 0
+            self._pending_tokens.clear()
+            self._pending_str = ""
         return result
 
     def _set_thinking(
@@ -137,9 +140,9 @@ class ReasoningParser:
 
     def _flush_pending(self, as_reasoning: bool) -> list[Any]:
         result: list[Any] = []
-        if self._pending_tag:
-            for t in self._pending_tag:
+        if self._pending_tokens:
+            for t in self._pending_tokens:
                 result.extend(self._wrap(t) if as_reasoning else [t])
-            self._pending_tag.clear()
-            self._pending_length = 0
+            self._pending_tokens.clear()
+            self._pending_str = ""
         return result
