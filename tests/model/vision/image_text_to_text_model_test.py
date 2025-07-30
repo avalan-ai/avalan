@@ -241,11 +241,12 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 logger=logger_mock,
             )
 
+            gen_settings = GenerationSettings(max_new_tokens=5)
             result = await model(
                 "img.jpg",
                 "prompt",
                 system_prompt=system_prompt,
-                settings=GenerationSettings(max_new_tokens=5),
+                settings=gen_settings,
                 width=width,
             )
 
@@ -292,7 +293,7 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
             processor_instance.apply_chat_template.assert_called_once_with(
                 expected_messages,
                 tokenize=False,
-                add_generation_prompt=True,
+                add_generation_prompt=gen_settings.chat_settings.add_generation_prompt,
             )
             processor_instance.assert_called_once_with(
                 text=["chat"],

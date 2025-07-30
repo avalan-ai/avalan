@@ -17,6 +17,8 @@ from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.entities import GenerationSettings, ReasoningSettings
+from avalan.entities import TransformerEngineSettings
+from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.response.parsers.tool import ToolCallParser
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main, TestCase
@@ -1111,7 +1113,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         engine_uri = SimpleNamespace(model_id="id", is_local=True)
         load_cm = MagicMock()
-        load_cm.__enter__.return_value = MagicMock(
+        load_cm.__enter__.return_value = AsyncMock(
             config=MagicMock(__repr__=lambda self=None: "cfg")
         )
         load_cm.__exit__.return_value = False
@@ -1139,7 +1141,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                     "output_hidden_states": True,
                 },
             ) as gms,
-            patch.object(model_cmds, "get_input", return_value=None),
+            patch.object(model_cmds, "get_input", return_value="hi"),
             patch.object(
                 model_cmds, "token_generation", new_callable=AsyncMock
             ),
@@ -1150,6 +1152,90 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri.assert_called_once_with("id")
         gms.assert_called_once_with(args, hub, logger, engine_uri)
         self.assertTrue(manager.load.call_args.kwargs["output_hidden_states"])
+
+    async def test_model_run_chat_disable_thinking(self):
+        args = Namespace(
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            chat_disable_thinking=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        hub = MagicMock()
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        settings = TransformerEngineSettings(
+            auto_load_model=False, auto_load_tokenizer=False
+        )
+        lm = TextGenerationModel("id", settings)
+        lm._model = MagicMock()
+        lm._tokenizer = MagicMock()
+        lm._tokenizer.eos_token_id = 99
+        tok_mock = MagicMock(return_value={"input_ids": [[1]]})
+        lm._tokenize_input = tok_mock
+        lm._string_output = MagicMock()
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        with (
+            patch.object(
+                model_cmds, "ModelManager", return_value=manager
+            ) as mm,
+            patch(
+                "avalan.cli.commands.model.ModelManager.get_operation_from_arguments",
+                new=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ) as gms,
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        mm.assert_called_once_with(hub, logger)
+        manager.parse_uri.assert_called_once_with("id")
+        gms.assert_called_once_with(args, hub, logger, engine_uri)
+        tok_kwargs = tok_mock.call_args.kwargs
+        self.assertFalse(
+            tok_kwargs["chat_template_settings"]["enable_thinking"]
+        )
 
     async def test_run_audio_text_to_speech(self):
         base_args = dict(

@@ -17,7 +17,7 @@ from ....model.nlp import BaseNLPModel
 from ....model.engine import Engine
 from diffusers import DiffusionPipeline
 from ....tool.manager import ToolManager
-from dataclasses import replace
+from dataclasses import asdict, replace
 from importlib.util import find_spec
 from logging import Logger
 from threading import Thread
@@ -166,7 +166,7 @@ class TextGenerationModel(BaseNLPModel):
             system_prompt,
             context=None,
             tool=tool,
-            chat_template_settings=settings.chat_template_settings,
+            chat_template_settings=asdict(settings.chat_settings),
         )
         return TextGenerationResponse(
             output_fn,

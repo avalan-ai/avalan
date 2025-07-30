@@ -231,6 +231,15 @@ class ReasoningSettings:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ChatSettings:
+    add_generation_prompt: bool = True
+    tokenize: bool = True
+    add_special_tokens: bool = True
+    return_dict: bool = True
+    enable_thinking: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
 class GenerationSettings:
     # Generation length ------------------------------------------------------
     # The minimum numbers of tokens to generate, ignoring the number of tokens
@@ -352,14 +361,7 @@ class GenerationSettings:
     # Optional attention mask passed directly to ``generate``
     attention_mask: Tensor | None = None
     # Parameters passed to tokenizer.apply_chat_template
-    chat_template_settings: dict[str, object] | None = field(
-        default_factory=lambda: {
-            "add_generation_prompt": True,
-            "tokenize": True,
-            "add_special_tokens": True,
-            "return_dict": True,
-        }
-    )
+    chat_settings: ChatSettings = field(default_factory=ChatSettings)
     reasoning: ReasoningSettings = field(default_factory=ReasoningSettings)
 
 

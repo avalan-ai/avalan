@@ -1337,6 +1337,13 @@ class CLI:
             help="If specified, assume model response starts with reasoning",
         )
         model_run_parser.add_argument(
+            "--chat-disable-thinking",
+            dest="chat_disable_thinking",
+            action="store_true",
+            default=False,
+            help="Disable thinking tokens in chat template",
+        )
+        model_run_parser.add_argument(
             "--no-reasoning",
             action="store_true",
             default=False,
@@ -1545,7 +1552,7 @@ class CLI:
             return gettext
 
     @staticmethod
-    def _extract_chat_template_settings(
+    def _extract_chat_settings(
         argv: list[str],
     ) -> tuple[list[str], dict[str, bool]]:
         """Return ``argv`` without chat options and extracted flags."""
@@ -1707,7 +1714,7 @@ class CLI:
         return True
 
     async def __call__(self) -> None:
-        argv, chat_opts = self._extract_chat_template_settings(sys.argv[1:])
+        argv, chat_opts = self._extract_chat_settings(sys.argv[1:])
         args = self._parser.parse_args(argv)
 
         if args.parallel and not args.quiet:

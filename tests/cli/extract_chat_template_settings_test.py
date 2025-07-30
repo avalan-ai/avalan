@@ -11,6 +11,6 @@ class ExtractChatTemplateSettingsTestCase(unittest.TestCase):
             "--bar",
             "--run-chat-other",
         ]
-        new_argv, opts = CLI._extract_chat_template_settings(argv)
+        new_argv, opts = CLI._extract_chat_settings(argv)
         self.assertEqual(new_argv, ["--foo", "--bar"])
         self.assertEqual(opts, {"enable_thinking": True, "other": True})

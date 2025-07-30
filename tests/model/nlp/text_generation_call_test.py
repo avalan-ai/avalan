@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
 from unittest import IsolatedAsyncioTestCase, main
@@ -33,7 +34,7 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             None,
             context=None,
             tool=None,
-            chat_template_settings=settings.chat_template_settings,
+            chat_template_settings=asdict(settings.chat_settings),
         )
         self.assertIs(response._output_fn, string_output)
         self.assertEqual(

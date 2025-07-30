@@ -141,7 +141,9 @@ class ImageTextToTextModel(ImageToTextModel):
         )
 
         text = self._processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages,
+            tokenize=False,
+            add_generation_prompt=settings.chat_settings.add_generation_prompt,
         )
         inputs = self._processor(
             text=[text],

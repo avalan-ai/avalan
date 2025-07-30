@@ -607,9 +607,7 @@ enable_thinking = true
                 lfs_patch.assert_awaited_once()
                 settings = lfs_patch.call_args.args[0]
                 self.assertTrue(
-                    settings.call_options["chat_template_settings"][
-                        "enable_thinking"
-                    ]
+                    settings.call_options["chat_settings"]["enable_thinking"]
                 )
             await stack.aclose()
 

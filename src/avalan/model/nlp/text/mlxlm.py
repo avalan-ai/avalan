@@ -9,7 +9,7 @@ from ....entities import (
 )
 from ....tool.manager import ToolManager
 from asyncio import to_thread
-from dataclasses import replace
+from dataclasses import asdict, replace
 from logging import Logger
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
@@ -111,7 +111,7 @@ class MlxLmModel(TextGenerationModel):
             context=None,
             tensor_format=tensor_format,
             tool=tool,
-            chat_template_settings=settings.chat_template_settings,
+            chat_template_settings=asdict(settings.chat_settings),
         )
         generation_settings = replace(settings, do_sample=False)
         output_fn = (
