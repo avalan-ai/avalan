@@ -358,8 +358,8 @@ class GenerationSettings:
     enable_gradient_calculation: bool = False
     # Use async generator (token streaming)
     use_async_generator: bool = True
-    # Optional attention mask passed directly to ``generate``
-    attention_mask: Tensor | None = None
+    # Use the attention mask discovered during input tokenization
+    use_inputs_attention_mask: bool = True
     # Parameters passed to tokenizer.apply_chat_template
     chat_settings: ChatSettings = field(default_factory=ChatSettings)
     reasoning: ReasoningSettings = field(default_factory=ReasoningSettings)

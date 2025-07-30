@@ -1,6 +1,8 @@
 from dataclasses import asdict
+from contextlib import nullcontext
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
+from torch import tensor
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -165,6 +167,78 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         self.assertIs(response._output_fn, string_output)
         self.assertFalse(response._use_async_generator)
         self.assertTrue(response._kwargs["settings"].do_sample)
+
+    async def test_use_inputs_attention_mask_batch_encoding(self):
+        class DummyBatchEncoding(dict):
+            pass
+
+        mask = tensor([[1, 1]])
+        tok_inputs = DummyBatchEncoding(
+            {
+                "input_ids": tensor([[1, 2]]),
+                "attention_mask": mask,
+            }
+        )
+        self.model._tokenize_input = MagicMock(return_value=tok_inputs)
+        self.model._model.generate = MagicMock(return_value=[[1, 2, 3]])
+        self.model._tokenizer.decode.return_value = "out"
+
+        with (
+            patch("avalan.model.nlp.BatchEncoding", DummyBatchEncoding),
+            patch(
+                "avalan.model.nlp.text.generation.BatchEncoding",
+                DummyBatchEncoding,
+            ),
+            patch(
+                "avalan.model.nlp.inference_mode", return_value=nullcontext()
+            ),
+        ):
+            response = await self.model(
+                "in",
+                settings=GenerationSettings(
+                    use_async_generator=False, use_inputs_attention_mask=True
+                ),
+            )
+            await response.to_str()
+
+        kwargs = self.model._model.generate.call_args.kwargs
+        self.assertIs(kwargs["attention_mask"], mask)
+
+    async def test_drop_inputs_attention_mask_batch_encoding(self):
+        class DummyBatchEncoding(dict):
+            pass
+
+        mask = tensor([[1, 1]])
+        tok_inputs = DummyBatchEncoding(
+            {
+                "input_ids": tensor([[1, 2]]),
+                "attention_mask": mask,
+            }
+        )
+        self.model._tokenize_input = MagicMock(return_value=tok_inputs)
+        self.model._model.generate = MagicMock(return_value=[[1, 2, 3]])
+        self.model._tokenizer.decode.return_value = "out"
+
+        with (
+            patch("avalan.model.nlp.BatchEncoding", DummyBatchEncoding),
+            patch(
+                "avalan.model.nlp.text.generation.BatchEncoding",
+                DummyBatchEncoding,
+            ),
+            patch(
+                "avalan.model.nlp.inference_mode", return_value=nullcontext()
+            ),
+        ):
+            response = await self.model(
+                "in",
+                settings=GenerationSettings(
+                    use_async_generator=False, use_inputs_attention_mask=False
+                ),
+            )
+            await response.to_str()
+
+        kwargs = self.model._model.generate.call_args.kwargs
+        self.assertNotIn("attention_mask", kwargs)
 
 
 if __name__ == "__main__":

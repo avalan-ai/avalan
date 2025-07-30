@@ -152,6 +152,9 @@ class ImageTextToTextModel(ImageToTextModel):
             padding=True,
             return_tensors=tensor_format,
         )
+        if settings.use_inputs_attention_mask:
+            inputs.pop("attention_mask", None)
+
         inputs.to(self._device)
         with inference_mode():
             generated_ids = self._model.generate(

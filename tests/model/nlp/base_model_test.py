@@ -52,12 +52,33 @@ class BaseNLPModelGenerateTestCase(TestCase):
         model._model = MagicMock()
         model._tokenizer = MagicMock(eos_token_id=2)
         mask = torch.tensor([[1, 1]])
-        settings = GenerationSettings(attention_mask=mask)
+        settings = GenerationSettings()
         with patch(
             "avalan.model.nlp.inference_mode", return_value=nullcontext()
         ) as inf_mock:
-            model._generate_output({}, settings)
+            model._generate_output({"attention_mask": mask}, settings)
         inf_mock.assert_called_once_with()
         model._model.generate.assert_called_once()
         _, kwargs = model._model.generate.call_args
         self.assertIs(kwargs["attention_mask"], mask)
+
+    def test_generate_output_without_attention_mask(self):
+        model = DummyNLPModel(
+            "model",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=MagicMock(spec=Logger),
+        )
+        model._model = MagicMock()
+        model._tokenizer = MagicMock(eos_token_id=2)
+        mask = torch.tensor([[1, 1]])
+        settings = GenerationSettings(use_inputs_attention_mask=False)
+        with patch(
+            "avalan.model.nlp.inference_mode", return_value=nullcontext()
+        ) as inf_mock:
+            model._generate_output({"attention_mask": mask}, settings)
+        inf_mock.assert_called_once_with()
+        model._model.generate.assert_called_once()
+        _, kwargs = model._model.generate.call_args
+        self.assertNotIn("attention_mask", kwargs)
