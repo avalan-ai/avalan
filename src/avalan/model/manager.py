@@ -478,6 +478,15 @@ class ModelManager(ContextDecorator):
         args: Namespace,
         input_string: Input | None,
     ) -> Operation:
+        reasoning_settings = ReasoningSettings(
+            max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
+            enabled=not getattr(args, "no_reasoning", False),
+            stop_on_max_new_tokens=getattr(
+                args,
+                "reasoning_stop_on_max_new_tokens",
+                False,
+            ),
+        )
         settings = GenerationSettings(
             do_sample=args.do_sample,
             enable_gradient_calculation=args.enable_gradient_calculation,
@@ -492,18 +501,12 @@ class ModelManager(ContextDecorator):
             use_cache=args.use_cache,
             chat_settings=ChatSettings(
                 enable_thinking=not getattr(
-                    args, "chat_disable_thinking", False
+                    args,
+                    "chat_disable_thinking",
+                    not reasoning_settings.enabled,
                 )
             ),
-            reasoning=ReasoningSettings(
-                max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
-                enabled=not getattr(args, "no_reasoning", False),
-                stop_on_max_new_tokens=getattr(
-                    args,
-                    "reasoning_stop_on_max_new_tokens",
-                    False,
-                ),
-            ),
+            reasoning=reasoning_settings,
         )
         system_prompt = args.system or None
 
