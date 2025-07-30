@@ -11,6 +11,12 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
         await parser.push("</think>")
         self.assertEqual(await parser.flush(), [])
 
+    async def test_flush_returns_pending_tokens(self) -> None:
+        parser = ReasoningParser(reasoning_settings=ReasoningSettings())
+        await parser.push("<")
+        await parser.push("thi")
+        self.assertEqual(await parser.flush(), ["<", "thi"])
+
     async def test_set_thinking_affects_state(self):
         parser = ReasoningParser(reasoning_settings=ReasoningSettings())
         self.assertFalse(parser.is_thinking)
