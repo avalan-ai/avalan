@@ -27,7 +27,16 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
     async def test_buffer_limit_with_long_prefix(self) -> None:
         parser = ReasoningParser(reasoning_settings=ReasoningSettings())
         outputs = []
-        sequence = ["x"] * 50 + ["<", "think", ">", "a", "<", "/think", ">", "y"]
+        sequence = ["x"] * 50 + [
+            "<",
+            "think",
+            ">",
+            "a",
+            "<",
+            "/think",
+            ">",
+            "y",
+        ]
         for text in sequence:
             outputs.extend(await parser.push(text))
         self.assertEqual(outputs[:50], ["x"] * 50)
