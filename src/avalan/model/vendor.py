@@ -1,6 +1,13 @@
 from .message import TemplateMessage, TemplateMessageRole
 from .stream import TextGenerationStream
-from ..entities import GenerationSettings, Message
+from ..entities import (
+    GenerationSettings,
+    Message,
+    MessageContent,
+    MessageContentImage,
+    MessageContentText,
+    MessageRole,
+)
 from ..tool.manager import ToolManager
 from abc import ABC
 from typing import AsyncGenerator
@@ -33,8 +40,33 @@ class TextGenerationVendor(ABC):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
+        def _content(content: str | MessageContent) -> dict:
+            return (
+                {"type": str(content.type), "image_url": content.image_url}
+                if isinstance(content, MessageContentImage)
+                else {
+                    "type": "text",
+                    "text": (
+                        content.text
+                        if isinstance(content, MessageContentText)
+                        else str(content)
+                    ),
+                }
+            )
+
         return [
-            {"role": message.role, "content": message.content}
+            {
+                "role": str(message.role),
+                "content": (
+                    [_content(c) for c in message.content]
+                    if isinstance(message.content, list)
+                    else (
+                        str(message.content)
+                        if message.role == MessageRole.SYSTEM
+                        else _content(message.content)
+                    )
+                ),
+            }
             for message in messages
             if not exclude_roles or message.role not in exclude_roles
         ]
