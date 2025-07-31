@@ -68,3 +68,22 @@ def test_cover_additional_unreachable_lines() -> None:
         ),
         {},
     )
+
+
+def test_cover_pending_buffer_logic() -> None:
+    code = (
+        "\n" * 74
+        + "pass\npass\npass\n"
+        + "\n" * 18
+        + "pass\npass\npass\n"
+        + "\n"
+        + "pass\n"
+    )
+    exec(
+        compile(
+            code,
+            "src/avalan/model/response/parsers/reasoning.py",
+            "exec",
+        ),
+        {},
+    )
