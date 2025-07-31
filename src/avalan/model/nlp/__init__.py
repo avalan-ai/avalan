@@ -77,7 +77,10 @@ class BaseNLPModel(TransformerModel, ABC):
                 assert attention_mask.shape == inputs["input_ids"].shape
                 generation_kwargs["attention_mask"] = attention_mask
 
-        if not settings.use_inputs_attention_mask or attention_mask is not None:
+        if (
+            not settings.use_inputs_attention_mask
+            or attention_mask is not None
+        ):
             inputs.pop("attention_mask", None)
 
         if settings.forced_bos_token_id or settings.forced_eos_token_id:

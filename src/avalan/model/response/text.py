@@ -109,54 +109,65 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     async def __anext__(self) -> Token | TokenDetail | str:
         assert self._output
 
-        if self._parser_queue and not self._parser_queue.empty():
-            return self._parser_queue.get()
+        while True:
+            if self._parser_queue and not self._parser_queue.empty():
+                return self._parser_queue.get()
 
-        try:
-            token = await self._output.__anext__()
-        except StopAsyncIteration:
-            await self._trigger_consumed()
-            raise
+            try:
+                token = await self._output.__anext__()
+            except StopAsyncIteration:
+                if self._reasoning_parser:
+                    for it in await self._reasoning_parser.flush():
+                        self._parser_queue.put(it)
+                    if not self._parser_queue.empty():
+                        continue
+                await self._trigger_consumed()
+                raise
 
-        token_str = token if isinstance(token, str) else token.token
-        self._buffer.write(token_str)
+            if not self._reasoning_parser or (
+                self._reasoning_parser.is_thinking_budget_exhausted
+                and not self._reasoning_parser.is_thinking
+            ):
+                return token
 
-        if not self._reasoning_parser:
-            return token
+            token_str = token if isinstance(token, str) else token.token
+            self._buffer.write(token_str)
 
-        try:
-            items = await self._reasoning_parser.push(token_str)
-        except ReasoningTokenLimitExceeded:
-            await self._trigger_consumed()
-            raise StopAsyncIteration
-        for it in items:
-            if isinstance(it, ReasoningToken):
-                token_id = (
-                    token.id
-                    if isinstance(token, (Token, TokenDetail))
-                    else it.id
-                )
-                parsed = ReasoningToken(
-                    token=it.token, id=token_id, probability=it.probability
-                )
-            elif isinstance(token, ToolCallToken):
-                parsed = ToolCallToken(token=str(it), id=token.id)
-            elif isinstance(token, TokenDetail):
-                parsed = TokenDetail(
-                    id=token.id,
-                    token=it if isinstance(it, str) else it.token,
-                    probability=token.probability,
-                    tokens=token.tokens,
-                    probability_distribution=token.probability_distribution,
-                    step=token.step,
-                )
-            elif isinstance(token, Token):
-                parsed = Token(id=token.id, token=str(it))
-            else:
-                parsed = it
-            self._parser_queue.put(parsed)
+            try:
+                items = await self._reasoning_parser.push(token_str)
+            except ReasoningTokenLimitExceeded:
+                await self._trigger_consumed()
+                raise StopAsyncIteration
 
-        return self._parser_queue.get()
+            for it in items:
+                if isinstance(it, ReasoningToken):
+                    token_id = (
+                        token.id
+                        if isinstance(token, (Token, TokenDetail))
+                        else it.id
+                    )
+                    parsed = ReasoningToken(
+                        token=it.token, id=token_id, probability=it.probability
+                    )
+                elif isinstance(token, ToolCallToken):
+                    parsed = ToolCallToken(token=str(it), id=token.id)
+                elif isinstance(token, TokenDetail):
+                    parsed = TokenDetail(
+                        id=token.id,
+                        token=it if isinstance(it, str) else it.token,
+                        probability=token.probability,
+                        tokens=token.tokens,
+                        probability_distribution=token.probability_distribution,
+                        step=token.step,
+                    )
+                elif isinstance(token, Token):
+                    parsed = Token(id=token.id, token=str(it))
+                else:
+                    parsed = it
+                self._parser_queue.put(parsed)
+
+            if not self._parser_queue.empty():
+                return self._parser_queue.get()
 
     async def to_str(self) -> str:
         if not self._use_async_generator:

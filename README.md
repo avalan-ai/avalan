@@ -1053,6 +1053,19 @@ echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
 
 ![Nvidia's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_nvidia.webp)
 
+When using reasoning models, be mindful of your total token limit. Some reasoning models include limit recommendations on their model cards, like the following model from Z.ai:
+
+```bash
+echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+    avalan model run 'zai-org/GLM-Z1-32B-0414' \
+        --temperature 0.6 \
+        --top-p .95 \
+        --top-k 40 \
+        --max-new-tokens 30000 \
+        --start-thinking \
+        --backend mlxlm
+```
+
 ### ReACT
 
 ReACT interleaves reasoning with tool use so an agent can think through steps and take actions in turn.
