@@ -1769,8 +1769,8 @@ class FancyTheme(Theme):
                     ),
                     (
                         _f(
-                            "ttst",
-                            _("ttsr: {ttsr} s").format(ttsr=f"{ttsr:.1f}"),
+                            "ttsr",
+                            _("rt: {ttsr} s").format(ttsr=f"{ttsr:.1f}"),
                         )
                         if ttsr
                         else None
