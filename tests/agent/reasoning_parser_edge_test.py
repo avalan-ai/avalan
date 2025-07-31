@@ -2,12 +2,15 @@ from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
 from avalan.entities import ReasoningSettings
+from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
 
 class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
     async def test_pending_buffer_drop_when_exceeds_length(self) -> None:
-        parser = ReasoningParser(reasoning_settings=ReasoningSettings())
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
         parser._pending_tokens = ["<", "thi"]
         parser._pending_str = "<thi"
         tokens = await parser.push("nk>")
@@ -17,14 +20,18 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         self.assertEqual([t.token for t in tokens], ["<", "thi", "nk>"])
 
     async def test_overlong_pending_clears_token(self) -> None:
-        parser = ReasoningParser(reasoning_settings=ReasoningSettings())
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
         tokens = await parser.push("<th")
         self.assertEqual(tokens, [])
         self.assertEqual(parser._pending_tokens, ["<th"])
         self.assertEqual(parser._pending_str, "<th")
 
     async def test_flush_reasoning_tokens(self) -> None:
-        parser = ReasoningParser(reasoning_settings=ReasoningSettings())
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
         parser.set_thinking(True)
         parser._pending_tokens = ["a", "b"]
         parser._pending_str = "ab"

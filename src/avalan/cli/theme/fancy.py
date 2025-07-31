@@ -99,6 +99,7 @@ class FancyTheme(Theme):
             "tool_call_results": ":package:",
             "ttft": ":seedling:",
             "ttnt": ":alarm_clock:",
+            "ttst": ":thinking_face:",
             "updated_at": ":calendar:",
             "user": ":hugging_face:",
             "user_input": ":speaking_head:",
@@ -1654,7 +1655,8 @@ class FancyTheme(Theme):
         tool_event_results: list[Event] | None,
         tool_running_spinner: Spinner | None,
         ttft: float,
-        ttnt: float,
+        ttnt: float | None,
+        ttsr: float | None,
         elapsed: float,
         console_width: int,
         logger: Logger,
@@ -1760,9 +1762,17 @@ class FancyTheme(Theme):
                     (
                         _f(
                             "ttnt",
-                            _("ttnt: {ttnt} s").format(ttnt=f"{ttnt:.2f}"),
+                            _("ttnt: {ttnt} s").format(ttnt=f"{ttnt:.1f}"),
                         )
                         if ttnt
+                        else None
+                    ),
+                    (
+                        _f(
+                            "ttst",
+                            _("ttsr: {ttsr} s").format(ttsr=f"{ttsr:.1f}"),
+                        )
+                        if ttsr
                         else None
                     ),
                     _f(
@@ -1822,9 +1832,12 @@ class FancyTheme(Theme):
                 ]
             )
         )
-        think_pannel = (
+        think_panel = (
             Panel(
-                f"[bright_black]{think_wrapped_output}[/bright_black]",
+                Align(
+                    f"[bright_black]{think_wrapped_output}[/bright_black]",
+                    vertical="top",
+                ),
                 title=_("{model_id} reasoning").format(
                     model_id=_f("id", model_id)
                 ),
@@ -1845,7 +1858,7 @@ class FancyTheme(Theme):
         )
         tool_panel = (
             Panel(
-                f"[cyan]{tool_wrapped_output}[/cyan]",
+                Align(f"[cyan]{tool_wrapped_output}[/cyan]", vertical="top"),
                 title=_("Tool call requests"),
                 title_align="left",
                 height=(
@@ -1864,7 +1877,7 @@ class FancyTheme(Theme):
         )
         answer_panel = (
             Panel(
-                wrapped_output,
+                Align(wrapped_output, vertical="top"),
                 title=(
                     _("{model_id} response").format(
                         model_id=_f("id", model_id)
@@ -1904,7 +1917,7 @@ class FancyTheme(Theme):
                 Group(
                     *_lf(
                         [
-                            think_pannel or None,
+                            think_panel or None,
                             tool_panel or None,
                             tool_running_panel or None,
                             answer_panel or None,
@@ -2112,7 +2125,7 @@ class FancyTheme(Theme):
                 Group(
                     *_lf(
                         [
-                            think_pannel or None,
+                            think_panel or None,
                             tool_panel or None,
                             tool_running_panel or None,
                             answer_panel or None,

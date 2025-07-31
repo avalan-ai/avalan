@@ -12,6 +12,7 @@ from avalan.entities import (
 from avalan.event.manager import EventManager
 from avalan.event import EventType
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -117,7 +118,9 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         def output_fn(*args, **kwargs):
             return '{"value": "ok"}'
 
-        response = TextGenerationResponse(output_fn, use_async_generator=False)
+        response = TextGenerationResponse(
+            output_fn, logger=getLogger(), use_async_generator=False
+        )
 
         agent_mock = AsyncMock(spec=TemplateEngineAgent)
         agent_mock.engine = engine

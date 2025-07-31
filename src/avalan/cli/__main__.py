@@ -445,6 +445,11 @@ class CLI:
             ),
         )
         model_inference_display_parser.add_argument(
+            "--skip-display-reasoning-time",
+            action="store_true",
+            help="Don't display total reasoning time",
+        )
+        model_inference_display_parser.add_argument(
             "--display-tokens",
             type=int,
             nargs="?",

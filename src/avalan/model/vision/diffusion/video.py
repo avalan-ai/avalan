@@ -7,7 +7,7 @@ from dataclasses import replace
 from diffusers import DiffusionPipeline
 from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
 from diffusers.utils import export_to_video, load_image, load_video
-from logging import Logger
+from logging import Logger, getLogger
 from torch import Generator, inference_mode
 from transformers import PreTrainedModel
 
@@ -19,7 +19,7 @@ class TextToVideoModel(BaseVisionModel):
         self,
         model_id: str,
         settings: EngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ):
         settings = settings or EngineSettings()
         assert settings.upsampler_model_id

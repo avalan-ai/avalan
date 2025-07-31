@@ -12,6 +12,7 @@ from avalan.entities import (
     GenerationSettings,
 )
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
@@ -47,6 +48,7 @@ def _dummy_response() -> TextGenerationResponse:
     settings = GenerationSettings()
     return TextGenerationResponse(
         lambda **_: output_gen(),
+        logger=getLogger(),
         use_async_generator=True,
         generation_settings=settings,
         settings=settings,

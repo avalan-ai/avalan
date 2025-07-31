@@ -17,6 +17,7 @@ from avalan.event.manager import EventManager
 from avalan.tool.manager import ToolManager
 from avalan.cli import CommandAbortException
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -53,7 +54,9 @@ def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
     def output_fn():
         return output_gen()
 
-    return TextGenerationResponse(output_fn, use_async_generator=async_gen)
+    return TextGenerationResponse(
+        output_fn, logger=getLogger(), use_async_generator=async_gen
+    )
 
 
 class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):

@@ -13,6 +13,7 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
@@ -115,7 +116,9 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         def output_fn(*args, **kwargs):
             return output_gen()
 
-        response = TextGenerationResponse(output_fn, use_async_generator=True)
+        response = TextGenerationResponse(
+            output_fn, logger=getLogger(), use_async_generator=True
+        )
 
         agent_mock = AsyncMock(spec=TemplateEngineAgent)
         agent_mock.engine = engine

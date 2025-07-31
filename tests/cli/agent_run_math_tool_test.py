@@ -22,6 +22,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
 from avalan.tool.math import MathToolSet
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 
@@ -45,7 +46,7 @@ class DummyEngine:
                 yield "</tool_call>"
 
             return TextGenerationResponse(
-                lambda: gen(), use_async_generator=True
+                lambda: gen(), logger=getLogger(), use_async_generator=True
             )
         else:
             result = (
@@ -56,7 +57,7 @@ class DummyEngine:
                 yield f"The result is {result}."
 
             return TextGenerationResponse(
-                lambda: gen(), use_async_generator=True
+                lambda: gen(), logger=getLogger(), use_async_generator=True
             )
 
     def input_token_count(self, *_a, **_k):

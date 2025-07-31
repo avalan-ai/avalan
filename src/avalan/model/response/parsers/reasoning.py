@@ -1,4 +1,5 @@
 from ....entities import ReasoningSettings, ReasoningToken
+from logging import Logger
 from typing import Any, Iterable
 
 
@@ -18,17 +19,20 @@ class ReasoningParser:
     _token_count: int
     _pending_tokens: list[str]
     _pending_str: str
+    _logger: Logger
 
     def __init__(
         self,
         *,
         reasoning_settings: ReasoningSettings,
+        logger: Logger,
         start_tag: str = "<think>",
         end_tag: str = "</think>",
         prefixes: list[str] | None = None,
         max_thinking_turns: int = 1,
     ) -> None:
         self._settings = reasoning_settings
+        self._logger = logger
         self._start_tag = start_tag
         self._end_tag = end_tag
         self._prefixes = tuple(prefixes or ["Think:"])
@@ -53,6 +57,9 @@ class ReasoningParser:
 
     async def push(self, token: str) -> Iterable[Any]:
         if self._thinking_budget_exhausted and not self._thinking:
+            self._logger.debug(
+                "Thinking budget exhausted and no longer thinking"
+            )
             return [token]
 
         token_clean = token.strip()
@@ -73,7 +80,7 @@ class ReasoningParser:
                         result, expecting_tag == self._start_tag
                     )
                 return result
-            result.extend(self._flush_pending(False))
+            result.extend(self._flush_pending(self._thinking))
 
         if token_clean in (self._start_tag, self._end_tag) or (
             not self._thinking and token_clean.startswith(self._prefixes)
@@ -101,10 +108,19 @@ class ReasoningParser:
                 or self._token_count < self._settings.max_new_tokens
             )
             if within_budget:
+                self._logger.debug('Adding reasoning token "%s"', token)
                 result.extend(self._wrap(token))
                 return result
             if self._settings.stop_on_max_new_tokens:
+                self._logger.debug(
+                    "Maximum token limit %s reached",
+                    self._settings.max_new_tokens,
+                )
                 raise ReasoningTokenLimitExceeded
+
+            self._logger.debug(
+                'Adding reasoning token "%s" after budget exceeded', token
+            )
             result.append(token)
             return result
 
@@ -118,8 +134,10 @@ class ReasoningParser:
             for t in self._pending_tokens:
                 if as_reasoning:
                     self._token_count += 1
+                    self._logger.debug('Flushing reasoning token "%s"', t)
                     result.append(ReasoningToken(t))
                 else:
+                    self._logger.debug('Flushing token "%s"', t)
                     result.append(t)
             self._pending_tokens.clear()
             self._pending_str = ""
@@ -135,6 +153,7 @@ class ReasoningParser:
                 self._thinking_budget_exhausted = True
         result.extend(self._flush_pending(True))
         if token is not None:
+            self._logger.debug('Adding reasoning token "%s"', token)
             result.extend(self._wrap(token))
         return result
 
@@ -146,6 +165,11 @@ class ReasoningParser:
         result: list[Any] = []
         if self._pending_tokens:
             for t in self._pending_tokens:
+                self._logger.debug(
+                    'Flushing pending parser token "%s". Reasoning: %s',
+                    t,
+                    as_reasoning,
+                )
                 result.extend(self._wrap(t) if as_reasoning else [t])
             self._pending_tokens.clear()
             self._pending_str = ""

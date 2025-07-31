@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from unittest import IsolatedAsyncioTestCase
 from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
 from avalan.entities import GenerationSettings, ReasoningSettings
 
 
@@ -14,6 +15,7 @@ class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         resp = TextGenerationResponse(
             lambda **_: '{"value": "ok"}',
+            logger=getLogger(),
             use_async_generator=False,
             generation_settings=settings,
             settings=settings,
@@ -29,6 +31,7 @@ class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
         gs = GenerationSettings(reasoning=ReasoningSettings(enabled=False))
         resp = TextGenerationResponse(
             lambda **_: gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=gs,
             settings=gs,

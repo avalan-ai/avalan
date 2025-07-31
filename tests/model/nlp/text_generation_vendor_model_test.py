@@ -8,6 +8,7 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 from avalan.model.nlp.text.vendor import TextGenerationVendorModel
 
 
@@ -22,14 +23,14 @@ DummyVendorModel.__abstractmethods__ = set()
 class ConstructorTestCase(TestCase):
     def test_no_settings_requires_token(self):
         with self.assertRaises(AssertionError):
-            DummyVendorModel("m")
+            DummyVendorModel("m", logger=getLogger())
 
     def test_settings_without_token_raises(self):
         settings = TransformerEngineSettings(
             auto_load_model=False, auto_load_tokenizer=False
         )
         with self.assertRaises(AssertionError):
-            DummyVendorModel("m", settings)
+            DummyVendorModel("m", settings, logger=getLogger())
 
     def test_settings_with_token_success(self):
         settings = TransformerEngineSettings(
@@ -38,7 +39,7 @@ class ConstructorTestCase(TestCase):
             access_token="tok",
             enable_eval=True,
         )
-        model = DummyVendorModel("m", settings)
+        model = DummyVendorModel("m", settings, logger=getLogger())
         self.assertIsInstance(model, DummyVendorModel)
         self.assertFalse(model._settings.enable_eval)
 
@@ -50,7 +51,7 @@ class PropertyTestCase(TestCase):
             auto_load_tokenizer=False,
             access_token="tok",
         )
-        self.model = DummyVendorModel("m", self.settings)
+        self.model = DummyVendorModel("m", self.settings, logger=getLogger())
 
     def test_properties(self):
         self.assertFalse(self.model.supports_sample_generation)
@@ -73,7 +74,7 @@ class InputTokenCountTestCase(TestCase):
             auto_load_tokenizer=False,
             access_token="tok",
         )
-        self.model = DummyVendorModel("m", self.settings)
+        self.model = DummyVendorModel("m", self.settings, logger=getLogger())
 
     def test_input_token_count_with_model_encoding(self):
         encoding = MagicMock()
@@ -122,7 +123,7 @@ class CallTestCase(IsolatedAsyncioTestCase):
             auto_load_tokenizer=False,
             access_token="tok",
         )
-        model = DummyVendorModel("m", settings)
+        model = DummyVendorModel("m", settings, logger=getLogger())
         messages = [Message(role=MessageRole.USER, content="hi")]
         model._messages = MagicMock(return_value=messages)
 

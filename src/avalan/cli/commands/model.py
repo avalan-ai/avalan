@@ -519,7 +519,8 @@ async def _token_stream(
     tool_events_limit: int | None,
     with_stats: bool = True,
 ) -> None:
-    display_time_to_n_token = args.display_time_to_n_token or 256
+    display_time_to_n_token = args.display_time_to_n_token
+    display_reasoning_time = not getattr(args, "skip_display_reasoning_time")
     display_pause = (
         args.display_pause
         if args.display_pause and args.display_pause > 0
@@ -541,7 +542,6 @@ async def _token_stream(
         100 if display_pause > 0 and display_tokens > 0 else 0
     )
 
-    start = perf_counter()
     input_token_count = (
         response.input_token_count
         if response.input_token_count
@@ -559,7 +559,13 @@ async def _token_stream(
     if start_thinking and response.can_think and not response.is_thinking:
         response.set_thinking(start_thinking)
 
+    start = perf_counter()
+    started_reasoning = perf_counter() if response.is_thinking else None
+    reasoning_time = None
+
     async for token in response:
+        is_reasoning_token = isinstance(token, ReasoningToken)
+
         if isinstance(token, Event):
             event = token
             tool_events.append(event)
@@ -578,12 +584,21 @@ async def _token_stream(
                     completed_call_ids.add(event.payload["call"].id)
             else:
                 tool_event_calls.append(event)
-
         else:
+            if (
+                display_reasoning_time
+                and not is_reasoning_token
+                and started_reasoning is not None
+            ):
+                reasoning_time = perf_counter() - started_reasoning
+                started_reasoning = None
+
             text_token = token.token if isinstance(token, Token) else token
             if isinstance(token, ToolCallToken):
                 tool_text_tokens.append(text_token)
-            elif isinstance(token, ReasoningToken):
+            elif is_reasoning_token:
+                if not started_reasoning:
+                    started_reasoning = perf_counter()
                 thinking_text_tokens.append(text_token)
             else:
                 answer_text_tokens.append(text_token)
@@ -614,12 +629,21 @@ async def _token_stream(
                 else None
             )
 
-        total_tokens += 1
         elapsed = perf_counter() - start
+        total_tokens += 1
+
         if ttft is None:
             ttft = elapsed
-        if ttnt is None and total_tokens >= display_time_to_n_token:
+        if (
+            ttnt is None
+            and display_time_to_n_token
+            and total_tokens >= display_time_to_n_token
+        ):
             ttnt = elapsed
+
+        ttsr = None
+        if display_reasoning_time and reasoning_time:
+            ttsr = reasoning_time
 
         if display_tokens and isinstance(token, Token):
             tokens.append(token)
@@ -668,6 +692,7 @@ async def _token_stream(
             tool_running_spinner,
             ttft,
             ttnt,
+            ttsr,
             elapsed,
             console.width,
             logger,

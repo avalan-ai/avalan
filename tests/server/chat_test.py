@@ -1,5 +1,6 @@
 from avalan.agent.orchestrator import Orchestrator
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 import importlib
 from pathlib import Path
 import sys
@@ -10,7 +11,9 @@ from unittest.mock import AsyncMock
 
 class DummyOrchestrator(Orchestrator):
     async def __call__(self, messages, settings=None):
-        return TextGenerationResponse(lambda: "ok", use_async_generator=False)
+        return TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
 
 
 @skip(
@@ -41,7 +44,7 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         app = self.FastAPI()
         app.state.orchestrator = AsyncMock(spec=DummyOrchestrator)
         app.state.orchestrator.return_value = TextGenerationResponse(
-            lambda: "ok", use_async_generator=False
+            lambda: "ok", logger=getLogger(), use_async_generator=False
         )
         app.include_router(self.chat.router)
 
@@ -70,13 +73,13 @@ class ChatCompletionEndpointTestCase(IsolatedAsyncioTestCase):
         class StreamingOrchestrator(Orchestrator):
             async def __call__(self, messages, settings=None):
                 return TextGenerationResponse(
-                    output_fn, use_async_generator=True
+                    output_fn, logger=getLogger(), use_async_generator=True
                 )
 
         app = self.FastAPI()
         app.state.orchestrator = AsyncMock(spec=StreamingOrchestrator)
         app.state.orchestrator.return_value = TextGenerationResponse(
-            output_fn, use_async_generator=True
+            output_fn, logger=getLogger(), use_async_generator=True
         )
         app.include_router(self.chat.router)
 

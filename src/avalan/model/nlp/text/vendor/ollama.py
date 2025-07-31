@@ -11,7 +11,7 @@ from .....entities import (
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from dataclasses import replace
-from logging import Logger
+from logging import Logger, getLogger
 from typing import AsyncIterator
 
 try:
@@ -75,7 +75,7 @@ class OllamaModel(TextGenerationVendorModel):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ) -> None:
         settings = settings or TransformerEngineSettings()
         settings = replace(settings, enable_eval=False)

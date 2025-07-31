@@ -10,7 +10,7 @@ from diffusers import DiffusionPipeline
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from dataclasses import replace
-from logging import Logger
+from logging import Logger, getLogger
 from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
@@ -26,7 +26,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ) -> None:
         settings = settings or TransformerEngineSettings()
         assert (
@@ -97,6 +97,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         gen_settings = settings or GenerationSettings()
         return TextGenerationResponse(
             streamer,
+            logger=self._logger,
             generation_settings=gen_settings,
             settings=gen_settings,
             use_async_generator=gen_settings.use_async_generator,

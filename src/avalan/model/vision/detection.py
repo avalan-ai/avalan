@@ -5,7 +5,7 @@ from ...model.vision import BaseVisionModel
 from ...model.vision.classification import ImageClassificationModel
 from ...model.engine import Engine
 from diffusers import DiffusionPipeline
-from logging import Logger
+from logging import Logger, getLogger
 from PIL import Image
 from torch import inference_mode, tensor
 from transformers import (
@@ -22,7 +22,7 @@ class ObjectDetectionModel(ImageClassificationModel):
         model_id: str,
         settings: EngineSettings | None = None,
         revision: Literal["no_timm"] = "no_timm",
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ):
         self._revision = revision
         super().__init__(model_id, settings, logger=logger)
