@@ -64,6 +64,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=spinner,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=80,
                 logger=MagicMock(),
@@ -101,13 +102,14 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=80,
                 logger=MagicMock(),
             )
             _, frame = await gen.__anext__()
         self.assertEqual(len(frame.renderables), 2)
-        self.assertIn("tool", frame.renderables[0].renderable)
+        self.assertIn("tool", str(frame.renderables[0].renderable.renderable))
 
     async def test_progress_title_pluralization_singular(self):
         theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
@@ -140,6 +142,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=80,
                 logger=MagicMock(),
@@ -184,6 +187,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=80,
                 logger=MagicMock(),
@@ -497,6 +501,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -542,6 +547,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.1,
                 ttnt=0.1,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -579,6 +585,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -623,6 +630,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -657,6 +665,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -664,7 +673,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             _, frame = await gen.__anext__()
 
         self.assertEqual(len(frame.renderables), 1)
-        text = frame.renderables[0].renderable
+        text = frame.renderables[0].renderable.renderable
         self.assertIn("Word Word", text)
         self.assertIn("Another word", text)
         self.assertGreaterEqual(text.count("\n"), 1)
@@ -695,6 +704,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -702,8 +712,8 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             _, frame = await gen.__anext__()
 
         self.assertEqual(len(frame.renderables), 2)
-        think_text = frame.renderables[0].renderable
-        answer_text = frame.renderables[1].renderable
+        think_text = frame.renderables[0].renderable.renderable
+        answer_text = frame.renderables[1].renderable.renderable
         self.assertIn("Reasoning", think_text)
         self.assertIn("Answer", answer_text)
         self.assertGreaterEqual(answer_text.count("\n"), 1)
@@ -733,6 +743,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
+                ttsr=0.0,
                 elapsed=1.0,
                 console_width=40,
                 logger=MagicMock(),
@@ -740,7 +751,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             _, frame = await gen.__anext__()
 
         self.assertEqual(len(frame.renderables), 1)
-        think_text = frame.renderables[0].renderable
+        think_text = frame.renderables[0].renderable.renderable
         self.assertIn("line0", think_text)
         self.assertGreaterEqual(think_text.count("\n"), 3)
 

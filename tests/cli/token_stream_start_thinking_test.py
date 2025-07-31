@@ -28,6 +28,7 @@ class _Resp:
 class TokenStreamStartThinkingTestCase(IsolatedAsyncioTestCase):
     async def test_start_thinking(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=None,
             display_pause=0,
             start_thinking=True,
