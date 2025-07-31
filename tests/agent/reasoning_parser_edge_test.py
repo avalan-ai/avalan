@@ -8,31 +8,30 @@ from unittest import IsolatedAsyncioTestCase
 class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
     async def test_pending_buffer_drop_when_exceeds_length(self) -> None:
         parser = ReasoningParser(reasoning_settings=ReasoningSettings())
-        parser._pending_tag = ["<", "thi"]
-        parser._pending_length = 8
+        parser._pending_tokens = ["<", "thi"]
+        parser._pending_str = "<thi"
         tokens = await parser.push("nk>")
         self.assertTrue(parser.is_thinking)
-        self.assertEqual(parser._pending_tag, [])
-        self.assertEqual(parser._pending_length, 0)
-        self.assertEqual([t.token for t in tokens], ["nk>"])
+        self.assertEqual(parser._pending_tokens, [])
+        self.assertEqual(parser._pending_str, "")
+        self.assertEqual([t.token for t in tokens], ["<", "thi", "nk>"])
 
     async def test_overlong_pending_clears_token(self) -> None:
         parser = ReasoningParser(reasoning_settings=ReasoningSettings())
-        parser._pending_length = 5
         tokens = await parser.push("<th")
         self.assertEqual(tokens, [])
-        self.assertEqual(parser._pending_tag, [])
-        self.assertEqual(parser._pending_length, 5)
+        self.assertEqual(parser._pending_tokens, ["<th"])
+        self.assertEqual(parser._pending_str, "<th")
 
     async def test_flush_reasoning_tokens(self) -> None:
         parser = ReasoningParser(reasoning_settings=ReasoningSettings())
         parser.set_thinking(True)
-        parser._pending_tag = ["a", "b"]
-        parser._pending_length = 2
+        parser._pending_tokens = ["a", "b"]
+        parser._pending_str = "ab"
         tokens = await parser.flush()
         self.assertEqual([t.token for t in tokens], ["a", "b"])
-        self.assertEqual(parser._pending_tag, [])
-        self.assertEqual(parser._pending_length, 0)
+        self.assertEqual(parser._pending_tokens, [])
+        self.assertEqual(parser._pending_str, "")
 
 
 def test_cover_unreachable_lines() -> None:
