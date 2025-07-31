@@ -103,9 +103,9 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             tmpl,
             [
-                {"role": MessageRole.SYSTEM, "content": "sys"},
-                {"role": MessageRole.USER, "content": "hi"},
-                {"role": MessageRole.TOOL, "content": "t"},
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": {"type": "text", "text": "hi"}},
+                {"role": "tool", "content": {"type": "text", "text": "t"}},
             ],
         )
 
