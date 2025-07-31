@@ -9,7 +9,7 @@ from ....model.vendor import TextGenerationVendorStream
 from ....model.nlp.text.generation import TextGenerationModel
 from ....tool.manager import ToolManager
 from dataclasses import asdict, replace
-from logging import Logger
+from logging import Logger, getLogger
 from typing import AsyncGenerator
 
 try:
@@ -39,7 +39,7 @@ class VllmModel(TextGenerationModel):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ) -> None:
         super().__init__(model_id, settings, logger)
 

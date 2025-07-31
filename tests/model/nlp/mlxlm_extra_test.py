@@ -3,6 +3,7 @@ import importlib
 import types
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
+from logging import getLogger
 
 import avalan.model  # noqa: F401
 
@@ -66,6 +67,7 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._model = MagicMock()
         model._tokenizer = MagicMock()
@@ -99,6 +101,7 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "prompt"
@@ -152,6 +155,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=True
             ),
+            logger=getLogger(),
         )
         self.assertFalse(model._settings.auto_load_tokenizer)
 
@@ -161,6 +165,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         out = model._load_model()
         self.stub.load.assert_called_once_with("id")
@@ -174,6 +179,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._model = "m"
         model._tokenizer = MagicMock()
@@ -197,6 +203,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._model = "m"
         model._tokenizer = MagicMock()
@@ -220,6 +227,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._model = "m"
         model._tokenizer = MagicMock()
@@ -252,5 +260,6 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         self.assertFalse(model.supports_sample_generation)

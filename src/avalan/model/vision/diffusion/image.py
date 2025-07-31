@@ -10,7 +10,7 @@ from ....model.engine import Engine
 from ....model.vision import BaseVisionModel
 from dataclasses import replace
 from diffusers import DiffusionPipeline
-from logging import Logger
+from logging import Logger, getLogger
 from torch import inference_mode
 from transformers import PreTrainedModel
 from typing import Literal
@@ -23,7 +23,7 @@ class TextToImageModel(BaseVisionModel):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ):
         settings = settings or TransformerEngineSettings()
         assert settings.refiner_model_id

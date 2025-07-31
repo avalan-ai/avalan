@@ -19,7 +19,7 @@ from diffusers import DiffusionPipeline
 from ....tool.manager import ToolManager
 from dataclasses import asdict, replace
 from importlib.util import find_spec
-from logging import Logger
+from logging import Logger, getLogger
 from threading import Thread
 from torch import log_softmax, softmax, topk, Tensor
 from torch.nn.functional import gumbel_softmax
@@ -46,7 +46,7 @@ class TextGenerationModel(BaseNLPModel):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ) -> None:
         super().__init__(
             model_id, settings or TransformerEngineSettings(), logger
@@ -171,6 +171,7 @@ class TextGenerationModel(BaseNLPModel):
         return TextGenerationResponse(
             output_fn,
             inputs=inputs,
+            logger=self._logger,
             generation_settings=generation_settings,
             pick=pick,
             settings=generation_settings,

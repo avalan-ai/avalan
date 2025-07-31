@@ -10,6 +10,7 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.tool.manager import ToolManager
 from avalan.model import TextGenerationResponse
+from logging import getLogger
 from avalan.model.manager import ModelManager
 from dataclasses import replace
 from unittest import IsolatedAsyncioTestCase
@@ -126,7 +127,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_with_settings_and_previous_response(self):
         last_response = TextGenerationResponse(
-            lambda: "prev", use_async_generator=False
+            lambda: "prev", logger=getLogger(), use_async_generator=False
         )
         agent, engine, memory, manager = self._make_agent(last_response)
 
@@ -176,7 +177,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_kwargs_only_with_previous_response(self):
         last_response = TextGenerationResponse(
-            lambda: "prev", use_async_generator=False
+            lambda: "prev", logger=getLogger(), use_async_generator=False
         )
         agent, engine, memory, manager = self._make_agent(last_response)
 

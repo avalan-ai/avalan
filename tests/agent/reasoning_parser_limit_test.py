@@ -1,6 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import ReasoningSettings, ReasoningToken
+from logging import getLogger
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
     ReasoningTokenLimitExceeded,
@@ -10,7 +11,8 @@ from avalan.model.response.parsers.reasoning import (
 class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
     async def test_token_limit_switches_to_plain_output(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(max_new_tokens=2)
+            reasoning_settings=ReasoningSettings(max_new_tokens=2),
+            logger=getLogger(),
         )
         outputs = []
         for text in ["<think>", "a", "b", "c", "</think>", "d"]:
@@ -31,7 +33,8 @@ class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(
                 max_new_tokens=2,
                 stop_on_max_new_tokens=True,
-            )
+            ),
+            logger=getLogger(),
         )
         await parser.push("<think>")
         await parser.push("a")

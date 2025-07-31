@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch, call, ANY
 from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.entities import GenerationSettings, ReasoningSettings
 from avalan.entities import TransformerEngineSettings
@@ -35,6 +36,7 @@ class CliModelTestCase(TestCase):
     def test_get_model_settings(self):
         engine_uri = MagicMock()
         args = Namespace(
+            skip_display_reasoning_time=False,
             attention="flash",
             base_url="http://localhost:9001/v1",
             device="cpu",
@@ -84,7 +86,7 @@ class CliModelTestCase(TestCase):
         self.assertEqual(result, expected)
 
     def test_model_install_secret_creates_secret(self):
-        args = Namespace(model="m")
+        args = Namespace(skip_display_reasoning_time=False, model="m")
         engine_uri = SimpleNamespace(
             vendor="openai", password="pw", user="secret"
         )
@@ -113,7 +115,7 @@ class CliModelTestCase(TestCase):
         )
 
     def test_model_uninstall_secret(self):
-        args = Namespace(model="m")
+        args = Namespace(skip_display_reasoning_time=False, model="m")
         engine_uri = SimpleNamespace(
             vendor="openai", password="pw", user="secret"
         )
@@ -139,7 +141,11 @@ class CliModelTestCase(TestCase):
 
     def test_model_display_uses_provided_model(self):
         args = Namespace(
-            model="id", skip_hub_access_check=False, summary=False, load=False
+            skip_display_reasoning_time=False,
+            model="id",
+            skip_hub_access_check=False,
+            summary=False,
+            load=False,
         )
         manager = MagicMock()
         manager.__enter__.return_value = manager
@@ -182,7 +188,11 @@ class CliModelTestCase(TestCase):
 
     def test_model_display_loads_model(self):
         args = Namespace(
-            model="id", skip_hub_access_check=False, summary=False, load=True
+            skip_display_reasoning_time=False,
+            model="id",
+            skip_hub_access_check=False,
+            summary=False,
+            load=True,
         )
         manager = MagicMock()
         manager.__enter__.return_value = manager
@@ -216,7 +226,7 @@ class CliModelTestCase(TestCase):
         self.console.print.assert_called()
 
     def test_model_install_secret_override(self):
-        args = Namespace(model="m")
+        args = Namespace(skip_display_reasoning_time=False, model="m")
         engine_uri = SimpleNamespace(
             vendor="openai", password="pw", user="secret"
         )
@@ -247,7 +257,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             for t in ["a", "b"]:
                 yield t
 
-        args = Namespace()
+        args = Namespace(
+            skip_display_reasoning_time=False,
+        )
         console = MagicMock()
         await model_cmds.token_generation(
             args=args,
@@ -274,7 +286,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
             yield "t"
 
-        args = Namespace()
+        args = Namespace(
+            skip_display_reasoning_time=False,
+        )
         console = MagicMock()
         await model_cmds.token_generation(
             args=args,
@@ -299,6 +313,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def g():
@@ -308,6 +327,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 return g()
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=1,
             display_pause=1,
             start_thinking=False,
@@ -362,6 +382,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def g():
@@ -370,6 +395,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 return g()
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=1,
             display_pause=0,
             start_thinking=False,
@@ -423,6 +449,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             def __init__(self, toks):
                 self._toks = toks
                 self.input_token_count = 1
+                self.can_think = False
+                self.is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def gen():
@@ -434,6 +465,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         response = Resp([token])
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=None,
             display_pause=0,
             start_thinking=False,
@@ -497,6 +529,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             def __init__(self, toks, count):
                 self._toks = toks
                 self.input_token_count = count
+                self.can_think = False
+                self.is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def gen():
@@ -506,6 +543,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 return gen()
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=None,
             display_pause=0,
             start_thinking=False,
@@ -626,6 +664,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         inner_response = model_cmds.TextGenerationResponse(
             lambda: inner_gen(),
             inputs={"input_ids": [[1, 2, 3]]},
+            logger=getLogger(),
             use_async_generator=True,
         )
 
@@ -651,6 +690,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             def __init__(self, items, count):
                 self._items = items
                 self.input_token_count = count
+                self.can_think = False
+                self.is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def gen():
@@ -662,6 +706,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         response = Resp(events, 1)
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=None,
             display_pause=0,
             start_thinking=False,
@@ -762,6 +807,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         for display_events, display_tools, expected_event_calls in combos:
             args = Namespace(
+                skip_display_reasoning_time=False,
                 display_time_to_n_token=None,
                 display_pause=0,
                 start_thinking=False,
@@ -817,6 +863,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 class CliModelRunTestCase(IsolatedAsyncioTestCase):
     async def test_returns_when_no_input(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -901,6 +948,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_local_model(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=2,
@@ -998,6 +1046,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_remote_model(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1080,6 +1129,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_model_run_sets_output_hidden_states(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1155,6 +1205,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_model_run_chat_disable_thinking(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1275,6 +1326,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 reference_path=ref_path, reference_text=ref_text
             ):
                 args = Namespace(
+                    skip_display_reasoning_time=False,
                     **base_args,
                     audio_reference_path=ref_path,
                     audio_reference_text=ref_text,
@@ -1354,6 +1406,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_audio_generation(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=2,
@@ -1448,6 +1501,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_audio_speech_recognition(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1539,6 +1593,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_audio_classification(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1636,6 +1691,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_question_answering(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1726,6 +1782,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_token_classification(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1826,6 +1883,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_token_classification_labeled_only(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -1927,6 +1985,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_sequence_classification(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2021,6 +2080,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_sequence_to_sequence(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2124,6 +2184,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_translation(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2232,6 +2293,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_object_detection(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2339,6 +2401,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_semantic_segmentation(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2440,6 +2503,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_image_classification(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2541,6 +2605,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_image_to_text(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2637,6 +2702,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_encoder_decoder(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2737,6 +2803,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_image_text_to_text(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2840,6 +2907,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_text_to_image(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -2946,6 +3014,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_text_to_animation(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3052,6 +3121,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_vision_text_to_animation_custom_options(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3158,6 +3228,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_to_video(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3276,6 +3347,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_to_video_custom_options(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3394,6 +3466,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_to_video_width_only(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3514,6 +3587,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_text_to_video_steps_only(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3634,6 +3708,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_invalid_modality_raises(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3717,6 +3792,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
     async def test_run_unknown_modality(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,
@@ -3790,6 +3866,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 class CliModelSearchTestCase(IsolatedAsyncioTestCase):
     async def test_model_search(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             filter=["f"],
             search=["q"],
             library=["lib"],
@@ -3872,6 +3949,7 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
 
     async def test_model_search_open(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             filter=None,
             search=None,
             library=None,
@@ -3942,7 +4020,12 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         console = MagicMock()
         stop_signal = asyncio.Event()
 
-        args = Namespace(display_events=True, display_tools=True, record=False)
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=True,
+            record=False,
+        )
         task = asyncio.create_task(
             model_cmds._event_stream(
                 args,
@@ -3973,7 +4056,12 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         group = SimpleNamespace(renderables=[MagicMock(), MagicMock()])
         theme = MagicMock()
 
-        args = Namespace(display_events=True, display_tools=True, record=False)
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=True,
+            record=False,
+        )
         await model_cmds._event_stream(
             args,
             console,
@@ -3991,7 +4079,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         orchestrator = SimpleNamespace(event_manager=MagicMock())
         args = Namespace(
-            display_events=False, display_tools=False, record=False
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=False,
+            record=False,
         )
         await model_cmds._event_stream(
             args,
@@ -4019,7 +4110,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         stop_signal = asyncio.Event()
 
         args = Namespace(
-            display_events=True, display_tools=False, record=False
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=False,
+            record=False,
         )
         console = MagicMock()
         task = asyncio.create_task(
@@ -4056,7 +4150,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         stop_signal = asyncio.Event()
 
         args = Namespace(
-            display_events=False, display_tools=True, record=False
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=True,
+            record=False,
         )
         console = MagicMock()
         task = asyncio.create_task(
@@ -4095,7 +4192,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         console = MagicMock()
 
         args = Namespace(
-            display_events=True, display_tools=False, record=False
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=False,
+            record=False,
         )
         task = asyncio.create_task(
             model_cmds._event_stream(
@@ -4126,6 +4226,11 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 return token_gen()
@@ -4136,6 +4241,7 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
             yield (None, "frame3")
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=1,
             display_pause=0,
             start_thinking=False,
@@ -4203,6 +4309,11 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 return token_gen()
@@ -4211,6 +4322,7 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
             yield (None, "frame1")
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=1,
             display_pause=10,
             start_thinking=False,
@@ -4271,6 +4383,7 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 class CliRecordOptionTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_record_enables_screen(self):
         args = Namespace(
+            skip_display_reasoning_time=False,
             record=True,
             display_time_to_n_token=None,
             display_pause=0,
@@ -4318,7 +4431,7 @@ class CliRecordOptionTestCase(IsolatedAsyncioTestCase):
 
 class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
     def test_render_frame_saves_svg_when_recording(self):
-        args = Namespace(record=True)
+        args = Namespace(skip_display_reasoning_time=False, record=True)
         console = MagicMock()
         live = MagicMock()
         dt_value = datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=timezone.utc)
@@ -4332,7 +4445,7 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
         live.update.assert_called_once_with("frame")
 
     def test_render_frame_no_record(self):
-        args = Namespace(record=False)
+        args = Namespace(skip_display_reasoning_time=False, record=False)
         console = MagicMock()
         live = MagicMock()
 
@@ -4347,6 +4460,11 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 return token_gen()
@@ -4356,6 +4474,7 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
             yield (model_cmds.Token(id=2, token="B"), "frame2")
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=1,
             display_pause=10,
             start_thinking=False,
@@ -4417,6 +4536,11 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
     async def test_reasoning_token_tracked(self):
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def gen():
@@ -4426,6 +4550,7 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
                 return gen()
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=None,
             display_pause=0,
             start_thinking=False,
@@ -4478,6 +4603,11 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
     async def test_tool_call_token_tracked(self):
         class Resp:
             input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
             def __aiter__(self):
                 async def gen():
@@ -4487,6 +4617,7 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
                 return gen()
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             display_time_to_n_token=None,
             display_pause=0,
             start_thinking=False,
@@ -4546,7 +4677,9 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
     async def test_model_run_mixed_tokens(self):
         async def complex_generator():
-            rp = ReasoningParser(reasoning_settings=ReasoningSettings())
+            rp = ReasoningParser(
+                reasoning_settings=ReasoningSettings(), logger=getLogger()
+            )
             tm = MagicMock()
             tm.is_potential_tool_call.return_value = True
             tm.get_calls.return_value = None
@@ -4595,12 +4728,14 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         response = TextGenerationResponse(
             lambda **_: complex_generator(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,
         )
 
         args = Namespace(
+            skip_display_reasoning_time=False,
             model="id",
             device="cpu",
             max_new_tokens=1,

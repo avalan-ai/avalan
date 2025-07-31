@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace, ModuleType
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, patch
+from logging import getLogger
 
 import torch
 
@@ -22,6 +23,7 @@ class SupportsTokenStreamingTestCase(TestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         self.assertTrue(model.supports_token_streaming)
 
@@ -38,7 +40,7 @@ class LoadModelQuantizationTestCase(TestCase):
                 bnb_4bit_compute_dtype=torch.float16,
             ),
         )
-        model = TextGenerationModel("m", settings)
+        model = TextGenerationModel("m", settings, logger=getLogger())
         model._device = "cpu"
         loader = MagicMock()
         loader.from_pretrained.return_value = "loaded"
@@ -71,6 +73,7 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._model = MagicMock()
         model._tokenizer = MagicMock()
@@ -139,6 +142,7 @@ class StringOutputTestCase(TestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "ok"
@@ -164,7 +168,7 @@ class TokenGeneratorTestCase(IsolatedAsyncioTestCase):
         settings = TransformerEngineSettings(
             auto_load_model=False, auto_load_tokenizer=False
         )
-        model = TextGenerationModel("m", settings)
+        model = TextGenerationModel("m", settings, logger=getLogger())
         model._tokenizer = MagicMock()
         model._tokenizer.decode.side_effect = (
             lambda i, skip_special_tokens=False: f"t{i}"
@@ -283,6 +287,7 @@ class TokenizeInputTestCase(TestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         model._model = MagicMock()
         model._model.device = "cpu"
@@ -325,6 +330,7 @@ class MessagesTestCase(TestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         result = model._messages("hi", "sys")
         self.assertEqual(
@@ -341,6 +347,7 @@ class MessagesTestCase(TestCase):
             TransformerEngineSettings(
                 auto_load_model=False, auto_load_tokenizer=False
             ),
+            logger=getLogger(),
         )
         messages = [
             Message(role=MessageRole.USER, content="a"),

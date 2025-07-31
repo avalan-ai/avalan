@@ -11,7 +11,7 @@ from avalan.entities import (
     MessageRole,
 )
 from avalan.model import TextGenerationResponse
-from logging import Logger
+from logging import Logger, getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 import importlib
@@ -20,7 +20,9 @@ import sys
 
 class DummyOrchestrator(Orchestrator):
     async def __call__(self, messages, settings=None):
-        return TextGenerationResponse(lambda: "ok", use_async_generator=False)
+        return TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
 
 
 class ChatRouterUnitTest(IsolatedAsyncioTestCase):
@@ -35,7 +37,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
-            lambda: "ok", use_async_generator=False
+            lambda: "ok", logger=getLogger(), use_async_generator=False
         )
         req = ChatCompletionRequest(
             model="m",
@@ -67,7 +69,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
-            lambda: output_gen(), use_async_generator=True
+            lambda: output_gen(), logger=getLogger(), use_async_generator=True
         )
         req = ChatCompletionRequest(
             model="m",
@@ -111,6 +113,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
             lambda: "ok",
+            logger=getLogger(),
             use_async_generator=False,
         )
         req = ChatCompletionRequest(
@@ -132,6 +135,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
             lambda: "ok",
+            logger=getLogger(),
             use_async_generator=False,
         )
         req = ChatCompletionRequest(
@@ -162,6 +166,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
             lambda: "ok",
+            logger=getLogger(),
             use_async_generator=False,
         )
         req = ChatCompletionRequest(
@@ -187,6 +192,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
             lambda: "ok",
+            logger=getLogger(),
             use_async_generator=False,
         )
         req = ChatCompletionRequest(

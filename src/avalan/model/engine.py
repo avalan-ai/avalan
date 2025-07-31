@@ -114,9 +114,9 @@ class Engine(ABC):
         self,
         model_id: str | None,
         settings: EngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ):
-        self._logger = logger if logger else getLogger()
+        self._logger = logger
         self._model_id = model_id
         self._settings = settings if settings else EngineSettings()
         self._device = (

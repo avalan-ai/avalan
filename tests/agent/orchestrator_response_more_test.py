@@ -11,6 +11,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.tool.manager import ToolManager
 from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
 from avalan.agent.engine import EngineAgent
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -44,7 +45,9 @@ def _empty_response() -> TextGenerationResponse:
         if False:
             yield ""  # pragma: no cover - never executed
 
-    return TextGenerationResponse(lambda: gen(), use_async_generator=True)
+    return TextGenerationResponse(
+        lambda: gen(), logger=getLogger(), use_async_generator=True
+    )
 
 
 class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):

@@ -1,4 +1,5 @@
 from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
@@ -21,6 +22,7 @@ class TextGenerationStopOnLimitTestCase(IsolatedAsyncioTestCase):
         )
         resp = TextGenerationResponse(
             lambda **_: gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,

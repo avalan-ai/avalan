@@ -27,6 +27,7 @@ from avalan.event import Event, EventType
 from avalan.memory.permanent import VectorFunction
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from logging import getLogger
 from avalan.entities import OrchestratorSettings, ReasoningSettings
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
@@ -1358,7 +1359,9 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_agent_run_mixed_tokens(self):
         async def complex_generator():
-            rp = ReasoningParser(reasoning_settings=ReasoningSettings())
+            rp = ReasoningParser(
+                reasoning_settings=ReasoningSettings(), logger=getLogger()
+            )
             tm = MagicMock()
             tm.is_potential_tool_call.return_value = True
             tm.get_calls.return_value = None
@@ -1411,6 +1414,7 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
                 settings = GenerationSettings()
                 self._resp = TextGenerationResponse(
                     lambda **_: complex_generator(),
+                    logger=getLogger(),
                     use_async_generator=True,
                     generation_settings=settings,
                     settings=settings,

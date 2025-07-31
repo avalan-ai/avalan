@@ -5,7 +5,7 @@ from ..entities import (
     TransformerEngineSettings,
 )
 from ..model.engine import Engine
-from logging import Logger
+from logging import Logger, getLogger
 from tokenizers import AddedToken
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
@@ -44,7 +44,7 @@ class TransformerModel(Engine, ABC):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ) -> None:
         super().__init__(
             model_id, settings or TransformerEngineSettings(), logger

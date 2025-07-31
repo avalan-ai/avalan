@@ -7,6 +7,7 @@ from ...entities import (
     ToolCallToken,
 )
 from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
+from logging import Logger
 from io import StringIO
 from queue import Queue
 from inspect import iscoroutine
@@ -40,11 +41,13 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _consumed: bool = False
     _reasoning_parser: ReasoningParser | None = None
     _parser_queue: Queue[Token | TokenDetail | str] | None = None
+    _logger: Logger
 
     def __init__(
         self,
         output_fn: OutputFunction,
         *args,
+        logger: Logger,
         use_async_generator: bool,
         generation_settings: GenerationSettings | None = None,
         **kwargs,
@@ -52,12 +55,14 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         self._args = args
         self._kwargs = kwargs
         self._output_fn = output_fn
+        self._logger = logger
         self._use_async_generator = use_async_generator
         self._generation_settings = generation_settings
         if generation_settings and generation_settings.reasoning.enabled:
             self._parser_queue = Queue()
             self._reasoning_parser = ReasoningParser(
-                reasoning_settings=generation_settings.reasoning
+                reasoning_settings=generation_settings.reasoning,
+                logger=self._logger,
             )
         else:
             self._parser_queue = None

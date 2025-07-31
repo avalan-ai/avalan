@@ -13,7 +13,7 @@ from diffusers import (
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers.utils import export_to_gif
 from huggingface_hub import hf_hub_download
-from logging import Logger
+from logging import Logger, getLogger
 from safetensors.torch import load_file
 from torch import inference_mode
 from transformers import PreTrainedModel
@@ -28,7 +28,7 @@ class TextToAnimationModel(BaseVisionModel):
         self,
         model_id: str,
         settings: EngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ):
         settings = settings or EngineSettings()
         assert settings.base_model_id and settings.checkpoint

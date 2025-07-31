@@ -10,7 +10,7 @@ from ....entities import (
 from ....tool.manager import ToolManager
 from asyncio import to_thread
 from dataclasses import asdict, replace
-from logging import Logger
+from logging import Logger, getLogger
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 from torch import Tensor
@@ -39,7 +39,7 @@ class MlxLmModel(TextGenerationModel):
         self,
         model_id: str,
         settings: TransformerEngineSettings | None = None,
-        logger: Logger | None = None,
+        logger: Logger = getLogger(__name__),
     ) -> None:
         settings = settings or TransformerEngineSettings()
         if settings.auto_load_tokenizer:
@@ -123,6 +123,7 @@ class MlxLmModel(TextGenerationModel):
         return TextGenerationResponse(
             output_fn,
             inputs=inputs,
+            logger=self._logger,
             generation_settings=generation_settings,
             settings=generation_settings,
             skip_special_tokens=skip_special_tokens,

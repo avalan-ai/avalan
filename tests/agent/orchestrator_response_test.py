@@ -16,6 +16,7 @@ from avalan.event.manager import EventManager
 from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from logging import getLogger
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import (
     ReasoningToken,
@@ -67,6 +68,7 @@ def _dummy_response(async_gen=True):
     settings = GenerationSettings()
     return TextGenerationResponse(
         output_fn,
+        logger=getLogger(),
         use_async_generator=async_gen,
         generation_settings=settings,
         settings=settings,
@@ -75,7 +77,9 @@ def _dummy_response(async_gen=True):
 
 def _complex_response():
     async def gen():
-        rp = ReasoningParser(reasoning_settings=ReasoningSettings())
+        rp = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
         tm = MagicMock()
         tm.is_potential_tool_call.return_value = True
         tm.get_calls.return_value = None
@@ -122,6 +126,7 @@ def _complex_response():
     settings = GenerationSettings()
     return TextGenerationResponse(
         lambda **_: gen(),
+        logger=getLogger(),
         use_async_generator=True,
         generation_settings=settings,
         settings=settings,
@@ -191,6 +196,7 @@ def _string_response(text: str, *, async_gen: bool = False, inputs=None):
 
     return TextGenerationResponse(
         output_fn,
+        logger=getLogger(),
         use_async_generator=async_gen,
         inputs=inputs or {"input_ids": [[1, 2, 3]]},
         generation_settings=GenerationSettings(),
@@ -259,6 +265,7 @@ class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         response = TextGenerationResponse(
             lambda **_: gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,
@@ -293,6 +300,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         response = TextGenerationResponse(
             lambda **_: gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,
@@ -328,6 +336,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         outer_response = TextGenerationResponse(
             lambda **_: outer_gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,
@@ -358,6 +367,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         inner_settings = GenerationSettings()
         inner_response = TextGenerationResponse(
             lambda **_: inner_gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=inner_settings,
             settings=inner_settings,

@@ -1,4 +1,5 @@
 from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
@@ -18,6 +19,7 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         resp = TextGenerationResponse(
             lambda **_: _gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,
@@ -33,6 +35,7 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         resp = TextGenerationResponse(
             lambda **_: _gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,
@@ -51,6 +54,7 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         gs = GenerationSettings(reasoning=ReasoningSettings(enabled=False))
         resp = TextGenerationResponse(
             lambda **_: gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=gs,
             settings=gs,
@@ -73,6 +77,7 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         settings = GenerationSettings()
         resp = TextGenerationResponse(
             lambda **_: gen(),
+            logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
             settings=settings,

@@ -2,12 +2,15 @@ from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
 from avalan.entities import ReasoningToken, ReasoningSettings
+from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
 
 class ReasoningParserTestCase(IsolatedAsyncioTestCase):
     async def test_with_thinking_tags(self):
-        parser = ReasoningParser(reasoning_settings=ReasoningSettings())
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
         tokens = []
         for t in ["a", "<think>", "b", "</think>", "c"]:
             tokens.extend(await parser.push(t))
@@ -21,7 +24,9 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[4], "c")
 
     async def test_without_thinking_tags(self):
-        parser = ReasoningParser(reasoning_settings=ReasoningSettings())
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
         tokens = []
         for t in ["x", "y"]:
             tokens.extend(await parser.push(t))
@@ -29,7 +34,9 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
 
     async def test_with_prefixes(self):
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), prefixes=["Thought:"]
+            reasoning_settings=ReasoningSettings(),
+            prefixes=["Thought:"],
+            logger=getLogger(),
         )
         tokens = []
         for t in ["Thought:", "d", "e"]:
@@ -43,7 +50,9 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
 
     async def test_without_prefixes(self):
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), prefixes=["Thought:"]
+            reasoning_settings=ReasoningSettings(),
+            prefixes=["Thought:"],
+            logger=getLogger(),
         )
         tokens = []
         for t in ["hello", "world"]:
