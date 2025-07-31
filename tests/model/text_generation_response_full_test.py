@@ -1,5 +1,11 @@
 from avalan.model.response.text import TextGenerationResponse
-from avalan.entities import GenerationSettings, ReasoningSettings
+from avalan.entities import (
+    GenerationSettings,
+    ReasoningSettings,
+    ReasoningToken,
+    TokenDetail,
+    ToolCallToken,
+)
 from unittest import IsolatedAsyncioTestCase
 
 
@@ -55,3 +61,37 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(resp.can_think)
         resp.set_thinking(True)  # Should have no effect
         self.assertFalse(resp.is_thinking)
+
+    async def test_flush_and_token_type_parsing(self) -> None:
+        async def gen():
+            yield ToolCallToken(token="tool", id=1)
+            yield TokenDetail(id=2, token="det", probability=0.1)
+            yield "<think>"
+            yield "foo"
+            yield "<"
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        tokens = []
+        async for t in resp:
+            tokens.append(t)
+
+        self.assertEqual(
+            [type(t) for t in tokens],
+            [
+                ToolCallToken,
+                TokenDetail,
+                ReasoningToken,
+                ReasoningToken,
+                ReasoningToken,
+            ],
+        )
+        self.assertEqual(tokens[0].token, "tool")
+        self.assertEqual(tokens[1].token, "det")
+        self.assertEqual(tokens[-1].token, "<")
