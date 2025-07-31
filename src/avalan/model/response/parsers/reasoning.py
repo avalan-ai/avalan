@@ -69,7 +69,9 @@ class ReasoningParser:
                     removed_clean = removed.strip()
                     self._pending_str = self._pending_str[len(removed_clean) :]
                 if candidate == expecting_tag:
-                    return self._set_thinking(result, expecting_tag == self._start_tag)
+                    return self._set_thinking(
+                        result, expecting_tag == self._start_tag
+                    )
                 return result
             result.extend(self._flush_pending(False))
 
@@ -88,7 +90,9 @@ class ReasoningParser:
                 removed_clean = removed.strip()
                 self._pending_str = self._pending_str[len(removed_clean) :]
             if token_clean == expecting_tag:
-                return self._set_thinking(result, expecting_tag == self._start_tag)
+                return self._set_thinking(
+                    result, expecting_tag == self._start_tag
+                )
             return result
 
         if self._thinking:
