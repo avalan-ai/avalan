@@ -1242,8 +1242,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(DummyEngine.last_tool, tool_manager)
 
 
-class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
-    async def test_agent_init_returns_when_no_role(self):
+class CliAgentInitNoRoleTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_init_accepts_no_role(self):
         args = Namespace(
             name="A",
             role=None,
@@ -1273,7 +1273,7 @@ class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_cmds.Prompt, "ask", return_value="A"),
         ):
             await agent_cmds.agent_init(args, console, theme)
-        console.print.assert_not_called()
+        console.print.assert_called_once()
 
 
 class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):

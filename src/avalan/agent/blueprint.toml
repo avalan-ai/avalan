@@ -2,9 +2,11 @@
 {% if orchestrator.agent_config.get('name') %}
 name = "{{ orchestrator.agent_config['name'] }}"
 {% endif %}
+{% if orchestrator.agent_config.get('role') %}
 role = """
-{{ orchestrator.agent_config.get('role', '') | indent(4) }}
+{{ orchestrator.agent_config['role'] | indent(4) }}
 """
+{% endif %}
 {% if orchestrator.agent_config.get('task') %}
 task = """
 {{ orchestrator.agent_config['task'] | indent(4) }}

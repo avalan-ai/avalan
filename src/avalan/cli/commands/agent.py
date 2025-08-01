@@ -368,8 +368,8 @@ async def agent_run(
             )
         else:
             assert (
-                args.engine_uri and args.role
-            ), "--engine-uri and --role required when no specifications file"
+                args.engine_uri
+            ), "--engine-uri required when no specifications file"
             assert not args.specifications_file or not args.engine_uri
             memory_recent = (
                 args.memory_recent
@@ -575,7 +575,6 @@ async def agent_serve(
                 agent_id=uuid4(),
             )
         else:
-            assert args.role
             memory_recent = (
                 args.memory_recent if args.memory_recent is not None else True
             )
@@ -623,8 +622,6 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
     )
-    if not role:
-        return
 
     task = args.task or get_input(
         console,

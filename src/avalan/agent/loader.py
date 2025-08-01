@@ -82,10 +82,6 @@ class OrchestratorLoader:
             ), "No uri defined in engine section of configuration"
 
             agent_config = config["agent"]
-            for setting in ["role"]:
-                assert (
-                    setting in agent_config
-                ), f"No {setting} defined in agent section of configuration"
 
             assert (
                 "engine" in config
@@ -120,9 +116,6 @@ class OrchestratorLoader:
                 f"Unknown type {config['agent']['type']} in agent section "
                 + "of configuration"
             )
-            assert (
-                "role" in agent_config
-            ), "No role defined in agent section of configuration"
 
             call_options = config["run"] if "run" in config else None
             if call_options and "chat" in call_options:
@@ -425,9 +418,6 @@ class OrchestratorLoader:
         assert (
             "task" in agent_config
         ), "No task defined in agent section of configuration"
-        assert (
-            "role" in agent_config
-        ), "No role defined in agent section of configuration"
 
         properties: list[Property] = []
         for property_name in config.get("json", []):
@@ -452,7 +442,7 @@ class OrchestratorLoader:
             properties,
             id=agent_id,
             name=agent_config["name"] if "name" in agent_config else None,
-            role=agent_config["role"],
+            role=agent_config.get("role"),
             task=agent_config["task"],
             instructions=agent_config["instructions"],
             rules=agent_config["rules"] if "rules" in agent_config else None,
