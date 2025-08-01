@@ -1,4 +1,5 @@
 from . import InvalidJsonResponseException
+from ..stream import TextGenerationSingleStream
 from ...entities import (
     GenerationSettings,
     ReasoningToken,
@@ -177,6 +178,8 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     async def to_str(self) -> str:
         if not self._use_async_generator:
             result = self._output_fn(*self._args, **self._kwargs)
+            if isinstance(result, TextGenerationSingleStream):
+                result = result.content
             self._buffer.write(result)
             await self._trigger_consumed()
             return result

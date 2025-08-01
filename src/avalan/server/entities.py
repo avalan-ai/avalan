@@ -2,6 +2,59 @@ from ..entities import MessageRole
 from pydantic import BaseModel, Field
 from typing import Annotated, Literal
 
+JSONType = Literal["bool", "float", "int", "object", "string"]
+
+
+class ResponseFormatText(BaseModel):
+    type: Literal["text"]
+
+
+class ResponseFormatJSONObject(BaseModel):
+    type: Literal["json_object"]
+
+
+class JSONSchemaField(BaseModel):
+    title: str
+    type: JSONType
+
+
+class JSONSchema(BaseModel):
+    properties: dict[str, JSONSchemaField]
+    required: list[str] | None = None
+    title: str | None = None
+    type: JSONType
+    additionalProperties: bool | None = None
+
+
+class JSONSchemaSettings(BaseModel):
+    schema_: JSONSchema = Field(
+        ..., validation_alias="schema", serialization_alias="schema"
+    )
+    name: str | None = None
+    strict: bool = True
+
+
+class ResponseFormatJSONSchema(BaseModel):
+    type: Literal["json_schema"]
+    json_schema: JSONSchemaSettings
+
+
+class FunctionParameters(BaseModel):
+    type: Literal["object"] = "object"
+    properties: dict[str, JSONSchemaField]
+    required: list[str] | None = None
+
+
+class FunctionDefinition(BaseModel):
+    name: str
+    description: str | None = None
+    parameters: FunctionParameters
+
+
+class ToolFunction(BaseModel):
+    type: Literal["function"]
+    function: FunctionDefinition
+
 
 class ContentText(BaseModel):
     type: Literal["text"]
@@ -12,6 +65,13 @@ class ContentImage(BaseModel):
     type: Literal["image_url"]
     image_url: dict[str, str]
 
+
+ResponseFormat = Annotated[
+    ResponseFormatText | ResponseFormatJSONObject | ResponseFormatJSONSchema,
+    Field(discriminator="type"),
+]
+
+Tool = Annotated[ToolFunction, Field(discriminator="type")]
 
 ContentPart = Annotated[
     ContentText | ContentImage, Field(discriminator="type")
@@ -75,9 +135,17 @@ class ChatCompletionRequest(BaseModel):
             " completion"
         ),
     )
+    logprobs: bool | None = None
+    top_logprobs: int | None = Field(None, ge=0, le=5)
     user: str | None = Field(
         None, description="Unique identifier representing your end-user"
     )
+    response_format: ResponseFormat | None = Field(
+        None,
+        description="Format to use for model response"
+    )
+    tools: list[Tool] | None = None
+    tool_choice: Literal["auto", "none", "required"] | str | dict | None = None
 
 
 class ChatCompletionChunkChoiceDelta(BaseModel):
