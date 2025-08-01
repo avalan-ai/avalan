@@ -364,6 +364,10 @@ class GenerationSettings:
     chat_settings: ChatSettings = field(default_factory=ChatSettings)
     reasoning: ReasoningSettings = field(default_factory=ReasoningSettings)
 
+    # Response settings ------------------------------------------------------
+    # How to format the model response
+    response_format: dict | None = None
+
 
 @dataclass(frozen=True, kw_only=True)
 class GenericProxyConfig:

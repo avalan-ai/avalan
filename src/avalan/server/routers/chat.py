@@ -59,11 +59,19 @@ async def create_chat_completion(
     timestamp = int(time())
 
     settings = GenerationSettings(
+        use_async_generator=request.stream,
         temperature=request.temperature,
         max_new_tokens=request.max_tokens,
         stop_strings=request.stop,
         top_p=request.top_p,
         # num_return_sequences=request.n
+        response_format=(
+            request.response_format.model_dump(
+                by_alias=True, exclude_none=True
+            )
+            if request.response_format
+            else None
+        ),
     )
 
     logger.debug(

@@ -1,3 +1,4 @@
+from .....model.stream import TextGenerationSingleStream
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 from .....compat import override
@@ -37,16 +38,36 @@ class OpenAIClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        timeout: int | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
         template_messages = self._template_messages(messages)
         client_stream = await self._client.chat.completions.create(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
             model=model_id,
             messages=template_messages,
             stream=use_async_generator,
+            timeout=timeout,
+            response_format=(
+                settings.response_format
+                if settings and settings.response_format
+                else None
+            ),
         )
-        return OpenAIStream(stream=client_stream)
+
+        stream = (
+            OpenAIStream(stream=client_stream)
+            if use_async_generator
+            else TextGenerationSingleStream(
+                client_stream.choices[0].message.content
+            )
+        )
+
+        return stream
 
 
 class OpenAIModel(TextGenerationVendorModel):
