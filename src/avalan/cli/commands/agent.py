@@ -381,6 +381,10 @@ async def agent_run(
                 agent_id=agent_id or uuid4(),
                 memory_recent=memory_recent,
                 tools=args.tool,
+                max_new_tokens=getattr(args, "run_max_new_tokens", None),
+                temperature=getattr(args, "run_temperature", None),
+                top_k=getattr(args, "run_top_k", None),
+                top_p=getattr(args, "run_top_p", None),
             )
             logger.debug("Loading agent from inline settings")
             browser_settings = get_tool_settings(

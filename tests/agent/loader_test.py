@@ -666,6 +666,151 @@ permanent = {{ {entries} }}
                         self.assertEqual(settings.permanent_memory, case)
                     await stack.aclose()
 
+    async def test_engine_only_generates_id(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        uid = uuid4()
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with (
+                patch.object(
+                    OrchestratorLoader,
+                    "from_settings",
+                    new=AsyncMock(return_value="orch"),
+                ) as lfs_patch,
+                patch("avalan.agent.loader.uuid4", return_value=uid),
+            ):
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.agent_id, uid)
+                self.assertEqual(settings.uri, "ai://local/model")
+            await stack.aclose()
+
+    async def test_engine_with_id(self):
+        uid = uuid4()
+        config = f"""
+[agent]
+id = \"{uid}\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.agent_id, str(uid))
+            await stack.aclose()
+
+    async def test_engine_with_name(self):
+        config = """
+[agent]
+name = \"Agent\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.agent_config.get("name"), "Agent")
+            await stack.aclose()
+
+    async def test_engine_generation_settings(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run]
+temperature = 0.5
+top_p = 0.9
+top_k = 5
+max_new_tokens = 42
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.call_options["temperature"], 0.5)
+                self.assertEqual(settings.call_options["top_p"], 0.9)
+                self.assertEqual(settings.call_options["top_k"], 5)
+                self.assertEqual(settings.call_options["max_new_tokens"], 42)
+            await stack.aclose()
+
 
 class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
     async def test_load_default_orchestrator_from_settings(self):
