@@ -60,7 +60,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             base_url="b", api_key="k"
         )
         client._client.chat.completions.create.assert_awaited_once_with(
-            model="m", messages=[{"c": 1}], stream=True
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="m",
+            messages=[{"c": 1}],
+            stream=True,
+            timeout=None,
+            response_format=None,
         )
         StreamMock.assert_called_once_with(stream=stream_instance)
         self.assertIs(result, StreamMock.return_value)
