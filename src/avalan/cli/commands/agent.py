@@ -623,13 +623,13 @@ async def agent_proxy(
     name: str,
     version: str,
 ) -> None:
-    args.name = getattr(args, "name", "Proxy")
-    args.memory_recent = getattr(args, "memory_recent", True)
+    args.name = getattr(args, "name", "Proxy") or "Proxy"
+    args.memory_recent = getattr(args, "memory_recent", True) or True
     args.memory_permanent_message = getattr(
         args, 
         "memory_permanent_message", 
-        "postgresql://avalan:password@localhost:5432/avalan"
-    )
+        None
+    ) or "postgresql://avalan:password@localhost:5432/avalan"
     args.specifications_file = None
     
     if not getattr(args, "engine_uri", None):
