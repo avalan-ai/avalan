@@ -78,9 +78,13 @@ server = [
 ]
 test = [
   "boto3==1.39.13",
+  "diffusers==0.34.0",
+  "elasticsearch==9.0.2",
   "faiss-cpu==1.11.0",
   "fastapi==0.116.1",
   "huggingface-hub==0.34.1",
+  "imageio==2.37.0",
+  "imageio-ffmpeg==0.6.0",
   "keyring==25.6.0",
   "litellm==1.74.8",
   "markitdown[pdf]==0.1.2",
@@ -89,9 +93,7 @@ test = [
   "mcp==1.12.2",
   "pgvector==0.4.1",
   "pillow==11.3.0",
-  "diffusers==0.34.0",
-  "imageio==2.37.0",
-  "imageio-ffmpeg==0.6.0",
+  "openai==1.90.0",
   "opencv-python==4.12.0.88",
   "playwright==1.54.0",
   "psycopg[binary,pool]==3.2.9",
@@ -104,7 +106,6 @@ test = [
   "torchaudio==2.7.1",
   "tree-sitter==0.25.0",
   "tree-sitter-python==0.23.6",
-  "elasticsearch==9.0.2",
 ]
 tool = [
   "playwright==1.54.0",

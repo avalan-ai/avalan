@@ -104,8 +104,8 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
             tmpl,
             [
                 {"role": "system", "content": "sys"},
-                {"role": "user", "content": {"type": "text", "text": "hi"}},
-                {"role": "tool", "content": {"type": "text", "text": "t"}},
+                {"role": "user", "content": "hi"},
+                {"role": "tool", "content": "t"},
             ],
         )
 

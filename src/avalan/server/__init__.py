@@ -29,13 +29,6 @@ def agents_server(
     logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)
 
-    logger.debug("Creating %s server", name)
-    app = FastAPI(title=name, version=version)
-    di_set(app, logger=logger, orchestrator=orchestrators[0])
-
-    logger.debug("Adding routes to %s server", name)
-    app.include_router(chat.router, prefix=prefix_openai)
-
     logger.debug("Creating MCP server with SSE")
     mcp_server = MCPServer(name=name)
     sse = SseServerTransport(f"{prefix_mcp}/messages/")

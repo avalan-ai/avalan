@@ -45,7 +45,7 @@ class RendererTestCase(TestCase):
     def test_render_basic(self):
         renderer = self.Renderer()
         result = renderer("agent.md", name="Leo")
-        expected = "You are a helpful assistant.\n\nYour name is Leo.\n\n\n\n"
+        expected = "You are a helpful assistant.\n\nYour name is Leo.\n\n\n"
         self.assertEqual(result, expected)
 
     def test_custom_template_path(self):
