@@ -1260,6 +1260,30 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
+#### Proxy agents
+
+The command `agent proxy` serves as a quick way to serve an agent that:
+
+* Wraps a given `--engine-uri`.
+* Enables recent message memory.
+* Enables persistent message memory (defaulting to pgsql with pgvector.)
+
+For example, to proxy OpenAI's gpt-4o, do:
+
+```bash
+avalan agent proxy \
+    --engine-uri "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+    --run-max-new-tokens 1024 \
+    -v
+```
+
+And you can connect to it from another terminal using `--base-url`:
+
+```bash
+echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
+    avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
+```
+
 # Install
 
 On macOS, install avalan with Homebrew:

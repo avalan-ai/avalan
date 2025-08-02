@@ -15,7 +15,9 @@
 {% endblock %}
 
 {% block task %}
-    {{ task }}
+    {% if task %}
+        {{ task }}
+    {% endif %}
 {% endblock %}
 
 {% block instructions %}
