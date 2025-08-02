@@ -1241,9 +1241,154 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(model_manager.passed_tool, tool_manager)
         self.assertIs(DummyEngine.last_tool, tool_manager)
 
+    async def test_run_engine_uri_only_generates_id(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = None
+        self.args.id = None
 
-class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
-    async def test_agent_init_returns_when_no_role(self):
+        uid = uuid4()
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as ff_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+            patch("avalan.cli.commands.agent.uuid4", return_value=uid),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        ff_patch.assert_not_called()
+        settings = fs_patch.call_args.args[0]
+        self.assertEqual(settings.agent_id, uid)
+        self.assertEqual(settings.uri, "engine")
+
+    async def test_run_engine_uri_with_id(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = None
+        self.args.id = "custom"
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as ff_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        ff_patch.assert_not_called()
+        settings = fs_patch.call_args.args[0]
+        self.assertEqual(settings.agent_id, "custom")
+
+    async def test_run_engine_uri_with_name(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.name = "Agent"
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as ff_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        ff_patch.assert_not_called()
+        settings = fs_patch.call_args.args[0]
+        self.assertEqual(settings.agent_config["name"], "Agent")
+
+    async def test_run_engine_uri_with_generation_settings(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.run_temperature = 0.5
+        self.args.run_top_p = 0.9
+        self.args.run_top_k = 5
+        self.args.run_max_new_tokens = 42
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        settings = fs_patch.call_args.args[0]
+        self.assertEqual(settings.call_options["temperature"], 0.5)
+        self.assertEqual(settings.call_options["top_p"], 0.9)
+        self.assertEqual(settings.call_options["top_k"], 5)
+        self.assertEqual(settings.call_options["max_new_tokens"], 42)
+
+
+class CliAgentInitNoRoleTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_init_accepts_no_role(self):
         args = Namespace(
             name="A",
             role=None,
@@ -1273,7 +1418,7 @@ class CliAgentInitEarlyReturnTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_cmds.Prompt, "ask", return_value="A"),
         ):
             await agent_cmds.agent_init(args, console, theme)
-        console.print.assert_not_called()
+        console.print.assert_called_once()
 
 
 class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):

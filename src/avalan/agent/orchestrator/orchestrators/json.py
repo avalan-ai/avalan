@@ -35,7 +35,9 @@ class Property:
 
 
 class JsonSpecification(Specification):
-    def __init__(self, output: type | list[Property], role: str, **kwargs):
+    def __init__(
+        self, output: type | list[Property], role: str | None = None, **kwargs
+    ):
         if not isinstance(output, list):
             annotations = getattr(output, "__annotations__", None)
             assert annotations
@@ -70,7 +72,8 @@ class JsonSpecification(Specification):
             **{"output_properties": properties},
         }
 
-        kwargs.setdefault("role", Role(persona=[role]))
+        if role is not None:
+            kwargs.setdefault("role", Role(persona=[role]))
         kwargs.setdefault("output_type", OutputType.JSON)
         kwargs.setdefault("template_vars", template_vars)
         super().__init__(**kwargs)
@@ -89,7 +92,7 @@ class JsonOrchestrator(Orchestrator):
         event_manager: EventManager,
         output: type | list[Property],
         *,
-        role: str,
+        role: str | None = None,
         task: str,
         instructions: str,
         name: str | None = None,

@@ -368,8 +368,8 @@ async def agent_run(
             )
         else:
             assert (
-                args.engine_uri and args.role
-            ), "--engine-uri and --role required when no specifications file"
+                args.engine_uri
+            ), "--engine-uri required when no specifications file"
             assert not args.specifications_file or not args.engine_uri
             memory_recent = (
                 args.memory_recent
@@ -381,6 +381,10 @@ async def agent_run(
                 agent_id=agent_id or uuid4(),
                 memory_recent=memory_recent,
                 tools=args.tool,
+                max_new_tokens=getattr(args, "run_max_new_tokens", None),
+                temperature=getattr(args, "run_temperature", None),
+                top_k=getattr(args, "run_top_k", None),
+                top_p=getattr(args, "run_top_p", None),
             )
             logger.debug("Loading agent from inline settings")
             browser_settings = get_tool_settings(
@@ -575,7 +579,6 @@ async def agent_serve(
                 agent_id=uuid4(),
             )
         else:
-            assert args.role
             memory_recent = (
                 args.memory_recent if args.memory_recent is not None else True
             )
@@ -623,8 +626,6 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
     )
-    if not role:
-        return
 
     task = args.task or get_input(
         console,
