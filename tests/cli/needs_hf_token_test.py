@@ -50,3 +50,18 @@ class NeedsHfTokenTestCase(unittest.TestCase):
     def test_agent_missing_engine_defaults_true(self):
         args = Namespace(command="agent", agent_command="serve")
         self.assertTrue(CLI._needs_hf_token(args))
+
+    def test_agent_proxy_remote_no_token(self):
+        args = Namespace(
+            command="agent", agent_command="proxy", engine_uri="e"
+        )
+        with patch.object(
+            ModelManager,
+            "parse_uri",
+            return_value=SimpleNamespace(is_local=False),
+        ):
+            self.assertFalse(CLI._needs_hf_token(args))
+
+    def test_agent_proxy_missing_engine_defaults_true(self):
+        args = Namespace(command="agent", agent_command="proxy")
+        self.assertTrue(CLI._needs_hf_token(args))
