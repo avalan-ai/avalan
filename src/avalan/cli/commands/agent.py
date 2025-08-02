@@ -616,6 +616,26 @@ async def agent_serve(
         await server.serve()
 
 
+async def agent_proxy(
+    args: Namespace,
+    hub: HuggingfaceHub,
+    logger: Logger,
+    name: str,
+    version: str,
+) -> None:
+    args.name = getattr(args, "name", "Proxy") or "Proxy"
+    args.memory_recent = getattr(args, "memory_recent", True) or True
+    args.memory_permanent_message = (
+        getattr(args, "memory_permanent_message", None)
+        or "postgresql://avalan:password@localhost:5432/avalan"
+    )
+    args.specifications_file = None
+
+    assert getattr(args, "engine_uri", None), "--engine-uri is required"
+
+    await agent_serve(args, hub, logger, name, version)
+
+
 async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     _ = theme._
 

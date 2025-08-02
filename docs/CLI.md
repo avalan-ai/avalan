@@ -8,6 +8,7 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan agent message search](#avalan-agent-message-search)
   * [avalan agent run](#avalan-agent-run)
   * [avalan agent serve](#avalan-agent-serve)
+  * [avalan agent proxy](#avalan-agent-proxy)
   * [avalan agent init](#avalan-agent-init)
 * [avalan cache](#avalan-cache)
   * [avalan cache delete](#avalan-cache-delete)
@@ -159,12 +160,12 @@ equence_parallel,replicate}]
                     [--no-repl] [--quiet] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
-                    {message,run,serve,init} ...
+                    {message,run,serve,proxy,init} ...
 
 Manage AI agents
 
 positional arguments:
-  {message,run,serve,init}
+  {message,run,serve,proxy,init}
 
 options:
   -h, --help            show this help message and exit
@@ -748,6 +749,119 @@ options:
   --parallel
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
 equence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not
+                        be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --loader-class {auto,gemma3,mistral3}
+                        Loader class to use (defaults to "auto")
+  --locales LOCALES     Path to locale files (defaults to
+                        /Users/mariano/Code/ai/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
+  --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --host HOST           Host (defaults to 127.0.0.1)
+  --port PORT           Port (defaults to 9001, HAL 9000+1)
+  --prefix-mcp PREFIX_MCP
+                        URL prefix for MCP endpoints (defaults to /mcp)
+  --prefix-openai PREFIX_OPENAI
+                        URL prefix fir OpenAI endpoints (defaults to /v1)
+  --reload              Hot reload on code changes
+
+inline agent settings:
+  --engine-uri ENGINE_URI
+                        Agent engine URI
+  --name NAME           Agent name
+  --role ROLE           Agent role
+  --task TASK           Agent task
+  --instructions INSTRUCTIONS
+                        Agent instructions
+  --memory-recent
+  --no-memory-recent
+  --memory-permanent-message MEMORY_PERMANENT_MESSAGE
+                        Permanent message memory DSN
+  --memory-permanent MEMORY_PERMANENT
+                        Permanent memory definition namespace@dsn
+  --memory-engine-model-id MEMORY_ENGINE_MODEL_ID
+                        Sentence transformer model for memory
+  --memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS
+                        Maximum tokens for memory sentence transformer
+  --memory-engine-overlap MEMORY_ENGINE_OVERLAP
+                        Overlap size for memory sentence transformer
+  --memory-engine-window MEMORY_ENGINE_WINDOW
+                        Window size for memory sentence transformer
+  --run-max-new-tokens RUN_MAX_NEW_TOKENS
+                        Maximum count of tokens on output
+  --run-skip-special-tokens
+                        Skip special tokens on output
+  --run-temperature RUN_TEMPERATURE
+                        Temperature [0, 1]
+  --run-top-k RUN_TOP_K
+                        Number of highest probability vocabulary tokens to
+                        keep for top-k-filtering.
+  --run-top-p RUN_TOP_P
+                        If set to < 1, only the smallest set of most probable
+                        tokens with probabilities that add up to top_p or
+                        higher are kept for generation.
+  --tool TOOL           Enable tool
+
+browser tool settings:
+  --tool-browser-engine TOOL_BROWSER_ENGINE
+  --tool-browser-search
+  --tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT
+  --tool-browser-search-k TOOL_BROWSER_SEARCH_K
+  --tool-browser-debug
+  --tool-browser-debug-url TOOL_BROWSER_DEBUG_URL
+  --tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE
+  --tool-browser-slowdown TOOL_BROWSER_SLOWDOWN
+  --tool-browser-devtools
+  --tool-browser-chromium-sandbox
+  --tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH
+  --tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT
+  --tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR
+  --tool-browser-is-mobile
+  --tool-browser-has-touch
+  --tool-browser-java-script-enabled
+```
+
+### avalan agent proxy
+
+```usage: avalan agent proxy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]                          [--tokenizer-subfolder TOKENIZER_SUBFOLDER]                          [--device DEVICE]                          [--parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}]                          [--parallel-count PARALLEL_COUNT]                          [--disable-loading-progress-bar]                          [--hf-token HF_TOKEN] [--locale LOCALE]                          [--loader-class {auto,gemma3,mistral3}]                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]                          [--no-repl] [--quiet] [--record]                          [--revision REVISION] [--skip-hub-access-check]                          [--verbose] [--version]                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]                          [--host HOST] [--port PORT]                          [--prefix-mcp PREFIX_MCP]                          [--prefix-openai PREFIX_OPENAI] [--reload]                          [--engine-uri ENGINE_URI] [--name NAME]                          [--role ROLE] [--task TASK]                          [--instructions INSTRUCTIONS] [--memory-recent]                          [--no-memory-recent]                          [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]                          [--memory-permanent MEMORY_PERMANENT]                          [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]                          [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]                          [--memory-engine-window MEMORY_ENGINE_WINDOW]                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS]                          [--run-skip-special-tokens]                          [--run-temperature RUN_TEMPERATURE]                          [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]                          [--tool TOOL]                          [--tool-browser-engine TOOL_BROWSER_ENGINE]                          [--tool-browser-search]                          [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]                          [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]                          [--tool-browser-debug]                          [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]                          [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]                          [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]                          [--tool-browser-devtools]                          [--tool-browser-chromium-sandbox]                          [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]                          [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]                          [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]                          [--tool-browser-is-mobile]                          [--tool-browser-has-touch]                          [--tool-browser-java-script-enabled]
+Serve a proxy agent as an API endpoint
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to
+                        /Users/mariano/.cache/huggingface/hub, can also be
+                        specified with $HF_HUB_CACHE)
+  --subfolder SUBFOLDER
+                        Subfolder inside model repository to load the model
+                        from
+  --tokenizer-subfolder TOKENIZER_SUBFOLDER
+                        Subfolder inside model repository to load the
+                        tokenizer from
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
+  --parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used

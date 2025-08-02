@@ -409,6 +409,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             serve_mock = stack.enter_context(
                 patch("avalan.cli.__main__.agent_serve", AsyncMock())
             )
+            proxy_mock = stack.enter_context(
+                patch("avalan.cli.__main__.agent_proxy", AsyncMock())
+            )
             init_mock = stack.enter_context(
                 patch("avalan.cli.__main__.agent_init", AsyncMock())
             )
@@ -455,6 +458,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("agent", "run", run_mock),
                 ("agent", "message", msg_mock),
                 ("agent", "serve", serve_mock),
+                ("agent", "proxy", proxy_mock),
                 ("agent", "init", init_mock),
                 ("cache", "delete", cache_del),
                 ("cache", "download", cache_down),

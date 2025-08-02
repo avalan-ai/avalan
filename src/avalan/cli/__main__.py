@@ -10,6 +10,7 @@ from ..cli.commands.agent import (
     agent_message_search,
     agent_run,
     agent_serve,
+    agent_proxy,
     agent_init,
 )
 from ..cli.commands.cache import cache_delete, cache_download, cache_list
@@ -645,40 +646,23 @@ class CLI:
             nargs="?",
             help="File that holds the agent specifications",
         )
-        agent_serve_parser.add_argument(
-            "--host",
-            default="127.0.0.1",
-            type=str,
-            help="Host (defaults to 127.0.0.1)",
-        )
-        agent_serve_parser.add_argument(
-            "--port",
-            default=9001,
-            type=int,
-            help="Port (defaults to 9001, HAL 9000+1)",
-        )
-        agent_serve_parser.add_argument(
-            "--prefix-mcp",
-            default="/mcp",
-            type=str,
-            help="URL prefix for MCP endpoints (defaults to /mcp)",
-        )
-        agent_serve_parser.add_argument(
-            "--prefix-openai",
-            default="/v1",
-            type=str,
-            help="URL prefix fir OpenAI endpoints (defaults to /v1)",
-        )
-        agent_serve_parser.add_argument(
-            "--reload",
-            action="store_true",
-            default=False,
-            help="Hot reload on code changes",
-        )
-
+        CLI._add_agent_server_arguments(agent_serve_parser)
         CLI._add_agent_settings_arguments(agent_serve_parser)
         CLI._add_tool_settings_arguments(
             agent_serve_parser,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
+        )
+
+        agent_proxy_parser = agent_command_parsers.add_parser(
+            name="proxy",
+            description="Serve a proxy agent as an API endpoint",
+            parents=[global_parser],
+        )
+        CLI._add_agent_server_arguments(agent_proxy_parser)
+        CLI._add_agent_settings_arguments(agent_proxy_parser)
+        CLI._add_tool_settings_arguments(
+            agent_proxy_parser,
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
@@ -1572,6 +1556,41 @@ class CLI:
         return new_argv, options
 
     @staticmethod
+    def _add_agent_server_arguments(parser: ArgumentParser) -> ArgumentParser:
+        """Add shared server options for agent commands."""
+        parser.add_argument(
+            "--host",
+            default="127.0.0.1",
+            type=str,
+            help="Host (defaults to 127.0.0.1)",
+        )
+        parser.add_argument(
+            "--port",
+            default=9001,
+            type=int,
+            help="Port (defaults to 9001, HAL 9000+1)",
+        )
+        parser.add_argument(
+            "--prefix-mcp",
+            default="/mcp",
+            type=str,
+            help="URL prefix for MCP endpoints (defaults to /mcp)",
+        )
+        parser.add_argument(
+            "--prefix-openai",
+            default="/v1",
+            type=str,
+            help="URL prefix fir OpenAI endpoints (defaults to /v1)",
+        )
+        parser.add_argument(
+            "--reload",
+            action="store_true",
+            default=False,
+            help="Hot reload on code changes",
+        )
+        return parser
+
+    @staticmethod
     def _add_agent_settings_arguments(
         parser: ArgumentParser,
     ) -> ArgumentParser:
@@ -1710,7 +1729,7 @@ class CLI:
             engine_uri = ModelManager.parse_uri(args.model)
             return engine_uri.is_local
         if command == "agent" and (
-            (args.agent_command or "run") in {"run", "serve"}
+            (args.agent_command or "run") in {"run", "serve", "proxy"}
         ):
             engine = getattr(args, "engine_uri", None)
             if engine:
@@ -1918,6 +1937,14 @@ class CLI:
                         )
                     case "serve":
                         await agent_serve(
+                            args,
+                            hub,
+                            self._logger,
+                            self._name,
+                            str(self._version),
+                        )
+                    case "proxy":
+                        await agent_proxy(
                             args,
                             hub,
                             self._logger,

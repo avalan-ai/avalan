@@ -331,6 +331,73 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
 
+class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_proxy_defaults_and_forward(self):
+        args = Namespace(
+            host="0.0.0.0",
+            port=80,
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            reload=False,
+            backend="transformers",
+            engine_uri="uri",
+            name=None,
+            role=None,
+            task=None,
+            instructions=None,
+            memory_recent=None,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            run_max_new_tokens=None,
+            run_skip_special_tokens=False,
+            tool=None,
+            tool_browser_engine=None,
+            tool_browser_debug=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            tools_confirm=False,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+
+        with patch.object(
+            agent_cmds, "agent_serve", AsyncMock()
+        ) as serve_mock:
+            await agent_cmds.agent_proxy(args, hub, logger, "name", "1.0")
+
+        serve_mock.assert_awaited_once_with(args, hub, logger, "name", "1.0")
+        self.assertEqual(args.name, "Proxy")
+        self.assertTrue(args.memory_recent)
+        self.assertEqual(
+            args.memory_permanent_message,
+            "postgresql://avalan:password@localhost:5432/avalan",
+        )
+        self.assertIsNone(args.specifications_file)
+
+    async def test_agent_proxy_requires_engine(self):
+        args = Namespace(
+            host="0.0.0.0",
+            port=80,
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            reload=False,
+            backend="transformers",
+            engine_uri=None,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+
+        with self.assertRaises(AssertionError):
+            await agent_cmds.agent_proxy(args, hub, logger, "name", "1.0")
+
+
 class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_agent_init(self):
         args = Namespace(
