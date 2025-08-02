@@ -99,7 +99,7 @@ class FancyTheme(Theme):
             "tool_call_results": ":package:",
             "ttft": ":seedling:",
             "ttnt": ":alarm_clock:",
-            "ttst": ":thinking_face:",
+            "ttsr": ":thinking_face:",
             "updated_at": ":calendar:",
             "user": ":hugging_face:",
             "user_input": ":speaking_head:",
