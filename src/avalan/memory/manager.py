@@ -1,4 +1,4 @@
-from ..entities import EngineMessage
+from ..entities import EngineMessage, MessageContentImage, MessageContentText
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory import RecentMessageMemory
@@ -158,8 +158,16 @@ class MemoryManager:
                         started=start,
                     )
                 )
-            partitions = await self._text_partitioner(
-                engine_message.message.content
+            content = engine_message.message.content
+            content_text = (
+                content.text if isinstance(content, MessageContentText)
+                else str(content) if not isinstance(content, MessageContentImage)
+                else None
+            )
+            partitions = (
+                await self._text_partitioner(content_text)
+                if content_text
+                else []
             )
             await self._permanent_message_memory.append_with_partitions(
                 engine_message, partitions=partitions

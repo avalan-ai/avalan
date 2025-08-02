@@ -6,7 +6,6 @@ from ..entities import (
     MessageContent,
     MessageContentImage,
     MessageContentText,
-    MessageRole,
 )
 from ..tool.manager import ToolManager
 from abc import ABC

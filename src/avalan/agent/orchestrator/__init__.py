@@ -277,27 +277,13 @@ class Orchestrator:
         exc_value: BaseException | None,
         traceback: Any | None,
     ):
-        if (
-            self._last_engine_agent
-            and self._last_engine_agent.output
-            and (
-                self._memory.has_permanent_message
-                or self._memory.has_recent_message
-            )
-        ):
-            previous_message = Message(
-                role=MessageRole.ASSISTANT,
-                content=await self._last_engine_agent.output.to_str(),
-            )
-            await self._memory.append_message(
-                EngineMessage(
-                    agent_id=self._id,
-                    model_id=self._last_engine_agent.engine.model_id,
-                    message=previous_message,
-                )
-            )
+        await self.sync_messages()
 
         if self._exit_memory:
             self._memory.__exit__(exc_type, exc_value, traceback)
 
         return self._engines_stack.__exit__(exc_type, exc_value, traceback)
+
+    async def sync_messages(self) -> None:
+        if self._last_engine_agent:
+            await self._last_engine_agent.sync_messages()
