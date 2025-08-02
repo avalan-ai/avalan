@@ -625,15 +625,13 @@ async def agent_proxy(
 ) -> None:
     args.name = getattr(args, "name", "Proxy") or "Proxy"
     args.memory_recent = getattr(args, "memory_recent", True) or True
-    args.memory_permanent_message = getattr(
-        args, 
-        "memory_permanent_message", 
-        None
-    ) or "postgresql://avalan:password@localhost:5432/avalan"
+    args.memory_permanent_message = (
+        getattr(args, "memory_permanent_message", None)
+        or "postgresql://avalan:password@localhost:5432/avalan"
+    )
     args.specifications_file = None
-    
-    if not getattr(args, "engine_uri", None):
-        raise SystemExit("--engine-uri is required")
+
+    assert getattr(args, "engine_uri", None), "--engine-uri is required"
 
     await agent_serve(args, hub, logger, name, version)
 
