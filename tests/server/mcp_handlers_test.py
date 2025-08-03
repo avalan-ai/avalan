@@ -82,7 +82,6 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
                 patch("avalan.server.APIRouter", APIRouter),
             ):
                 logger = MagicMock()
-                orch = MagicMock()
                 app = MagicMock()
                 FastAPI.return_value = app
                 mcp_router = MagicMock()
@@ -118,7 +117,6 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
                     agents_server(
                         name="srv",
                         version="v",
-                        orchestrators=[orch],
                         host="h",
                         port=1,
                         reload=False,
@@ -213,7 +211,6 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                 patch("avalan.server.APIRouter", APIRouter),
             ):
                 logger = MagicMock()
-                orch = MagicMock()
                 app = MagicMock()
                 FastAPI.return_value = app
                 mcp_router = MagicMock()
@@ -249,7 +246,6 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                     agents_server(
                         name="srv",
                         version="v",
-                        orchestrators=[orch],
                         host="h",
                         port=1,
                         reload=False,

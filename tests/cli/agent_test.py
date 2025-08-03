@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from argparse import Namespace
 from uuid import uuid4
+from tempfile import NamedTemporaryFile
 
 from rich.syntax import Syntax
 
@@ -188,7 +189,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         args = Namespace(
             host="0.0.0.0",
             port=80,
-            specifications_file="spec.toml",
+            specifications_file=None,
             prefix_openai="oa",
             prefix_mcp="mcp",
             reload=False,
@@ -203,25 +204,40 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
         server = MagicMock()
         server.serve = AsyncMock()
+        captured = {}
 
-        with (
-            patch.object(
-                agent_cmds, "AsyncExitStack", return_value=dummy_stack
-            ),
-            patch.object(
-                agent_cmds.OrchestratorLoader,
-                "from_file",
-                new=AsyncMock(return_value=orch),
-            ) as lf,
-            patch.object(
-                agent_cmds, "agents_server", return_value=server
-            ) as asrv,
-        ):
-            await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+        def fake_server(*_, **kwargs):
+            captured["lifespan"] = kwargs.get("lifespan")
+            return server
 
-        lf.assert_awaited_once()
-        asrv.assert_called_once()
-        server.serve.assert_awaited_once()
+        with NamedTemporaryFile("w") as spec:
+            args.specifications_file = spec.name
+            with (
+                patch.object(
+                    agent_cmds, "AsyncExitStack", return_value=dummy_stack
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_file",
+                    new=AsyncMock(return_value=orch),
+                ) as lf,
+                patch.object(
+                    agent_cmds, "agents_server", side_effect=fake_server
+                ) as asrv,
+            ):
+                await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
+                lf.assert_not_awaited()
+                asrv.assert_called_once()
+                server.serve.assert_awaited_once()
+
+                app = SimpleNamespace(state=SimpleNamespace())
+                async with captured["lifespan"](app):
+                    pass
+
+                lf.assert_awaited_once()
+                dummy_stack.enter_async_context.assert_awaited_once_with(orch)
+                self.assertIs(app.state.orchestrator, orch)
 
     async def test_agent_serve_from_settings(self):
         args = Namespace(
@@ -265,6 +281,11 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
         server = MagicMock()
         server.serve = AsyncMock()
+        captured = {}
+
+        def fake_server(*_, **kwargs):
+            captured["lifespan"] = kwargs.get("lifespan")
+            return server
 
         with (
             patch.object(
@@ -281,15 +302,23 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ) as lf,
             patch.object(
-                agent_cmds, "agents_server", return_value=server
+                agent_cmds, "agents_server", side_effect=fake_server
             ) as asrv,
         ):
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
-        lfs.assert_awaited_once()
-        lf.assert_not_called()
-        asrv.assert_called_once()
-        server.serve.assert_awaited_once()
+            lfs.assert_not_awaited()
+            lf.assert_not_called()
+            asrv.assert_called_once()
+            server.serve.assert_awaited_once()
+
+            app = SimpleNamespace(state=SimpleNamespace())
+            async with captured["lifespan"](app):
+                pass
+
+            lfs.assert_awaited_once()
+            dummy_stack.enter_async_context.assert_awaited_once_with(orch)
+        self.assertIs(app.state.orchestrator, orch)
 
     async def test_agent_serve_needs_settings(self):
         args = Namespace(

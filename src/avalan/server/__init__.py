@@ -2,18 +2,19 @@ from ..agent.orchestrator import Orchestrator
 from ..utils import logger_replace
 from fastapi import APIRouter, FastAPI, Request
 from logging import Logger
+from typing import AsyncContextManager
 
 
 def agents_server(
     name: str,
     version: str,
-    orchestrators: list[Orchestrator],
     host: str,
     port: int,
     reload: bool,
     prefix_mcp: str,
     prefix_openai: str,
     logger: Logger,
+    lifespan: AsyncContextManager | None = None,
 ):
     from ..server.routers import chat
     from mcp.server.lowlevel.server import Server as MCPServer
@@ -23,8 +24,7 @@ def agents_server(
     from uvicorn import Config, Server
 
     logger.debug("Creating %s server", name)
-    app = FastAPI(title=name, version=version)
-    di_set(app, logger=logger, orchestrator=orchestrators[0])
+    app = FastAPI(title=name, version=version, lifespan=lifespan)
 
     logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)
