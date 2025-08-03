@@ -3,20 +3,21 @@ from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from ...cli import get_input, has_input, confirm_tool_call
+from ...cli import confirm_tool_call, get_input, has_input
 from ...cli.commands.model import token_generation
 from ...entities import Backend, OrchestratorSettings, ToolCall
 from ...event import EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
-from ...server import agents_server
+from ...server import agents_server, di_set
 from ...tool.browser import BrowserToolSettings
 from argparse import Namespace
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import fields
+from fastapi import FastAPI
 from jinja2 import Environment, FileSystemLoader
 from logging import Logger
-from os.path import dirname, join, getmtime
+from os.path import dirname, getmtime, join
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
@@ -564,56 +565,61 @@ async def agent_serve(
         specs_path or engine_uri
     ), "specifications file or --engine-uri must be specified"
 
-    async with AsyncExitStack() as stack:
-        loader = OrchestratorLoader(
-            hub=hub,
-            logger=logger,
-            participant_id=uuid4(),
-            stack=stack,
-        )
-        if specs_path:
-            logger.debug("Loading agent from %s", specs_path)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with AsyncExitStack() as stack:
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            if specs_path:
+                logger.debug("Loading agent from %s", specs_path)
+                orchestrator = await loader.from_file(
+                    specs_path,
+                    agent_id=uuid4(),
+                )
+            else:
+                memory_recent = (
+                    args.memory_recent
+                    if args.memory_recent is not None
+                    else True
+                )
+                settings = get_orchestrator_settings(
+                    args,
+                    agent_id=uuid4(),
+                    memory_recent=memory_recent,
+                    tools=args.tool,
+                )
+                logger.debug("Loading agent from inline settings")
+                browser_settings = get_tool_settings(
+                    args, prefix="browser", settings_cls=BrowserToolSettings
+                )
+                orchestrator = await loader.from_settings(
+                    settings,
+                    browser_settings=browser_settings,
+                )
+            orchestrator = await stack.enter_async_context(orchestrator)
+            di_set(app, logger=logger, orchestrator=orchestrator)
+            logger.debug(
+                "Agent loaded from %s",
+                specs_path if specs_path else "inline settings",
+            )
+            yield
 
-            orchestrator = await loader.from_file(
-                specs_path,
-                agent_id=uuid4(),
-            )
-        else:
-            memory_recent = (
-                args.memory_recent if args.memory_recent is not None else True
-            )
-            settings = get_orchestrator_settings(
-                args,
-                agent_id=uuid4(),
-                memory_recent=memory_recent,
-                tools=args.tool,
-            )
-            logger.debug("Loading agent from inline settings")
-            browser_settings = get_tool_settings(
-                args, prefix="browser", settings_cls=BrowserToolSettings
-            )
-            orchestrator = await loader.from_settings(
-                settings,
-                browser_settings=browser_settings,
-            )
-        orchestrator = await stack.enter_async_context(orchestrator)
-
-        logger.debug(
-            "Agent loaded from"
-            f" {specs_path if specs_path else 'inline settings'}"
-        )
-        server = agents_server(
-            name=name,
-            version=version,
-            prefix_openai=args.prefix_openai,
-            prefix_mcp=args.prefix_mcp,
-            orchestrators=[orchestrator],
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            logger=logger,
-        )
-        await server.serve()
+    server = agents_server(
+        name=name,
+        version=version,
+        prefix_openai=args.prefix_openai,
+        prefix_mcp=args.prefix_mcp,
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        logger=logger,
+        lifespan=lifespan,
+    )
+    await server.serve()
 
 
 async def agent_proxy(

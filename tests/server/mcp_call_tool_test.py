@@ -87,7 +87,6 @@ class MCPCallToolTestCase(IsolatedAsyncioTestCase):
         captured = {}
         with patch.dict(sys.modules, modules):
             logger = MagicMock()
-            orch = MagicMock()
             app = MagicMock()
             FastAPI.return_value = app
             mcp_router = MagicMock()
@@ -115,7 +114,6 @@ class MCPCallToolTestCase(IsolatedAsyncioTestCase):
                 agents_server(
                     name="srv",
                     version="v",
-                    orchestrators=[orch],
                     host="h",
                     port=1,
                     reload=False,

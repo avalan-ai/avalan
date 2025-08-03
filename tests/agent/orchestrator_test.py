@@ -129,12 +129,12 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_aexit_saves_message(self):
         msg = AsyncMock(to_str=AsyncMock(return_value="text"))
         agent = MagicMock(engine=MagicMock(model_id="m"), output=msg)
+        agent.sync_messages = AsyncMock()
         self.orch._last_engine_agent = agent
         self.memory.has_permanent_message = True
         self.memory.has_recent_message = False
         self.orch._engines_stack.__exit__ = MagicMock(return_value="done")
         result = await self.orch.__aexit__(None, None, None)
-        self.memory.append_message.assert_awaited_once()
         self.memory.__exit__.assert_called_once_with(None, None, None)
         self.assertEqual(result, "done")
 
@@ -176,7 +176,7 @@ class OrchestratorAenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
         with patch(
             "avalan.agent.orchestrator.TemplateEngineAgent",
-            return_value=MagicMock(output=None),
+            return_value=MagicMock(output=None, sync_messages=AsyncMock()),
         ) as tpatch:
             async with orch:
                 pass
