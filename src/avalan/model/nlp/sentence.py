@@ -80,5 +80,7 @@ class SentenceTransformerModel(BaseNLPModel):
             if not enable_gradient_calculation
             else nullcontext()
         ):
-            embeddings = self._model.encode(input, convert_to_numpy=True)
+            embeddings = self._model.encode(
+                input, convert_to_numpy=True, show_progress_bar=False
+            )
         return embeddings

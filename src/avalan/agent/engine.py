@@ -252,12 +252,9 @@ class EngineAgent(ABC):
         return output
 
     async def sync_messages(self) -> None:
-        if (
-            self._last_output
-            and (
-                self._memory.has_permanent_message
-                or self._memory.has_recent_message
-            )
+        if self._last_output and (
+            self._memory.has_permanent_message
+            or self._memory.has_recent_message
         ):
             previous_message = Message(
                 role=MessageRole.ASSISTANT,
@@ -277,9 +274,7 @@ class EngineAgent(ABC):
                         self._memory, "participant_id", None
                     ),
                     "session_id": (
-                        getattr(
-                            self._memory, "permanent_message", None
-                        )
+                        getattr(self._memory, "permanent_message", None)
                         and getattr(
                             self._memory.permanent_message,
                             "session_id",
@@ -307,9 +302,7 @@ class EngineAgent(ABC):
                         self._memory, "participant_id", None
                     ),
                     "session_id": (
-                        getattr(
-                            self._memory, "permanent_message", None
-                        )
+                        getattr(self._memory, "permanent_message", None)
                         and getattr(
                             self._memory.permanent_message,
                             "session_id",

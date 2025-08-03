@@ -6,7 +6,7 @@ from .. import (
 )
 from ..engine import EngineAgent
 from ...entities import (
-    EngineMessage,
+    EngineMessage as EngineMessage,
     Input,
     Message,
     MessageRole,
@@ -196,9 +196,17 @@ class Orchestrator:
                 started=start,
             )
         )
+
+        self._logger.info(
+            "Orchestrator calling engine agent %s", str(engine_agent)
+        )
         result = await engine_agent(
             operation.specification, input, **engine_args
         )
+        self._logger.info(
+            "Engine agent %s responded to orchestrator", str(engine_agent)
+        )
+
         end = perf_counter()
         await self._event_manager.trigger(
             Event(

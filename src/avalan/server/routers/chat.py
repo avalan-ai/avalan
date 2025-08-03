@@ -42,6 +42,10 @@ async def create_chat_completion(
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
 
+    logger.info(
+        "Processing chat completion request for orchestrator %s",
+        str(orchestrator),
+    )
     logger.debug(
         "Processing chat completion request with messages %r", request
     )
@@ -81,7 +85,17 @@ async def create_chat_completion(
         response_id,
     )
 
+    logger.info(
+        "Calling orchestrator %s for chat completion request",
+        str(orchestrator),
+    )
+
     response = await orchestrator(messages, settings=settings)
+
+    logger.info(
+        "Orchestrator %s responded for chat completion request",
+        str(orchestrator),
+    )
 
     # Streaming through SSE (server-sent events with text/event-stream)
     if request.stream:

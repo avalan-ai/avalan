@@ -9,12 +9,11 @@ from ...entities import Backend, OrchestratorSettings, ToolCall
 from ...event import EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
-from ...server import agents_server, di_set
+from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from argparse import Namespace
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack
 from dataclasses import fields
-from fastapi import FastAPI
 from jinja2 import Environment, FileSystemLoader
 from logging import Logger
 from os.path import dirname, getmtime, join
@@ -565,59 +564,36 @@ async def agent_serve(
         specs_path or engine_uri
     ), "specifications file or --engine-uri must be specified"
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        async with AsyncExitStack() as stack:
-            loader = OrchestratorLoader(
-                hub=hub,
-                logger=logger,
-                participant_id=uuid4(),
-                stack=stack,
-            )
-            if specs_path:
-                logger.debug("Loading agent from %s", specs_path)
-                orchestrator = await loader.from_file(
-                    specs_path,
-                    agent_id=uuid4(),
-                )
-            else:
-                memory_recent = (
-                    args.memory_recent
-                    if args.memory_recent is not None
-                    else True
-                )
-                settings = get_orchestrator_settings(
-                    args,
-                    agent_id=uuid4(),
-                    memory_recent=memory_recent,
-                    tools=args.tool,
-                )
-                logger.debug("Loading agent from inline settings")
-                browser_settings = get_tool_settings(
-                    args, prefix="browser", settings_cls=BrowserToolSettings
-                )
-                orchestrator = await loader.from_settings(
-                    settings,
-                    browser_settings=browser_settings,
-                )
-            orchestrator = await stack.enter_async_context(orchestrator)
-            di_set(app, logger=logger, orchestrator=orchestrator)
-            logger.debug(
-                "Agent loaded from %s",
-                specs_path if specs_path else "inline settings",
-            )
-            yield
+    settings: OrchestratorSettings | None = None
+    browser_settings: BrowserToolSettings | None = None
+
+    if not specs_path:
+        memory_recent = (
+            args.memory_recent if args.memory_recent is not None else True
+        )
+        settings = get_orchestrator_settings(
+            args,
+            agent_id=uuid4(),
+            memory_recent=memory_recent,
+            tools=args.tool,
+        )
+        browser_settings = get_tool_settings(
+            args, prefix="browser", settings_cls=BrowserToolSettings
+        )
 
     server = agents_server(
+        hub=hub,
         name=name,
         version=version,
         prefix_openai=args.prefix_openai,
         prefix_mcp=args.prefix_mcp,
+        specs_path=specs_path,
+        settings=settings,
+        browser_settings=browser_settings,
         host=args.host,
         port=args.port,
         reload=args.reload,
         logger=logger,
-        lifespan=lifespan,
     )
     await server.serve()
 

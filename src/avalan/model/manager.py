@@ -119,6 +119,8 @@ class ModelManager(ContextDecorator):
     ):
         modality = operation.modality
 
+        self._logger.info("ModelManager call process started for %s", modality)
+
         stopping_criteria = (
             KeywordStoppingCriteria(
                 operation.parameters["text"].stop_on_keywords,
@@ -469,6 +471,8 @@ class ModelManager(ContextDecorator):
                     elapsed=end - start,
                 )
             )
+
+        self._logger.info("ModelManager call processed for %s", modality)
 
         return result
 

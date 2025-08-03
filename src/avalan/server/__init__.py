@@ -1,20 +1,28 @@
+from ..agent.loader import OrchestratorLoader
 from ..agent.orchestrator import Orchestrator
+from ..entities import OrchestratorSettings
+from ..model.hubs.huggingface import HuggingfaceHub
+from ..tool.browser import BrowserToolSettings
 from ..utils import logger_replace
+from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 from logging import Logger
-from typing import AsyncContextManager
+from uuid import uuid4
 
 
 def agents_server(
+    hub: HuggingfaceHub,
     name: str,
     version: str,
     host: str,
     port: int,
     reload: bool,
+    specs_path: str | None,
+    settings: OrchestratorSettings | None,
+    browser_settings: BrowserToolSettings | None,
     prefix_mcp: str,
     prefix_openai: str,
     logger: Logger,
-    lifespan: AsyncContextManager | None = None,
 ):
     from ..server.routers import chat
     from mcp.server.lowlevel.server import Server as MCPServer
@@ -22,6 +30,37 @@ def agents_server(
     from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
     from starlette.requests import Request
     from uvicorn import Config, Server
+    from os import environ
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        logger.info("Initializing app lifespan")
+        environ["TOKENIZERS_PARALLELISM"] = "false"
+        async with AsyncExitStack() as stack:
+            logger.info("Loading OrchestratorLoader in app lifespan")
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            if specs_path:
+                orchestrator = await loader.from_file(
+                    specs_path,
+                    agent_id=uuid4(),
+                )
+            else:
+                orchestrator = await loader.from_settings(
+                    settings,
+                    browser_settings=browser_settings,
+                )
+            orchestrator = await stack.enter_async_context(orchestrator)
+            di_set(app, logger=logger, orchestrator=orchestrator)
+            logger.info(
+                "Agent loaded from %s in app lifespan",
+                specs_path if specs_path else "inline settings",
+            )
+            yield
 
     logger.debug("Creating %s server", name)
     app = FastAPI(title=name, version=version, lifespan=lifespan)

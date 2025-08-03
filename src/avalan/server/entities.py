@@ -141,8 +141,7 @@ class ChatCompletionRequest(BaseModel):
         None, description="Unique identifier representing your end-user"
     )
     response_format: ResponseFormat | None = Field(
-        None,
-        description="Format to use for model response"
+        None, description="Format to use for model response"
     )
     tools: list[Tool] | None = None
     tool_choice: Literal["auto", "none", "required"] | str | dict | None = None

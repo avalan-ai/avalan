@@ -20,11 +20,11 @@ from ..tool.memory import MemoryToolSet
 from ..tool.code import CodeToolSet
 from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from contextlib import AsyncExitStack
-from logging import Logger
+from logging import Logger, DEBUG, INFO
 from os import access, R_OK
 from os.path import exists
 from tomllib import load
-from types import FunctionType
+from typing import Any, Callable
 from uuid import UUID, uuid4
 
 
@@ -66,7 +66,7 @@ class OrchestratorLoader:
         elif not access(path, R_OK):
             raise PermissionError(path)
 
-        _l("Loading agent from %s", path)
+        _l("Loading agent from %s", path, is_debug=False)
 
         with open(path, "rb") as file:
             config = load(file)
@@ -227,6 +227,8 @@ class OrchestratorLoader:
                     )
                 browser_settings = BrowserToolSettings(**tool_config)
 
+            _l("Loaded agent from %s", path, is_debug=False)
+
             return await self.from_settings(
                 settings,
                 browser_settings=browser_settings,
@@ -239,6 +241,8 @@ class OrchestratorLoader:
         browser_settings: BrowserToolSettings | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
+
+        _l("Loading agent from settings", is_debug=False)
 
         sentence_model_engine_settings = (
             TransformerEngineSettings(**settings.sentence_model_engine_config)
@@ -394,6 +398,8 @@ class OrchestratorLoader:
                 template_vars=settings.template_vars,
             )
 
+        _l("Loaded agent from settings", is_debug=False)
+
         return agent
 
     @staticmethod
@@ -453,14 +459,20 @@ class OrchestratorLoader:
         return agent
 
     @staticmethod
-    def _log_wrapper(logger: Logger) -> FunctionType:
-        return lambda message, *args, inner_type=None, **kwargs: logger.debug(
-            (
+    def _log_wrapper(logger: Logger) -> Callable[..., Any]:
+        def wrapper(
+            message: str,
+            *args: Any,
+            inner_type: str | None = None,
+            **kwargs: Any,
+        ) -> Any:
+            is_debug = kwargs.pop("is_debug", True)
+            level = DEBUG if is_debug else INFO
+            prefix = (
                 f"<{inner_type} @ OrchestratorLoader> "
                 if inner_type
                 else "<OrchestratorLoader> "
             )
-            + message,
-            *args,
-            **kwargs,
-        )
+            return logger.log(level, prefix + message, *args, **kwargs)
+
+        return wrapper

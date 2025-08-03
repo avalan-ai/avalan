@@ -209,9 +209,7 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
             model="m",
-            messages=[
-                {"role": "user", "content": "hi"}
-            ],
+            messages=[{"role": "user", "content": "hi"}],
             stream=False,
             timeout=None,
             response_format=None,
