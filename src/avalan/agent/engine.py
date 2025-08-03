@@ -43,6 +43,10 @@ class EngineAgent(ABC):
         raise NotImplementedError()
 
     @property
+    def id(self) -> UUID:
+        return self._id
+
+    @property
     def memory(self) -> MemoryManager:
         return self._memory
 
@@ -156,20 +160,25 @@ class EngineAgent(ABC):
         assert (
             not self._memory.has_recent_message
             or self._memory.recent_message is not None
+        ) and (
+            not self._memory.has_permanent_message
+            or self._memory.permanent_message is not None
         )
 
         # Should always be stored, with or without memory
         self._last_prompt = (input, system_prompt)
 
+        if isinstance(input, Message):
+            input = [input]
+
         # Transform input (by adding memory, if necessary)
         if (
             self._memory.has_permanent_message
             or self._memory.has_recent_message
-        ) and isinstance(input, Message):
-            previous_message: Message | None = None
-            new_message: Message = input
-
+        ) and isinstance(input, list):
             # Handle last message if not already consumed
+
+            previous_message: Message | None = None
             previous_output = self._last_output
             if previous_output and isinstance(
                 previous_output, TextGenerationResponse
@@ -179,111 +188,13 @@ class EngineAgent(ABC):
                     content=await previous_output.to_str(),
                 )
 
-            # Append messages
-            if previous_message:
-                await self._event_manager.trigger(
-                    Event(
-                        type=EventType.MEMORY_APPEND_BEFORE,
-                        payload={
-                            "model_type": self._model.model_type,
-                            "model_id": self._model.model_id,
-                            "message": previous_message,
-                            "participant_id": getattr(
-                                self._memory, "participant_id", None
-                            ),
-                            "session_id": (
-                                getattr(
-                                    self._memory, "permanent_message", None
-                                )
-                                and getattr(
-                                    self._memory.permanent_message,
-                                    "session_id",
-                                    None,
-                                )
-                            ),
-                        },
-                    )
-                )
-                await self._memory.append_message(
-                    EngineMessage(
-                        agent_id=self._id,
-                        model_id=self._model.model_id,
-                        message=previous_message,
-                    )
-                )
-                await self._event_manager.trigger(
-                    Event(
-                        type=EventType.MEMORY_APPEND_AFTER,
-                        payload={
-                            "model_type": self._model.model_type,
-                            "model_id": self._model.model_id,
-                            "message": previous_message,
-                            "participant_id": getattr(
-                                self._memory, "participant_id", None
-                            ),
-                            "session_id": (
-                                getattr(
-                                    self._memory, "permanent_message", None
-                                )
-                                and getattr(
-                                    self._memory.permanent_message,
-                                    "session_id",
-                                    None,
-                                )
-                            ),
-                        },
-                    )
-                )
+                # Append messages
 
-            await self._event_manager.trigger(
-                Event(
-                    type=EventType.MEMORY_APPEND_BEFORE,
-                    payload={
-                        "model_type": self._model.model_type,
-                        "model_id": self._model.model_id,
-                        "message": new_message,
-                        "participant_id": getattr(
-                            self._memory, "participant_id", None
-                        ),
-                        "session_id": (
-                            getattr(self._memory, "permanent_message", None)
-                            and getattr(
-                                self._memory.permanent_message,
-                                "session_id",
-                                None,
-                            )
-                        ),
-                    },
-                )
-            )
-            await self._memory.append_message(
-                EngineMessage(
-                    agent_id=self._id,
-                    model_id=self._model.model_id,
-                    message=new_message,
-                )
-            )
-            await self._event_manager.trigger(
-                Event(
-                    type=EventType.MEMORY_APPEND_AFTER,
-                    payload={
-                        "model_type": self._model.model_type,
-                        "model_id": self._model.model_id,
-                        "message": new_message,
-                        "participant_id": getattr(
-                            self._memory, "participant_id", None
-                        ),
-                        "session_id": (
-                            getattr(self._memory, "permanent_message", None)
-                            and getattr(
-                                self._memory.permanent_message,
-                                "session_id",
-                                None,
-                            )
-                        ),
-                    },
-                )
-            )
+                if previous_message:
+                    await self.sync_message(previous_message)
+
+            for current_message in input:
+                await self.sync_message(current_message)
 
             # Make recent memory the new model input
             input = [rm.message for rm in self._memory.recent_messages]
@@ -339,3 +250,72 @@ class EngineAgent(ABC):
             self._last_output = output
 
         return output
+
+    async def sync_messages(self) -> None:
+        if (
+            self._last_output
+            and (
+                self._memory.has_permanent_message
+                or self._memory.has_recent_message
+            )
+        ):
+            previous_message = Message(
+                role=MessageRole.ASSISTANT,
+                content=await self._last_output.to_str(),
+            )
+            await self.sync_message(previous_message)
+
+    async def sync_message(self, message: Message) -> None:
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.MEMORY_APPEND_BEFORE,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "message": message,
+                    "participant_id": getattr(
+                        self._memory, "participant_id", None
+                    ),
+                    "session_id": (
+                        getattr(
+                            self._memory, "permanent_message", None
+                        )
+                        and getattr(
+                            self._memory.permanent_message,
+                            "session_id",
+                            None,
+                        )
+                    ),
+                },
+            )
+        )
+        await self._memory.append_message(
+            EngineMessage(
+                agent_id=self._id,
+                model_id=self._model.model_id,
+                message=message,
+            )
+        )
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.MEMORY_APPEND_AFTER,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "message": message,
+                    "participant_id": getattr(
+                        self._memory, "participant_id", None
+                    ),
+                    "session_id": (
+                        getattr(
+                            self._memory, "permanent_message", None
+                        )
+                        and getattr(
+                            self._memory.permanent_message,
+                            "session_id",
+                            None,
+                        )
+                    ),
+                },
+            )
+        )

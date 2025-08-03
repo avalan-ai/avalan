@@ -101,7 +101,6 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
 
         with patch.dict(sys.modules, modules):
             logger = MagicMock()
-            orch = MagicMock()
             app_inst = MagicMock()
             app_inst.state = SimpleNamespace()
             FastAPI.return_value = app_inst
@@ -112,7 +111,6 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
                 agents_server(
                     name="srv",
                     version="v",
-                    orchestrators=[orch],
                     host="h",
                     port=1,
                     reload=False,

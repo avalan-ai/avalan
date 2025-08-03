@@ -103,6 +103,8 @@ async def create_chat_completion(
                 yield f"data: {chunk.model_dump_json()}\n\n"  # SSE data event
             yield "data: [DONE]\n\n"  # end of stream
 
+            await orchestrator.sync_messages()
+
         logger.debug(
             f"Generating event-stream stream for response {response_id}"
         )
@@ -126,6 +128,9 @@ async def create_chat_completion(
     logger.debug(
         "Generated chat completion response #%s %r", response_id, response
     )
+
+    await orchestrator.sync_messages()
+
     return response
 
 

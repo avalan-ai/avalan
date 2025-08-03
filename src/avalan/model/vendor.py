@@ -6,7 +6,6 @@ from ..entities import (
     MessageContent,
     MessageContentImage,
     MessageContentText,
-    MessageRole,
 )
 from ..tool.manager import ToolManager
 from abc import ABC
@@ -40,36 +39,40 @@ class TextGenerationVendor(ABC):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
-        def _content(content: str | MessageContent) -> dict:
-            return (
-                {"type": str(content.type), "image_url": content.image_url}
-                if isinstance(content, MessageContentImage)
-                else {
-                    "type": "text",
-                    "text": (
-                        content.text
-                        if isinstance(content, MessageContentText)
-                        else str(content)
-                    ),
-                }
-            )
 
-        return [
-            {
-                "role": str(message.role),
-                "content": (
-                    [_content(c) for c in message.content]
-                    if isinstance(message.content, list)
-                    else (
-                        str(message.content)
-                        if message.role == MessageRole.SYSTEM
-                        else _content(message.content)
-                    )
-                ),
-            }
-            for message in messages
-            if not exclude_roles or message.role not in exclude_roles
-        ]
+        def _block(c: MessageContent) -> dict:
+            if isinstance(c, MessageContentImage):
+                return {"type": "image_url", "image_url": c.image_url}
+            return {"type": "text", "text": c.text}
+
+        def _wrap(
+            content: str | MessageContent | list[MessageContent]
+        ) -> str | list[dict]:
+            if isinstance(content, str):
+                return content
+
+            if isinstance(content, list):
+                return [_block(c) for c in content]
+
+            if isinstance(content, MessageContentText):
+                return content.text
+
+            if isinstance(content, MessageContentImage):
+                return [_block(content)]
+
+            return str(content)
+
+        out: list[TemplateMessage] = []
+        for msg in messages:
+            if exclude_roles and msg.role in exclude_roles:
+                continue
+
+            out.append({
+                "role": str(msg.role),
+                "content": _wrap(msg.content)
+            })
+
+        return out
 
 
 class TextGenerationVendorStream(TextGenerationStream):

@@ -210,7 +210,7 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             messages=[
-                {"role": "user", "content": {"type": "text", "text": "hi"}}
+                {"role": "user", "content": "hi"}
             ],
             stream=False,
             timeout=None,

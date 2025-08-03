@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from ...entities import EngineMessage, MessageRole
+from ...entities import EngineMessage, MessageContentImage, MessageContentText, MessageRole
 from ...memory import MessageMemory, MemoryStore
 from ...memory.partitioner.text import TextPartition
 from ...model.nlp.sentence import SentenceTransformerModel
@@ -208,13 +208,20 @@ class PermanentMessageMemory(MessageMemory):
     ) -> tuple[PermanentMessage, list[PermanentMessagePartition]]:
         if message_id is None:
             message_id = uuid4()
+        content = engine_message.message.content
+        data = (
+            content.text if isinstance(content, MessageContentText)
+            else content.image_url if isinstance(content, MessageContentImage)
+            else str(content)
+        )
+
         message = PermanentMessage(
             id=message_id,
             agent_id=engine_message.agent_id,
             model_id=engine_message.model_id,
             session_id=session_id,
             author=engine_message.message.role,
-            data=engine_message.message.content,
+            data=data,
             partitions=len(partitions),
             created_at=created_at,
         )

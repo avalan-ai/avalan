@@ -67,7 +67,6 @@ class AgentsServerTestCase(TestCase):
                 patch("avalan.server.APIRouter", APIRouter),
             ):
                 logger = MagicMock()
-                orch = MagicMock()
                 app = MagicMock()
                 FastAPI.return_value = app
                 mcp_router = MagicMock()
@@ -84,23 +83,25 @@ class AgentsServerTestCase(TestCase):
                 Config.return_value = config_instance
                 server_instance = MagicMock()
                 Server.return_value = server_instance
+                lifespan = MagicMock()
 
                 with patch("avalan.server.logger_replace") as lr:
                     result = agents_server(
                         name="srv",
                         version="v",
-                        orchestrators=[orch],
                         host="h",
                         port=1,
                         reload=False,
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,
+                        lifespan=lifespan,
                     )
 
         self.assertIs(result, server_instance)
-        FastAPI.assert_called_once_with(title="srv", version="v")
-        self.assertIs(app.state.orchestrator, orch)
+        FastAPI.assert_called_once_with(
+            title="srv", version="v", lifespan=lifespan
+        )
         app.include_router.assert_any_call(chat_router, prefix="/o")
         SseServerTransport.assert_called_once_with("/m/messages/")
         app.mount.assert_called_once_with(
