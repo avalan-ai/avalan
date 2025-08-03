@@ -32,6 +32,7 @@ from logging import getLogger
 from avalan.entities import OrchestratorSettings, ReasoningSettings
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
+from avalan.tool.browser import BrowserToolSettings
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -197,47 +198,31 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         )
         hub = MagicMock()
         logger = MagicMock()
-        orch = MagicMock()
-        dummy_stack = AsyncMock()
-        dummy_stack.__aenter__.return_value = dummy_stack
-        dummy_stack.__aexit__.return_value = False
-        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
         server = MagicMock()
         server.serve = AsyncMock()
-        captured = {}
-
-        def fake_server(*_, **kwargs):
-            captured["lifespan"] = kwargs.get("lifespan")
-            return server
 
         with NamedTemporaryFile("w") as spec:
             args.specifications_file = spec.name
-            with (
-                patch.object(
-                    agent_cmds, "AsyncExitStack", return_value=dummy_stack
-                ),
-                patch.object(
-                    agent_cmds.OrchestratorLoader,
-                    "from_file",
-                    new=AsyncMock(return_value=orch),
-                ) as lf,
-                patch.object(
-                    agent_cmds, "agents_server", side_effect=fake_server
-                ) as asrv,
-            ):
+            with patch.object(
+                agent_cmds, "agents_server", return_value=server
+            ) as asrv:
                 await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
-                lf.assert_not_awaited()
-                asrv.assert_called_once()
-                server.serve.assert_awaited_once()
-
-                app = SimpleNamespace(state=SimpleNamespace())
-                async with captured["lifespan"](app):
-                    pass
-
-                lf.assert_awaited_once()
-                dummy_stack.enter_async_context.assert_awaited_once_with(orch)
-                self.assertIs(app.state.orchestrator, orch)
+        asrv.assert_called_once_with(
+            hub=hub,
+            name="name",
+            version="1.0",
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            specs_path=spec.name,
+            settings=None,
+            browser_settings=None,
+            host="0.0.0.0",
+            port=80,
+            reload=False,
+            logger=logger,
+        )
+        server.serve.assert_awaited_once()
 
     async def test_agent_serve_from_settings(self):
         args = Namespace(
@@ -274,51 +259,43 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         )
         hub = MagicMock()
         logger = MagicMock()
-        orch = MagicMock()
-        dummy_stack = AsyncMock()
-        dummy_stack.__aenter__.return_value = dummy_stack
-        dummy_stack.__aexit__.return_value = False
-        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
         server = MagicMock()
         server.serve = AsyncMock()
-        captured = {}
-
-        def fake_server(*_, **kwargs):
-            captured["lifespan"] = kwargs.get("lifespan")
-            return server
+        settings = MagicMock()
+        browser_settings = MagicMock()
 
         with (
             patch.object(
-                agent_cmds, "AsyncExitStack", return_value=dummy_stack
-            ),
+                agent_cmds, "get_orchestrator_settings", return_value=settings
+            ) as gos,
             patch.object(
-                agent_cmds.OrchestratorLoader,
-                "from_settings",
-                new=AsyncMock(return_value=orch),
-            ) as lfs,
+                agent_cmds, "get_tool_settings", return_value=browser_settings
+            ) as gts,
             patch.object(
-                agent_cmds.OrchestratorLoader,
-                "from_file",
-                new=AsyncMock(),
-            ) as lf,
-            patch.object(
-                agent_cmds, "agents_server", side_effect=fake_server
+                agent_cmds, "agents_server", return_value=server
             ) as asrv,
         ):
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
-            lfs.assert_not_awaited()
-            lf.assert_not_called()
-            asrv.assert_called_once()
-            server.serve.assert_awaited_once()
-
-            app = SimpleNamespace(state=SimpleNamespace())
-            async with captured["lifespan"](app):
-                pass
-
-            lfs.assert_awaited_once()
-            dummy_stack.enter_async_context.assert_awaited_once_with(orch)
-        self.assertIs(app.state.orchestrator, orch)
+        gos.assert_called_once()
+        gts.assert_called_once_with(
+            args, prefix="browser", settings_cls=BrowserToolSettings
+        )
+        asrv.assert_called_once_with(
+            hub=hub,
+            name="name",
+            version="1.0",
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            specs_path=None,
+            settings=settings,
+            browser_settings=browser_settings,
+            host="0.0.0.0",
+            port=80,
+            reload=False,
+            logger=logger,
+        )
+        server.serve.assert_awaited_once()
 
     async def test_agent_serve_needs_settings(self):
         args = Namespace(
