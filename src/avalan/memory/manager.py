@@ -160,9 +160,13 @@ class MemoryManager:
                 )
             content = engine_message.message.content
             content_text = (
-                content.text if isinstance(content, MessageContentText)
-                else str(content) if not isinstance(content, MessageContentImage)
-                else None
+                content.text
+                if isinstance(content, MessageContentText)
+                else (
+                    str(content)
+                    if not isinstance(content, MessageContentImage)
+                    else None
+                )
             )
             partitions = (
                 await self._text_partitioner(content_text)

@@ -53,7 +53,7 @@ from contextlib import ContextDecorator, ExitStack
 from logging import Logger
 from typing import Any, get_args, TypeAlias
 from time import perf_counter
-from urllib.parse import urlparse, parse_qsl
+from urllib.parse import parse_qsl, urlparse
 
 ModelType: TypeAlias = (
     AudioClassificationModel
@@ -118,6 +118,8 @@ class ModelManager(ContextDecorator):
         tool: ToolManager | None = None,
     ):
         modality = operation.modality
+
+        self._logger.info("ModelManager call process started for %s", modality)
 
         stopping_criteria = (
             KeywordStoppingCriteria(
@@ -469,6 +471,8 @@ class ModelManager(ContextDecorator):
                     elapsed=end - start,
                 )
             )
+
+        self._logger.info("ModelManager call processed for %s", modality)
 
         return result
 

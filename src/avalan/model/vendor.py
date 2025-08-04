@@ -39,14 +39,13 @@ class TextGenerationVendor(ABC):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
-
         def _block(c: MessageContent) -> dict:
             if isinstance(c, MessageContentImage):
                 return {"type": "image_url", "image_url": c.image_url}
             return {"type": "text", "text": c.text}
 
         def _wrap(
-            content: str | MessageContent | list[MessageContent]
+            content: str | MessageContent | list[MessageContent],
         ) -> str | list[dict]:
             if isinstance(content, str):
                 return content
@@ -67,10 +66,7 @@ class TextGenerationVendor(ABC):
             if exclude_roles and msg.role in exclude_roles:
                 continue
 
-            out.append({
-                "role": str(msg.role),
-                "content": _wrap(msg.content)
-            })
+            out.append({"role": str(msg.role), "content": _wrap(msg.content)})
 
         return out
 

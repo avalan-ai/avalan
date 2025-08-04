@@ -190,7 +190,13 @@ class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):
                 self.assertIsInstance(model._model, DummySentenceTransformer)
                 self.assertEqual(
                     model._model.called_with,
-                    (("hello",), {"convert_to_numpy": True}),
+                    (
+                        ("hello",),
+                        {
+                            "convert_to_numpy": True,
+                            "show_progress_bar": False,
+                        },
+                    ),
                 )
                 self.assertEqual(result, [0.1, 0.2])
 

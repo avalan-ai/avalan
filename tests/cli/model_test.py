@@ -1351,6 +1351,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 load_cm.__exit__.return_value = False
 
                 manager = AsyncMock()
+                manager._logger = logger
                 manager.__enter__.return_value = manager
                 manager.__exit__.return_value = False
                 manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -1452,6 +1453,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -1547,6 +1549,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -1640,6 +1643,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -1827,6 +1831,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -1929,6 +1934,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2029,6 +2035,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2125,6 +2132,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2231,6 +2239,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2344,6 +2353,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2448,6 +2458,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2550,6 +2561,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2651,6 +2663,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2748,6 +2761,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2850,6 +2864,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -2956,6 +2971,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3063,6 +3079,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3170,6 +3187,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3283,6 +3301,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3402,6 +3421,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3522,6 +3542,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3643,6 +3664,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3752,6 +3774,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock(side_effect=NotImplementedError())
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
@@ -3832,6 +3855,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         load_cm.__exit__.return_value = False
 
         manager = AsyncMock()
+        manager._logger = logger
         manager.__enter__.return_value = manager
         manager.__exit__.return_value = False
         manager.parse_uri = MagicMock(return_value=engine_uri)
