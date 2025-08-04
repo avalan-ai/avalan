@@ -90,6 +90,17 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     def input_token_count(self) -> int:
         return self._response.input_token_count
 
+    @property
+    def can_think(self) -> bool:
+        return self._response.can_think
+
+    @property
+    def is_thinking(self) -> bool:
+        return self._response.is_thinking
+
+    def set_thinking(self, thinking: bool) -> None:
+        self._response.set_thinking(thinking)
+
     async def to_str(self) -> str:
         output = await self._react(self._response)
         return output
