@@ -83,25 +83,29 @@ class AgentsServerTestCase(TestCase):
                 Config.return_value = config_instance
                 server_instance = MagicMock()
                 Server.return_value = server_instance
-                lifespan = MagicMock()
 
                 with patch("avalan.server.logger_replace") as lr:
                     result = agents_server(
+                        hub=MagicMock(),
                         name="srv",
                         version="v",
                         host="h",
                         port=1,
                         reload=False,
+                        specs_path=None,
+                        settings=None,
+                        browser_settings=None,
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,
-                        lifespan=lifespan,
                     )
 
         self.assertIs(result, server_instance)
-        FastAPI.assert_called_once_with(
-            title="srv", version="v", lifespan=lifespan
-        )
+        FastAPI.assert_called_once()
+        _, kwargs = FastAPI.call_args
+        self.assertEqual(kwargs["title"], "srv")
+        self.assertEqual(kwargs["version"], "v")
+        self.assertTrue(callable(kwargs["lifespan"]))
         app.include_router.assert_any_call(chat_router, prefix="/o")
         SseServerTransport.assert_called_once_with("/m/messages/")
         app.mount.assert_called_once_with(

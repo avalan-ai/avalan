@@ -53,7 +53,7 @@ from contextlib import ContextDecorator, ExitStack
 from logging import Logger
 from typing import Any, get_args, TypeAlias
 from time import perf_counter
-from urllib.parse import urlparse, parse_qsl
+from urllib.parse import parse_qsl, urlparse
 
 ModelType: TypeAlias = (
     AudioClassificationModel
