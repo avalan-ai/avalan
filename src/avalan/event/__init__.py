@@ -47,7 +47,7 @@ class EventType(StrEnum):
 TOOL_TYPES = {et for et in EventType if et.value.startswith("tool_")}
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Event:
     type: EventType
     payload: dict[str, Any] | None = None

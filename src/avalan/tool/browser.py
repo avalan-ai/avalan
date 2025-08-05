@@ -18,7 +18,7 @@ from playwright.async_api import (
 from typing import Literal
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class BrowserToolSettings(dict):
     engine: Literal["chromium", "firefox", "webkit"] = "firefox"
     search: bool = False

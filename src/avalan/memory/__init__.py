@@ -9,7 +9,7 @@ from uuid import UUID
 T = TypeVar("T")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MemoryChunk(Generic[T]):
     repository_key: str
     key: str | None

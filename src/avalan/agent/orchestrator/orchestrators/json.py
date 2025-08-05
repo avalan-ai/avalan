@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Annotated, get_args, get_origin
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Property:
     TYPE_MAP = {
         int: int.__name__,

@@ -22,18 +22,18 @@ class OutputType(StrEnum):
     TEXT = "text"
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Goal:
     task: str
     instructions: list[str]
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Role:
     persona: list[str]
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Specification:
     role: Role | None
     goal: Goal | None
@@ -45,13 +45,13 @@ class Specification:
     template_vars: dict | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class EngineEnvironment:
     engine_uri: EngineUri
     settings: EngineSettings | TransformerEngineSettings
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class AgentOperation:
     specification: Specification
     environment: EngineEnvironment
