@@ -1,9 +1,9 @@
+from avalan.server import agents_server
+from logging import Logger
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
-
-from avalan.server import agents_server
 
 
 def make_modules():
@@ -90,7 +90,10 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                 loader.from_file = AsyncMock(return_value=orchestrator_cm)
                 loader.from_settings = AsyncMock()
 
-                logger = MagicMock()
+                logger = MagicMock(spec=Logger)
+                logger.handlers = []
+                logger.level = 0
+                logger.propagate = False
                 app = MagicMock()
                 app.state = SimpleNamespace()
                 FastAPI.return_value = app
@@ -173,7 +176,10 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                 loader.from_settings = AsyncMock(return_value=orchestrator_cm)
                 loader.from_file = AsyncMock()
 
-                logger = MagicMock()
+                logger = MagicMock(spec=Logger)
+                logger.handlers = []
+                logger.level = 0
+                logger.propagate = False
                 settings = MagicMock()
                 browser_settings = MagicMock()
                 app = MagicMock()
