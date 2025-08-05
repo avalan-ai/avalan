@@ -1,8 +1,9 @@
 from avalan.server import agents_server
+from logging import Logger
 import sys
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class MCPListToolsTestCase(IsolatedAsyncioTestCase):
@@ -75,13 +76,16 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
             "avalan.server.routers.chat": chat_module,
         }
 
-        captured = {}
+        captured: dict[str, object] = {}
         with patch.dict(sys.modules, modules):
             with (
                 patch("avalan.server.FastAPI", FastAPI),
                 patch("avalan.server.APIRouter", APIRouter),
             ):
-                logger = MagicMock()
+                logger = MagicMock(spec=Logger)
+                logger.handlers = []
+                logger.level = 0
+                logger.propagate = False
                 app = MagicMock()
                 FastAPI.return_value = app
                 mcp_router = MagicMock()
@@ -214,7 +218,10 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                 patch("avalan.server.FastAPI", FastAPI),
                 patch("avalan.server.APIRouter", APIRouter),
             ):
-                logger = MagicMock()
+                logger = MagicMock(spec=Logger)
+                logger.handlers = []
+                logger.level = 0
+                logger.propagate = False
                 app = MagicMock()
                 FastAPI.return_value = app
                 mcp_router = MagicMock()
@@ -245,6 +252,14 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                 MCPServer.return_value = mcp_server
                 Config.return_value = MagicMock()
                 Server.return_value = MagicMock()
+
+                async def dummy_handler(request):
+                    async with sse_instance.connect_sse(
+                        request.scope, request.receive, request._send
+                    ) as streams:
+                        await mcp_server.run(streams[0], streams[1], "opts")
+
+                captured["sse_fn"] = dummy_handler
 
                 with patch("avalan.server.logger_replace"):
                     agents_server(
