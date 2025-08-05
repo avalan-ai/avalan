@@ -1,4 +1,5 @@
 from avalan.server import agents_server
+from logging import Logger
 import sys
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
@@ -86,7 +87,10 @@ class MCPCallToolTestCase(IsolatedAsyncioTestCase):
 
         captured = {}
         with patch.dict(sys.modules, modules):
-            logger = MagicMock()
+            logger = MagicMock(spec=Logger)
+            logger.handlers = []
+            logger.level = 0
+            logger.propagate = False
             app = MagicMock()
             FastAPI.return_value = app
             mcp_router = MagicMock()

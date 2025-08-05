@@ -1,20 +1,23 @@
-import sys
-from types import ModuleType, SimpleNamespace
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
-
 from avalan.server import (
     agents_server,
     di_get_logger,
     di_get_orchestrator,
     di_set,
 )
+from logging import Logger
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import MagicMock, patch
 
 
 class DiHelpersTestCase(TestCase):
     def test_di_set_and_get(self) -> None:
         app = SimpleNamespace(state=SimpleNamespace())
-        logger = MagicMock()
+        logger = MagicMock(spec=Logger)
+        logger.handlers = []
+        logger.level = 0
+        logger.propagate = False
         orch = MagicMock()
         di_set(app, logger, orch)
         request = SimpleNamespace(app=app)
@@ -100,7 +103,10 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
         modules["uvicorn"].Server = Server
 
         with patch.dict(sys.modules, modules):
-            logger = MagicMock()
+            logger = MagicMock(spec=Logger)
+            logger.handlers = []
+            logger.level = 0
+            logger.propagate = False
             app_inst = MagicMock()
             app_inst.state = SimpleNamespace()
             FastAPI.return_value = app_inst
