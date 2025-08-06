@@ -1,13 +1,49 @@
-from avalan.agent.renderer import TemplateEngineAgent, Renderer
-from avalan.agent import Specification, Goal, Role
+from avalan.agent import Goal, Role, Specification
+from avalan.agent.renderer import Renderer, TemplateEngineAgent
+from avalan.entities import EngineMessage, EngineUri, MessageRole
 from avalan.event import EventType
-from avalan.memory.manager import MemoryManager
-from avalan.tool.manager import ToolManager
 from avalan.event.manager import EventManager
-from avalan.entities import EngineUri
+from avalan.memory.manager import MemoryManager
+from avalan.model import TextGenerationResponse
 from avalan.model.manager import ModelManager
-from unittest import TestCase, IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, AsyncMock
+from avalan.tool.manager import ToolManager
+from logging import getLogger
+from uuid import UUID, uuid4
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock
+
+
+class TemplateEngineAgentPropertyTestCase(TestCase):
+    def test_id_property(self) -> None:
+        renderer = Renderer()
+        memory = MagicMock(spec=MemoryManager)
+        tool = MagicMock(spec=ToolManager)
+        event_manager = MagicMock(spec=EventManager)
+        model_manager = MagicMock(spec=ModelManager)
+        model = MagicMock()
+        model.model_id = "m"
+        model.model_type = "t"
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        agent_id: UUID = uuid4()
+        agent = TemplateEngineAgent(
+            model=model,
+            memory=memory,
+            tool=tool,
+            event_manager=event_manager,
+            model_manager=model_manager,
+            renderer=renderer,
+            engine_uri=engine_uri,
+            id=agent_id,
+        )
+        self.assertEqual(agent.id, agent_id)
 
 
 class TemplateEngineAgentPrepareTestCase(TestCase):
@@ -151,4 +187,63 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             event_types,
             [EventType.CALL_PREPARE_BEFORE, EventType.CALL_PREPARE_AFTER],
+        )
+
+
+class FakeMemory:
+    def __init__(self) -> None:
+        self.has_permanent_message = True
+        self.has_recent_message = False
+        self.messages: list[EngineMessage] = []
+
+    async def append_message(self, message: EngineMessage) -> None:
+        self.messages.append(message)
+
+
+class TemplateEngineAgentSyncMessagesTestCase(IsolatedAsyncioTestCase):
+    async def test_sync_messages_stores_previous_output(self) -> None:
+        renderer = Renderer()
+        memory = FakeMemory()
+        tool = MagicMock(spec=ToolManager)
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        model = MagicMock()
+        model.model_id = "m"
+        model.model_type = "t"
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        agent = TemplateEngineAgent(
+            model=model,
+            memory=memory,
+            tool=tool,
+            event_manager=event_manager,
+            model_manager=MagicMock(spec=ModelManager),
+            renderer=renderer,
+            engine_uri=engine_uri,
+        )
+        agent._last_output = TextGenerationResponse(
+            lambda: "prev", logger=getLogger(), use_async_generator=False
+        )
+
+        await agent.sync_messages()
+
+        self.assertEqual(len(memory.messages), 1)
+        stored = memory.messages[0]
+        self.assertEqual(stored.agent_id, agent.id)
+        self.assertEqual(stored.model_id, model.model_id)
+        self.assertEqual(stored.message.role, MessageRole.ASSISTANT)
+        self.assertEqual(stored.message.content, "prev")
+        event_types = [
+            c.args[0].type for c in event_manager.trigger.await_args_list
+        ]
+        self.assertEqual(
+            event_types,
+            [EventType.MEMORY_APPEND_BEFORE, EventType.MEMORY_APPEND_AFTER],
         )
