@@ -3,6 +3,7 @@ docs/images/*.mov
 __pycache__/
 .venv/
 *.egg-info/
+dist/
 .DS_Store
 *.sw[nop]
 .session.vim
