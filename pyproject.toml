@@ -18,7 +18,8 @@ dependencies = [
   "packaging (==25.0)",
   "humanize (==4.12.3)",
   "rich (==14.1.0)",
-  "torch (==2.8.0)",
+  # version limited because of vllm
+  "torch (==2.7.1)",
   "transformers (==4.55.0)",
   "pandas (==2.3.1)"
 ]
