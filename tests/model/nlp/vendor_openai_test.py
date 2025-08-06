@@ -5,7 +5,14 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.entities import (
+    GenerationSettings,
+    Message,
+    MessageContentImage,
+    MessageContentText,
+    MessageRole,
+    TransformerEngineSettings,
+)
 
 
 class AsyncIter:
@@ -219,6 +226,83 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(response._output_fn, TextGenerationSingleStream)
         self.assertFalse(response._use_async_generator)
         self.assertEqual(await response.to_str(), "ok")
+
+
+class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.openai_stub = types.ModuleType("openai")
+
+        class ChatCompletionsSpec:
+            async def create(self, *args, **kwargs):
+                pass
+
+        class ChatSpec:
+            completions: ChatCompletionsSpec
+
+        self.openai_stub.AsyncOpenAI = MagicMock()
+        self.openai_stub.AsyncStream = MagicMock()
+        self.openai_stub.AsyncOpenAI.return_value.chat = MagicMock(
+            spec=ChatSpec
+        )
+        self.openai_stub.AsyncOpenAI.return_value.chat.completions = MagicMock(
+            spec=ChatCompletionsSpec
+        )
+        self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
+        self.patch.start()
+        importlib.reload(
+            importlib.import_module("avalan.model.nlp.text.vendor.openai")
+        )
+        self.mod = importlib.import_module(
+            "avalan.model.nlp.text.vendor.openai"
+        )
+
+    def tearDown(self):
+        self.patch.stop()
+
+    async def _assert_messages(self, content, expected_content):
+        resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="x"))]
+        )
+        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create = (
+            AsyncMock(return_value=resp)
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        message = Message(role=MessageRole.USER, content=content)
+        await client("model", [message], use_async_generator=False)
+        create_mock = (
+            self.openai_stub.AsyncOpenAI.return_value.chat.completions.create
+        )
+        create_mock.assert_awaited_once()
+        kwargs = create_mock.await_args.kwargs
+        self.assertEqual(
+            kwargs["messages"], [{"role": "user", "content": expected_content}]
+        )
+
+    async def test_string_message(self):
+        await self._assert_messages("hi", "hi")
+
+    async def test_text_message_content(self):
+        content = MessageContentText(type="text", text="hi")
+        await self._assert_messages(content, "hi")
+
+    async def test_image_message_content(self):
+        content = MessageContentImage(type="image_url", image_url={"url": "u"})
+        await self._assert_messages(
+            content, [{"type": "image_url", "image_url": {"url": "u"}}]
+        )
+
+    async def test_mixed_message_content(self):
+        content = [
+            MessageContentText(type="text", text="hi"),
+            MessageContentImage(type="image_url", image_url={"url": "u"}),
+        ]
+        await self._assert_messages(
+            content,
+            [
+                {"type": "text", "text": "hi"},
+                {"type": "image_url", "image_url": {"url": "u"}},
+            ],
+        )
 
 
 if __name__ == "__main__":

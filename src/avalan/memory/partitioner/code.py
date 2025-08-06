@@ -23,14 +23,14 @@ ParameterType = Literal[
 ]
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Parameter:
     parameter_type: ParameterType
     name: str
     type: str | None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Function:
     id: str
     namespace: str | None
@@ -40,13 +40,13 @@ class Function:
     return_type: str | None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Symbol:
     symbol_type: SymbolType
     id: str
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class CodePartition:
     data: str
     encoding: Encoding

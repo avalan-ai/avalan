@@ -175,7 +175,7 @@ class BetaSchedule(StrEnum):
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class QuantizationSettings:
     load_in_4bit: bool
     bnb_4bit_quant_type: Literal["nf4"]
@@ -183,7 +183,7 @@ class QuantizationSettings:
     bnb_4bit_compute_dtype: type
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class EngineSettings:
     auto_load_model: bool = True
     auto_load_tokenizer: bool = True
@@ -208,7 +208,7 @@ class EngineSettings:
     upsampler_model_id: str | None = None
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(kw_only=True, frozen=True, slots=True)
 class EngineUri:
     host: str | None
     port: int | None
@@ -223,14 +223,14 @@ class EngineUri:
         return not self.vendor or self.vendor == "local"
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningSettings:
     max_new_tokens: int | None = None
     enabled: bool = True
     stop_on_max_new_tokens: bool = False
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ChatSettings:
     add_generation_prompt: bool = True
     tokenize: bool = True
@@ -239,7 +239,7 @@ class ChatSettings:
     enable_thinking: bool = True
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class GenerationSettings:
     # Generation length ------------------------------------------------------
     # The minimum numbers of tokens to generate, ignoring the number of tokens
@@ -369,7 +369,7 @@ class GenerationSettings:
     response_format: dict | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class GenericProxyConfig:
     scheme: str
     host: str
@@ -387,7 +387,7 @@ class GenericProxyConfig:
         return {"http": url, "https": url}
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class HubCacheFile:
     name: str
     path: str
@@ -396,7 +396,7 @@ class HubCacheFile:
     last_modified: datetime
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class HubCache:
     model_id: str
     path: str
@@ -407,7 +407,7 @@ class HubCache:
     total_revisions: int
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class HubCacheDeletion:
     model_id: str
     revisions: list[str]
@@ -418,20 +418,20 @@ class HubCacheDeletion:
     deletable_snapshots: list[str]
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ImageEntity:
     label: str
     score: float | None = None
     box: list[float] | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class MessageContentText:
     type: Literal["text"]
     text: str
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class MessageContentImage:
     type: Literal["image_url"]
     image_url: dict[str, str]
@@ -440,7 +440,7 @@ class MessageContentImage:
 MessageContent = MessageContentText | MessageContentImage
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
     content: str | MessageContent | list[MessageContent]
@@ -451,7 +451,7 @@ class Message:
 Input = str | list[str] | Message | list[Message]
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningOrchestratorResponse:
     """Result returned by :class:`ReasoningOrchestrator`."""
 
@@ -459,7 +459,7 @@ class ReasoningOrchestratorResponse:
     reasoning: str | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class EngineMessage:
     agent_id: UUID
     model_id: str
@@ -470,12 +470,12 @@ class EngineMessage:
         return self.message.role == MessageRole.ASSISTANT
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class EngineMessageScored(EngineMessage):
     score: float
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Model:
     id: str
     parameters: int | None
@@ -501,7 +501,7 @@ class Model:
     updated_at: datetime
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ModelConfig:
     # Model architectures that can be used with the model pretrained weights
     architectures: list[str] | None
@@ -569,7 +569,7 @@ class ModelConfig:
     tokenizer_class: str | None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class OrchestratorSettings:
     agent_id: UUID
     orchestrator_type: str | None
@@ -591,14 +591,14 @@ class OrchestratorSettings:
     log_events: bool
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class SearchMatch:
     query: str
     match: str
     l2_distance: float
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class SentenceTransformerModelConfig:
     backend: Literal["torch", "onnx", "openvino"]
     similarity_function: SimilarityFunction | None
@@ -606,7 +606,7 @@ class SentenceTransformerModelConfig:
     transformer_model_config: ModelConfig
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Similarity:
     cosine_distance: float
     inner_product: float
@@ -615,7 +615,7 @@ class Similarity:
     pearson: float
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class OperationAudioParameters:
     path: str
     reference_path: str | None = None
@@ -623,7 +623,7 @@ class OperationAudioParameters:
     sampling_rate: int
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class OperationTextParameters:
     context: str | None = None
     labeled_only: bool | None = None
@@ -636,7 +636,7 @@ class OperationTextParameters:
     system_prompt: str | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class OperationVisionParameters:
     path: str
     reference_path: str | None = None
@@ -668,7 +668,7 @@ class OperationParameters(TypedDict, total=False):
     vision: OperationVisionParameters | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Operation:
     generation_settings: GenerationSettings | None
     input: Input | None
@@ -677,7 +677,7 @@ class Operation:
     requires_input: bool = False
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class TokenizerConfig:
     name_or_path: str
     tokens: list[str] | None
@@ -688,21 +688,21 @@ class TokenizerConfig:
     fast: bool = False
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Token:
     id: Tensor | int
     token: str
     probability: float | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class TokenDetail(Token):
     step: int | None = None
     probability_distribution: ProbabilityDistribution | None = None
     tokens: list[Token] | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningToken(Token):
     """Token produced while the model is reasoning."""
 
@@ -713,10 +713,10 @@ class ReasoningToken(Token):
         id: Tensor | int = -1,
         probability: float | None = None,
     ) -> None:
-        super().__init__(id=id, token=token, probability=probability)
+        Token.__init__(self, id=id, token=token, probability=probability)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallToken(Token):
     """Token produced while the model emits a tool call."""
 
@@ -727,17 +727,17 @@ class ToolCallToken(Token):
         id: Tensor | int = -1,
         probability: float | None = None,
     ) -> None:
-        super().__init__(id=id, token=token, probability=probability)
+        Token.__init__(self, id=id, token=token, probability=probability)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCall:
     id: UUID
     name: str
     arguments: dict[str, ToolValue] | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallContext:
     agent_id: UUID | None = None
     input: Input | None = None
@@ -746,14 +746,14 @@ class ToolCallContext:
     calls: list[ToolCall] | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallResult(ToolCall):
     id: UUID
     call: ToolCall
     result: ToolValue | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolFilter:
     func: Callable[
         [ToolCall, ToolCallContext], tuple[ToolCall, ToolCallContext] | None
@@ -761,7 +761,7 @@ class ToolFilter:
     namespace: str | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolTransformer:
     func: Callable[
         [ToolCall, ToolCallContext, ToolValue | None], ToolValue | None
@@ -769,7 +769,7 @@ class ToolTransformer:
     namespace: str | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolManagerSettings:
     eos_token: str | None = None
     tool_format: ToolFormat | None = None
@@ -796,14 +796,14 @@ class ToolManagerSettings:
     ) = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class TextPartition:
     data: str
     total_tokens: int
     embeddings: ndarray
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class TransformerEngineSettings(EngineSettings):
     attention: AttentionImplementation | None = None
     backend: Backend = Backend.TRANSFORMERS
@@ -816,14 +816,14 @@ class TransformerEngineSettings(EngineSettings):
     tokens: list[str] | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class User:
     name: str
     full_name: str | None = None
     access_token_name: str | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class WebshareProxyConfig:
     host: str
     port: int

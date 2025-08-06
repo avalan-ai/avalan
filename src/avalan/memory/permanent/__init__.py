@@ -45,7 +45,7 @@ class MemoryType(StrEnum):
     RAW = "raw"
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Session:
     id: UUID
     agent_id: UUID
@@ -54,7 +54,7 @@ class Session:
     created_at: datetime
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Memory:
     id: UUID
     model_id: str
@@ -68,7 +68,7 @@ class Memory:
     created_at: datetime
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class PermanentMessage:
     id: UUID
     agent_id: UUID
@@ -80,12 +80,12 @@ class PermanentMessage:
     created_at: datetime
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class PermanentMessageScored(PermanentMessage):
     score: float
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class PermanentMessagePartition:
     agent_id: UUID
     session_id: UUID | None
@@ -96,7 +96,7 @@ class PermanentMessagePartition:
     created_at: datetime
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class PermanentMemoryPartition:
     participant_id: UUID
     memory_id: UUID

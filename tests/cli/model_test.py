@@ -1,8 +1,12 @@
 from avalan.cli.commands import get_model_settings
 from avalan.cli.commands import model as model_cmds
+from avalan.agent.engine import EngineAgent
+from avalan.agent.orchestrator import OrchestratorResponse
 from avalan.entities import (
-    Modality,
     ImageEntity,
+    Message,
+    MessageRole,
+    Modality,
     Token,
     TokenDetail,
     ToolCallToken,
@@ -12,7 +16,7 @@ from avalan.event import Event, EventType
 from types import SimpleNamespace
 from argparse import Namespace
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, AsyncMock, patch, call, ANY
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.response.text import TextGenerationResponse
 from logging import getLogger
@@ -22,7 +26,7 @@ from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.response.parsers.tool import ToolCallParser
 import asyncio
-from unittest import IsolatedAsyncioTestCase, main, TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 
 class CliModelTestCase(TestCase):
@@ -4554,6 +4558,87 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(stop_signal.is_set())
         slp.assert_called()
+
+    async def test_token_stream_start_thinking_orchestrator_response(self):
+        async def gen():
+            yield model_cmds.Token(id=1, token="A")
+
+        response = TextGenerationResponse(
+            lambda: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=GenerationSettings(),
+        )
+
+        engine = SimpleNamespace(model_id="m", tokenizer=MagicMock())
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = MagicMock()
+        orch_response = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+        )
+
+        orchestrator = SimpleNamespace(event_manager=None, input_token_count=1)
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=True,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        live = MagicMock()
+        logger = MagicMock()
+        stop_signal = asyncio.Event()
+        group = SimpleNamespace(renderables=[None])
+
+        async def fake_frames(*_, **__):
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        lm = SimpleNamespace(
+            model_id="m", tokenizer_config=None, input_token_count=lambda s: 1
+        )
+
+        self.assertTrue(orch_response.can_think)
+        self.assertFalse(orch_response.is_thinking)
+
+        await model_cmds._token_stream(
+            live=live,
+            group=group,
+            tokens_group_index=0,
+            args=args,
+            console=console,
+            theme=theme,
+            logger=logger,
+            orchestrator=orchestrator,
+            event_stats=None,
+            lm=lm,
+            input_string="hi",
+            response=orch_response,
+            display_tokens=0,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=stop_signal,
+            tool_events_limit=None,
+            with_stats=True,
+        )
+
+        self.assertTrue(stop_signal.is_set())
+        self.assertTrue(orch_response.is_thinking)
+        theme.tokens.assert_called_once()
 
 
 class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
