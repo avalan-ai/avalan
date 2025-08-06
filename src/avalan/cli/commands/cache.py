@@ -40,13 +40,16 @@ def cache_download(
     assert args.model
     model_id = args.model
     can_access = args.skip_hub_access_check or hub.can_access(model_id)
+    workers = args.workers or 8
     model = hub.model(model_id)
     console.print(theme.model(model, can_access=can_access))
     console.print(theme.download_start(model_id))
     progress_template = theme.download_progress()
     try:
         path = hub.download(
-            model_id, tqdm_class=create_live_tqdm_class(progress_template)
+            model_id,
+            tqdm_class=create_live_tqdm_class(progress_template),
+            workers=workers,
         )
         console.print(theme.download_finished(model_id, path))
     except HubAccessDeniedException:
