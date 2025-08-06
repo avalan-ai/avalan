@@ -26,7 +26,8 @@ MESSAGE_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 class PgsqlChatCompletionTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
-        # Set up FastAPI components and import chat router without running server __init__
+        # Set up FastAPI components and import chat router
+        # without running server __init__
         server_pkg = ModuleType("avalan.server")
         server_pkg.__path__ = [str(Path("src/avalan/server").resolve())]
 
