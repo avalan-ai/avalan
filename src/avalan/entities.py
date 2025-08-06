@@ -19,7 +19,12 @@ SimilarityFunction = Literal["cosine", "dot", "euclidean", "manhattan"]
 
 ImageTextGenerationLoaderClass = Literal["gemma3", "qwen2"]
 
-TextGenerationLoaderClass = Literal["auto", "gemma3", "mistral3"]
+TextGenerationLoaderClass = Literal[
+    "auto",
+    "gemma3",
+    "gpt-oss",
+    "mistral3"
+]
 
 
 class Backend(StrEnum):

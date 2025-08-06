@@ -27,6 +27,7 @@ from transformers import (
     AsyncTextIteratorStreamer,
     AutoModelForCausalLM,
     Gemma3ForConditionalGeneration,
+    GptOssForCausalLM,
     Mistral3ForConditionalGeneration,
     PreTrainedModel,
 )
@@ -39,6 +40,7 @@ class TextGenerationModel(BaseNLPModel):
     _loaders: dict[TextGenerationLoaderClass, type[PreTrainedModel]] = {
         "auto": AutoModelForCausalLM,
         "gemma3": Gemma3ForConditionalGeneration,
+        "gpt-oss": GptOssForCausalLM,
         "mistral3": Mistral3ForConditionalGeneration,
     }
 
