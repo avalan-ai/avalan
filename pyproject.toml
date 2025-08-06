@@ -50,7 +50,8 @@ agent = [
 ]
 audio = [
   "soundfile==0.13.1",
-  "torchaudio==2.8.0",
+  # version limited because of vllm
+  "torchaudio==2.7.1",
 ]
 cpu = [
   "accelerate==1.9.0",
@@ -104,7 +105,8 @@ test = [
   "RestrictedPython==8.0",
   "sympy==1.14.0",
   "tiktoken==0.10.0",
-  "torchaudio==2.8.0",
+  # version limited because of vllm
+  "torchaudio==2.7.1",
   "tree-sitter==0.25.1",
   "tree-sitter-python==0.23.6",
 ]
@@ -187,7 +189,8 @@ all = [
   "soundfile==0.13.1",
   "sympy==1.14.0",
   "tiktoken==0.10.0",
-  "torchaudio==2.8.0",
+  # version limited because of vllm
+  "torchaudio==2.7.1",
   "torchvision==0.22.1",
   "tree-sitter==0.25.1",
   "tree-sitter-python==0.23.6",
