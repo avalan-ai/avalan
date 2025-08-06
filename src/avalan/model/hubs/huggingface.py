@@ -139,6 +139,8 @@ class HuggingfaceHub:
     def download(
         self,
         model_id: str,
+        *,
+        workers: int = 8,
         tqdm_class: type[tqdm] | Callable[..., tqdm] | None = None,
     ) -> str:
         try:
@@ -147,6 +149,7 @@ class HuggingfaceHub:
                 cache_dir=self._cache_dir,
                 tqdm_class=tqdm_class,
                 force_download=False,
+                max_workers=workers,
             )
             return path
         except GatedRepoError as e:

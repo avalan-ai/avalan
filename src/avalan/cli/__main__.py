@@ -342,6 +342,20 @@ class CLI:
             help="Number of tokens per window when partitioning",
         )
 
+        # Model options shared by commands: cache download, model install
+        model_install_parser = ArgumentParser(add_help=False)
+        model_install_parser.add_argument(
+            "model",
+            type=str,
+            help="Model to download",
+        )
+        model_install_parser.add_argument(
+            "--workers",
+            default=8,
+            type=int,
+            help="How many download workers to use",
+        )
+
         # Model options shared by commands: memory embeddings, model
         model_options_parser = ArgumentParser(add_help=False)
         model_options_parser.add_argument(
@@ -709,17 +723,10 @@ class CLI:
             action="append",
             help="Revision to delete",
         )
-        cache_download_parser = cache_command_parsers.add_parser(
+        cache_command_parsers.add_parser(
             name="download",
             description="Download model data to cache",
-            parents=[global_parser],
-        )
-        cache_download_parser.add_argument(
-            "--model",
-            "-m",
-            type=str,
-            required=True,
-            help="Model to load",
+            parents=[global_parser, model_install_parser],
         )
         cache_list_parser = cache_command_parsers.add_parser(
             name="list",
@@ -945,7 +952,7 @@ class CLI:
         model_command_parsers.add_parser(
             name="install",
             description="Install a model",
-            parents=[global_parser, model_options_parser],
+            parents=[global_parser, model_install_parser],
         )
         model_run_parser = model_command_parsers.add_parser(
             name="run",

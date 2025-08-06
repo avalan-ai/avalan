@@ -70,7 +70,9 @@ class CliCacheDeleteTestCase(unittest.TestCase):
 
 class CliCacheDownloadTestCase(unittest.TestCase):
     def setUp(self):
-        self.args = Namespace(model="m", skip_hub_access_check=False)
+        self.args = Namespace(
+            model="m", skip_hub_access_check=False, workers=8
+        )
         self.console = MagicMock()
         self.theme = MagicMock()
         self.theme._ = lambda s: s
@@ -91,7 +93,9 @@ class CliCacheDownloadTestCase(unittest.TestCase):
         self.theme.model.assert_called_once_with("model", can_access=True)
         self.theme.download_start.assert_called_once_with("m")
         cltc.assert_called_once_with(("tpl",))
-        self.hub.download.assert_called_once_with("m", tqdm_class="C")
+        self.hub.download.assert_called_once_with(
+            "m", tqdm_class="C", workers=8
+        )
         self.theme.download_finished.assert_called_once_with("m", "/path")
         self.theme.download_access_denied.assert_not_called()
 
