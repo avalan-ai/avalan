@@ -257,7 +257,8 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                     async with sse_instance.connect_sse(
                         request.scope, request.receive, request._send
                     ) as streams:
-                        await mcp_server.run(streams[0], streams[1], "opts")
+                        opts = mcp_server.create_initialization_options()
+                        await mcp_server.run(streams[0], streams[1], opts)
 
                 captured["sse_fn"] = dummy_handler
 
@@ -292,4 +293,5 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
         self.sse_instance.connect_sse.assert_called_once_with(
             request.scope, request.receive, request._send
         )
+        self.mcp_server.create_initialization_options.assert_called_once_with()
         self.mcp_server.run.assert_awaited_once_with("in", "out", "opts")
