@@ -58,10 +58,13 @@ jobs:
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry sync --no-interaction --extras "test"
+        continue-on-error: true
 
-      - name: Clear Poetry wheel cache on error
-        if: failure()
-        run: rm -rf ~/.cache/pypoetry/artifacts ~/.cache/pypoetry/cache .venv
+      - name: Clear Poetry cache & venv on install failure
+        if: steps.install-deps.outcome == 'failure'
+        run: |
+          echo "⚠️ Install failed—purging Poetry caches and venv"
+          rm -rf ~/.cache/pypoetry/artifacts ~/.cache/pypoetry/cache .venv
 
       - name: Run tests with coverage analysis
         run: poetry run pytest --cov=src/ --cov-report=xml
