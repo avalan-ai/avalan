@@ -29,7 +29,7 @@ TextGenerationLoaderClass = Literal[
 
 class Backend(StrEnum):
     TRANSFORMERS = "transformers"
-    MLXLM = "mlxlm"
+    MLXLM = "mlx"
     VLLM = "vllm"
 
 

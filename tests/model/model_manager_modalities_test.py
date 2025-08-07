@@ -1,4 +1,9 @@
-from avalan.entities import EngineUri, Modality, TransformerEngineSettings
+from avalan.entities import (
+    Backend,
+    EngineUri,
+    Modality,
+    TransformerEngineSettings
+)
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from logging import Logger
@@ -60,7 +65,7 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
     def test_load_engine_text_generation_mlxlm_backend(self):
         with ModelManager(self.hub, self.logger) as manager:
             uri = manager.parse_uri("ai://local/m")
-            settings = TransformerEngineSettings(backend="mlxlm")
+            settings = TransformerEngineSettings(backend=Backend.MLXLM)
             manager._stack.enter_context = MagicMock()
             with patch("avalan.model.nlp.text.mlxlm.MlxLmModel") as Model:
                 result = manager.load_engine(
