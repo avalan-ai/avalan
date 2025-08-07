@@ -59,6 +59,10 @@ jobs:
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry sync --no-interaction --extras "test"
 
+      - name: Clear Poetry wheel cache on error
+        if: failure()
+        run: rm -rf ~/.cache/pypoetry/artifacts ~/.cache/pypoetry/cache .venv
+
       - name: Run tests with coverage analysis
         run: poetry run pytest --cov=src/ --cov-report=xml
 
