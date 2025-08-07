@@ -21,6 +21,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    env:
+      POETRY_EXPERIMENTAL_NEW_INSTALLER: "false"
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -58,18 +61,9 @@ jobs:
       - name: Install dependencies
         id: install-deps
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry sync --no-interaction --extras "test"
-        continue-on-error: true
-
-      - name: Clear Poetry cache & venv on install failure
-        if: steps.install-deps.outcome == 'failure'
-        run: |
-          echo "⚠️ Install failed—purging Poetry caches and venv"
-          rm -rf ~/.cache/pypoetry/artifacts ~/.cache/pypoetry/cache .venv
-
-      - name: Re-install dependencies (after cache purge)
-        if: steps.install-deps.outcome == 'failure'
-        run: poetry sync --no-interaction --extras "test"
+        run: | 
+          poetry config experimental.new-installer fals
+          poetry sync --no-interaction --extras "test"
 
       - name: Run tests with coverage analysis
         run: poetry run pytest --cov=src/ --cov-report=xml
