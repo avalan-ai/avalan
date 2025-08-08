@@ -1835,7 +1835,7 @@ class FancyTheme(Theme):
         think_panel = (
             Panel(
                 Align(
-                    f"[bright_black]{think_wrapped_output}[/bright_black]",
+                    f"[light_pink1]{think_wrapped_output}[/light_pink1]",
                     vertical="top",
                 ),
                 title=_("{model_id} reasoning").format(
