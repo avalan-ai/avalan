@@ -183,6 +183,7 @@ class TextGenerationModel(BaseNLPModel):
             stopping_criterias=stopping_criterias,
             skip_special_tokens=skip_special_tokens,
             use_async_generator=settings.use_async_generator,
+            bos_token=self._tokenizer.bos_token,
         )
 
     async def _stream_generator(

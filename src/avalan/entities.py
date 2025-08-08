@@ -233,7 +233,7 @@ class ReasoningSettings:
     max_new_tokens: int | None = None
     enabled: bool = True
     stop_on_max_new_tokens: bool = False
-    tag: ReasoningTag = ReasoningTag.THINK
+    tag: ReasoningTag | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

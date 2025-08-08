@@ -40,3 +40,32 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(tokens[3], ReasoningToken)
         self.assertEqual(tokens[3].token, end)
         self.assertEqual(tokens[4], "z")
+
+    async def test_auto_tag_think(self):
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+        )
+        tokens: list[object] = []
+        for t in ["a", "<think>", "b", "</think>", "c"]:
+            tokens.extend(await parser.push(t))
+        self.assertIsInstance(tokens[1], ReasoningToken)
+        self.assertEqual(tokens[1].token, "<think>")
+        self.assertIsInstance(tokens[3], ReasoningToken)
+        self.assertEqual(tokens[3].token, "</think>")
+
+    async def test_auto_tag_channel(self):
+        start = "<|channel|>analysis<|message|>"
+        end = "<|end|><|start|>assistant<|channel|>final<|message|>"
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            bos_token="<|startoftext|>",
+        )
+        tokens: list[object] = []
+        for t in ["x", start, "y", end, "z"]:
+            tokens.extend(await parser.push(t))
+        self.assertIsInstance(tokens[1], ReasoningToken)
+        self.assertEqual(tokens[1].token, start)
+        self.assertIsInstance(tokens[3], ReasoningToken)
+        self.assertEqual(tokens[3].token, end)
