@@ -1025,21 +1025,33 @@ Avalan supports several reasoning approaches for guiding agents through complex 
 
 ### Reasoning models
 
-Reasoning models that emit thinking tags are natively supported. Some of them, like `DeepSeek-R1-Distill-Qwen-14B`, assume the model starts thinking without a thinking tag, so we'll use `--start-thinking`:
+Reasoning models that emit thinking tags are natively supported. Here's OpenAI's gpt-oss 20B solving a simple calculation:
+
+```bash
+echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
+    avalan model run 'ai://local/openai/gpt-oss-20b' \
+        --max-new-tokens 1024 \
+        --backend mlx
+```
+
+The response includes the model reasoning, and its final answer:
+
+![OpenAI's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_openai.webp)
+
+Some of them, like `DeepSeek-R1-Distill-Qwen-14B`, assume the model starts thinking without a thinking tag, so we'll use `--start-thinking`:
 
 ```bash
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B' \
         --temperature 0.6 \
         --max-new-tokens 1024 \
-        --start-thinking
+        --start-thinking \
+        --backend mlx
 ```
 
-The response includes the model reasoning, and its final answer:
+![DeepSeek's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_deepseek-2.webp)
 
-![DeepSeek's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_deepseek.webp)
-
-Nvidia's Nemotron reasoning model solves the same problem easily and doesn't require the `--start-thinking` flag, since it automatically produces think tags. It does so more verbosely, though (**852** output tokens versus DeepSeek's **216** output tokens), since it detects ambiguity in the `and then that result` part of the prompt and ends up revisiting the essential principles of mathematics, to the point of realizing it's overthinking 🤓
+Nvidia's Nemotron reasoning model solves the same problem easily and doesn't require the `--start-thinking` flag, since it automatically produces think tags. It does so more verbosely, though (**962** output tokens versus DeepSeek's **186** output tokens or OpenAI's more concise **140** tokens), since it detects ambiguity in the `and then that result` part of the prompt and ends up revisiting the essential principles of mathematics, to the point of realizing it's overthinking 🤓
 
 > [!TIP]
 > Endless reasoning rants can be stopped by setting `--reasoning-max-new-tokens` to the maximum number of reasoning tokens allowed, and adding `--reasoning-stop-on-max-new-tokens` to finish generation when that limit is reached.
@@ -1047,11 +1059,12 @@ Nvidia's Nemotron reasoning model solves the same problem easily and doesn't req
 ```bash
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run "nvidia/OpenReasoning-Nemotron-14B" \
-      --weight "bf16" \
-      --max-new-tokens 1024
+        --weight "bf16" \
+        --max-new-tokens 30000 \
+        --backend mlx
 ```
 
-![Nvidia's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_nvidia.webp)
+![Nvidia's reasoning model responding to a math question](https://avalan.ai/images/github/text_generation_reasoning_nvidia-2.webp)
 
 When using reasoning models, be mindful of your total token limit. Some reasoning models include limit recommendations on their model cards, like the following model from Z.ai:
 
