@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local
-          key: poetry-v2
+          key: poetry-v6
       - name: Install Poetry
         if: steps.cached-poetry.outputs.cache-hit != 'true'
         uses: snok/install-poetry@v1
@@ -44,7 +44,7 @@ jobs:
           POETRY_VIRTUALENVS_CREATE: "false"
 
       - name: Regenerate poetry.lock
-        run: poetry lock --no-ansi --no-interaction --no-cache --regenerate
+        run: poetry lock --no-ansi --no-interaction
 
       - name: Create or update Pull Request
         id: cpr
