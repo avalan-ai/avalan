@@ -19,12 +19,12 @@ SimilarityFunction = Literal["cosine", "dot", "euclidean", "manhattan"]
 
 ImageTextGenerationLoaderClass = Literal["gemma3", "qwen2"]
 
-TextGenerationLoaderClass = Literal["auto", "gemma3", "mistral3"]
+TextGenerationLoaderClass = Literal["auto", "gemma3", "gpt-oss", "mistral3"]
 
 
 class Backend(StrEnum):
     TRANSFORMERS = "transformers"
-    MLXLM = "mlxlm"
+    MLXLM = "mlx"
     VLLM = "vllm"
 
 
@@ -175,6 +175,11 @@ class BetaSchedule(StrEnum):
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
 
+class ReasoningTag(StrEnum):
+    THINK = "think"
+    CHANNEL = "channel"
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QuantizationSettings:
     load_in_4bit: bool
@@ -228,6 +233,7 @@ class ReasoningSettings:
     max_new_tokens: int | None = None
     enabled: bool = True
     stop_on_max_new_tokens: bool = False
+    tag: ReasoningTag = ReasoningTag.THINK
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

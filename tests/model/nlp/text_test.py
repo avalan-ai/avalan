@@ -123,7 +123,6 @@ class TextGenerationModelTestCase(TestCase):
                     low_cpu_mem_usage=True,
                     device_map=Engine.get_default_device(),
                     token=None,
-                    quantization_config=None,
                     revision=None,
                     tp_plan=None,
                 )

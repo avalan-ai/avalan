@@ -40,6 +40,7 @@ from ..entities import (
     TimestepSpacing,
     TextGenerationLoaderClass,
     Backend,
+    ReasoningTag,
     User,
     WeightType,
 )
@@ -640,6 +641,13 @@ class CLI:
             "--tools-confirm",
             action="store_true",
             help="Confirm tool calls before execution",
+        )
+        agent_run_parser.add_argument(
+            "--reasoning-tag",
+            type=str,
+            choices=[t.value for t in ReasoningTag],
+            default=ReasoningTag.THINK.value,
+            help="Reasoning tag style",
         )
 
         CLI._add_agent_settings_arguments(agent_run_parser)
@@ -1344,6 +1352,13 @@ class CLI:
             action="store_true",
             default=False,
             help="Disable reasoning parser",
+        )
+        model_run_parser.add_argument(
+            "--reasoning-tag",
+            type=str,
+            choices=[t.value for t in ReasoningTag],
+            default=ReasoningTag.THINK.value,
+            help="Reasoning tag style",
         )
         model_run_parser.add_argument(
             "--reasoning-max-new-tokens",

@@ -78,6 +78,8 @@ that have less than 95% coverage on folder `src/avalan/tool`:
 make test-coverage -- -95 src/avalan/tool
 ```
 
+When looking to ncrease code coverage **don't apply tricks** like using `exec` with `compile` to simulate lines covered.
+
 ## Submitting changes
 
 Run the full test suite before every commit:

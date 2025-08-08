@@ -1,9 +1,28 @@
-from avalan.model.response.parsers.reasoning import (
-    ReasoningParser,
-)
-from avalan.entities import ReasoningSettings
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
+
+from avalan.entities import ReasoningSettings
+from avalan.model.response.parsers.reasoning import ReasoningParser
+
+
+class FakeStartTag:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.eq_calls = 0
+
+    def startswith(self, prefix: str) -> bool:
+        return True
+
+    def __len__(self) -> int:  # noqa: D401 - delegating
+        return len(self.value)
+
+    def __eq__(self, other: object) -> bool:
+        self.eq_calls += 1
+        if other is self:
+            return True
+        if isinstance(other, str):
+            return self.eq_calls > 1 and self.value == other
+        return False
 
 
 class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
@@ -40,50 +59,49 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
 
+    async def test_pending_tokens_trim_when_candidate_exceeds_tag(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            start_tag=FakeStartTag("<think>"),
+        )
+        await parser.push("<")
+        tokens = await parser.push("think>extra")
+        self.assertEqual(tokens, [])
+        self.assertEqual(parser._pending_tokens, [])
+        self.assertEqual(parser._pending_str, "")
 
-def test_cover_unreachable_lines() -> None:
-    code = "\n" * 86 + "pass\npass\npass\n"
-    exec(
-        compile(
-            code, "src/avalan/model/response/parsers/reasoning.py", "exec"
-        ),
-        {},
-    )
+    async def test_single_token_longer_than_tag_trimmed(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            start_tag=FakeStartTag("<think>"),
+        )
+        tokens = await parser.push("<think>extra")
+        self.assertEqual(tokens, [])
+        self.assertEqual(parser._pending_tokens, [])
+        self.assertEqual(parser._pending_str, "")
 
+    async def test_exact_tag_sets_thinking(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            start_tag=FakeStartTag("<think>"),
+        )
+        tokens = await parser.push("<think>")
+        self.assertTrue(parser.is_thinking)
+        self.assertEqual([t.token for t in tokens], ["<think>"])
 
-def test_cover_additional_unreachable_lines() -> None:
-    code = (
-        "\n" * 67
-        + "pass\npass\npass\n"
-        + "\n" * 19
-        + "pass\npass\n"
-        + "\n"
-        + "pass\n"
-    )
-    exec(
-        compile(
-            code,
-            "src/avalan/model/response/parsers/reasoning.py",
-            "exec",
-        ),
-        {},
-    )
-
-
-def test_cover_pending_buffer_logic() -> None:
-    code = (
-        "\n" * 74
-        + "pass\npass\npass\n"
-        + "\n" * 18
-        + "pass\npass\npass\n"
-        + "\n"
-        + "pass\n"
-    )
-    exec(
-        compile(
-            code,
-            "src/avalan/model/response/parsers/reasoning.py",
-            "exec",
-        ),
-        {},
-    )
+    async def test_thinking_budget_exhaustion_property(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            max_thinking_turns=1,
+        )
+        await parser.push("<think>")
+        await parser.push("</think>")
+        self.assertTrue(parser.is_thinking_budget_exhausted)
+        tokens = await parser.push("after")
+        self.assertEqual(tokens, ["after"])

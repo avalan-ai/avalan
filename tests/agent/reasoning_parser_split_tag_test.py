@@ -1,6 +1,6 @@
 from unittest import IsolatedAsyncioTestCase
 
-from avalan.entities import ReasoningSettings, ReasoningToken
+from avalan.entities import ReasoningSettings, ReasoningTag, ReasoningToken
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from logging import getLogger
 
@@ -54,3 +54,25 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
             ["<", "think", ">", "a", "<", "/think", ">"],
         )
         self.assertEqual(outputs[-1], "y")
+
+    async def test_split_channel_start_and_end_tags(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(tag=ReasoningTag.CHANNEL),
+            logger=getLogger(),
+        )
+        start_parts = ["<|channel|>", "analysis", "<|message|>"]
+        message = ["Leo", "Messi", "dances", "past", "defenders"]
+        end_parts = [
+            "<|end|>",
+            "<|start|>assistant",
+            "<|channel|>final",
+            "<|message|>",
+        ]
+        outputs: list[object] = []
+        for text in start_parts + message + end_parts:
+            outputs.extend(await parser.push(text))
+        self.assertTrue(all(isinstance(t, ReasoningToken) for t in outputs))
+        self.assertEqual(
+            [t.token for t in outputs], start_parts + message + end_parts
+        )
+        self.assertFalse(parser.is_thinking)

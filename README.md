@@ -66,7 +66,7 @@ echo "Who are you, and who is Leo Messi?" \
 Open models run across engines such as transformers, vLLM and mlx-lm.
 Search through millions of them with `avalan model search` using different
 filters. The following command looks for up to three text-generation models that
-run with the `mlxlm` backend, match the term `DeepSeek-R1`, and were published by
+run with the `mlx` backend, match the term `DeepSeek-R1`, and were published by
 the MLX community:
 
 ```bash
@@ -116,11 +116,11 @@ The model is now ready to use:
 Distill-Qwen-14B/snapshots/68570f64bcc30966595926e3b7d200a9d77fb1e8
 ```
 
-Test the model we just installed, specifying `mlxlm` as the backend:
+Test the model we just installed, specifying `mlx` as the backend:
 
 > [!TIP]
 > You can choose your preferred backend using the `--backend` option. For example,
-> on Apple Silicon Macs, the `mlxlm` backend typically offers a 3x speedup
+> on Apple Silicon Macs, the `mlx` backend typically offers a 3x speedup
 > compared to the default `transformers` backend. On devices with access to
 > Nvidia GPUs, models that run on the backend `vllm` are also orders of
 > magnitude faster.
@@ -131,7 +131,7 @@ echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
         --temperature 0.6 \
         --max-new-tokens 1024 \
         --start-thinking \
-        --backend mlxlm
+        --backend mlx
 ```
 
 The output shows the reasoning and the correct final answer:
@@ -1063,7 +1063,7 @@ echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
         --top-k 40 \
         --max-new-tokens 30000 \
         --start-thinking \
-        --backend mlxlm
+        --backend mlx
 ```
 
 ### ReACT
@@ -1309,7 +1309,7 @@ poetry install avalan --extras all
 
 > [!TIP]
 > If you are running on Apple Silicon Macs, add the `apple` extra to benefit
-> from the `mlxlm` backend:
+> from the `mlx` backend:
 >
 > ```bash
 > poetry install avalan --extras all --extras apple

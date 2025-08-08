@@ -4,6 +4,7 @@ from ..entities import (
     GenerationSettings,
     ChatSettings,
     ReasoningSettings,
+    ReasoningTag,
     Input,
     Modality,
     Operation,
@@ -489,6 +490,9 @@ class ModelManager(ContextDecorator):
                 args,
                 "reasoning_stop_on_max_new_tokens",
                 False,
+            ),
+            tag=ReasoningTag(
+                getattr(args, "reasoning_tag", ReasoningTag.THINK.value)
             ),
         )
         settings = GenerationSettings(

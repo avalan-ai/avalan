@@ -27,6 +27,7 @@ from transformers import (
     AsyncTextIteratorStreamer,
     AutoModelForCausalLM,
     Gemma3ForConditionalGeneration,
+    GptOssForCausalLM,
     Mistral3ForConditionalGeneration,
     PreTrainedModel,
 )
@@ -39,6 +40,7 @@ class TextGenerationModel(BaseNLPModel):
     _loaders: dict[TextGenerationLoaderClass, type[PreTrainedModel]] = {
         "auto": AutoModelForCausalLM,
         "gemma3": Gemma3ForConditionalGeneration,
+        "gpt-oss": GptOssForCausalLM,
         "mistral3": Mistral3ForConditionalGeneration,
     }
 
@@ -81,8 +83,7 @@ class TextGenerationModel(BaseNLPModel):
             bnb_config = None
 
         loader = self._loaders[self._settings.loader_class]
-        model = loader.from_pretrained(
-            self._model_id,
+        model_args = dict(
             cache_dir=self._settings.cache_dir,
             subfolder=self._settings.subfolder or "",
             attn_implementation=self._settings.attention,
@@ -100,6 +101,10 @@ class TextGenerationModel(BaseNLPModel):
             revision=self._settings.revision,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
         )
+        if model_args["quantization_config"] is None:
+            model_args.pop("quantization_config", None)
+
+        model = loader.from_pretrained(self._model_id, **model_args)
         return model
 
     @override

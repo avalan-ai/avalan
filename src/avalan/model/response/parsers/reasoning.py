@@ -1,4 +1,4 @@
-from ....entities import ReasoningSettings, ReasoningToken
+from ....entities import ReasoningSettings, ReasoningTag, ReasoningToken
 from logging import Logger
 from typing import Any, Iterable
 
@@ -8,6 +8,14 @@ class ReasoningTokenLimitExceeded(Exception):
 
 
 class ReasoningParser:
+    tags: dict[ReasoningTag, tuple[str, str]] = {
+        ReasoningTag.THINK: ("<think>", "</think>"),
+        ReasoningTag.CHANNEL: (
+            "<|channel|>analysis<|message|>",
+            "<|end|><|start|>assistant<|channel|>final<|message|>",
+        ),
+    }
+
     _settings: ReasoningSettings
     _start_tag: str
     _end_tag: str
@@ -26,15 +34,16 @@ class ReasoningParser:
         *,
         reasoning_settings: ReasoningSettings,
         logger: Logger,
-        start_tag: str = "<think>",
-        end_tag: str = "</think>",
+        start_tag: str | None = None,
+        end_tag: str | None = None,
         prefixes: list[str] | None = None,
         max_thinking_turns: int = 1,
     ) -> None:
         self._settings = reasoning_settings
         self._logger = logger
-        self._start_tag = start_tag
-        self._end_tag = end_tag
+        default_start, default_end = self.tags[reasoning_settings.tag]
+        self._start_tag = start_tag or default_start
+        self._end_tag = end_tag or default_end
         self._prefixes = tuple(prefixes or ["Think:"])
         self._thinking = False
         self._thinking_turns = 0
