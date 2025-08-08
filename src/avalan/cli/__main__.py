@@ -646,7 +646,6 @@ class CLI:
             "--reasoning-tag",
             type=str,
             choices=[t.value for t in ReasoningTag],
-            default=ReasoningTag.THINK.value,
             help="Reasoning tag style",
         )
 
@@ -1357,7 +1356,6 @@ class CLI:
             "--reasoning-tag",
             type=str,
             choices=[t.value for t in ReasoningTag],
-            default=ReasoningTag.THINK.value,
             help="Reasoning tag style",
         )
         model_run_parser.add_argument(

@@ -51,6 +51,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         logger: Logger,
         use_async_generator: bool,
         generation_settings: GenerationSettings | None = None,
+        bos_token: str | None = None,
         **kwargs,
     ):
         self._args = args
@@ -64,6 +65,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             self._reasoning_parser = ReasoningParser(
                 reasoning_settings=generation_settings.reasoning,
                 logger=self._logger,
+                bos_token=bos_token,
             )
         else:
             self._parser_queue = None

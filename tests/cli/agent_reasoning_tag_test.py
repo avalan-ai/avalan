@@ -47,7 +47,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             load_recent_messages_limit=None,
             start_thinking=False,
             chat_disable_thinking=False,
-            reasoning_tag=ReasoningTag.THINK.value,
+            reasoning_tag=None,
         )
         self.console = MagicMock()
         status_cm = MagicMock()
@@ -109,6 +109,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             *,
             reasoning_settings,
             logger,
+            bos_token=None,
             start_tag=None,
             end_tag=None,
             prefixes=None,
@@ -118,6 +119,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
                 self,
                 reasoning_settings=reasoning_settings,
                 logger=logger,
+                bos_token=bos_token,
                 start_tag=start_tag,
                 end_tag=end_tag,
                 prefixes=prefixes,

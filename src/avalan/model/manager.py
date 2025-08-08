@@ -491,8 +491,10 @@ class ModelManager(ContextDecorator):
                 "reasoning_stop_on_max_new_tokens",
                 False,
             ),
-            tag=ReasoningTag(
-                getattr(args, "reasoning_tag", ReasoningTag.THINK.value)
+            tag=(
+                ReasoningTag(getattr(args, "reasoning_tag"))
+                if getattr(args, "reasoning_tag", None)
+                else None
             ),
         )
         settings = GenerationSettings(

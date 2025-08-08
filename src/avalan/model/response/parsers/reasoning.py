@@ -34,6 +34,7 @@ class ReasoningParser:
         *,
         reasoning_settings: ReasoningSettings,
         logger: Logger,
+        bos_token: str | None = None,
         start_tag: str | None = None,
         end_tag: str | None = None,
         prefixes: list[str] | None = None,
@@ -41,7 +42,13 @@ class ReasoningParser:
     ) -> None:
         self._settings = reasoning_settings
         self._logger = logger
-        default_start, default_end = self.tags[reasoning_settings.tag]
+        tag = reasoning_settings.tag
+        if not tag:
+            if bos_token == "<|startoftext|>":
+                tag = ReasoningTag.CHANNEL
+            else:
+                tag = ReasoningTag.THINK
+        default_start, default_end = self.tags[tag]
         self._start_tag = start_tag or default_start
         self._end_tag = end_tag or default_end
         self._prefixes = tuple(prefixes or ["Think:"])
