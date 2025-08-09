@@ -488,6 +488,21 @@ class CLI:
             help="How many tool events to show on tool call panel",
         )
 
+        display_answer_height_group = (
+            model_inference_display_parser.add_mutually_exclusive_group()
+        )
+        display_answer_height_group.add_argument(
+            "--display-answer-height-expand",
+            action="store_true",
+            help="Expand answer section to full height",
+        )
+        display_answer_height_group.add_argument(
+            "--display-answer-height",
+            type=int,
+            default=12,
+            help="Height of the answer section (defaults to 12)",
+        )
+
         # Agent command
         agent_parser = command_parsers.add_parser(
             name="agent",

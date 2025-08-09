@@ -647,6 +647,10 @@ async def _token_stream(
 
         if display_tokens and isinstance(token, Token):
             tokens.append(token)
+        limit_answer_height = not getattr(
+            args, "display_answer_height_expand", False
+        )
+        answer_height = getattr(args, "display_answer_height", 12)
 
         token_frames_promise = theme.tokens(
             lm.model_id,
@@ -697,8 +701,9 @@ async def _token_stream(
             console.width,
             logger,
             event_stats,
+            height=answer_height,
             tool_events_limit=tool_events_limit,
-            limit_answer_height=True,
+            limit_answer_height=limit_answer_height,
             maximum_frames=1,
             start_thinking=start_thinking,
         )
