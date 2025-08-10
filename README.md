@@ -233,6 +233,7 @@ with AudioClassificationModel("superb/hubert-base-superb-er") as model:
     labels = await model("oprah.wav", sampling_rate=16000)
     print(labels)
 ```
+For a runnable script, see [docs/examples/audio_classification.py](docs/examples/audio_classification.py).
 
 #### Speech recognition
 
@@ -262,6 +263,7 @@ with SpeechRecognitionModel("facebook/wav2vec2-base-960h") as model:
     output = await model("oprah.wav", sampling_rate=16000)
     print(output)
 ```
+For a runnable script, see [docs/examples/audio_speech_recognition.py](docs/examples/audio_speech_recognition.py).
 
 #### Text to speech
 
@@ -293,6 +295,7 @@ with TextToSpeechModel("nari-labs/Dia-1.6B-0626") as model:
         ),
     )
 ```
+For a runnable script, see [docs/examples/audio_text_to_speech.py](docs/examples/audio_text_to_speech.py).
 
 #### Audio generation
 
@@ -314,6 +317,7 @@ from avalan.model.audio.generation import AudioGenerationModel
 with AudioGenerationModel("facebook/musicgen-small") as model:
     await model("A funky riff about Leo Messi.", "melody.wav", max_new_tokens=1024)
 ```
+For a runnable script, see [docs/examples/audio_generation.py](docs/examples/audio_generation.py).
 
 ### Text
 
@@ -346,6 +350,7 @@ with QuestionAnsweringModel("deepset/roberta-base-squad2") as model:
     )
     print(answer)
 ```
+For a runnable script, see [docs/examples/question_answering.py](docs/examples/question_answering.py).
 
 #### Sequence classification
 
@@ -372,6 +377,7 @@ with SequenceClassificationModel("distilbert-base-uncased-finetuned-sst-2-englis
     output = await model("We love Leo Messi.")
     print(output)
 ```
+For a runnable script, see [docs/examples/sequence_classification.py](docs/examples/sequence_classification.py).
 
 #### Sequence to sequence
 
@@ -415,6 +421,7 @@ with SequenceToSequenceModel("facebook/bart-large-cnn") as model:
     """)
     print(output)
 ```
+For a runnable script, see [docs/examples/seq2seq_summarization.py](docs/examples/seq2seq_summarization.py).
 
 #### Text generation
 
@@ -483,6 +490,7 @@ with TextGenerationModel(f"ai://{api_key}@openai/gpt-4o") as model:
     ):
         print(token, end="", flush=True)
 ```
+For a runnable script, see [docs/examples/text_generation.py](docs/examples/text_generation.py).
 
 #### Token classification
 
@@ -533,6 +541,7 @@ with TokenClassificationModel("dslim/bert-base-NER") as model:
     )
     print(labels)
 ```
+For a runnable script, see [docs/examples/token_classification.py](docs/examples/token_classification.py).
 
 #### Translation
 
@@ -579,6 +588,7 @@ with TranslationModel("facebook/mbart-large-50-many-to-many-mmt") as model:
     )
     print(output)
 ```
+For a runnable script, see [docs/examples/seq2seq_translation.py](docs/examples/seq2seq_translation.py).
 
 ### Vision
 
@@ -616,6 +626,7 @@ with VisionEncoderDecoderModel("naver-clova-ix/donut-base-finetuned-docvqa") as 
     )
     print(answer)
 ```
+For a runnable script, see [docs/examples/vision_encoder_decoder.py](docs/examples/vision_encoder_decoder.py).
 
 #### Image classification
 
@@ -646,6 +657,7 @@ with ImageClassificationModel("microsoft/resnet-50") as model:
     output = await model("docs/examples/cat.jpg")
     print(output)
 ```
+For a runnable script, see [docs/examples/vision_image_classification.py](docs/examples/vision_image_classification.py).
 
 #### Image to text
 
@@ -672,6 +684,7 @@ with ImageToTextModel("salesforce/blip-image-captioning-base") as model:
     caption = await model("docs/examples/Example_Image_1.jpg")
     print(caption)
 ```
+For a runnable script, see [docs/examples/vision_image_to_text.py](docs/examples/vision_image_to_text.py).
 
 #### Image text to text
 
@@ -710,6 +723,7 @@ with ImageTextToTextModel("google/gemma-3-12b-it") as model:
     )
     print(output)
 ```
+For a runnable script, see [docs/examples/vision_ocr.py](docs/examples/vision_ocr.py).
 
 #### Object detection
 
@@ -761,6 +775,7 @@ with ObjectDetectionModel("facebook/detr-resnet-50") as model:
     labels = await model("docs/examples/kitchen.jpg", threshold=0.3)
     print(labels)
 ```
+For a runnable script, see [docs/examples/vision_object_detection.py](docs/examples/vision_object_detection.py).
 
 #### Semantic segmentation
 
@@ -835,6 +850,7 @@ with SemanticSegmentationModel("nvidia/segformer-b0-finetuned-ade-512-512") as m
     labels = await model("docs/examples/kitchen.jpg")
     print(labels)
 ```
+For a runnable script, see [docs/examples/vision_semantic_segmentation.py](docs/examples/vision_semantic_segmentation.py).
 
 #### Text to animation
 
@@ -874,6 +890,7 @@ with TextToAnimationModel("ByteDance/AnimateDiff-Lightning", settings=EngineSett
         timestep_spacing="trailing"
     )
 ```
+For a runnable script, see [docs/examples/vision_text_to_animation.py](docs/examples/vision_text_to_animation.py).
 
 #### Text to image
 
@@ -912,6 +929,7 @@ with TextToImageModel("stabilityai/stable-diffusion-xl-base-1.0", settings=Trans
         n_steps=150
     )
 ```
+For a runnable script, see [docs/examples/vision_text_to_image.py](docs/examples/vision_text_to_image.py).
 
 #### Text to video
 
@@ -962,6 +980,7 @@ with TextToVideoModel("Lightricks/LTX-Video-0.9.7-dev", settings=EngineSettings(
         denoise_strength=0.4
     )
 ```
+For a runnable script, see [docs/examples/vision_text_to_video.py](docs/examples/vision_text_to_video.py).
 
 ## Tools
 
@@ -1241,7 +1260,7 @@ icdiff locale/avalan.pot <(
 ![diff showing what the AI translator agent modified](https://avalan.ai/images/github/agent_gettext_translator.webp)
 
 There are more agent, NLP, multimodal, audio, and vision examples in the
-[docs/examples](https://github.com/avalan-ai/avalan/blob/main/docs/examples)
+[docs/examples](docs/examples/README.md)
 folder.
 
 ### Serving agents
