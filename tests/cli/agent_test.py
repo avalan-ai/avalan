@@ -8,6 +8,7 @@ from tempfile import NamedTemporaryFile
 from rich.syntax import Syntax
 
 from avalan.entities import (
+    EngineMessage,
     ToolCall,
     Message,
     MessageRole,
@@ -20,12 +21,13 @@ from avalan.entities import (
 )
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
+from avalan.memory import RecentMessageMemory
 from avalan.memory.manager import MemoryManager
 from avalan.event.manager import EventManager
 from avalan.tool.manager import ToolManager
 from avalan.cli.commands import agent as agent_cmds
 from avalan.event import Event, EventType
-from avalan.memory.permanent import VectorFunction
+from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from logging import getLogger
@@ -643,6 +645,245 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.console.print.assert_any_call("agent_panel")
         self.assertEqual(len(self.console.print.call_args_list), 1)
+
+    async def test_no_session_option_skips_session(self):
+        self.args.no_session = True
+        self.args.session = uuid4()
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.orch.memory.continue_session.assert_not_awaited()
+        self.orch.memory.start_session.assert_not_awaited()
+
+    async def test_start_session_when_no_session_id(self):
+        self.args.session = None
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.orch.memory.start_session.assert_awaited_once_with()
+        self.orch.memory.continue_session.assert_not_awaited()
+
+    async def test_continue_session_skip_load_recent_messages(self):
+        self.args.skip_load_recent_messages = True
+        self.args.load_recent_messages_limit = 5
+        session_id = uuid4()
+        self.args.session = session_id
+
+        permanent = AsyncMock(spec=PermanentMessageMemory)
+        permanent.get_recent_messages = AsyncMock()
+        recent = RecentMessageMemory()
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=permanent,
+            recent_message_memory=recent,
+            text_partitioner=AsyncMock(),
+            logger=self.logger,
+        )
+        manager.continue_session = AsyncMock(wraps=manager.continue_session)
+        self.orch.memory = manager
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        manager.continue_session.assert_awaited_once_with(
+            session_id=session_id,
+            load_recent_messages=False,
+            load_recent_messages_limit=5,
+        )
+        permanent.get_recent_messages.assert_not_awaited()
+        self.assertEqual(manager.recent_messages, [])
+
+    async def test_continue_session_with_limit_loads_recent_messages(self):
+        self.args.load_recent_messages_limit = 3
+        session_id = uuid4()
+        self.args.session = session_id
+
+        for existing in (False, True):
+            permanent = AsyncMock(spec=PermanentMessageMemory)
+            recent = RecentMessageMemory()
+            manager = MemoryManager(
+                agent_id=uuid4(),
+                participant_id=uuid4(),
+                permanent_message_memory=permanent,
+                recent_message_memory=recent,
+                text_partitioner=AsyncMock(),
+                logger=self.logger,
+            )
+            manager.continue_session = AsyncMock(
+                wraps=manager.continue_session
+            )
+            if existing:
+                msg = EngineMessage(
+                    agent_id=manager._agent_id,
+                    model_id="m",
+                    message=Message(role=MessageRole.USER, content="x"),
+                )
+                messages = [msg]
+            else:
+                messages = []
+            permanent.get_recent_messages = AsyncMock(return_value=messages)
+            self.orch.memory = manager
+            self.console.print.reset_mock()
+
+            with (
+                patch.object(agent_cmds, "get_input", return_value=None),
+                patch.object(
+                    agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_file",
+                    new=AsyncMock(return_value=self.orch),
+                ),
+                patch.object(
+                    agent_cmds, "token_generation", new_callable=AsyncMock
+                ),
+            ):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+
+            manager.continue_session.assert_awaited_once_with(
+                session_id=session_id,
+                load_recent_messages=True,
+                load_recent_messages_limit=3,
+            )
+            permanent.get_recent_messages.assert_awaited_once_with(
+                participant_id=manager.participant_id,
+                session_id=session_id,
+                limit=3,
+            )
+            self.assertEqual(manager.recent_messages, messages)
+            calls = [c.args[0] for c in self.console.print.call_args_list]
+            self.assertIn("agent_panel", calls)
+            if messages:
+                self.assertIn("recent_panel", calls)
+            else:
+                self.assertNotIn("recent_panel", calls)
+
+    async def test_continue_session_without_limit_loads_all_messages(self):
+        self.args.load_recent_messages_limit = None
+        session_id = uuid4()
+        self.args.session = session_id
+
+        for existing in (False, True):
+            permanent = AsyncMock(spec=PermanentMessageMemory)
+            recent = RecentMessageMemory()
+            manager = MemoryManager(
+                agent_id=uuid4(),
+                participant_id=uuid4(),
+                permanent_message_memory=permanent,
+                recent_message_memory=recent,
+                text_partitioner=AsyncMock(),
+                logger=self.logger,
+            )
+            manager.continue_session = AsyncMock(
+                wraps=manager.continue_session
+            )
+            if existing:
+                msg = EngineMessage(
+                    agent_id=manager._agent_id,
+                    model_id="m",
+                    message=Message(role=MessageRole.USER, content="x"),
+                )
+                messages = [msg]
+            else:
+                messages = []
+            permanent.get_recent_messages = AsyncMock(return_value=messages)
+            self.orch.memory = manager
+            self.console.print.reset_mock()
+
+            with (
+                patch.object(agent_cmds, "get_input", return_value=None),
+                patch.object(
+                    agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_file",
+                    new=AsyncMock(return_value=self.orch),
+                ),
+                patch.object(
+                    agent_cmds, "token_generation", new_callable=AsyncMock
+                ),
+            ):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+
+            manager.continue_session.assert_awaited_once_with(
+                session_id=session_id,
+                load_recent_messages=True,
+                load_recent_messages_limit=None,
+            )
+            permanent.get_recent_messages.assert_awaited_once_with(
+                participant_id=manager.participant_id,
+                session_id=session_id,
+                limit=None,
+            )
+            self.assertEqual(manager.recent_messages, messages)
+            calls = [c.args[0] for c in self.console.print.call_args_list]
+            self.assertIn("agent_panel", calls)
+            if messages:
+                self.assertIn("recent_panel", calls)
+            else:
+                self.assertNotIn("recent_panel", calls)
 
     async def test_run_with_text_response(self):
         class DummyResponse:
