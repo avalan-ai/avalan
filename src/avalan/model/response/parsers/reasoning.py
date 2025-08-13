@@ -12,7 +12,7 @@ class ReasoningParser:
         ReasoningTag.THINK: ("<think>", "</think>"),
         ReasoningTag.CHANNEL: (
             "<|channel|>analysis<|message|>",
-            "<|end|><|start|>assistant<|channel|>final<|message|>",
+            "<|end|>",
         ),
     }
 

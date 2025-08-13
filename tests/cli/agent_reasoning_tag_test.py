@@ -162,7 +162,4 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
     async def test_channel_tag(self):
         start, end = await self._run(ReasoningTag.CHANNEL)
         self.assertEqual(start, "<|channel|>analysis<|message|>")
-        self.assertEqual(
-            end,
-            "<|end|><|start|>assistant<|channel|>final<|message|>",
-        )
+        self.assertEqual(end, "<|end|>")

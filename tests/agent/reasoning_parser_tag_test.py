@@ -24,7 +24,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
 
     async def test_channel_tag(self):
         start = "<|channel|>analysis<|message|>"
-        end = "<|end|><|start|>assistant<|channel|>final<|message|>"
+        end = "<|end|>"
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(tag=ReasoningTag.CHANNEL),
             logger=getLogger(),
@@ -56,7 +56,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
 
     async def test_auto_tag_channel(self):
         start = "<|channel|>analysis<|message|>"
-        end = "<|end|><|start|>assistant<|channel|>final<|message|>"
+        end = "<|end|>"
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
