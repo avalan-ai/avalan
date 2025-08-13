@@ -1719,6 +1719,12 @@ class CLI:
         group.add_argument(
             "--tool", type=str, action="append", help="Enable tool"
         )
+        group.add_argument(
+            "--tools",
+            type=str,
+            action="append",
+            help="Enable tools matching namespace",
+        )
         return group
 
     @staticmethod

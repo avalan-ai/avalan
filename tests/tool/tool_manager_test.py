@@ -51,6 +51,33 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertTrue(manager.is_empty)
         self.assertIsNone(manager.tools)
 
+    def test_enable_tools_partial_namespace(self):
+        calculator = CalculatorTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["math"],
+            available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+        self.assertEqual(manager.tools, [calculator])
+
+    def test_enable_tools_full_namespace(self):
+        calculator = CalculatorTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator"],
+            available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+        self.assertEqual(manager.tools, [calculator])
+
+    def test_enable_tools_no_namespace_match(self):
+        calculator = CalculatorTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["science"],
+            available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
+            settings=ToolManagerSettings(),
+        )
+        self.assertTrue(manager.is_empty)
+
 
 class DummyAdder:
     def __init__(self) -> None:
