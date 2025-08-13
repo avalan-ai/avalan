@@ -124,7 +124,11 @@ def get_orchestrator_settings(
         sentence_model_overlap_size=args.memory_engine_overlap,
         sentence_model_window_size=args.memory_engine_window,
         json_config=None,
-        tools=tools if tools is not None else args.tool or [],
+        tools=(
+            tools
+            if tools is not None
+            else (args.tool or []) + (getattr(args, "tools", None) or [])
+        ),
         log_events=True,
     )
 
@@ -252,7 +256,8 @@ async def agent_message_search(
                     args,
                     agent_id=agent_id,
                     memory_recent=memory_recent,
-                    tools=args.tool,
+                    tools=(args.tool or [])
+                    + (getattr(args, "tools", None) or []),
                 )
                 browser_settings = get_tool_settings(
                     args, prefix="browser", settings_cls=BrowserToolSettings
@@ -380,7 +385,7 @@ async def agent_run(
                 args,
                 agent_id=agent_id or uuid4(),
                 memory_recent=memory_recent,
-                tools=args.tool,
+                tools=(args.tool or []) + (getattr(args, "tools", None) or []),
                 max_new_tokens=getattr(args, "run_max_new_tokens", None),
                 temperature=getattr(args, "run_temperature", None),
                 top_k=getattr(args, "run_top_k", None),
@@ -575,7 +580,7 @@ async def agent_serve(
             args,
             agent_id=uuid4(),
             memory_recent=memory_recent,
-            tools=args.tool,
+            tools=(args.tool or []) + (getattr(args, "tools", None) or []),
         )
         browser_settings = get_tool_settings(
             args, prefix="browser", settings_cls=BrowserToolSettings
@@ -668,7 +673,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         memory_recent=memory_recent,
         memory_permanent_message=memory_permanent_message,
         max_new_tokens=args.run_max_new_tokens or 1024,
-        tools=args.tool or [],
+        tools=(args.tool or []) + (getattr(args, "tools", None) or []),
     )
 
     browser_tool = get_tool_settings(

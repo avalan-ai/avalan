@@ -110,12 +110,17 @@ class ToolSet(ContextDecorator):
 
     def with_enabled_tools(self, enable_tools: list[str]) -> "ToolSet":
         prefix = f"{self.namespace}." if self.namespace else ""
-        tools = [
-            tool
-            for tool in self._tools
-            if f"{prefix}{getattr(tool, '__name__', tool.__class__.__name__)}"
-            in enable_tools
-        ]
+
+        tools = []
+        for tool in self._tools:
+            name = (
+                f"{prefix}{getattr(tool, '__name__', tool.__class__.__name__)}"
+            )
+            for enabled in enable_tools:
+                if name == enabled or name.startswith(f"{enabled}."):
+                    tools.append(tool)
+                    break
+
         self._tools = tools
         return self
 
