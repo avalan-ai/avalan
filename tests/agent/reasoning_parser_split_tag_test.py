@@ -62,12 +62,7 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         )
         start_parts = ["<|channel|>", "analysis", "<|message|>"]
         message = ["Leo", "Messi", "dances", "past", "defenders"]
-        end_parts = [
-            "<|end|>",
-            "<|start|>assistant",
-            "<|channel|>final",
-            "<|message|>",
-        ]
+        end_parts = ["<|", "end", "|>"]
         outputs: list[object] = []
         for text in start_parts + message + end_parts:
             outputs.extend(await parser.push(text))
