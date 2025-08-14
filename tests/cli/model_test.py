@@ -4453,7 +4453,9 @@ class CliRecordOptionTestCase(IsolatedAsyncioTestCase):
                 with_stats=True,
             )
 
-        live_patch.assert_called_once_with(refresh_per_second=3, screen=True)
+        live_patch.assert_called_once_with(
+            refresh_per_second=3, screen=True, console=console
+        )
         ts_patch.assert_awaited_once()
 
 
@@ -4770,6 +4772,69 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(theme.tokens.call_args.kwargs["limit_answer_height"])
         self.assertEqual(theme.tokens.call_args.kwargs["height"], 20)
+
+    async def test_token_stream_height_scale(self):
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def __aiter__(self):
+                async def gen():
+                    yield model_cmds.Token(id=0, token="a")
+
+                return gen()
+
+        async def fake_frames(*_, **__):
+            yield (None, "frame")
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+            display_answer_height=20,
+        )
+
+        console = MagicMock()
+        console.width = 80
+        live = MagicMock()
+        logger = MagicMock()
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        lm = SimpleNamespace(
+            model_id="m", tokenizer_config=None, input_token_count=lambda s: 1
+        )
+
+        await model_cmds._token_stream(
+            live=live,
+            group=None,
+            tokens_group_index=None,
+            args=args,
+            console=console,
+            theme=theme,
+            logger=logger,
+            orchestrator=None,
+            event_stats=None,
+            lm=lm,
+            input_string="hi",
+            response=Resp(),
+            display_tokens=0,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=None,
+            tool_events_limit=None,
+            height_scale_func=lambda: 2,
+            with_stats=True,
+        )
+
+        self.assertEqual(theme.tokens.call_args.kwargs["height"], 40)
 
 
 class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):

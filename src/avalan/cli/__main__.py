@@ -2,6 +2,8 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 import sys
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
+from typing import TextIO, cast
+from prompt_toolkit.output.defaults import create_output
 from torch.cuda import device_count, is_available, set_device
 from torch.distributed import destroy_process_group
 from .. import license, name, site, version
@@ -1816,8 +1818,11 @@ class CLI:
         assert self._logger is not None and isinstance(self._logger, Logger)
         theme = FancyTheme(translator.gettext, translator.ngettext)
         _ = theme._
+        output = create_output()
         console = Console(
-            theme=Theme(styles=theme.get_styles()), record=args.record
+            file=cast(TextIO, output),
+            theme=Theme(styles=theme.get_styles()),
+            record=args.record,
         )
 
         if args.help_full:
