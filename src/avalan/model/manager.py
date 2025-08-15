@@ -2,19 +2,11 @@ from .modalities import ModalityRegistry
 from ..entities import (
     AttentionImplementation,
     Backend,
-    ChatSettings,
     EngineUri,
-    GenerationSettings,
     Input,
     Modality,
     Operation,
-    OperationAudioParameters,
-    OperationParameters,
-    OperationTextParameters,
-    OperationVisionParameters,
     ParallelStrategy,
-    ReasoningSettings,
-    ReasoningTag,
     TextGenerationLoaderClass,
     TransformerEngineSettings,
     Vendor,
@@ -24,8 +16,8 @@ from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..model.audio.classification import AudioClassificationModel
 from ..model.audio.generation import AudioGenerationModel
-from ..model.audio.speech_recognition import SpeechRecognitionModel
 from ..model.audio.speech import TextToSpeechModel
+from ..model.audio.speech_recognition import SpeechRecognitionModel
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.nlp.question import QuestionAnsweringModel
 from ..model.nlp.sentence import SentenceTransformerModel
@@ -51,8 +43,8 @@ from ..tool.manager import ToolManager
 from argparse import Namespace
 from contextlib import ContextDecorator, ExitStack
 from logging import Logger
-from typing import Any, get_args, TypeAlias
 from time import perf_counter
+from typing import Any, TypeAlias, get_args
 from urllib.parse import parse_qsl, urlparse
 
 ModelType: TypeAlias = (
@@ -68,15 +60,14 @@ ModelType: TypeAlias = (
     | SequenceClassificationModel
     | SequenceToSequenceModel
     | SpeechRecognitionModel
-    | AudioGenerationModel
     | TextGenerationModel
+    | TextToAnimationModel
     | TextToImageModel
     | TextToSpeechModel
-    | TranslationModel
-    | TokenClassificationModel
-    | VisionEncoderDecoderModel
-    | TextToAnimationModel
     | TextToVideoModel
+    | TokenClassificationModel
+    | TranslationModel
+    | VisionEncoderDecoderModel
 )
 
 
@@ -165,257 +156,9 @@ class ModelManager(ContextDecorator):
         args: Namespace,
         input_string: Input | None,
     ) -> Operation:
-        reasoning_settings = ReasoningSettings(
-            max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
-            enabled=not getattr(args, "no_reasoning", False),
-            stop_on_max_new_tokens=getattr(
-                args,
-                "reasoning_stop_on_max_new_tokens",
-                False,
-            ),
-            tag=(
-                ReasoningTag(getattr(args, "reasoning_tag"))
-                if getattr(args, "reasoning_tag", None)
-                else None
-            ),
+        return ModalityRegistry.get_operation_from_arguments(
+            modality, args, input_string
         )
-        settings = GenerationSettings(
-            do_sample=args.do_sample,
-            enable_gradient_calculation=args.enable_gradient_calculation,
-            max_new_tokens=args.max_new_tokens,
-            max_length=getattr(args, "text_max_length", None),
-            min_p=args.min_p,
-            num_beams=getattr(args, "text_num_beams", None),
-            repetition_penalty=args.repetition_penalty,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            use_cache=args.use_cache,
-            chat_settings=ChatSettings(
-                enable_thinking=not getattr(
-                    args,
-                    "chat_disable_thinking",
-                    not reasoning_settings.enabled,
-                )
-            ),
-            reasoning=reasoning_settings,
-        )
-        system_prompt = args.system or None
-
-        requires_input = modality in {
-            Modality.AUDIO_TEXT_TO_SPEECH,
-            Modality.AUDIO_GENERATION,
-            Modality.TEXT_GENERATION,
-            Modality.TEXT_QUESTION_ANSWERING,
-            Modality.TEXT_SEQUENCE_CLASSIFICATION,
-            Modality.TEXT_SEQUENCE_TO_SEQUENCE,
-            Modality.TEXT_TRANSLATION,
-            Modality.TEXT_TOKEN_CLASSIFICATION,
-            Modality.VISION_IMAGE_TEXT_TO_TEXT,
-            Modality.VISION_TEXT_TO_IMAGE,
-            Modality.VISION_TEXT_TO_ANIMATION,
-            Modality.VISION_TEXT_TO_VIDEO,
-        }
-
-        match modality:
-            case Modality.AUDIO_CLASSIFICATION:
-                parameters = OperationParameters(
-                    audio=OperationAudioParameters(
-                        path=args.path,
-                        sampling_rate=args.audio_sampling_rate,
-                    )
-                )
-
-            case Modality.AUDIO_SPEECH_RECOGNITION:
-                parameters = OperationParameters(
-                    audio=OperationAudioParameters(
-                        path=args.path,
-                        sampling_rate=args.audio_sampling_rate,
-                    )
-                )
-
-            case Modality.AUDIO_TEXT_TO_SPEECH:
-                parameters = OperationParameters(
-                    audio=OperationAudioParameters(
-                        path=args.path,
-                        reference_path=args.audio_reference_path,
-                        reference_text=args.audio_reference_text,
-                        sampling_rate=args.audio_sampling_rate,
-                    )
-                )
-
-            case Modality.AUDIO_GENERATION:
-                parameters = OperationParameters(
-                    audio=OperationAudioParameters(
-                        path=args.path,
-                        sampling_rate=args.audio_sampling_rate,
-                    )
-                )
-
-            case Modality.TEXT_QUESTION_ANSWERING:
-                parameters = OperationParameters(
-                    text=OperationTextParameters(
-                        context=args.text_context,
-                        system_prompt=system_prompt,
-                    )
-                )
-
-            case Modality.TEXT_SEQUENCE_CLASSIFICATION:
-                parameters = None
-
-            case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
-                parameters = OperationParameters(
-                    text=OperationTextParameters(
-                        stop_on_keywords=args.stop_on_keyword,
-                    )
-                )
-
-            case Modality.TEXT_TRANSLATION:
-                parameters = OperationParameters(
-                    text=OperationTextParameters(
-                        language_destination=args.text_to_lang,
-                        language_source=args.text_from_lang,
-                        stop_on_keywords=args.stop_on_keyword,
-                        skip_special_tokens=args.skip_special_tokens,
-                    )
-                )
-
-            case Modality.TEXT_TOKEN_CLASSIFICATION:
-                parameters = OperationParameters(
-                    text=OperationTextParameters(
-                        labeled_only=getattr(args, "text_labeled_only", None),
-                        system_prompt=system_prompt,
-                    )
-                )
-
-            case Modality.TEXT_GENERATION:
-                parameters = OperationParameters(
-                    text=OperationTextParameters(
-                        manual_sampling=args.display_tokens or 0,
-                        pick_tokens=(
-                            10
-                            if args.display_tokens and args.display_tokens > 0
-                            else 0
-                        ),
-                        stop_on_keywords=args.stop_on_keyword,
-                        skip_special_tokens=args.quiet
-                        or args.skip_special_tokens,
-                        system_prompt=system_prompt,
-                    )
-                )
-
-            case Modality.VISION_IMAGE_CLASSIFICATION:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                    )
-                )
-
-            case (
-                Modality.VISION_IMAGE_TO_TEXT | Modality.VISION_ENCODER_DECODER
-            ):
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                        skip_special_tokens=args.skip_special_tokens,
-                    )
-                )
-
-            case Modality.VISION_IMAGE_TEXT_TO_TEXT:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                        system_prompt=system_prompt,
-                        width=getattr(
-                            args,
-                            "vision_width",
-                            getattr(args, "image_width", None),
-                        ),
-                    )
-                )
-
-            case Modality.VISION_OBJECT_DETECTION:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                        threshold=getattr(
-                            args,
-                            "vision_threshold",
-                            getattr(args, "image_threshold", None),
-                        ),
-                    )
-                )
-
-            case Modality.VISION_TEXT_TO_IMAGE:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                        color_model=args.vision_color_model,
-                        high_noise_frac=args.vision_high_noise_frac,
-                        image_format=args.vision_image_format,
-                        n_steps=args.vision_steps,
-                    )
-                )
-
-            case Modality.VISION_TEXT_TO_ANIMATION:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                        n_steps=args.vision_steps,
-                        timestep_spacing=args.vision_timestep_spacing,
-                        beta_schedule=args.vision_beta_schedule,
-                        guidance_scale=args.vision_guidance_scale,
-                    )
-                )
-
-            case Modality.VISION_TEXT_TO_VIDEO:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                        reference_path=getattr(
-                            args, "vision_reference_path", None
-                        ),
-                        negative_prompt=getattr(
-                            args, "vision_negative_prompt", None
-                        ),
-                        width=getattr(args, "vision_width", None),
-                        height=getattr(args, "vision_height", None),
-                        downscale=getattr(args, "vision_downscale", None),
-                        frames=getattr(args, "vision_frames", None),
-                        denoise_strength=getattr(
-                            args, "vision_denoise_strength", None
-                        ),
-                        n_steps=getattr(args, "vision_steps", None),
-                        inference_steps=getattr(
-                            args, "vision_inference_steps", None
-                        ),
-                        decode_timestep=getattr(
-                            args, "vision_decode_timestep", None
-                        ),
-                        noise_scale=getattr(args, "vision_noise_scale", None),
-                        frames_per_second=getattr(args, "vision_fps", None),
-                    )
-                )
-
-            case Modality.VISION_SEMANTIC_SEGMENTATION:
-                parameters = OperationParameters(
-                    vision=OperationVisionParameters(
-                        path=args.path,
-                    )
-                )
-
-            case _:
-                parameters = None
-
-        operation = Operation(
-            generation_settings=settings,
-            input=input_string,
-            modality=modality,
-            parameters=parameters,
-            requires_input=requires_input,
-        )
-
-        return operation
 
     def get_engine_settings(
         self,
@@ -513,146 +256,18 @@ class ModelManager(ContextDecorator):
         engine_settings: TransformerEngineSettings,
         modality: Modality = Modality.TEXT_GENERATION,
     ) -> ModelType:
-        assert isinstance(engine_uri, EngineUri)
-        model_load_args = dict(
-            model_id=engine_uri.model_id,
-            settings=engine_settings,
-            logger=self._logger,
-        )
+        if modality is Modality.EMBEDDING:
+            from ..model.nlp.sentence import SentenceTransformerModel
 
-        # Load local model, or lazy-import per vendor
-        if engine_uri.is_local:
-            match modality:
-                case Modality.EMBEDDING:
-                    model = SentenceTransformerModel(**model_load_args)
-                case Modality.AUDIO_CLASSIFICATION:
-                    model = AudioClassificationModel(**model_load_args)
-                case Modality.AUDIO_SPEECH_RECOGNITION:
-                    model = SpeechRecognitionModel(**model_load_args)
-                case Modality.AUDIO_TEXT_TO_SPEECH:
-                    model = TextToSpeechModel(**model_load_args)
-                case Modality.AUDIO_GENERATION:
-                    model = AudioGenerationModel(**model_load_args)
-                case Modality.VISION_OBJECT_DETECTION:
-                    model = ObjectDetectionModel(**model_load_args)
-                case Modality.VISION_IMAGE_CLASSIFICATION:
-                    model = ImageClassificationModel(**model_load_args)
-                case Modality.VISION_IMAGE_TO_TEXT:
-                    model = ImageToTextModel(**model_load_args)
-                case Modality.VISION_IMAGE_TEXT_TO_TEXT:
-                    model = ImageTextToTextModel(**model_load_args)
-                case Modality.VISION_ENCODER_DECODER:
-                    model = VisionEncoderDecoderModel(**model_load_args)
-                case Modality.VISION_TEXT_TO_IMAGE:
-                    model = TextToImageModel(**model_load_args)
-                case Modality.VISION_TEXT_TO_ANIMATION:
-                    model = TextToAnimationModel(**model_load_args)
-                case Modality.VISION_TEXT_TO_VIDEO:
-                    model = TextToVideoModel(**model_load_args)
-                case Modality.VISION_SEMANTIC_SEGMENTATION:
-                    model = SemanticSegmentationModel(**model_load_args)
-                case Modality.TEXT_QUESTION_ANSWERING:
-                    model = QuestionAnsweringModel(**model_load_args)
-                case Modality.TEXT_SEQUENCE_CLASSIFICATION:
-                    model = SequenceClassificationModel(**model_load_args)
-                case Modality.TEXT_SEQUENCE_TO_SEQUENCE:
-                    model = SequenceToSequenceModel(**model_load_args)
-                case Modality.TEXT_TRANSLATION:
-                    model = TranslationModel(**model_load_args)
-                case Modality.TEXT_TOKEN_CLASSIFICATION:
-                    model = TokenClassificationModel(**model_load_args)
-                case _:
-                    match engine_settings.backend:
-                        case Backend.MLXLM:
-                            from ..model.nlp.text.mlxlm import MlxLmModel
-
-                            model = MlxLmModel(**model_load_args)
-                        case Backend.VLLM:
-                            from ..model.nlp.text.vllm import VllmModel
-
-                            model = VllmModel(**model_load_args)
-                        case _:
-                            model = TextGenerationModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "openai"
-        ):
-            from ..model.nlp.text.vendor.openai import OpenAIModel
-
-            model = OpenAIModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "openrouter"
-        ):
-            from ..model.nlp.text.vendor.openrouter import OpenRouterModel
-
-            model = OpenRouterModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "anyscale"
-        ):
-            from ..model.nlp.text.vendor.anyscale import AnyScaleModel
-
-            model = AnyScaleModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "together"
-        ):
-            from ..model.nlp.text.vendor.together import TogetherModel
-
-            model = TogetherModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "deepseek"
-        ):
-            from ..model.nlp.text.vendor.deepseek import DeepSeekModel
-
-            model = DeepSeekModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "deepinfra"
-        ):
-            from ..model.nlp.text.vendor.deepinfra import DeepInfraModel
-
-            model = DeepInfraModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "groq"
-        ):
-            from ..model.nlp.text.vendor.groq import GroqModel
-
-            model = GroqModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "ollama"
-        ):
-            from ..model.nlp.text.vendor.ollama import OllamaModel
-
-            model = OllamaModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "huggingface"
-        ):
-            from ..model.nlp.text.vendor.huggingface import HuggingfaceModel
-
-            model = HuggingfaceModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "hyperbolic"
-        ):
-            from ..model.nlp.text.vendor.hyperbolic import HyperbolicModel
-
-            model = HyperbolicModel(**model_load_args)
-        elif (
-            modality == Modality.TEXT_GENERATION
-            and engine_uri.vendor == "litellm"
-        ):
-            from ..model.nlp.text.vendor.litellm import LiteLLMModel
-
-            model = LiteLLMModel(**model_load_args)
+            model = SentenceTransformerModel(
+                model_id=engine_uri.model_id,
+                settings=engine_settings,
+                logger=self._logger,
+            )
         else:
-            raise NotImplementedError()
-
+            model = ModalityRegistry.load_engine(
+                engine_uri, engine_settings, modality, self._logger
+            )
         self._stack.enter_context(model)
         return model
 

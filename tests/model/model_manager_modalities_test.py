@@ -2,7 +2,7 @@ from avalan.entities import (
     Backend,
     EngineUri,
     Modality,
-    TransformerEngineSettings
+    TransformerEngineSettings,
 )
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
@@ -18,30 +18,68 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
 
     def test_load_engine_local_modalities(self):
         modalities = {
-            Modality.AUDIO_CLASSIFICATION: "AudioClassificationModel",
-            Modality.AUDIO_GENERATION: "AudioGenerationModel",
-            Modality.AUDIO_SPEECH_RECOGNITION: "SpeechRecognitionModel",
-            Modality.AUDIO_TEXT_TO_SPEECH: "TextToSpeechModel",
-            Modality.EMBEDDING: "SentenceTransformerModel",
-            Modality.TEXT_GENERATION: "TextGenerationModel",
-            Modality.TEXT_QUESTION_ANSWERING: "QuestionAnsweringModel",
-            Modality.TEXT_SEQUENCE_CLASSIFICATION: (
-                "SequenceClassificationModel"
+            Modality.AUDIO_CLASSIFICATION: (
+                "avalan.model.modalities.audio.AudioClassificationModel"
             ),
-            Modality.TEXT_SEQUENCE_TO_SEQUENCE: "SequenceToSequenceModel",
-            Modality.TEXT_TOKEN_CLASSIFICATION: "TokenClassificationModel",
-            Modality.TEXT_TRANSLATION: "TranslationModel",
-            Modality.VISION_OBJECT_DETECTION: "ObjectDetectionModel",
-            Modality.VISION_IMAGE_CLASSIFICATION: "ImageClassificationModel",
-            Modality.VISION_IMAGE_TO_TEXT: "ImageToTextModel",
-            Modality.VISION_IMAGE_TEXT_TO_TEXT: "ImageTextToTextModel",
-            Modality.VISION_ENCODER_DECODER: "VisionEncoderDecoderModel",
-            Modality.VISION_SEMANTIC_SEGMENTATION: "SemanticSegmentationModel",
-            Modality.VISION_TEXT_TO_IMAGE: "TextToImageModel",
-            Modality.VISION_TEXT_TO_ANIMATION: "TextToAnimationModel",
-            Modality.VISION_TEXT_TO_VIDEO: "TextToVideoModel",
+            Modality.AUDIO_GENERATION: (
+                "avalan.model.modalities.audio.AudioGenerationModel"
+            ),
+            Modality.AUDIO_SPEECH_RECOGNITION: (
+                "avalan.model.modalities.audio.SpeechRecognitionModel"
+            ),
+            Modality.AUDIO_TEXT_TO_SPEECH: (
+                "avalan.model.modalities.audio.TextToSpeechModel"
+            ),
+            Modality.EMBEDDING: (
+                "avalan.model.nlp.sentence.SentenceTransformerModel"
+            ),
+            Modality.TEXT_GENERATION: (
+                "avalan.model.modalities.text.TextGenerationModel"
+            ),
+            Modality.TEXT_QUESTION_ANSWERING: (
+                "avalan.model.modalities.text.QuestionAnsweringModel"
+            ),
+            Modality.TEXT_SEQUENCE_CLASSIFICATION: (
+                "avalan.model.modalities.text.SequenceClassificationModel"
+            ),
+            Modality.TEXT_SEQUENCE_TO_SEQUENCE: (
+                "avalan.model.modalities.text.SequenceToSequenceModel"
+            ),
+            Modality.TEXT_TOKEN_CLASSIFICATION: (
+                "avalan.model.modalities.text.TokenClassificationModel"
+            ),
+            Modality.TEXT_TRANSLATION: (
+                "avalan.model.modalities.text.TranslationModel"
+            ),
+            Modality.VISION_OBJECT_DETECTION: (
+                "avalan.model.modalities.vision.ObjectDetectionModel"
+            ),
+            Modality.VISION_IMAGE_CLASSIFICATION: (
+                "avalan.model.modalities.vision.ImageClassificationModel"
+            ),
+            Modality.VISION_IMAGE_TO_TEXT: (
+                "avalan.model.modalities.vision.ImageToTextModel"
+            ),
+            Modality.VISION_IMAGE_TEXT_TO_TEXT: (
+                "avalan.model.modalities.vision.ImageTextToTextModel"
+            ),
+            Modality.VISION_ENCODER_DECODER: (
+                "avalan.model.modalities.vision.VisionEncoderDecoderModel"
+            ),
+            Modality.VISION_SEMANTIC_SEGMENTATION: (
+                "avalan.model.modalities.vision.SemanticSegmentationModel"
+            ),
+            Modality.VISION_TEXT_TO_IMAGE: (
+                "avalan.model.modalities.vision.TextToImageModel"
+            ),
+            Modality.VISION_TEXT_TO_ANIMATION: (
+                "avalan.model.modalities.vision.TextToAnimationModel"
+            ),
+            Modality.VISION_TEXT_TO_VIDEO: (
+                "avalan.model.modalities.vision.TextToVideoModel"
+            ),
         }
-        for modality, class_name in modalities.items():
+        for modality, path in modalities.items():
             with self.subTest(modality=modality):
                 with ModelManager(self.hub, self.logger) as manager:
                     uri = manager.parse_uri(
@@ -49,7 +87,6 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
                     )
                     settings = TransformerEngineSettings()
                     manager._stack.enter_context = MagicMock()
-                    path = f"avalan.model.manager.{class_name}"
                     with patch(path) as Model:
                         result = manager.load_engine(uri, settings, modality)
                     Model.assert_called_once_with(
