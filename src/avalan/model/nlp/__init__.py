@@ -63,6 +63,7 @@ class BaseNLPModel(TransformerModel, ABC):
             "top_k": settings.top_k,
             "top_p": settings.top_p,
             "use_cache": settings.use_cache,
+            "cache_implementation": settings.cache_strategy,
         }
 
         attention_mask: Tensor | None = None

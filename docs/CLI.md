@@ -78,14 +78,16 @@ You'll need your Huggingface access token exported as `HF_TOKEN`.
 usage: avalan [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
               [--tokenizer-subfolder TOKENIZER_SUBFOLDER] [--device DEVICE]
               [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
               [--parallel-count PARALLEL_COUNT]
               [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-              [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-              [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
-              [--quiet] [--record] [--revision REVISION]
-              [--skip-hub-access-check] [--verbose] [--version]
+              [--locale LOCALE]
+              [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+              [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+              [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--record]
+              [--revision REVISION] [--skip-hub-access-check] [--verbose]
+              [--version]
               [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
               [--help-full]
               {agent,cache,deploy,flow,memory,model,tokenizer,train} ...
@@ -109,8 +111,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -120,8 +122,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -151,14 +155,16 @@ usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                     [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                     [--device DEVICE]
                     [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                     [--parallel-count PARALLEL_COUNT]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                    [--no-repl] [--quiet] [--record] [--revision REVISION]
-                    [--skip-hub-access-check] [--verbose] [--version]
+                    [--locale LOCALE]
+                    [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                    [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                    [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                    [--record] [--revision REVISION] [--skip-hub-access-check]
+                    [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                     {message,run,serve,proxy,init} ...
 
@@ -181,8 +187,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -192,8 +198,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -223,12 +231,13 @@ usage: avalan agent message [-h] [--cache-dir CACHE_DIR]
                             [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                             [--device DEVICE]
                             [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                             [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
-                            [--loader-class {auto,gemma3,mistral3}]
+                            [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--backend {transformers,mlx,vllm}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
@@ -255,8 +264,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -266,8 +275,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -297,12 +308,13 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR]
                                    [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                                    [--device DEVICE]
                                    [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                                    [--parallel-count PARALLEL_COUNT]
                                    [--disable-loading-progress-bar]
                                    [--hf-token HF_TOKEN] [--locale LOCALE]
-                                   [--loader-class {auto,gemma3,mistral3}]
+                                   [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                                   [--backend {transformers,mlx,vllm}]
                                    [--locales LOCALES] [--low-cpu-mem-usage]
                                    [--login] [--no-repl] [--quiet] [--record]
                                    [--revision REVISION]
@@ -310,9 +322,10 @@ equence_parallel,replicate}]
                                    [--version]
                                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                                    --function
-{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
-                                   --id ID [--limit LIMIT]
-                                   --participant PARTICIPANT --session SESSION
+                                   {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector
+_norms}
+                                   --id ID [--limit LIMIT] --participant
+                                   PARTICIPANT --session SESSION
                                    [--engine-uri ENGINE_URI] [--name NAME]
                                    [--role ROLE] [--task TASK]
                                    [--instructions INSTRUCTIONS]
@@ -325,9 +338,13 @@ equence_parallel,replicate}]
                                    [--memory-engine-window MEMORY_ENGINE_WINDOW]
                                    [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
                                    [--run-skip-special-tokens]
+                                   [--run-disable-cache]
+                                   [--run-cache-strategy
+{dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                                    [--run-temperature RUN_TEMPERATURE]
                                    [--run-top-k RUN_TOP_K]
                                    [--run-top-p RUN_TOP_P] [--tool TOOL]
+                                   [--tools TOOLS]
                                    [--tool-browser-engine TOOL_BROWSER_ENGINE]
                                    [--tool-browser-search]
                                    [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
@@ -365,8 +382,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -376,8 +393,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -431,6 +450,9 @@ inline agent settings:
                         Maximum count of tokens on output
   --run-skip-special-tokens
                         Skip special tokens on output
+  --run-disable-cache   Disable generation cache
+  --run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
@@ -441,6 +463,7 @@ inline agent settings:
                         tokens with probabilities that add up to top_p or
                         higher are kept for generation.
   --tool TOOL           Enable tool
+  --tools TOOLS         Enable tools matching namespace
 
 browser tool settings:
   --tool-browser-engine TOOL_BROWSER_ENGINE
@@ -468,12 +491,13 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                         [--device DEVICE]
                         [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                         [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
-                        [--loader-class {auto,gemma3,mistral3}]
+                        [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                        [--backend {transformers,mlx,vllm}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
@@ -483,13 +507,17 @@ equence_parallel,replicate}]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
+                        [--skip-display-reasoning-time]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
-                        [--conversation] [--watch] [--id ID] [--no-session |
-                        --session SESSION] [--skip-load-recent-messages]
+                        [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
+                        [--conversation] [--watch] [--id ID]
+                        [--no-session | --session SESSION]
+                        [--skip-load-recent-messages]
                         [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
                         [--participant PARTICIPANT] [--stats] [--sync]
                         [--tty TTY] [--tools-confirm]
+                        [--reasoning-tag {think,channel}]
                         [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE]
                         [--task TASK] [--instructions INSTRUCTIONS]
                         [--memory-recent] [--no-memory-recent]
@@ -500,10 +528,12 @@ equence_parallel,replicate}]
                         [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                         [--memory-engine-window MEMORY_ENGINE_WINDOW]
                         [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                        [--run-skip-special-tokens]
+                        [--run-skip-special-tokens] [--run-disable-cache]
+                        [--run-cache-strategy
+{dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                         [--run-temperature RUN_TEMPERATURE]
                         [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
-                        [--tool TOOL]
+                        [--tool TOOL] [--tools TOOLS]
                         [--tool-browser-engine TOOL_BROWSER_ENGINE]
                         [--tool-browser-search]
                         [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
@@ -540,8 +570,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -551,8 +581,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -591,6 +623,8 @@ equence_parallel,replicate}
   --display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]
                         Display the time it takes to reach the given Nth token
                         (defaults to 256)
+  --skip-display-reasoning-time
+                        Don't display total reasoning time
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a
                         time
@@ -598,6 +632,10 @@ equence_parallel,replicate}
                         orchestrator / agent involved, show the events panel.
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
+  --display-answer-height-expand
+                        Expand answer section to full height
+  --display-answer-height DISPLAY_ANSWER_HEIGHT
+                        Height of the answer section (defaults to 12)
   --conversation        Activate conversation mode with the agent
   --watch               Reload agent when the specification file changes (only
                         with --conversation)
@@ -617,6 +655,8 @@ equence_parallel,replicate}
   --tty TTY             TTY stream (only applicable if combining
                         --conversation with input piping)
   --tools-confirm       Confirm tool calls before execution
+  --reasoning-tag {think,channel}
+                        Reasoning tag style
 
 inline agent settings:
   --engine-uri ENGINE_URI
@@ -644,6 +684,9 @@ inline agent settings:
                         Maximum count of tokens on output
   --run-skip-special-tokens
                         Skip special tokens on output
+  --run-disable-cache   Disable generation cache
+  --run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
@@ -654,6 +697,7 @@ inline agent settings:
                         tokens with probabilities that add up to top_p or
                         higher are kept for generation.
   --tool TOOL           Enable tool
+  --tools TOOLS         Enable tools matching namespace
 
 browser tool settings:
   --tool-browser-engine TOOL_BROWSER_ENGINE
@@ -681,12 +725,13 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                           [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                           [--device DEVICE]
                           [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                           [--parallel-count PARALLEL_COUNT]
                           [--disable-loading-progress-bar]
                           [--hf-token HF_TOKEN] [--locale LOCALE]
-                          [--loader-class {auto,gemma3,mistral3}]
+                          [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                          [--backend {transformers,mlx,vllm}]
                           [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                           [--no-repl] [--quiet] [--record]
                           [--revision REVISION] [--skip-hub-access-check]
@@ -706,10 +751,12 @@ equence_parallel,replicate}]
                           [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                           [--memory-engine-window MEMORY_ENGINE_WINDOW]
                           [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                          [--run-skip-special-tokens]
+                          [--run-skip-special-tokens] [--run-disable-cache]
+                          [--run-cache-strategy
+{dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                           [--run-temperature RUN_TEMPERATURE]
                           [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
-                          [--tool TOOL]
+                          [--tool TOOL] [--tools TOOLS]
                           [--tool-browser-engine TOOL_BROWSER_ENGINE]
                           [--tool-browser-search]
                           [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
@@ -747,8 +794,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -758,8 +805,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -813,6 +862,9 @@ inline agent settings:
                         Maximum count of tokens on output
   --run-skip-special-tokens
                         Skip special tokens on output
+  --run-disable-cache   Disable generation cache
+  --run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
@@ -823,6 +875,7 @@ inline agent settings:
                         tokens with probabilities that add up to top_p or
                         higher are kept for generation.
   --tool TOOL           Enable tool
+  --tools TOOLS         Enable tools matching namespace
 
 browser tool settings:
   --tool-browser-engine TOOL_BROWSER_ENGINE
@@ -845,7 +898,60 @@ browser tool settings:
 
 ### avalan agent proxy
 
-```usage: avalan agent proxy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]                          [--tokenizer-subfolder TOKENIZER_SUBFOLDER]                          [--device DEVICE]                          [--parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}]                          [--parallel-count PARALLEL_COUNT]                          [--disable-loading-progress-bar]                          [--hf-token HF_TOKEN] [--locale LOCALE]                          [--loader-class {auto,gemma3,mistral3}]                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]                          [--no-repl] [--quiet] [--record]                          [--revision REVISION] [--skip-hub-access-check]                          [--verbose] [--version]                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]                          [--host HOST] [--port PORT]                          [--prefix-mcp PREFIX_MCP]                          [--prefix-openai PREFIX_OPENAI] [--reload]                          [--engine-uri ENGINE_URI] [--name NAME]                          [--role ROLE] [--task TASK]                          [--instructions INSTRUCTIONS] [--memory-recent]                          [--no-memory-recent]                          [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]                          [--memory-permanent MEMORY_PERMANENT]                          [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]                          [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]                          [--memory-engine-window MEMORY_ENGINE_WINDOW]                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS]                          [--run-skip-special-tokens]                          [--run-temperature RUN_TEMPERATURE]                          [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]                          [--tool TOOL]                          [--tool-browser-engine TOOL_BROWSER_ENGINE]                          [--tool-browser-search]                          [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]                          [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]                          [--tool-browser-debug]                          [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]                          [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]                          [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]                          [--tool-browser-devtools]                          [--tool-browser-chromium-sandbox]                          [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]                          [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]                          [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]                          [--tool-browser-is-mobile]                          [--tool-browser-has-touch]                          [--tool-browser-java-script-enabled]
+```
+usage: avalan agent proxy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
+                          [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
+                          [--device DEVICE]
+                          [--parallel
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
+                          [--parallel-count PARALLEL_COUNT]
+                          [--disable-loading-progress-bar]
+                          [--hf-token HF_TOKEN] [--locale LOCALE]
+                          [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                          [--backend {transformers,mlx,vllm}]
+                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                          [--no-repl] [--quiet] [--record]
+                          [--revision REVISION] [--skip-hub-access-check]
+                          [--verbose] [--version]
+                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
+                          [--host HOST] [--port PORT]
+                          [--prefix-mcp PREFIX_MCP]
+                          [--prefix-openai PREFIX_OPENAI] [--reload]
+                          [--engine-uri ENGINE_URI] [--name NAME]
+                          [--role ROLE] [--task TASK]
+                          [--instructions INSTRUCTIONS] [--memory-recent]
+                          [--no-memory-recent]
+                          [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
+                          [--memory-permanent MEMORY_PERMANENT]
+                          [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
+                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
+                          [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
+                          [--memory-engine-window MEMORY_ENGINE_WINDOW]
+                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
+                          [--run-skip-special-tokens] [--run-disable-cache]
+                          [--run-cache-strategy
+{dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
+                          [--run-temperature RUN_TEMPERATURE]
+                          [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
+                          [--tool TOOL] [--tools TOOLS]
+                          [--tool-browser-engine TOOL_BROWSER_ENGINE]
+                          [--tool-browser-search]
+                          [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
+                          [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]
+                          [--tool-browser-debug]
+                          [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
+                          [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]
+                          [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]
+                          [--tool-browser-devtools]
+                          [--tool-browser-chromium-sandbox]
+                          [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
+                          [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
+                          [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]
+                          [--tool-browser-is-mobile]
+                          [--tool-browser-has-touch]
+                          [--tool-browser-java-script-enabled]
+
 Serve a proxy agent as an API endpoint
 
 options:
@@ -861,7 +967,9 @@ options:
                         Subfolder inside model repository to load the
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
-  --parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}
+  --parallel
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -871,8 +979,10 @@ options:
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -926,6 +1036,9 @@ inline agent settings:
                         Maximum count of tokens on output
   --run-skip-special-tokens
                         Skip special tokens on output
+  --run-disable-cache   Disable generation cache
+  --run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
@@ -936,6 +1049,7 @@ inline agent settings:
                         tokens with probabilities that add up to top_p or
                         higher are kept for generation.
   --tool TOOL           Enable tool
+  --tools TOOLS         Enable tools matching namespace
 
 browser tool settings:
   --tool-browser-engine TOOL_BROWSER_ENGINE
@@ -963,12 +1077,13 @@ usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                          [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                          [--device DEVICE]
                          [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                          [--parallel-count PARALLEL_COUNT]
                          [--disable-loading-progress-bar]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
-                         [--loader-class {auto,gemma3,mistral3}]
+                         [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                         [--backend {transformers,mlx,vllm}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                          [--no-repl] [--quiet] [--record]
                          [--revision REVISION] [--skip-hub-access-check]
@@ -984,10 +1099,12 @@ equence_parallel,replicate}]
                          [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                          [--memory-engine-window MEMORY_ENGINE_WINDOW]
                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                         [--run-skip-special-tokens]
+                         [--run-skip-special-tokens] [--run-disable-cache]
+                         [--run-cache-strategy
+{dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                          [--run-temperature RUN_TEMPERATURE]
                          [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
-                         [--tool TOOL]
+                         [--tool TOOL] [--tools TOOLS]
 
 Create an agent definition
 
@@ -1005,8 +1122,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1016,8 +1133,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1064,6 +1183,9 @@ inline agent settings:
                         Maximum count of tokens on output
   --run-skip-special-tokens
                         Skip special tokens on output
+  --run-disable-cache   Disable generation cache
+  --run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
@@ -1074,6 +1196,7 @@ inline agent settings:
                         tokens with probabilities that add up to top_p or
                         higher are kept for generation.
   --tool TOOL           Enable tool
+  --tools TOOLS         Enable tools matching namespace
 ```
 
 ## avalan cache
@@ -1083,14 +1206,16 @@ usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                     [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                     [--device DEVICE]
                     [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                     [--parallel-count PARALLEL_COUNT]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                    [--no-repl] [--quiet] [--record] [--revision REVISION]
-                    [--skip-hub-access-check] [--verbose] [--version]
+                    [--locale LOCALE]
+                    [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                    [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                    [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                    [--record] [--revision REVISION] [--skip-hub-access-check]
+                    [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                     {delete,download,list} ...
 
@@ -1113,8 +1238,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1124,8 +1249,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1155,12 +1282,13 @@ usage: avalan cache delete [-h] [--cache-dir CACHE_DIR]
                            [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                            [--device DEVICE]
                            [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                            [--parallel-count PARALLEL_COUNT]
                            [--disable-loading-progress-bar]
                            [--hf-token HF_TOKEN] [--locale LOCALE]
-                           [--loader-class {auto,gemma3,mistral3}]
+                           [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                           [--backend {transformers,mlx,vllm}]
                            [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                            [--no-repl] [--quiet] [--record]
                            [--revision REVISION] [--skip-hub-access-check]
@@ -1185,8 +1313,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1196,8 +1324,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1220,7 +1350,8 @@ equence_parallel,replicate}
   --delete              Actually delete. If not provided, a dry run is
                         performed and data that would be deleted is shown, yet
                         not deleted
-  --model, -m MODEL     Model to delete
+  --model MODEL, -m MODEL
+                        Model to delete
   --delete-revision DELETE_REVISION
                         Revision to delete
 ```
@@ -1233,20 +1364,25 @@ usage: avalan cache download [-h] [--cache-dir CACHE_DIR]
                              [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                              [--device DEVICE]
                              [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                              [--parallel-count PARALLEL_COUNT]
                              [--disable-loading-progress-bar]
                              [--hf-token HF_TOKEN] [--locale LOCALE]
-                             [--loader-class {auto,gemma3,mistral3}]
+                             [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                             [--backend {transformers,mlx,vllm}]
                              [--locales LOCALES] [--low-cpu-mem-usage]
                              [--login] [--no-repl] [--quiet] [--record]
                              [--revision REVISION] [--skip-hub-access-check]
                              [--verbose] [--version]
                              [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
-                             --model MODEL
+                             [--workers WORKERS]
+                             model
 
 Download model data to cache
+
+positional arguments:
+  model                 Model to download
 
 options:
   -h, --help            show this help message and exit
@@ -1262,8 +1398,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1273,8 +1409,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1294,7 +1432,7 @@ equence_parallel,replicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --model, -m MODEL     Model to load
+  --workers WORKERS     How many download workers to use
 ```
 
 ### avalan cache list
@@ -1304,12 +1442,13 @@ usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                          [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                          [--device DEVICE]
                          [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                          [--parallel-count PARALLEL_COUNT]
                          [--disable-loading-progress-bar]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
-                         [--loader-class {auto,gemma3,mistral3}]
+                         [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                         [--backend {transformers,mlx,vllm}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                          [--no-repl] [--quiet] [--record]
                          [--revision REVISION] [--skip-hub-access-check]
@@ -1333,8 +1472,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1344,8 +1483,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1377,13 +1518,15 @@ usage: avalan deploy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                      [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                      [--device DEVICE]
                      [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                      [--parallel-count PARALLEL_COUNT]
                      [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                     [--no-repl] [--quiet] [--record] [--revision REVISION]
+                     [--locale LOCALE]
+                     [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                     [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                     [--record] [--revision REVISION]
                      [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                      {run} ...
@@ -1407,8 +1550,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1418,8 +1561,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1448,12 +1593,13 @@ usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                          [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                          [--device DEVICE]
                          [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                          [--parallel-count PARALLEL_COUNT]
                          [--disable-loading-progress-bar]
                          [--hf-token HF_TOKEN] [--locale LOCALE]
-                         [--loader-class {auto,gemma3,mistral3}]
+                         [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                         [--backend {transformers,mlx,vllm}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                          [--no-repl] [--quiet] [--record]
                          [--revision REVISION] [--skip-hub-access-check]
@@ -1480,8 +1626,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1491,8 +1637,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1521,14 +1669,16 @@ usage: avalan flow [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                    [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                    [--device DEVICE]
                    [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                    [--parallel-count PARALLEL_COUNT]
                    [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                   [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-                   [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                   [--no-repl] [--quiet] [--record] [--revision REVISION]
-                   [--skip-hub-access-check] [--verbose] [--version]
+                   [--locale LOCALE]
+                   [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                   [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                   [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                   [--record] [--revision REVISION] [--skip-hub-access-check]
+                   [--verbose] [--version]
                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                    {run} ...
 
@@ -1551,8 +1701,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1562,8 +1712,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1592,14 +1744,15 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                        [--device DEVICE]
                        [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                        [--parallel-count PARALLEL_COUNT]
                        [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                        [--locale LOCALE]
-                       [--loader-class {auto,gemma3,mistral3}]
-                       [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                       [--no-repl] [--quiet] [--record] [--revision REVISION]
+                       [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                       [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                       [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                       [--record] [--revision REVISION]
                        [--skip-hub-access-check] [--verbose] [--version]
                        [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                        flow
@@ -1623,8 +1776,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1634,8 +1787,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1664,13 +1819,15 @@ usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                      [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                      [--device DEVICE]
                      [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                      [--parallel-count PARALLEL_COUNT]
                      [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                     [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-                     [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                     [--no-repl] [--quiet] [--record] [--revision REVISION]
+                     [--locale LOCALE]
+                     [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                     [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                     [--record] [--revision REVISION]
                      [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                      {embeddings,search,document} ...
@@ -1694,8 +1851,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1705,8 +1862,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1736,12 +1895,13 @@ usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR]
                                 [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                                 [--device DEVICE]
                                 [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                                 [--parallel-count PARALLEL_COUNT]
                                 [--disable-loading-progress-bar]
                                 [--hf-token HF_TOKEN] [--locale LOCALE]
-                                [--loader-class {auto,gemma3,mistral3}]
+                                [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                                [--backend {transformers,mlx,vllm}]
                                 [--locales LOCALES] [--low-cpu-mem-usage]
                                 [--login] [--no-repl] [--quiet] [--record]
                                 [--revision REVISION]
@@ -1751,8 +1911,7 @@ equence_parallel,replicate}]
                                 [--base-url BASE_URL] [--load]
                                 [--special-token SPECIAL_TOKEN]
                                 [--token TOKEN] [--tokenizer TOKENIZER]
-                                [--no-display-partitions |
-                                --display-partitions DISPLAY_PARTITIONS]
+                                [--no-display-partitions | --display-partitions DISPLAY_PARTITIONS]
                                 [--partition]
                                 [--partition-max-tokens PARTITION_MAX_TOKENS]
                                 [--partition-overlap PARTITION_OVERLAP]
@@ -1781,8 +1940,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1792,8 +1951,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1851,12 +2012,13 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR]
                             [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                             [--device DEVICE]
                             [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                             [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
-                            [--loader-class {auto,gemma3,mistral3}]
+                            [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--backend {transformers,mlx,vllm}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
@@ -1864,15 +2026,15 @@ equence_parallel,replicate}]
                             [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load]
                             [--special-token SPECIAL_TOKEN] [--token TOKEN]
-                            [--tokenizer TOKENIZER] [--no-display-partitions |
-                            --display-partitions DISPLAY_PARTITIONS]
+                            [--tokenizer TOKENIZER]
+                            [--no-display-partitions | --display-partitions DISPLAY_PARTITIONS]
                             [--partition]
                             [--partition-max-tokens PARTITION_MAX_TOKENS]
                             [--partition-overlap PARTITION_OVERLAP]
                             [--partition-window PARTITION_WINDOW] --dsn DSN
                             --participant PARTICIPANT --namespace NAMESPACE
                             --function
-{cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
+                            {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms}
                             [--limit LIMIT]
                             model
 
@@ -1895,8 +2057,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -1906,8 +2068,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -1981,23 +2145,24 @@ usage: avalan memory document index [-h] [--cache-dir CACHE_DIR]
                                     [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                                     [--device DEVICE]
                                     [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                                     [--parallel-count PARALLEL_COUNT]
                                     [--disable-loading-progress-bar]
                                     [--hf-token HF_TOKEN] [--locale LOCALE]
-                                    [--loader-class {auto,gemma3,mistral3}]
+                                    [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                                    [--backend {transformers,mlx,vllm}]
                                     [--locales LOCALES] [--low-cpu-mem-usage]
                                     [--login] [--no-repl] [--quiet] [--record]
                                     [--revision REVISION]
                                     [--skip-hub-access-check] [--verbose]
                                     [--version]
-                                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
+                                    [--weight-type
+{auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                                     [--base-url BASE_URL] [--load]
                                     [--special-token SPECIAL_TOKEN]
                                     [--token TOKEN] [--tokenizer TOKENIZER]
-                                    [--no-display-partitions |
-                                    --display-partitions DISPLAY_PARTITIONS]
+                                    [--no-display-partitions | --display-partitions DISPLAY_PARTITIONS]
                                     [--partition]
                                     [--partition-max-tokens PARTITION_MAX_TOKENS]
                                     [--partition-overlap PARTITION_OVERLAP]
@@ -2006,8 +2171,8 @@ equence_parallel,replicate}]
                                     [--language LANGUAGE]
                                     [--encoding ENCODING]
                                     [--identifier IDENTIFIER] --dsn DSN
-                                    --participant PARTICIPANT
-                                    --namespace NAMESPACE
+                                    --participant PARTICIPANT --namespace
+                                    NAMESPACE
                                     model source
 
 Add a document to the memory index
@@ -2030,8 +2195,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2041,8 +2206,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2120,12 +2287,13 @@ usage: avalan model display [-h] [--cache-dir CACHE_DIR]
                             [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                             [--device DEVICE]
                             [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                             [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
-                            [--loader-class {auto,gemma3,mistral3}]
+                            [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--backend {transformers,mlx,vllm}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
@@ -2156,8 +2324,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2167,8 +2335,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2211,26 +2381,25 @@ usage: avalan model install [-h] [--cache-dir CACHE_DIR]
                             [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                             [--device DEVICE]
                             [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                             [--parallel-count PARALLEL_COUNT]
                             [--disable-loading-progress-bar]
                             [--hf-token HF_TOKEN] [--locale LOCALE]
-                            [--loader-class {auto,gemma3,mistral3}]
+                            [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--backend {transformers,mlx,vllm}]
                             [--locales LOCALES] [--low-cpu-mem-usage]
                             [--login] [--no-repl] [--quiet] [--record]
                             [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version]
                             [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
-                            [--base-url BASE_URL] [--load]
-                            [--special-token SPECIAL_TOKEN] [--token TOKEN]
-                            [--tokenizer TOKENIZER]
+                            [--workers WORKERS]
                             model
 
 Install a model
 
 positional arguments:
-  model                 Model to use
+  model                 Model to download
 
 options:
   -h, --help            show this help message and exit
@@ -2246,8 +2415,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2257,8 +2426,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2278,16 +2449,7 @@ equence_parallel,replicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --base-url BASE_URL   If specified and model is a vendor model that supports
-                        it,load model using the given base URL
-  --load                If specified, load model and show more information
-  --special-token SPECIAL_TOKEN
-                        Special token to add to tokenizer, only when model is
-                        loaded
-  --token TOKEN         Token to add to tokenizer, only when model is loaded
-  --tokenizer TOKENIZER
-                        Path to tokenizer to use instead of model's default,
-                        only if model is loaded
+  --workers WORKERS     How many download workers to use
 ```
 
 ### avalan model run
@@ -2297,12 +2459,13 @@ usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                         [--device DEVICE]
                         [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                         [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
-                        [--loader-class {auto,gemma3,mistral3}]
+                        [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                        [--backend {transformers,mlx,vllm}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
@@ -2315,11 +2478,13 @@ equence_parallel,replicate}]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
+                        [--skip-display-reasoning-time]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
+                        [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
                         [--attention {eager,flash_attention_2,flex_attention,sdpa}]
-                        [--path PATH] [--checkpoint CHECKPOINT]
-                        [--base-model BASE_MODEL]
+                        [--output-hidden-states] [--path PATH]
+                        [--checkpoint CHECKPOINT] [--base-model BASE_MODEL]
                         [--upsampler-model UPSAMPLER_MODEL]
                         [--refiner-model REFINER_MODEL]
                         [--audio-reference-path AUDIO_REFERENCE_PATH]
@@ -2348,18 +2513,26 @@ equence_parallel,replicate}]
                         [--enable-gradient-calculation] [--use-cache]
                         [--max-new-tokens MAX_NEW_TOKENS]
                         [--modality
-{audio_speech_recognition,audio_text_to_speech,embedding,text_generation,text_question_answering,text_sequenc
-e_classification,text_sequence_to_sequence,text_translation,text_token_classification,vision_object_detection
-,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_text_t
-o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}]
+{audio_classification,audio_speech_recognition,audio_text_to_speech,audio_generation,embedding,text_generati
+on,text_question_answering,text_sequence_classification,text_sequence_to_sequence,text_translation,text_toke
+n_classification,vision_object_detection,vision_image_classification,vision_image_to_text,vision_text_to_ima
+ge,vision_text_to_animation,vision_text_to_video,vision_image_text_to_text,vision_encoder_decoder,vision_sem
+antic_segmentation}]
                         [--min-p MIN_P]
                         [--repetition-penalty REPETITION_PENALTY]
                         [--skip-special-tokens] [--system SYSTEM]
                         [--text-context TEXT_CONTEXT] [--text-labeled-only]
                         [--text-max-length TEXT_MAX_LENGTH]
                         [--text-num-beams TEXT_NUM_BEAMS]
+                        [--text-disable-cache]
+                        [--text-cache-strategy
+{dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                         [--text-from-lang TEXT_FROM_LANG]
                         [--text-to-lang TEXT_TO_LANG] [--start-thinking]
+                        [--chat-disable-thinking] [--no-reasoning]
+                        [--reasoning-tag {think,channel}]
+                        [--reasoning-max-new-tokens REASONING_MAX_NEW_TOKENS]
+                        [--reasoning-stop-on-max-new-tokens]
                         [--stop_on_keyword STOP_ON_KEYWORD]
                         [--temperature TEMPERATURE] [--top-k TOP_K]
                         [--top-p TOP_P] [--trust-remote-code]
@@ -2384,8 +2557,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2395,8 +2568,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2445,6 +2620,8 @@ equence_parallel,replicate}
   --display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]
                         Display the time it takes to reach the given Nth token
                         (defaults to 256)
+  --skip-display-reasoning-time
+                        Don't display total reasoning time
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a
                         time
@@ -2452,9 +2629,15 @@ equence_parallel,replicate}
                         orchestrator / agent involved, show the events panel.
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
+  --display-answer-height-expand
+                        Expand answer section to full height
+  --display-answer-height DISPLAY_ANSWER_HEIGHT
+                        Height of the answer section (defaults to 12)
   --attention {eager,flash_attention_2,flex_attention,sdpa}
                         Attention implementation to use (defaults to best
-                        available)
+                        available: sdpa)
+  --output-hidden-states
+                        Return hidden states for each layer
   --path PATH           Path where to store generated audio or vision output.
                         Only applicable to audio and vision modalities.
   --checkpoint CHECKPOINT
@@ -2488,7 +2671,8 @@ equence_parallel,replicate}
   --vision-color-model {1,L,LA,P,PA,RGB,RGBA,RGBX,CMYK,YCbCr,LAB,HSV,I,F}
                         Color model for image generation. Only applicable to
                         vision text to image modality.
-  --vision-image-format {BMP,DDS,EPS,GIF,ICNS,ICO,IM,JPEG,JPEG2000,MSP,PCX,PNG,PPM,SGI,SPI,TGA,TIFF,WEBP,XBM}
+  --vision-image-format
+{BMP,DDS,EPS,GIF,ICNS,ICO,IM,JPEG,JPEG2000,MSP,PCX,PNG,PPM,SGI,SPI,TGA,TIFF,WEBP,XBM}
                         Image format to save generated image. Only applicable
                         to vision text to image modality.
   --vision-high-noise-frac VISION_HIGH_NOISE_FRAC
@@ -2548,10 +2732,11 @@ equence_parallel,replicate}
   --max-new-tokens MAX_NEW_TOKENS
                         Maximum number of tokens to generate
   --modality
-{audio_speech_recognition,audio_text_to_speech,embedding,text_generation,text_question_answering,text_sequenc
-e_classification,text_sequence_to_sequence,text_translation,text_token_classification,vision_object_detection
-,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_text_t
-o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
+{audio_classification,audio_speech_recognition,audio_text_to_speech,audio_generation,embedding,text_generati
+on,text_question_answering,text_sequence_classification,text_sequence_to_sequence,text_translation,text_toke
+n_classification,vision_object_detection,vision_image_classification,vision_image_to_text,vision_text_to_ima
+ge,vision_text_to_animation,vision_text_to_video,vision_image_text_to_text,vision_encoder_decoder,vision_sem
+antic_segmentation}
   --min-p MIN_P         Minimum token probability, which will be scaled by the
                         probability of the most likely token [0, 1]
   --repetition-penalty REPETITION_PENALTY
@@ -2572,12 +2757,24 @@ o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segment
   --text-num-beams TEXT_NUM_BEAMS
                         Number of beams for beam search. 1 means no beam
                         search
+  --text-disable-cache  If specified, disable generation cache
+  --text-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --text-from-lang TEXT_FROM_LANG
                         Source language code for text translation
   --text-to-lang TEXT_TO_LANG
                         Destination language code for text translation
   --start-thinking      If specified, assume model response starts with
                         reasoning
+  --chat-disable-thinking
+                        Disable thinking tokens in chat template
+  --no-reasoning        Disable reasoning parser
+  --reasoning-tag {think,channel}
+                        Reasoning tag style
+  --reasoning-max-new-tokens REASONING_MAX_NEW_TOKENS
+                        Maximum number of reasoning tokens
+  --reasoning-stop-on-max-new-tokens
+                        Stop reasoning when maximum tokens are produced
   --stop_on_keyword STOP_ON_KEYWORD
                         Stop token generation when this keyword is found
   --temperature TEMPERATURE
@@ -2598,18 +2795,23 @@ usage: avalan model search [-h] [--cache-dir CACHE_DIR]
                            [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                            [--device DEVICE]
                            [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                            [--parallel-count PARALLEL_COUNT]
                            [--disable-loading-progress-bar]
                            [--hf-token HF_TOKEN] [--locale LOCALE]
-                           [--loader-class {auto,gemma3,mistral3}]
+                           [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                           [--backend {transformers,mlx,vllm}]
                            [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                            [--no-repl] [--quiet] [--record]
                            [--revision REVISION] [--skip-hub-access-check]
                            [--verbose] [--version]
                            [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
-                           [--search SEARCH] [--filter FILTER] [--limit LIMIT]
+                           [--search SEARCH] [--filter FILTER]
+                           [--library LIBRARY] [--author AUTHOR]
+                           [--gated | --open] [--language LANGUAGE]
+                           [--name NAME] [--task TASK] [--tag TAG]
+                           [--limit LIMIT]
 
 Search for models
 
@@ -2627,8 +2829,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2638,8 +2840,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2661,6 +2865,14 @@ equence_parallel,replicate}
                         Weight type to use (defaults to best available)
   --search SEARCH       Search for models matching given expression
   --filter FILTER       Filter models on this (e.g: text-classification)
+  --library LIBRARY     Filter by library
+  --author AUTHOR       Filter by author
+  --gated               Only gated models
+  --open                Only open models
+  --language LANGUAGE   Filter by language
+  --name NAME           Filter by model name
+  --task TASK           Filter by task
+  --tag TAG             Filter by tag
   --limit LIMIT         Maximum number of models to return
 ```
 
@@ -2672,12 +2884,13 @@ usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR]
                               [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                               [--device DEVICE]
                               [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                               [--parallel-count PARALLEL_COUNT]
                               [--disable-loading-progress-bar]
                               [--hf-token HF_TOKEN] [--locale LOCALE]
-                              [--loader-class {auto,gemma3,mistral3}]
+                              [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                              [--backend {transformers,mlx,vllm}]
                               [--locales LOCALES] [--low-cpu-mem-usage]
                               [--login] [--no-repl] [--quiet] [--record]
                               [--revision REVISION] [--skip-hub-access-check]
@@ -2707,8 +2920,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2718,8 +2931,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2761,12 +2976,13 @@ usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                         [--device DEVICE]
                         [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                         [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
-                        [--loader-class {auto,gemma3,mistral3}]
+                        [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                        [--backend {transformers,mlx,vllm}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
@@ -2790,8 +3006,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2801,8 +3017,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2822,7 +3040,7 @@ equence_parallel,replicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --tokenizer, -t TOKENIZER
+  --tokenizer TOKENIZER, -t TOKENIZER
                         Tokenizer to load
   --save SAVE           Save tokenizer (useful if modified via --special-token
                         or --token) to given path, only if model is loaded
@@ -2838,14 +3056,16 @@ usage: avalan train [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                     [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                     [--device DEVICE]
                     [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                     [--parallel-count PARALLEL_COUNT]
                     [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                    [--locale LOCALE] [--loader-class {auto,gemma3,mistral3}]
-                    [--locales LOCALES] [--low-cpu-mem-usage] [--login]
-                    [--no-repl] [--quiet] [--record] [--revision REVISION]
-                    [--skip-hub-access-check] [--verbose] [--version]
+                    [--locale LOCALE]
+                    [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                    [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                    [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                    [--record] [--revision REVISION] [--skip-hub-access-check]
+                    [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                     {run} ...
 
@@ -2868,8 +3088,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2879,8 +3099,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
@@ -2909,12 +3131,13 @@ usage: avalan train run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                         [--device DEVICE]
                         [--parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}]
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}]
                         [--parallel-count PARALLEL_COUNT]
                         [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                         [--locale LOCALE]
-                        [--loader-class {auto,gemma3,mistral3}]
+                        [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                        [--backend {transformers,mlx,vllm}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                         [--no-repl] [--quiet] [--record] [--revision REVISION]
                         [--skip-hub-access-check] [--verbose] [--version]
@@ -2940,8 +3163,8 @@ options:
                         tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to mps
   --parallel
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,s
-equence_parallel,replicate}
+{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,
+sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
                         Number of processes to launch when --parallel is used
@@ -2951,8 +3174,10 @@ equence_parallel,replicate}
                         be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,mistral3}
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm}
+                        Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to
                         /Users/mariano/Code/ai/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
