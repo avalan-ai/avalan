@@ -18,18 +18,23 @@ from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
 from ...secrets import KeyringSecrets
 from . import get_model_settings
-from dataclasses import replace
 from argparse import Namespace
 from asyncio import (
+    CancelledError,
+    Event as EventSignal,
     as_completed,
     create_task,
     gather,
     sleep,
     to_thread,
-    Event as EventSignal,
 )
+from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime, timezone
 from logging import Logger
+from typing import Callable
+from prompt_toolkit.input import create_input
+from prompt_toolkit.keys import Keys
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
@@ -374,29 +379,52 @@ async def token_generation(
     if not orchestrator or (
         not args.display_events and not args.display_tools
     ):
-        with Live(
-            refresh_per_second=refresh_per_second, screen=args.record
-        ) as live:
-            await _token_stream(
-                args,
-                console,
-                live,
-                None,
-                None,
-                theme,
-                logger,
-                orchestrator,
-                event_stats,
-                lm,
-                input_string,
-                response,
-                display_tokens=display_tokens,
-                dtokens_pick=dtokens_pick,
+        height_scale = 1
+
+        async def _listen_ctrl_r() -> None:
+            nonlocal height_scale
+            inp = create_input()
+            try:
+                while True:
+                    keys = await to_thread(inp.read_keys)
+                    if any(k.key == Keys.ControlR for k in keys):
+                        height_scale = 2
+                        break
+            finally:
+                inp.close()
+
+        listener = create_task(_listen_ctrl_r())
+        try:
+            with Live(
                 refresh_per_second=refresh_per_second,
-                stop_signal=None,
-                tool_events_limit=tool_events_limit,
-                with_stats=with_stats,
-            )
+                screen=args.record,
+                console=console,
+            ) as live:
+                await _token_stream(
+                    args,
+                    console,
+                    live,
+                    None,
+                    None,
+                    theme,
+                    logger,
+                    orchestrator,
+                    event_stats,
+                    lm,
+                    input_string,
+                    response,
+                    display_tokens=display_tokens,
+                    dtokens_pick=dtokens_pick,
+                    refresh_per_second=refresh_per_second,
+                    stop_signal=None,
+                    tool_events_limit=tool_events_limit,
+                    height_scale_func=lambda: height_scale,
+                    with_stats=with_stats,
+                )
+        finally:
+            listener.cancel()
+            with suppress(CancelledError):
+                await listener
         return
 
     stop_signal = EventSignal()
@@ -408,44 +436,68 @@ async def token_generation(
     tools_group_index = 1
     tokens_group_index = 2
 
-    with Live(
-        group, refresh_per_second=refresh_per_second, screen=args.record
-    ) as live:
-        await gather(
-            _event_stream(
-                args,
-                console,
-                live,
-                group,
-                events_group_index,
-                tools_group_index,
-                orchestrator,
-                theme,
-                events_height=events_height,
-                tools_height=tools_height,
-                stop_signal=stop_signal,
-            ),
-            _token_stream(
-                args,
-                console,
-                live,
-                group,
-                tokens_group_index,
-                theme,
-                logger,
-                orchestrator,
-                event_stats,
-                lm,
-                input_string,
-                response,
-                display_tokens=display_tokens,
-                dtokens_pick=dtokens_pick,
-                refresh_per_second=refresh_per_second,
-                stop_signal=stop_signal,
-                tool_events_limit=tool_events_limit,
-                with_stats=with_stats,
-            ),
-        )
+    height_scale = 1
+
+    async def _listen_ctrl_r() -> None:
+        nonlocal height_scale
+        inp = create_input()
+        try:
+            while True:
+                keys = await to_thread(inp.read_keys)
+                if any(k.key == Keys.ControlR for k in keys):
+                    height_scale = 2
+                    break
+        finally:
+            inp.close()
+
+    listener = create_task(_listen_ctrl_r())
+    try:
+        with Live(
+            group,
+            refresh_per_second=refresh_per_second,
+            screen=args.record,
+            console=console,
+        ) as live:
+            await gather(
+                _event_stream(
+                    args,
+                    console,
+                    live,
+                    group,
+                    events_group_index,
+                    tools_group_index,
+                    orchestrator,
+                    theme,
+                    events_height=events_height,
+                    tools_height=tools_height,
+                    stop_signal=stop_signal,
+                ),
+                _token_stream(
+                    args,
+                    console,
+                    live,
+                    group,
+                    tokens_group_index,
+                    theme,
+                    logger,
+                    orchestrator,
+                    event_stats,
+                    lm,
+                    input_string,
+                    response,
+                    display_tokens=display_tokens,
+                    dtokens_pick=dtokens_pick,
+                    refresh_per_second=refresh_per_second,
+                    stop_signal=stop_signal,
+                    tool_events_limit=tool_events_limit,
+                    height_scale_func=lambda: height_scale,
+                    with_stats=with_stats,
+                ),
+            )
+    finally:
+        listener.cancel()
+        with suppress(CancelledError):
+            await listener
 
 
 async def _event_stream(
@@ -517,6 +569,7 @@ async def _token_stream(
     refresh_per_second: int,
     stop_signal: EventSignal | None,
     tool_events_limit: int | None,
+    height_scale_func: Callable[[], int] | None = None,
     with_stats: bool = True,
 ) -> None:
     display_time_to_n_token = args.display_time_to_n_token
@@ -651,6 +704,7 @@ async def _token_stream(
             args, "display_answer_height_expand", False
         )
         answer_height = getattr(args, "display_answer_height", 12)
+        scale = height_scale_func() if height_scale_func else 1
 
         token_frames_promise = theme.tokens(
             lm.model_id,
@@ -701,7 +755,7 @@ async def _token_stream(
             console.width,
             logger,
             event_stats,
-            height=answer_height,
+            height=answer_height * scale,
             tool_events_limit=tool_events_limit,
             limit_answer_height=limit_answer_height,
             maximum_frames=1,
