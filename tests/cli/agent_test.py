@@ -1801,7 +1801,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args.engine_uri = None
                 self.args.quiet = True
 
-                async def from_file(self_loader, path, agent_id, disable_memory):
+                async def from_file(
+                    self_loader, path, agent_id, disable_memory
+                ):
                     import tomllib
 
                     with open(path, "rb") as f:
@@ -1866,7 +1868,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args.engine_uri = None
                 self.args.quiet = True
 
-                async def from_file(self_loader, path, agent_id, disable_memory):
+                async def from_file(
+                    self_loader, path, agent_id, disable_memory
+                ):
                     import tomllib
 
                     with open(path, "rb") as f:
