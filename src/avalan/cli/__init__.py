@@ -1,11 +1,11 @@
+from ..entities import ToolCall
 from contextlib import nullcontext
+from io import UnsupportedOperation
+from json import dumps
 from rich.console import Console
 from rich.padding import Padding
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
-from json import dumps
-from ..entities import ToolCall
-from io import UnsupportedOperation
 from select import select
 from sys import stdin
 

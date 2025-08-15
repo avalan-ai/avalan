@@ -369,6 +369,8 @@ async def token_generation(
             console.print(text_token, end="")
         return
 
+    stop_signal = EventSignal()
+
     # From here on, display includes stats and may include token probabilities
 
     if not orchestrator or (
@@ -393,59 +395,57 @@ async def token_generation(
                 display_tokens=display_tokens,
                 dtokens_pick=dtokens_pick,
                 refresh_per_second=refresh_per_second,
-                stop_signal=None,
+                stop_signal=stop_signal,
                 tool_events_limit=tool_events_limit,
                 with_stats=with_stats,
             )
-        return
+    else:
+        events_height = 6
+        tools_height = 10
+        empty = ""
+        group = Group(empty, empty, empty)
+        events_group_index = 0
+        tools_group_index = 1
+        tokens_group_index = 2
 
-    stop_signal = EventSignal()
-    events_height = 6
-    tools_height = 10
-    empty = ""
-    group = Group(empty, empty, empty)
-    events_group_index = 0
-    tools_group_index = 1
-    tokens_group_index = 2
-
-    with Live(
-        group, refresh_per_second=refresh_per_second, screen=args.record
-    ) as live:
-        await gather(
-            _event_stream(
-                args,
-                console,
-                live,
-                group,
-                events_group_index,
-                tools_group_index,
-                orchestrator,
-                theme,
-                events_height=events_height,
-                tools_height=tools_height,
-                stop_signal=stop_signal,
-            ),
-            _token_stream(
-                args,
-                console,
-                live,
-                group,
-                tokens_group_index,
-                theme,
-                logger,
-                orchestrator,
-                event_stats,
-                lm,
-                input_string,
-                response,
-                display_tokens=display_tokens,
-                dtokens_pick=dtokens_pick,
-                refresh_per_second=refresh_per_second,
-                stop_signal=stop_signal,
-                tool_events_limit=tool_events_limit,
-                with_stats=with_stats,
-            ),
-        )
+        with Live(
+            group, refresh_per_second=refresh_per_second, screen=args.record
+        ) as live:
+            await gather(
+                _event_stream(
+                    args,
+                    console,
+                    live,
+                    group,
+                    events_group_index,
+                    tools_group_index,
+                    orchestrator,
+                    theme,
+                    events_height=events_height,
+                    tools_height=tools_height,
+                    stop_signal=stop_signal,
+                ),
+                _token_stream(
+                    args,
+                    console,
+                    live,
+                    group,
+                    tokens_group_index,
+                    theme,
+                    logger,
+                    orchestrator,
+                    event_stats,
+                    lm,
+                    input_string,
+                    response,
+                    display_tokens=display_tokens,
+                    dtokens_pick=dtokens_pick,
+                    refresh_per_second=refresh_per_second,
+                    stop_signal=stop_signal,
+                    tool_events_limit=tool_events_limit,
+                    with_stats=with_stats,
+                ),
+            )
 
 
 async def _event_stream(
