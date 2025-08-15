@@ -2,6 +2,7 @@ from ...entities import (
     ChatSettings,
     EngineUri,
     GenerationSettings,
+    GenerationCacheStrategy,
     Input,
     Modality,
     Operation,
@@ -107,6 +108,11 @@ class ModalityRegistry:
             top_k=args.top_k,
             top_p=args.top_p,
             use_cache=args.use_cache,
+            cache_strategy=(
+                GenerationCacheStrategy(args.cache_strategy)
+                if getattr(args, "cache_strategy", None)
+                else None
+            ),
             chat_settings=ChatSettings(
                 enable_thinking=not getattr(
                     args,

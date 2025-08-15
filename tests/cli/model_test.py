@@ -21,7 +21,11 @@ from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.response.text import TextGenerationResponse
 from logging import getLogger
 from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.entities import GenerationSettings, ReasoningSettings
+from avalan.entities import (
+    GenerationCacheStrategy,
+    GenerationSettings,
+    ReasoningSettings,
+)
 from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.response.parsers.tool import ToolCallParser
@@ -1130,6 +1134,166 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once()
         tg_patch.assert_awaited_once()
+
+    async def test_model_run_use_cache_cli(self):
+        for use_cache in (True, False):
+            args = Namespace(
+                skip_display_reasoning_time=False,
+                model="id",
+                device="cpu",
+                max_new_tokens=1,
+                quiet=False,
+                skip_hub_access_check=False,
+                no_repl=True,
+                do_sample=False,
+                enable_gradient_calculation=False,
+                min_p=None,
+                repetition_penalty=1.0,
+                temperature=1.0,
+                top_k=1,
+                top_p=1.0,
+                use_cache=use_cache,
+                cache_strategy=None,
+                stop_on_keyword=None,
+                system=None,
+                skip_special_tokens=False,
+                display_tokens=0,
+                tool_events=2,
+                display_events=False,
+                display_tools=False,
+                display_tools_events=2,
+            )
+            console = MagicMock()
+            theme = MagicMock()
+            theme._ = lambda s: s
+            theme.icons = {"user_input": ">"}
+            theme.model.return_value = "panel"
+            hub = MagicMock()
+            hub.can_access.return_value = True
+            hub.model.return_value = "hub_model"
+            logger = MagicMock()
+
+            engine_uri = SimpleNamespace(model_id="id", is_local=True)
+            lm = AsyncMock(return_value="resp")
+            lm.config = MagicMock()
+            lm.config.__repr__ = lambda self=None: "cfg"
+
+            load_cm = MagicMock()
+            load_cm.__enter__.return_value = lm
+            load_cm.__exit__.return_value = False
+
+            manager = RealModelManager(hub, logger)
+            manager.parse_uri = MagicMock(return_value=engine_uri)
+            manager.load = MagicMock(return_value=load_cm)
+
+            with (
+                patch.object(model_cmds, "ModelManager", return_value=manager),
+                patch.object(
+                    model_cmds.ModelManager,
+                    "get_operation_from_arguments",
+                    side_effect=RealModelManager.get_operation_from_arguments,
+                ),
+                patch.object(
+                    model_cmds,
+                    "get_model_settings",
+                    return_value={
+                        "engine_uri": engine_uri,
+                        "modality": Modality.TEXT_GENERATION,
+                    },
+                ),
+                patch.object(model_cmds, "get_input", return_value="hi"),
+                patch.object(
+                    model_cmds, "token_generation", new_callable=AsyncMock
+                ),
+            ):
+                await model_cmds.model_run(
+                    args, console, theme, hub, 5, logger
+                )
+
+            settings = lm.await_args.kwargs["settings"]
+            self.assertEqual(settings.use_cache, use_cache)
+
+    async def test_model_run_cache_strategy_cli(self):
+        strategies = [None] + [s.value for s in GenerationCacheStrategy]
+        for strat in strategies:
+            args = Namespace(
+                skip_display_reasoning_time=False,
+                model="id",
+                device="cpu",
+                max_new_tokens=1,
+                quiet=False,
+                skip_hub_access_check=False,
+                no_repl=True,
+                do_sample=False,
+                enable_gradient_calculation=False,
+                min_p=None,
+                repetition_penalty=1.0,
+                temperature=1.0,
+                top_k=1,
+                top_p=1.0,
+                use_cache=True,
+                cache_strategy=strat,
+                stop_on_keyword=None,
+                system=None,
+                skip_special_tokens=False,
+                display_tokens=0,
+                tool_events=2,
+                display_events=False,
+                display_tools=False,
+                display_tools_events=2,
+            )
+            console = MagicMock()
+            theme = MagicMock()
+            theme._ = lambda s: s
+            theme.icons = {"user_input": ">"}
+            theme.model.return_value = "panel"
+            hub = MagicMock()
+            hub.can_access.return_value = True
+            hub.model.return_value = "hub_model"
+            logger = MagicMock()
+
+            engine_uri = SimpleNamespace(model_id="id", is_local=True)
+            lm = AsyncMock(return_value="resp")
+            lm.config = MagicMock()
+            lm.config.__repr__ = lambda self=None: "cfg"
+
+            load_cm = MagicMock()
+            load_cm.__enter__.return_value = lm
+            load_cm.__exit__.return_value = False
+
+            manager = RealModelManager(hub, logger)
+            manager.parse_uri = MagicMock(return_value=engine_uri)
+            manager.load = MagicMock(return_value=load_cm)
+
+            with (
+                patch.object(model_cmds, "ModelManager", return_value=manager),
+                patch.object(
+                    model_cmds.ModelManager,
+                    "get_operation_from_arguments",
+                    side_effect=RealModelManager.get_operation_from_arguments,
+                ),
+                patch.object(
+                    model_cmds,
+                    "get_model_settings",
+                    return_value={
+                        "engine_uri": engine_uri,
+                        "modality": Modality.TEXT_GENERATION,
+                    },
+                ),
+                patch.object(model_cmds, "get_input", return_value="hi"),
+                patch.object(
+                    model_cmds, "token_generation", new_callable=AsyncMock
+                ),
+            ):
+                await model_cmds.model_run(
+                    args, console, theme, hub, 5, logger
+                )
+
+            settings = lm.await_args.kwargs["settings"]
+            if strat is None:
+                self.assertIsNone(settings.cache_strategy)
+            else:
+                self.assertEqual(settings.cache_strategy, strat)
 
     async def test_model_run_sets_output_hidden_states(self):
         args = Namespace(

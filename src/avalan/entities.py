@@ -22,6 +22,16 @@ ImageTextGenerationLoaderClass = Literal["gemma3", "qwen2"]
 TextGenerationLoaderClass = Literal["auto", "gemma3", "gpt-oss", "mistral3"]
 
 
+class GenerationCacheStrategy(StrEnum):
+    DYNAMIC = "dynamic"
+    STATIC = "static"
+    OFFLOADED_STATIC = "offloaded_static"
+    SLIDING_WINDOW = "sliding_window"
+    HYBRID = "hybrid"
+    MAMBA = "mamba"
+    QUANTIZED = "quantized"
+
+
 class Backend(StrEnum):
     TRANSFORMERS = "transformers"
     MLXLM = "mlx"
@@ -294,6 +304,7 @@ class GenerationSettings:
     # Whether or not the model should use the past last key/values attentions
     # (if applicable to the model) to speed up decoding
     use_cache: bool = True
+    cache_strategy: GenerationCacheStrategy | None = None
 
     # Generation output variables --------------------------------------------
     # The number of independently computed returned sequences for each element

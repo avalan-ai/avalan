@@ -5,7 +5,12 @@ from ...agent.orchestrator.response.orchestrator_response import (
 )
 from ...cli import confirm_tool_call, get_input, has_input
 from ...cli.commands.model import token_generation
-from ...entities import Backend, OrchestratorSettings, ToolCall
+from ...entities import (
+    Backend,
+    GenerationCacheStrategy,
+    OrchestratorSettings,
+    ToolCall,
+)
 from ...event import EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
@@ -42,6 +47,8 @@ def get_orchestrator_settings(
     tools: list[str] | None = None,
     top_k: int | None = None,
     top_p: float | None = None,
+    use_cache: bool | None = None,
+    cache_strategy: GenerationCacheStrategy | None = None,
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
     memory_recent = (
@@ -65,6 +72,18 @@ def get_orchestrator_settings(
         for k, v in vars(args).items()
         if k.startswith("run_chat_") and v is not None
     }
+    call_options = {
+        "max_new_tokens": call_tokens,
+        "skip_special_tokens": args.run_skip_special_tokens,
+        "temperature": temperature,
+        "top_k": top_k,
+        "top_p": top_p,
+        **({"chat_settings": chat_settings} if chat_settings else {}),
+    }
+    if use_cache is not None:
+        call_options["use_cache"] = use_cache
+    if cache_strategy is not None:
+        call_options["cache_strategy"] = cache_strategy
 
     return OrchestratorSettings(
         agent_id=agent_id,
@@ -87,14 +106,7 @@ def get_orchestrator_settings(
         engine_config={
             "backend": getattr(args, "backend", Backend.TRANSFORMERS.value)
         },
-        call_options={
-            "max_new_tokens": call_tokens,
-            "skip_special_tokens": args.run_skip_special_tokens,
-            "temperature": temperature,
-            "top_k": top_k,
-            "top_p": top_p,
-            **({"chat_settings": chat_settings} if chat_settings else {}),
-        },
+        call_options=call_options,
         template_vars=None,
         memory_permanent_message=(
             memory_permanent_message
@@ -390,6 +402,8 @@ async def agent_run(
                 temperature=getattr(args, "run_temperature", None),
                 top_k=getattr(args, "run_top_k", None),
                 top_p=getattr(args, "run_top_p", None),
+                use_cache=getattr(args, "run_use_cache", None),
+                cache_strategy=getattr(args, "run_cache_strategy", None),
             )
             logger.debug("Loading agent from inline settings")
             browser_settings = get_tool_settings(

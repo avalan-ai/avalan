@@ -31,7 +31,11 @@ from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from logging import getLogger
-from avalan.entities import OrchestratorSettings, ReasoningSettings
+from avalan.entities import (
+    GenerationCacheStrategy,
+    OrchestratorSettings,
+    ReasoningSettings,
+)
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
 from avalan.tool.browser import BrowserToolSettings
@@ -1699,6 +1703,207 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.call_options["top_p"], 0.9)
         self.assertEqual(settings.call_options["top_k"], 5)
         self.assertEqual(settings.call_options["max_new_tokens"], 42)
+
+    async def test_run_engine_uri_use_cache_cli(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.run_use_cache = False
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        settings = fs_patch.call_args.args[0]
+        self.assertFalse(settings.call_options["use_cache"])
+
+    async def test_run_engine_uri_cache_strategy_cli(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        for strat in [None] + [s.value for s in GenerationCacheStrategy]:
+            self.args.run_cache_strategy = strat
+            with (
+                patch.object(agent_cmds, "get_input", return_value=None),
+                patch.object(
+                    agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_settings",
+                    new=AsyncMock(return_value=self.orch),
+                ) as fs_patch,
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_file",
+                    new=AsyncMock(),
+                ),
+                patch.object(
+                    agent_cmds, "token_generation", new_callable=AsyncMock
+                ),
+            ):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+            settings = fs_patch.call_args.args[0]
+            if strat is None:
+                self.assertNotIn("cache_strategy", settings.call_options)
+            else:
+                self.assertEqual(
+                    settings.call_options["cache_strategy"], strat
+                )
+
+    async def test_run_spec_use_cache(self):
+        captured = {}
+
+        async def orch_call(input, **engine_args):
+            captured["args"] = {
+                **getattr(self.orch, "_call_options", {}),
+                **engine_args,
+            }
+            return SimpleNamespace(to_str=AsyncMock(return_value="resp"))
+
+        self.orch.side_effect = orch_call
+
+        for use_cache in (None, True, False):
+            with NamedTemporaryFile("w+", suffix=".toml") as spec:
+                spec.write(
+                    "[engine]\nuri='engine'\n[agent]\nrole='assistant'\n"
+                )
+                spec.write("[run]\n")
+                if use_cache is not None:
+                    spec.write(f"use_cache = {str(use_cache).lower()}\n")
+                spec.flush()
+                self.args.specifications_file = spec.name
+                self.args.engine_uri = None
+                self.args.quiet = True
+
+                async def from_file(self_loader, path, agent_id, disable_memory):
+                    import tomllib
+
+                    with open(path, "rb") as f:
+                        data = tomllib.load(f)
+                    self.orch._call_options = data.get("run", {})
+                    return self.orch
+
+                with (
+                    patch.object(agent_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        agent_cmds,
+                        "AsyncExitStack",
+                        return_value=self.dummy_stack,
+                    ),
+                    patch.object(
+                        agent_cmds.OrchestratorLoader,
+                        "from_file",
+                        new=from_file,
+                    ),
+                    patch.object(
+                        agent_cmds, "token_generation", new_callable=AsyncMock
+                    ),
+                ):
+                    await agent_cmds.agent_run(
+                        self.args,
+                        self.console,
+                        self.theme,
+                        self.hub,
+                        self.logger,
+                        1,
+                    )
+
+            engine_args = captured["args"]
+            if use_cache is None:
+                self.assertNotIn("use_cache", engine_args)
+            else:
+                self.assertEqual(engine_args["use_cache"], use_cache)
+
+    async def test_run_spec_cache_strategy(self):
+        captured = {}
+
+        async def orch_call(input, **engine_args):
+            captured["args"] = {
+                **getattr(self.orch, "_call_options", {}),
+                **engine_args,
+            }
+            return SimpleNamespace(to_str=AsyncMock(return_value="resp"))
+
+        self.orch.side_effect = orch_call
+
+        strategies = [None] + [s.value for s in GenerationCacheStrategy]
+        for strat in strategies:
+            with NamedTemporaryFile("w+", suffix=".toml") as spec:
+                spec.write(
+                    "[engine]\nuri='engine'\n[agent]\nrole='assistant'\n"
+                )
+                spec.write("[run]\n")
+                if strat is not None:
+                    spec.write(f"cache_strategy = '{strat}'\n")
+                spec.flush()
+                self.args.specifications_file = spec.name
+                self.args.engine_uri = None
+                self.args.quiet = True
+
+                async def from_file(self_loader, path, agent_id, disable_memory):
+                    import tomllib
+
+                    with open(path, "rb") as f:
+                        data = tomllib.load(f)
+                    self.orch._call_options = data.get("run", {})
+                    return self.orch
+
+                with (
+                    patch.object(agent_cmds, "get_input", return_value="hi"),
+                    patch.object(
+                        agent_cmds,
+                        "AsyncExitStack",
+                        return_value=self.dummy_stack,
+                    ),
+                    patch.object(
+                        agent_cmds.OrchestratorLoader,
+                        "from_file",
+                        new=from_file,
+                    ),
+                    patch.object(
+                        agent_cmds, "token_generation", new_callable=AsyncMock
+                    ),
+                ):
+                    await agent_cmds.agent_run(
+                        self.args,
+                        self.console,
+                        self.theme,
+                        self.hub,
+                        self.logger,
+                        1,
+                    )
+
+            engine_args = captured["args"]
+            if strat is None:
+                self.assertNotIn("cache_strategy", engine_args)
+            else:
+                self.assertEqual(engine_args["cache_strategy"], strat)
 
 
 class CliAgentInitNoRoleTestCase(unittest.IsolatedAsyncioTestCase):

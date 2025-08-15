@@ -1,6 +1,9 @@
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 import torch
 from avalan.model.nlp import BaseNLPModel
+from avalan.entities import (
+    GenerationCacheStrategy,
+)
 from logging import Logger
 from contextlib import nullcontext
 from unittest import TestCase
@@ -82,3 +85,29 @@ class BaseNLPModelGenerateTestCase(TestCase):
         model._model.generate.assert_called_once()
         _, kwargs = model._model.generate.call_args
         self.assertNotIn("attention_mask", kwargs)
+
+    def test_generate_output_cache_settings(self):
+        model = DummyNLPModel(
+            "model",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=MagicMock(spec=Logger),
+        )
+        model._model = MagicMock()
+        model._tokenizer = MagicMock(eos_token_id=2)
+        settings = GenerationSettings(
+            use_cache=False,
+            cache_strategy=GenerationCacheStrategy.MAMBA,
+        )
+        with patch(
+            "avalan.model.nlp.inference_mode", return_value=nullcontext()
+        ):
+            model._generate_output({}, settings)
+        model._model.generate.assert_called_once()
+        _, kwargs = model._model.generate.call_args
+        self.assertFalse(kwargs["use_cache"])
+        self.assertEqual(
+            kwargs["cache_implementation"],
+            GenerationCacheStrategy.MAMBA,
+        )

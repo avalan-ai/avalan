@@ -41,6 +41,7 @@ from ..entities import (
     TextGenerationLoaderClass,
     Backend,
     ReasoningTag,
+    GenerationCacheStrategy,
     User,
     WeightType,
 )
@@ -1339,6 +1340,19 @@ class CLI:
             help="Number of beams for beam search. 1 means no beam search",
         )
         model_run_parser.add_argument(
+            "--text-disable-cache",
+            dest="use_cache",
+            action="store_false",
+            help="If specified, disable generation cache",
+        )
+        model_run_parser.add_argument(
+            "--text-cache-strategy",
+            type=str,
+            choices=[c.value for c in GenerationCacheStrategy],
+            dest="cache_strategy",
+            help="Cache implementation to use for generation",
+        )
+        model_run_parser.add_argument(
             "--text-from-lang",
             type=str,
             help="Source language code for text translation",
@@ -1692,6 +1706,20 @@ class CLI:
             action="store_true",
             default=False,
             help="Skip special tokens on output",
+        )
+        group.add_argument(
+            "--run-disable-cache",
+            dest="run_use_cache",
+            action="store_false",
+            default=None,
+            help="Disable generation cache",
+        )
+        group.add_argument(
+            "--run-cache-strategy",
+            type=str,
+            choices=[c.value for c in GenerationCacheStrategy],
+            dest="run_cache_strategy",
+            help="Cache implementation to use for generation",
         )
         group.add_argument(
             "--run-temperature",

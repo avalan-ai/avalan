@@ -325,6 +325,8 @@ equence_parallel,replicate}]
                                    [--memory-engine-window MEMORY_ENGINE_WINDOW]
                                    [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
                                    [--run-skip-special-tokens]
+                                   [--run-disable-cache]
+                                   [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                                    [--run-temperature RUN_TEMPERATURE]
                                    [--run-top-k RUN_TOP_K]
                                    [--run-top-p RUN_TOP_P] [--tool TOOL]
@@ -431,6 +433,9 @@ inline agent settings:
                         Maximum count of tokens on output
   --run-skip-special-tokens
                         Skip special tokens on output
+  --run-disable-cache   Disable generation cache
+  --run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
@@ -2358,6 +2363,8 @@ o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segment
                         [--text-context TEXT_CONTEXT] [--text-labeled-only]
                         [--text-max-length TEXT_MAX_LENGTH]
                         [--text-num-beams TEXT_NUM_BEAMS]
+                        [--text-disable-cache]
+                        [--text-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                         [--text-from-lang TEXT_FROM_LANG]
                         [--text-to-lang TEXT_TO_LANG] [--start-thinking]
                         [--stop_on_keyword STOP_ON_KEYWORD]
@@ -2572,6 +2579,10 @@ o_video,vision_image_text_to_text,vision_encoder_decoder,vision_semantic_segment
   --text-num-beams TEXT_NUM_BEAMS
                         Number of beams for beam search. 1 means no beam
                         search
+  --text-disable-cache
+                        Disable generation cache
+  --text-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}
+                        Cache implementation to use for generation
   --text-from-lang TEXT_FROM_LANG
                         Source language code for text translation
   --text-to-lang TEXT_TO_LANG
