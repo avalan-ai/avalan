@@ -5,8 +5,6 @@ from avalan.secrets import KeyringSecrets
 from logging import Logger
 from unittest import main, TestCase
 from unittest.mock import MagicMock, patch
-import sys
-import types
 
 
 class ManagerTestCase(TestCase):
@@ -297,13 +295,13 @@ class ManagerLoadEngineTestCase(TestCase):
         vendor_data = {
             "local": (
                 "ai://local/tiiuae/Falcon-E-3B-Instruct",
-                "avalan.model.manager.TextGenerationModel",
+                "avalan.model.modalities.text.TextGenerationModel",
                 "tiiuae/Falcon-E-3B-Instruct",
                 False,
             ),
             "sentence": (
                 "ai://local/tiiuae/Falcon-E-3B-Instruct",
-                "avalan.model.manager.SentenceTransformerModel",
+                "avalan.model.nlp.sentence.SentenceTransformerModel",
                 "tiiuae/Falcon-E-3B-Instruct",
                 True,
             ),
@@ -381,44 +379,16 @@ class ManagerLoadEngineTestCase(TestCase):
                     engine_uri = manager.parse_uri(uri)
                     settings = TransformerEngineSettings()
                     manager._stack.enter_context = MagicMock()
-                    if path.startswith("avalan.model.manager"):
-                        with patch(path) as Model:
-                            result = manager.load_engine(
-                                engine_uri,
-                                settings,
-                                (
-                                    Modality.EMBEDDING
-                                    if is_sentence
-                                    else Modality.TEXT_GENERATION
-                                ),
-                            )
-                            Model.assert_called_once_with(
-                                model_id=model_id,
-                                settings=settings,
-                                logger=self.logger_mock,
-                            )
-                            manager._stack.enter_context.assert_called_once_with(
-                                Model.return_value
-                            )
-                            self.assertIs(result, Model.return_value)
-                    else:
-                        module_path, class_name = path.rsplit(".", 1)
-                        dummy_module = types.SimpleNamespace()
-                        Model = MagicMock()
-                        setattr(dummy_module, class_name, Model)
-                        with patch.dict(
-                            sys.modules, {module_path: dummy_module}
-                        ):
-                            result = manager.load_engine(
-                                engine_uri,
-                                settings,
-                                (
-                                    Modality.EMBEDDING
-                                    if is_sentence
-                                    else Modality.TEXT_GENERATION
-                                ),
-                            )
-
+                    with patch(path) as Model:
+                        result = manager.load_engine(
+                            engine_uri,
+                            settings,
+                            (
+                                Modality.EMBEDDING
+                                if is_sentence
+                                else Modality.TEXT_GENERATION
+                            ),
+                        )
                         Model.assert_called_once_with(
                             model_id=model_id,
                             settings=settings,
