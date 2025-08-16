@@ -1,6 +1,6 @@
+from .parser import ReasoningOutputParser
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import Input, Message, ReasoningOrchestratorResponse
-from re import DOTALL, IGNORECASE, search
 
 
 class ReasoningOrchestrator(Orchestrator):
@@ -8,9 +8,14 @@ class ReasoningOrchestrator(Orchestrator):
 
     TEMPLATE_ID = "reasoning/cot.md"
 
-    def __init__(self, orchestrator: Orchestrator) -> None:
+    def __init__(
+        self,
+        orchestrator: Orchestrator,
+        parser: ReasoningOutputParser | None = None,
+    ) -> None:
         assert orchestrator
         self._orchestrator = orchestrator
+        self._parser = parser or ReasoningOutputParser()
         super().__init__(
             orchestrator._logger,
             orchestrator._model_manager,
@@ -56,39 +61,7 @@ class ReasoningOrchestrator(Orchestrator):
         )
         response = await self._orchestrator(rendered_input, **kwargs)
         text = await response.to_str()
-        reasoning, answer = self._parse_output(text)
+        reasoning, answer = self._parser.parse(text)
         return ReasoningOrchestratorResponse(
             answer=answer, reasoning=reasoning
         )
-
-    @staticmethod
-    def _parse_output(text: str) -> tuple[str | None, str]:
-        match = search(r"<think>(.*?)</think>", text, DOTALL | IGNORECASE)
-        if match:
-            reasoning = match.group(1).strip()
-            remaining = text[match.end() :].strip()
-            ans_match = search(
-                r"answer:\s*(.*)", remaining, DOTALL | IGNORECASE
-            )
-            answer = ans_match.group(1).strip() if ans_match else remaining
-            return reasoning, answer
-
-        prefix = search(r"^(?:reasoning|thought):", text, IGNORECASE)
-        if prefix:
-            after = text[prefix.end() :].strip()
-            ans_match = search(r"answer:\s*(.*)", after, DOTALL | IGNORECASE)
-            if ans_match:
-                reasoning = after[: ans_match.start()].strip()
-                answer = ans_match.group(1).strip()
-            else:
-                reasoning = after
-                answer = reasoning
-            return reasoning or None, answer
-
-        ans_match = search(r"answer:\s*(.*)", text, DOTALL | IGNORECASE)
-        if ans_match:
-            answer = ans_match.group(1).strip()
-            reasoning = text[: ans_match.start()].strip() or None
-            return reasoning, answer
-
-        return None, text.strip()
