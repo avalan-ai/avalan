@@ -36,7 +36,17 @@ from rich.padding import Padding
 from rich.prompt import Prompt
 from rich.spinner import Spinner
 from rich.theme import Theme
+from sys import platform, stdin
 from time import perf_counter
+
+if platform == "win32":
+    from msvcrt import getwch, kbhit
+else:
+    from fcntl import F_GETFL, F_SETFL, fcntl
+    from os import O_NONBLOCK, environ
+    from select import select
+    from termios import TCSADRAIN, tcgetattr, tcsetattr
+    from tty import setcbreak
 
 
 def model_display(
@@ -370,67 +380,30 @@ async def token_generation(
         return
 
     stop_signal = EventSignal()
+    expand_signal = EventSignal()
+    listener_task = (
+        create_task(
+            _listen_z_key(stop_signal=stop_signal, expand_signal=expand_signal)
+        )
+        if stdin.isatty() and "PYTEST_CURRENT_TEST" not in environ
+        else None
+    )
+    try:
+        # From here on, display includes stats and may include token
+        # probabilities
 
-    # From here on, display includes stats and may include token probabilities
-
-    if not orchestrator or (
-        not args.display_events and not args.display_tools
-    ):
-        with Live(
-            refresh_per_second=refresh_per_second, screen=args.record
-        ) as live:
-            await _token_stream(
-                args,
-                console,
-                live,
-                None,
-                None,
-                theme,
-                logger,
-                orchestrator,
-                event_stats,
-                lm,
-                input_string,
-                response,
-                display_tokens=display_tokens,
-                dtokens_pick=dtokens_pick,
-                refresh_per_second=refresh_per_second,
-                stop_signal=stop_signal,
-                tool_events_limit=tool_events_limit,
-                with_stats=with_stats,
-            )
-    else:
-        events_height = 6
-        tools_height = 10
-        empty = ""
-        group = Group(empty, empty, empty)
-        events_group_index = 0
-        tools_group_index = 1
-        tokens_group_index = 2
-
-        with Live(
-            group, refresh_per_second=refresh_per_second, screen=args.record
-        ) as live:
-            await gather(
-                _event_stream(
+        if not orchestrator or (
+            not args.display_events and not args.display_tools
+        ):
+            with Live(
+                refresh_per_second=refresh_per_second, screen=args.record
+            ) as live:
+                await _token_stream(
                     args,
                     console,
                     live,
-                    group,
-                    events_group_index,
-                    tools_group_index,
-                    orchestrator,
-                    theme,
-                    events_height=events_height,
-                    tools_height=tools_height,
-                    stop_signal=stop_signal,
-                ),
-                _token_stream(
-                    args,
-                    console,
-                    live,
-                    group,
-                    tokens_group_index,
+                    None,
+                    None,
                     theme,
                     logger,
                     orchestrator,
@@ -442,10 +415,98 @@ async def token_generation(
                     dtokens_pick=dtokens_pick,
                     refresh_per_second=refresh_per_second,
                     stop_signal=stop_signal,
+                    expand_signal=expand_signal,
                     tool_events_limit=tool_events_limit,
                     with_stats=with_stats,
-                ),
-            )
+                )
+        else:
+            events_height = 6
+            tools_height = 10
+            empty = ""
+            group = Group(empty, empty, empty)
+            events_group_index = 0
+            tools_group_index = 1
+            tokens_group_index = 2
+
+            with Live(
+                group,
+                refresh_per_second=refresh_per_second,
+                screen=args.record,
+            ) as live:
+                await gather(
+                    _event_stream(
+                        args,
+                        console,
+                        live,
+                        group,
+                        events_group_index,
+                        tools_group_index,
+                        orchestrator,
+                        theme,
+                        events_height=events_height,
+                        tools_height=tools_height,
+                        stop_signal=stop_signal,
+                    ),
+                    _token_stream(
+                        args,
+                        console,
+                        live,
+                        group,
+                        tokens_group_index,
+                        theme,
+                        logger,
+                        orchestrator,
+                        event_stats,
+                        lm,
+                        input_string,
+                        response,
+                        display_tokens=display_tokens,
+                        dtokens_pick=dtokens_pick,
+                        refresh_per_second=refresh_per_second,
+                        stop_signal=stop_signal,
+                        expand_signal=expand_signal,
+                        tool_events_limit=tool_events_limit,
+                        with_stats=with_stats,
+                    ),
+                )
+    finally:
+        stop_signal.set()
+        if listener_task:
+            await listener_task
+
+
+async def _listen_z_key(
+    *, stop_signal: EventSignal, expand_signal: EventSignal
+) -> None:
+    """Listen for ``z``/``Z`` and set ``expand_signal`` when detected."""
+    if not stdin.isatty():
+        return
+    if platform == "win32":
+        while not stop_signal.is_set() and not expand_signal.is_set():
+            if kbhit():
+                if getwch().lower() == "z":
+                    expand_signal.set()
+                    break
+            await sleep(0.05)
+    else:
+        fd = stdin.fileno()
+        original = tcgetattr(fd)
+        flags = fcntl(fd, F_GETFL)
+        try:
+            setcbreak(fd)
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+            while not stop_signal.is_set() and not expand_signal.is_set():
+                readers, _, _ = select([stdin], [], [], 0.1)
+                if readers:
+                    try:
+                        if stdin.read(1).lower() == "z":
+                            expand_signal.set()
+                            break
+                    except BlockingIOError:
+                        pass
+        finally:
+            tcsetattr(fd, TCSADRAIN, original)
+            fcntl(fd, F_SETFL, flags)
 
 
 async def _event_stream(
@@ -516,6 +577,7 @@ async def _token_stream(
     dtokens_pick: int,
     refresh_per_second: int,
     stop_signal: EventSignal | None,
+    expand_signal: EventSignal | None = None,
     tool_events_limit: int | None,
     with_stats: bool = True,
 ) -> None:
@@ -650,6 +712,8 @@ async def _token_stream(
         limit_answer_height = not getattr(
             args, "display_answer_height_expand", False
         )
+        if expand_signal and expand_signal.is_set():
+            limit_answer_height = False
         answer_height = getattr(args, "display_answer_height", 12)
 
         token_frames_promise = theme.tokens(
