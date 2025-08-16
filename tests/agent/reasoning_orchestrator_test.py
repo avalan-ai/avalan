@@ -1,10 +1,16 @@
+from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.orchestrator.orchestrators.reasoning.cot import (
     ReasoningOrchestrator,
 )
-from avalan.agent.orchestrator import Orchestrator
-from avalan.entities import ReasoningOrchestratorResponse
+from avalan.agent.orchestrator.orchestrators.reasoning.parser import (
+    ReasoningOutputParser,
+)
 from avalan.agent.renderer import Renderer
-from avalan.entities import Message, MessageRole
+from avalan.entities import (
+    Message,
+    MessageRole,
+    ReasoningOrchestratorResponse,
+)
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -251,3 +257,53 @@ class ReasoningOrchestratorAdditionalTestCase(IsolatedAsyncioTestCase):
             ReasoningOrchestratorResponse(answer="just text", reasoning=None),
         )
         orchestrator.assert_awaited()
+
+
+class ReasoningOrchestratorConfigTestCase(IsolatedAsyncioTestCase):
+    async def _make(self, text: str):
+        renderer = Renderer()
+        orchestrator = AsyncMock(
+            _logger=MagicMock(),
+            _model_manager=MagicMock(),
+            _memory=MagicMock(),
+            _tool=MagicMock(),
+            _event_manager=MagicMock(),
+            _call_options=None,
+            _exit_memory=True,
+            id=uuid4(),
+            name=None,
+            renderer=renderer,
+            operations=[
+                MagicMock(specification=MagicMock(template_vars=None))
+            ],
+        )
+        resp = MagicMock()
+        resp.to_str = AsyncMock(return_value=text)
+        orchestrator.return_value = resp
+        return orchestrator
+
+    async def test_custom_parser_matches(self):
+        orch = await self._make("<analysis>step</analysis> Final: done")
+        parser = ReasoningOutputParser(
+            reasoning_tag="analysis", answer_prefix="final"
+        )
+        cot = ReasoningOrchestrator(orch, parser=parser)
+        result = await cot("q")
+        self.assertEqual(
+            result,
+            ReasoningOrchestratorResponse(answer="done", reasoning="step"),
+        )
+        orch.assert_awaited()
+
+    async def test_custom_parser_no_matches(self):
+        orch = await self._make("Answer: 1")
+        parser = ReasoningOutputParser(
+            reasoning_tag="analysis", answer_prefix="final"
+        )
+        cot = ReasoningOrchestrator(orch, parser=parser)
+        result = await cot("q")
+        self.assertEqual(
+            result,
+            ReasoningOrchestratorResponse(answer="Answer: 1", reasoning=None),
+        )
+        orch.assert_awaited()
