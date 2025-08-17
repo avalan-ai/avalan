@@ -1,5 +1,7 @@
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
+    Entity,
+    Hyperedge,
     Memory,
     MemoryType,
     PermanentMemory,
@@ -174,3 +176,145 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             ),
         )
         return memories
+
+    async def upsert_hyperedge(
+        self,
+        hyperedge: Hyperedge,
+        *,
+        memory_id: UUID,
+        char_start: int | None = None,
+        char_end: int | None = None,
+    ) -> None:
+        assert hyperedge and memory_id
+        async with self._database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        INSERT INTO "hyperedges"(
+                            "id",
+                            "relation",
+                            "surface_text",
+                            "embedding",
+                            "symbols",
+                            "created_at"
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s
+                        )
+                        ON CONFLICT ("id") DO UPDATE SET
+                            "relation" = EXCLUDED."relation",
+                            "surface_text" = EXCLUDED."surface_text",
+                            "embedding" = EXCLUDED."embedding",
+                            "symbols" = EXCLUDED."symbols"
+                        """,
+                        (
+                            str(hyperedge.id),
+                            hyperedge.relation,
+                            hyperedge.surface_text,
+                            Vector(hyperedge.embedding),
+                            (
+                                dumps(hyperedge.symbols)
+                                if hyperedge.symbols
+                                else None
+                            ),
+                            hyperedge.created_at,
+                        ),
+                    )
+
+                    await cursor.execute(
+                        """
+                        INSERT INTO "hyperedges_memories"(
+                            "hyperedge_id",
+                            "memory_id",
+                            "char_start",
+                            "char_end"
+                        ) VALUES (
+                            %s, %s, %s, %s
+                        )
+                        ON CONFLICT ("hyperedge_id", "memory_id") DO UPDATE SET
+                            "char_start" = EXCLUDED."char_start",
+                            "char_end" = EXCLUDED."char_end"
+                        """,
+                        (
+                            str(hyperedge.id),
+                            str(memory_id),
+                            char_start,
+                            char_end,
+                        ),
+                    )
+                    await cursor.close()
+
+    async def upsert_entity(
+        self,
+        entity: Entity,
+        *,
+        hyperedge_id: UUID,
+        role_idx: int,
+        role_label: str | None = None,
+    ) -> UUID:
+        assert entity and hyperedge_id and role_idx >= 1
+        async with self._database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        INSERT INTO "entities"(
+                            "id",
+                            "name",
+                            "type",
+                            "embedding",
+                            "symbols",
+                            "participant_id",
+                            "namespace",
+                            "created_at"
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                        ON CONFLICT ON CONSTRAINT "uq_entities_scope_name"
+                        DO UPDATE SET
+                            "type" = EXCLUDED."type",
+                            "embedding" = EXCLUDED."embedding",
+                            "symbols" = EXCLUDED."symbols"
+                        RETURNING "id"
+                        """,
+                        (
+                            str(entity.id),
+                            entity.name,
+                            entity.type,
+                            Vector(entity.embedding),
+                            dumps(entity.symbols) if entity.symbols else None,
+                            (
+                                str(entity.participant_id)
+                                if entity.participant_id
+                                else None
+                            ),
+                            entity.namespace,
+                            entity.created_at,
+                        ),
+                    )
+                    result = await cursor.fetchone()
+                    entity_id = result["id"] if result else None
+
+                    await cursor.execute(
+                        """
+                        INSERT INTO "hyperedge_entities"(
+                            "hyperedge_id",
+                            "entity_id",
+                            "role_idx",
+                            "role_label"
+                        ) VALUES (
+                            %s, %s, %s, %s
+                        )
+                        ON CONFLICT ("hyperedge_id", "role_idx") DO UPDATE SET
+                            "entity_id" = EXCLUDED."entity_id",
+                            "role_label" = EXCLUDED."role_label"
+                        """,
+                        (
+                            str(hyperedge_id),
+                            str(entity_id),
+                            role_idx,
+                            role_label,
+                        ),
+                    )
+                    await cursor.close()
+        return UUID(entity_id) if isinstance(entity_id, str) else entity_id

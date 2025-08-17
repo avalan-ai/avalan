@@ -1,5 +1,5 @@
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import Memory, MemoryType
+from avalan.memory.permanent import Entity, Hyperedge, Memory, MemoryType
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone
 import numpy as np
@@ -108,6 +108,82 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             .strip()
             .startswith("INSERT INTO")
         )
+        cursor_mock.close.assert_awaited_once()
+
+    async def test_upsert_hyperedge(self):
+        pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()
+        memory_store = await PgsqlRawMemory.create_instance_from_pool(
+            pool=pool_mock, logger=MagicMock()
+        )
+        hyperedge = Hyperedge(
+            id=uuid4(),
+            relation="rel",
+            surface_text="A rel B",
+            embedding=np.array([0.1, 0.2]),
+            created_at=datetime.now(timezone.utc),
+        )
+        memory_id = uuid4()
+        await memory_store.upsert_hyperedge(
+            hyperedge,
+            memory_id=memory_id,
+            char_start=1,
+            char_end=2,
+        )
+        self.assertEqual(cursor_mock.execute.await_count, 2)
+        first_call, second_call = cursor_mock.execute.await_args_list
+        self.assertTrue(
+            first_call.args[0].strip().startswith('INSERT INTO "hyperedges"')
+        )
+        self.assertTrue(
+            second_call.args[0]
+            .strip()
+            .startswith('INSERT INTO "hyperedges_memories"')
+        )
+        self.assertEqual(
+            second_call.args[1],
+            (str(hyperedge.id), str(memory_id), 1, 2),
+        )
+        cursor_mock.close.assert_awaited_once()
+
+    async def test_upsert_entity(self):
+        entity_id = UUID("22222222-2222-2222-2222-222222222222")
+        pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()
+        cursor_mock.fetchone.return_value = {"id": str(entity_id)}
+        memory_store = await PgsqlRawMemory.create_instance_from_pool(
+            pool=pool_mock, logger=MagicMock()
+        )
+        entity = Entity(
+            id=uuid4(),
+            name="Alice",
+            type="person",
+            embedding=np.array([0.3, 0.4]),
+            participant_id=uuid4(),
+            namespace="ns",
+            created_at=datetime.now(timezone.utc),
+        )
+        hyperedge_id = uuid4()
+        returned = await memory_store.upsert_entity(
+            entity,
+            hyperedge_id=hyperedge_id,
+            role_idx=1,
+            role_label="subject",
+        )
+        self.assertEqual(returned, entity_id)
+        self.assertEqual(cursor_mock.execute.await_count, 2)
+        first_call, second_call = cursor_mock.execute.await_args_list
+        self.assertTrue(
+            first_call.args[0].strip().startswith('INSERT INTO "entities"')
+        )
+        self.assertTrue(
+            second_call.args[0]
+            .strip()
+            .startswith('INSERT INTO "hyperedge_entities"')
+        )
+        self.assertEqual(
+            second_call.args[1],
+            (str(hyperedge_id), str(entity_id), 1, "subject"),
+        )
+        cursor_mock.fetchone.assert_awaited_once()
         cursor_mock.close.assert_awaited_once()
 
     @staticmethod
