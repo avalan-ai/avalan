@@ -106,6 +106,44 @@ class PermanentMemoryPartition:
     created_at: datetime
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Hyperedge:
+    id: UUID
+    relation: str
+    surface_text: str
+    embedding: ndarray
+    symbols: dict | None = None
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class HyperedgeMemory:
+    hyperedge_id: UUID
+    memory_id: UUID
+    char_start: int | None = None
+    char_end: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Entity:
+    id: UUID
+    name: str
+    type: str | None = None
+    embedding: ndarray
+    symbols: dict | None = None
+    participant_id: UUID | None = None
+    namespace: str | None = None
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class HyperedgeEntity:
+    hyperedge_id: UUID
+    entity_id: UUID
+    role_idx: int
+    role_label: str | None = None
+
+
 class PermanentMessageMemory(MessageMemory):
     _session_id: UUID | None = None
     _sentence_model: SentenceTransformerModel

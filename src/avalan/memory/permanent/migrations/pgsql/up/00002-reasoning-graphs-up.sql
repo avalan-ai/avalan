@@ -4,12 +4,13 @@
 -- 1. FACTS: n-ary hyperedges
 -- =========================================
 CREATE TABLE IF NOT EXISTS "hyperedges" (
-    "id"           BIGSERIAL PRIMARY KEY,
+    "id"           UUID NOT NULL,
     "relation"     TEXT NOT NULL,
     "surface_text" TEXT NOT NULL,
     "embedding"    VECTOR(1024) NOT NULL,
     "symbols"      JSONB DEFAULT NULL,
-    "created_at"   TIMESTAMPTZ NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+    "created_at"   TIMESTAMPTZ NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    PRIMARY KEY("id")
 );
 
 -- Choose ONE ANN index:
@@ -26,7 +27,7 @@ CREATE INDEX IF NOT EXISTS "ix_hyperedges_relation_lc"
 -- 2. PROVENANCE: link hyperedges → memories
 -- =========================================
 CREATE TABLE IF NOT EXISTS "hyperedges_memories" (
-    "hyperedge_id" BIGINT NOT NULL REFERENCES "hyperedges"("id") ON DELETE CASCADE,
+    "hyperedge_id" UUID  NOT NULL REFERENCES "hyperedges"("id") ON DELETE CASCADE,
     "memory_id"    UUID   NOT NULL REFERENCES "memories"("id")  ON DELETE CASCADE,
     "char_start"   INT,
     "char_end"     INT,
@@ -57,7 +58,7 @@ WHERE m."is_deleted" = FALSE;
 -- 3. ENTITIES
 -- =========================================
 CREATE TABLE IF NOT EXISTS "entities" (
-    "id"             BIGSERIAL PRIMARY KEY,
+    "id"             UUID NOT NULL,
     "name"           TEXT NOT NULL,
     "name_lc"        TEXT GENERATED ALWAYS AS (LOWER("name")) STORED,
     "type"           TEXT,
@@ -66,7 +67,8 @@ CREATE TABLE IF NOT EXISTS "entities" (
     "participant_id" UUID,
     "namespace"      TEXT,
     "namespace_tree" LTREE GENERATED ALWAYS AS (text2ltree("namespace")) STORED,
-    "created_at"     TIMESTAMPTZ NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+    "created_at"     TIMESTAMPTZ NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    PRIMARY KEY("id")
 );
 
 ALTER TABLE "entities"
@@ -86,8 +88,8 @@ CREATE INDEX IF NOT EXISTS "ix_entities_scope"
 -- 4. ARGUMENTS: hyperedge ↔ entity mapping (ordered)
 -- =========================================
 CREATE TABLE IF NOT EXISTS "hyperedge_entities" (
-    "hyperedge_id" BIGINT NOT NULL REFERENCES "hyperedges"("id") ON DELETE CASCADE,
-    "entity_id"    BIGINT NOT NULL REFERENCES "entities"("id")   ON DELETE CASCADE,
+    "hyperedge_id" UUID  NOT NULL REFERENCES "hyperedges"("id") ON DELETE CASCADE,
+    "entity_id"    UUID  NOT NULL REFERENCES "entities"("id")   ON DELETE CASCADE,
     "role_idx"     INT    NOT NULL CHECK ("role_idx" >= 1),
     "role_label"   TEXT,
     PRIMARY KEY ("hyperedge_id", "role_idx")
