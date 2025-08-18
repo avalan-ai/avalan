@@ -83,6 +83,21 @@ class CliParallelOptionTestCase(TestCase):
         self.assertEqual(args.parallel_count, 5)
 
 
+class CliAgentPortTestCase(TestCase):
+    def setUp(self) -> None:
+        self.logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            self.cli = CLI(self.logger)
+
+    def test_agent_serve_default_port(self) -> None:
+        args = self.cli._parser.parse_args(["agent", "serve"])
+        self.assertEqual(args.port, 9001)
+
+    def test_agent_proxy_default_port(self) -> None:
+        args = self.cli._parser.parse_args(["agent", "proxy"])
+        self.assertEqual(args.port, 9001)
+
+
 class CliCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from logging import getLogger
