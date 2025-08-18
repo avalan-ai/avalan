@@ -1271,6 +1271,11 @@ Serve your agents on an OpenAI API–compatible endpoint:
 avalan agent serve docs/examples/agent_tool.toml -vvv
 ```
 
+Agents listen on port 9001 by default.
+
+> [!TIP]
+> Use `--port` to serve the agent on a different port.
+
 Or build an agent from inline settings and expose its OpenAI API endpoints:
 
 ```bash
@@ -1308,6 +1313,8 @@ avalan agent proxy \
     --run-max-new-tokens 1024 \
     -v
 ```
+
+Like `agent serve`, the proxy listens on port 9001 by default.
 
 And you can connect to it from another terminal using `--base-url`:
 
