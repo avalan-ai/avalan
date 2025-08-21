@@ -34,6 +34,15 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         await self.tool("http://host", "calc", None, context=context)
         self.client.call_tool.assert_awaited_once_with("calc", {})
 
+    async def test_passes_client_and_call_params(self):
+        tool = McpCallTool(
+            client_params={"token": "x"}, call_params={"timeout": 1}
+        )
+        context = ToolCallContext()
+        await tool("http://host", "calc", None, context=context)
+        self.Client.assert_called_once_with("http://host", token="x")
+        self.client.call_tool.assert_awaited_once_with("calc", {}, timeout=1)
+
 
 class McpToolSetTestCase(TestCase):
     def test_default_namespace(self):

@@ -13,9 +13,19 @@ class McpCallTool(Tool):
         arguments: Arguments to send to the tool.
     """
 
-    def __init__(self) -> None:
+    _client_params: dict[str, object]
+    _call_params: dict[str, object]
+
+    def __init__(
+        self,
+        *,
+        client_params: dict[str, object] | None = None,
+        call_params: dict[str, object] | None = None,
+    ) -> None:
         super().__init__()
         self.__name__ = "call"
+        self._client_params = client_params or {}
+        self._call_params = call_params or {}
 
     async def __call__(
         self,
@@ -27,8 +37,13 @@ class McpCallTool(Tool):
     ) -> list[object]:
         from mcp import Client
 
-        async with Client(uri) as client:
-            return await client.call_tool(name, arguments or {})
+        assert uri
+        assert name
+
+        async with Client(uri, **self._client_params) as client:
+            return await client.call_tool(
+                name, arguments or {}, **self._call_params
+            )
 
 
 class McpToolSet(ToolSet):
