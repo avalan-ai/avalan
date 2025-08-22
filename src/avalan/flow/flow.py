@@ -1,10 +1,12 @@
 from ..flow.connection import Connection
 from ..flow.node import Node
-from typing import Any, Callable
 from re import match
+from typing import Any, Callable
 
 
 class Flow:
+    """Directed graph of nodes and connections."""
+
     def __init__(self) -> None:
         self.nodes: dict[str, Node] = {}
         self.connections: list[Connection] = []
@@ -31,6 +33,11 @@ class Flow:
         self.outgoing[src_name].append(conn)
 
     def parse_mermaid(self, mermaid: str) -> None:
+        """Populate the flow from a Mermaid diagram.
+
+        Edge labels are accepted in both ``A -- label --> B`` and
+        ``A -->|label| B`` forms. Lines without edges are ignored.
+        """
         lines = [line.strip() for line in mermaid.splitlines() if line.strip()]
         if lines and lines[0].lower().startswith("graph"):
             lines = lines[1:]
@@ -40,11 +47,14 @@ class Flow:
             left, right = line.split("-->", 1)
             left = left.strip()
             right = right.strip()
-            # strip edge label syntax: A -- text --> B
             label = None
             if "--" in left:
                 parts = left.split("--", 1)
                 left, label = parts[0].strip(), parts[1].strip()
+            elif right.startswith("|"):
+                label, right = right[1:].split("|", 1)
+                label = label.strip()
+                right = right.strip()
             src_id, src_lbl, src_shape = self._parse_node(left)
             dst_id, dst_lbl, dst_shape = self._parse_node(right)
             for nid, nlbl, nshape in [

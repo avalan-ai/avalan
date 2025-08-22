@@ -52,6 +52,19 @@ class FlowParseMermaidTestCase(TestCase):
         self.assertEqual(flow.connections[0].src.name, "A")
         self.assertEqual(flow.connections[0].dest.name, "B")
 
+    def test_parse_mermaid_pipe_label(self):
+        mermaid = """
+        graph LR
+        A -->|edge| B
+        """
+        flow = Flow()
+        flow.parse_mermaid(mermaid)
+
+        self.assertEqual(len(flow.connections), 1)
+        self.assertEqual(flow.connections[0].label, "edge")
+        self.assertIn("A", flow.nodes)
+        self.assertIn("B", flow.nodes)
+
 
 class FlowExecutionTestCase(TestCase):
     def test_manual_execution(self):
