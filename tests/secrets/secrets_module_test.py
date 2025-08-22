@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-import builtins
 import importlib
 import sys
 from unittest import TestCase, main
@@ -33,7 +30,7 @@ class SecretsBaseTest(TestCase):
 class KeyringSecretsInitTest(TestCase):
     def test_init_uses_get_keyring_and_delete_handles_errors(self) -> None:
         ring = MagicMock()
-        with patch.object(secrets, "get_keyring", return_value=ring):
+        with patch("avalan.secrets.keyring.get_keyring", return_value=ring):
             sec = secrets.KeyringSecrets()
         self.assertIs(sec._ring, ring)
 
@@ -51,23 +48,20 @@ class KeyringSecretsInitTest(TestCase):
 
 class ImportFallbackTest(TestCase):
     def test_import_without_keyring(self) -> None:
-        real_import = builtins.__import__
-        saved = sys.modules.pop("keyring", None)
+        saved_lib = sys.modules.pop("keyring", None)
+        saved_mod = sys.modules.pop("avalan.secrets.keyring", None)
 
-        def fake_import(
-            name: str, globals=None, locals=None, fromlist=(), level=0
-        ):
-            if name.startswith("keyring"):
-                raise ModuleNotFoundError
-            return real_import(name, globals, locals, fromlist, level)
-
-        with patch("builtins.__import__", side_effect=fake_import):
+        with patch.dict(sys.modules, {"keyring": None}):
             mod = importlib.reload(secrets)
-            self.assertIsNone(mod.get_keyring)
-            self.assertIs(mod.KeyringBackend, object)
+            self.assertTrue(hasattr(mod, "KeyringSecrets"))
+            ks = mod.KeyringSecrets()
+            with self.assertRaises(AssertionError):
+                ks.read("k")
 
-        if saved is not None:
-            sys.modules["keyring"] = saved
+        if saved_lib is not None:
+            sys.modules["keyring"] = saved_lib
+        if saved_mod is not None:
+            sys.modules["avalan.secrets.keyring"] = saved_mod
         importlib.reload(secrets)
 
 
