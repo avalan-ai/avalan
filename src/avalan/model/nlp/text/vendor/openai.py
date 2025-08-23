@@ -43,21 +43,32 @@ class OpenAIClient(TextGenerationVendor):
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
         template_messages = self._template_messages(messages)
-        client_stream = await self._client.chat.completions.create(
-            extra_headers={
+        kwargs: dict = {
+            "extra_headers": {
                 "X-Title": "Avalan",
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
-            model=model_id,
-            messages=template_messages,
-            stream=use_async_generator,
-            timeout=timeout,
-            response_format=(
-                settings.response_format
-                if settings and settings.response_format
-                else None
-            ),
-        )
+            "model": model_id,
+            "messages": template_messages,
+            "stream": use_async_generator,
+            "timeout": timeout,
+        }
+        if settings:
+            if settings.response_format:
+                kwargs["response_format"] = settings.response_format
+            if settings.max_new_tokens is not None:
+                kwargs["max_tokens"] = settings.max_new_tokens
+            if settings.temperature is not None:
+                kwargs["temperature"] = settings.temperature
+            if settings.top_p is not None:
+                kwargs["top_p"] = settings.top_p
+            if settings.stop_strings is not None:
+                kwargs["stop"] = settings.stop_strings
+        if tool:
+            schemas = tool.json_schemas()
+            if schemas:
+                kwargs["tools"] = schemas
+        client_stream = await self._client.chat.completions.create(**kwargs)
 
         stream = (
             OpenAIStream(stream=client_stream)

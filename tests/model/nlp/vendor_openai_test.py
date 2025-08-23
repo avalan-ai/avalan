@@ -75,7 +75,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             messages=[{"c": 1}],
             stream=True,
             timeout=None,
-            response_format=None,
         )
         StreamMock.assert_called_once_with(stream=stream_instance)
         self.assertIs(result, StreamMock.return_value)
@@ -91,6 +90,45 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             loaded = model._load_model()
         ClientMock.assert_called_once_with(base_url="u", api_key="t")
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_generation_settings_and_tools(self):
+        stream_instance = AsyncIter([])
+        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create = (
+            AsyncMock(return_value=stream_instance)
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._template_messages = MagicMock(return_value=[{"c": 1}])
+        tool = MagicMock()
+        tool.json_schemas.return_value = [{"a": 1}]
+        settings = GenerationSettings(
+            temperature=0.5,
+            top_p=0.8,
+            max_new_tokens=10,
+            stop_strings=["stop"],
+            response_format={"type": "json_schema"},
+        )
+        await client(
+            "m",
+            [],
+            settings=settings,
+            tool=tool,
+        )
+        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="m",
+            messages=[{"c": 1}],
+            stream=True,
+            timeout=None,
+            response_format={"type": "json_schema"},
+            max_tokens=10,
+            temperature=0.5,
+            top_p=0.8,
+            stop=["stop"],
+            tools=[{"a": 1}],
+        )
 
 
 class VendorClientsTestCase(TestCase):
@@ -219,7 +257,8 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
             messages=[{"role": "user", "content": "hi"}],
             stream=False,
             timeout=None,
-            response_format=None,
+            temperature=1.0,
+            top_p=1.0,
         )
         from avalan.model.stream import TextGenerationSingleStream
 
