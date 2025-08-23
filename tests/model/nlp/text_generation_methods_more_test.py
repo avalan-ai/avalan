@@ -162,6 +162,32 @@ class StringOutputTestCase(TestCase):
         )
         self.assertEqual(result, "ok")
 
+    def test_string_output_skip_special_tokens_true(self):
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "ok"
+        model._log = MagicMock()
+        inputs = {"input_ids": torch.tensor([[1, 2]])}
+        with patch.object(
+            TextGenerationModel,
+            "_generate_output",
+            return_value=[[1, 2, 3, 4]],
+        ) as gen:
+            result = model._string_output(
+                inputs, GenerationSettings(), None, True
+            )
+        gen.assert_called_once()
+        model._tokenizer.decode.assert_called_once_with(
+            [3, 4], skip_special_tokens=True
+        )
+        self.assertEqual(result, "ok")
+
 
 class TokenGeneratorTestCase(IsolatedAsyncioTestCase):
     async def _setup(self, entmax_available: bool):
