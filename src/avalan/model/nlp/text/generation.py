@@ -239,13 +239,11 @@ class TextGenerationModel(BaseNLPModel):
         skip_special_tokens: bool,
         **kwargs,
     ) -> str:
-        _l = self._log
         input_length = inputs["input_ids"].shape[1]
         outputs = self._generate_output(inputs, settings, stopping_criterias)
-        response = self._tokenizer.decode(
-            outputs[0][input_length:], skip_special_tokens=False
+        return self._tokenizer.decode(
+            outputs[0][input_length:], skip_special_tokens=skip_special_tokens
         )
-        return response
 
     async def _token_generator(
         self,
