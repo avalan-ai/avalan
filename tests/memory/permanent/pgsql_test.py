@@ -141,6 +141,22 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     ),
                 ],
             ),
+            (
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                None,
+                "microsoft/Phi-4-mini-instruct",
+                VectorFunction.L2_DISTANCE,
+                [
+                    (
+                        MessageRole.USER,
+                        f"message {i}",
+                        float(i),
+                    )
+                    for i in range(11)
+                ],
+            ),
         ]
 
         cls.fixture_search_memories = [
@@ -461,6 +477,7 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     limit=limit,
                 )
 
+                expected_limit = limit or 10
                 self.assert_query(
                     connection_mock,
                     cursor_mock,
@@ -483,12 +500,14 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     ORDER BY "messages"."created_at" DESC
                     LIMIT %s
                 """,
-                    (str(session_id), str(participant_id), limit),
+                    (str(session_id), str(participant_id), expected_limit),
                     fetch_all=True,
                 )
 
                 expected_count = (
-                    limit if limit and len(messages) > limit else len(messages)
+                    expected_limit
+                    if expected_limit and len(messages) > expected_limit
+                    else len(messages)
                 )
                 self.assertEqual(len(result), expected_count)
 
@@ -564,6 +583,7 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     exclude_session_id=None,
                 )
 
+                expected_limit = limit or 10
                 self.assert_query(
                     connection_mock,
                     cursor_mock,
@@ -600,13 +620,15 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                         str(session_id),
                         str(participant_id),
                         str(agent_id),
-                        limit,
+                        expected_limit,
                     ),
                     fetch_all=True,
                 )
 
                 expected_count = (
-                    limit if limit and len(messages) > limit else len(messages)
+                    expected_limit
+                    if expected_limit and len(messages) > expected_limit
+                    else len(messages)
                 )
                 self.assertEqual(len(result), expected_count)
 
@@ -686,6 +708,7 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     search_user_messages=True,
                     exclude_session_id=None,
                 )
+                expected_limit = limit or 10
                 self.assert_query(
                     connection_mock,
                     cursor_mock,
@@ -732,13 +755,20 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                         True,
                         str(session_id),
                         None,
-                        limit,
+                        expected_limit,
                     ),
                     fetch_all=True,
                 )
 
-                self.assertEqual(len(result), len(messages))
+                expected_count = (
+                    expected_limit
+                    if expected_limit and len(messages) > expected_limit
+                    else len(messages)
+                )
+                self.assertEqual(len(result), expected_count)
                 for i, msg in enumerate(sorted(messages, key=lambda m: m[2])):
+                    if i == expected_count:
+                        break
                     self.assertEqual(result[i].message.content, msg[1])
 
     async def test_search_memories(self):
