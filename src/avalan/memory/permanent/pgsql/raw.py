@@ -90,14 +90,18 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                         """,
                         (
                             str(entry.id),
-                            str(entry.model_id),
+                            entry.model_id,
                             str(entry.participant_id),
                             str(entry.type),
                             entry.namespace,
                             entry.identifier,
                             entry.data,
                             entry.partitions,
-                            dumps(entry.symbols) if entry.symbols else None,
+                            (
+                                dumps(entry.symbols)
+                                if entry.symbols is not None
+                                else None
+                            ),
                             entry.created_at,
                         ),
                     )
@@ -141,6 +145,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         assert participant_id and namespace and search_partitions
         search_function = str(function)
         search_vector = Vector(search_partitions[0].embeddings)
+        limit_value = limit or 10
         memories = await self._fetch_all(
             Memory,
             f"""
@@ -172,7 +177,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                 str(participant_id),
                 namespace,
                 search_vector,
-                limit,
+                limit_value,
             ),
         )
         return memories
@@ -214,7 +219,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             Vector(hyperedge.embedding),
                             (
                                 dumps(hyperedge.symbols)
-                                if hyperedge.symbols
+                                if hyperedge.symbols is not None
                                 else None
                             ),
                             hyperedge.created_at,
@@ -282,7 +287,11 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             entity.name,
                             entity.type,
                             Vector(entity.embedding),
-                            dumps(entity.symbols) if entity.symbols else None,
+                            (
+                                dumps(entity.symbols)
+                                if entity.symbols is not None
+                                else None
+                            ),
                             (
                                 str(entity.participant_id)
                                 if entity.participant_id

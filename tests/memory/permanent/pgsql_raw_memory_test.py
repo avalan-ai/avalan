@@ -2,6 +2,7 @@ from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import Entity, Hyperedge, Memory, MemoryType
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone
+from json import dumps
 import numpy as np
 from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection, AsyncCursor
@@ -98,7 +99,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 base_memory.identifier,
                 base_memory.data,
                 len(partitions),
-                None,
+                dumps(base_memory.symbols),
                 ANY,
             ),
         )
@@ -109,6 +110,45 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             .startswith("INSERT INTO")
         )
         cursor_mock.close.assert_awaited_once()
+
+    async def test_append_with_partitions_without_model_id(self):
+        pool_mock, connection_mock, cursor_mock, _ = self.mock_insert()
+        memory_store = await PgsqlRawMemory.create_instance_from_pool(
+            pool=pool_mock,
+            logger=MagicMock(),
+        )
+
+        base_memory = Memory(
+            id=uuid4(),
+            model_id=None,
+            type=MemoryType.RAW,
+            participant_id=uuid4(),
+            namespace="ns",
+            identifier="id",
+            data="data",
+            partitions=0,
+            symbols=None,
+            created_at=datetime.now(timezone.utc),
+        )
+        partitions = [
+            TextPartition(data="a", embeddings=np.array([0.1]), total_tokens=1)
+        ]
+
+        await memory_store.append_with_partitions(
+            base_memory.namespace,
+            base_memory.participant_id,
+            memory_type=base_memory.type,
+            data=base_memory.data,
+            identifier=base_memory.identifier,
+            partitions=partitions,
+            symbols=base_memory.symbols,
+            model_id=base_memory.model_id,
+        )
+
+        connection_mock.transaction.assert_called_once()
+        cursor_mock.execute.assert_awaited_once()
+        args = cursor_mock.execute.call_args[0][1]
+        self.assertIsNone(args[1])
 
     async def test_upsert_hyperedge(self):
         pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()

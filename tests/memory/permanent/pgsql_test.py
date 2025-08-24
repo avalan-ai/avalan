@@ -156,6 +156,18 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     ("dibu", "about dibu", {"role": "goalkeeper"}),
                 ],
             ),
+            (
+                uuid4(),
+                "pets",
+                None,
+                "openai/gpt",
+                MemoryType.RAW,
+                VectorFunction.COSINE_DISTANCE,
+                [
+                    ("fido", "about fido", {"role": "dog"}),
+                    ("garfield", "about garfield", {"role": "cat"}),
+                ],
+            ),
         ]
 
     async def test_create_instance(self):
@@ -817,7 +829,7 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                         str(participant_id),
                         namespace,
                         Vector(search_partitions[0].embeddings),
-                        limit,
+                        limit or 10,
                     ),
                     fetch_all=True,
                 )
