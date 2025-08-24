@@ -7,8 +7,8 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
-from logging import Logger
 from datetime import datetime, timezone
+from logging import Logger
 from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
 
@@ -16,6 +16,8 @@ from uuid import UUID, uuid4
 class PgsqlMessageMemory(
     PgsqlMemory[PermanentMessage], PermanentMessageMemory
 ):
+    """PostgreSQL-backed implementation of :class:`PermanentMessageMemory`."""
+
     @classmethod
     async def create_instance(
         cls,
@@ -27,6 +29,7 @@ class PgsqlMessageMemory(
         pool_open: bool = True,
         **kwargs,
     ):
+        """Create a memory store backed by a PostgreSQL connection."""
         memory = cls(
             dsn=dsn,
             composite_types=["message_author_type"],
@@ -42,6 +45,7 @@ class PgsqlMessageMemory(
     async def create_session(
         self, *args, agent_id: UUID, participant_id: UUID
     ) -> UUID:
+        """Create a new session for a participant."""
         now_utc = datetime.now(timezone.utc)
         session = self._build_session(
             agent_id,
@@ -80,6 +84,7 @@ class PgsqlMessageMemory(
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
+        """Continue an existing session if it belongs to the participant."""
         session_id = await self._fetch_field(
             "id",
             """
@@ -101,6 +106,7 @@ class PgsqlMessageMemory(
         *args,
         partitions: list[TextPartition],
     ) -> None:
+        """Persist a message and its partitions."""
         assert engine_message and partitions
         now_utc = datetime.now(timezone.utc)
         message, message_partitions = self._build_message_with_partitions(
@@ -192,6 +198,8 @@ class PgsqlMessageMemory(
         *args,
         limit: int | None = None,
     ) -> list[EngineMessage]:
+        """Retrieve recent messages for a session."""
+        limit_value = limit or 10
         messages = await self._fetch_all(
             PermanentMessage,
             """
@@ -212,10 +220,10 @@ class PgsqlMessageMemory(
             ORDER BY "messages"."created_at" DESC
             LIMIT %s
         """,
-            (str(session_id), str(participant_id), limit),
+            (str(session_id), str(participant_id), limit_value),
         )
         engine_messages = self._to_engine_messages(
-            messages, limit=limit, reverse=True
+            messages, limit=limit_value, reverse=True
         )
         return engine_messages
 
@@ -231,9 +239,11 @@ class PgsqlMessageMemory(
         session_id: UUID | None,
         exclude_session_id: UUID | None,
     ) -> list[EngineMessageScored]:
+        """Search messages using a similarity function."""
         assert agent_id and participant_id and search_partitions
         search_function = str(function)
         search_vector = Vector(search_partitions[0].embeddings)
+        limit_value = limit or 10
         messages = await self._fetch_all(
             PermanentMessageScored,
             f"""
@@ -277,12 +287,12 @@ class PgsqlMessageMemory(
                 search_user_messages,
                 str(session_id) if session_id else None,
                 str(exclude_session_id) if exclude_session_id else None,
-                limit,
+                limit_value,
             ),
         )
         engine_messages = self._to_engine_messages(
             messages,
-            limit=limit,
+            limit=limit_value,
             scored=True,
         )
         return engine_messages
