@@ -59,6 +59,9 @@ async def create_chat_completion(
         "Transformed chat completion request to engine input %r", messages
     )
 
+    if request.stream and (request.n or 1) > 1:
+        raise ValueError("Streaming multiple completions is not supported")
+
     response_id = uuid4()
     timestamp = int(time())
 
@@ -68,7 +71,7 @@ async def create_chat_completion(
         max_new_tokens=request.max_tokens,
         stop_strings=request.stop,
         top_p=request.top_p,
-        # num_return_sequences=request.n
+        num_return_sequences=request.n,
         response_format=(
             request.response_format.model_dump(
                 by_alias=True, exclude_none=True
@@ -128,15 +131,21 @@ async def create_chat_completion(
         )
 
     # Non streaming
-    message = ChatMessage(
-        role=str(MessageRole.ASSISTANT), content=await response.to_str()
-    )
+    text = await response.to_str()
+    choices = [
+        ChatCompletionChoice(
+            index=i,
+            message=ChatMessage(role=str(MessageRole.ASSISTANT), content=text),
+            finish_reason="stop",
+        )
+        for i in range(request.n or 1)
+    ]
     usage = ChatCompletionUsage()
     response = ChatCompletionResponse(
         id=str(response_id),
         created=timestamp,
         model=request.model,
-        choices=[ChatCompletionChoice(message=message, finish_reason="stop")],
+        choices=choices,
         usage=usage,
     )
     logger.debug(
