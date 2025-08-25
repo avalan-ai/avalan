@@ -49,6 +49,25 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(resp.choices[0].message.content, "ok")
         orch.assert_awaited_once()
 
+    async def test_create_chat_completion_multiple(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            n=3,
+        )
+        with patch("avalan.server.routers.chat.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        self.assertEqual(len(resp.choices), 3)
+        self.assertEqual([c.index for c in resp.choices], [0, 1, 2])
+        orch.assert_awaited_once()
+        settings = orch.await_args.kwargs["settings"]
+        self.assertEqual(settings.num_return_sequences, 3)
+
     async def test_dependency_get_orchestrator(self) -> None:
         req = type(
             "Req",
@@ -83,6 +102,19 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn('"content":"b"', chunks[1])
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
+
+    async def test_create_chat_completion_stream_multiple_raises(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+            n=2,
+        )
+        with self.assertRaises(ValueError):
+            await self.chat.create_chat_completion(req, logger, orch)
+        orch.assert_not_awaited()
 
     async def test_streaming_skips_event_tokens(self) -> None:
         from avalan.event import Event, EventType
