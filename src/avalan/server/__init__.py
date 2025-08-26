@@ -7,7 +7,11 @@ from ..utils import logger_replace
 from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 from logging import Logger
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from uvicorn import Server
 
 
 def agents_server(
@@ -46,7 +50,6 @@ def agents_server(
     Returns:
         Configured Uvicorn server instance.
     """
-
     assert (specs_path is None) ^ (
         settings is None
     ), "Provide either specs_path or settings, but not both"
@@ -160,7 +163,6 @@ def agents_server(
 
 def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
     """Store dependencies on the application state."""
-
     assert logger is not None
     assert orchestrator is not None
     app.state.logger = logger
@@ -169,7 +171,6 @@ def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
 
 def di_get_logger(request: Request) -> Logger:
     """Retrieve the application logger from the request."""
-
     assert hasattr(request.app.state, "logger")
     logger = request.app.state.logger
     assert isinstance(logger, Logger)
@@ -178,8 +179,7 @@ def di_get_logger(request: Request) -> Logger:
 
 def di_get_orchestrator(request: Request) -> Orchestrator:
     """Retrieve the orchestrator from the request."""
-
     assert hasattr(request.app.state, "orchestrator")
     orchestrator = request.app.state.orchestrator
-    assert isinstance(orchestrator, Orchestrator)
+    assert orchestrator is not None
     return orchestrator
