@@ -97,7 +97,7 @@ class AgentsServerTestCase(TestCase):
                         port=1,
                         reload=False,
                         specs_path=None,
-                        settings=None,
+                        settings=MagicMock(),
                         browser_settings=None,
                         prefix_mcp="/m",
                         prefix_openai="/o",

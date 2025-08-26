@@ -118,20 +118,20 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
                 Server.return_value = MagicMock()
 
                 with patch("avalan.server.logger_replace"):
-                    agents_server(
-                        hub=MagicMock(),
-                        name="srv",
-                        version="v",
-                        host="h",
-                        port=1,
-                        reload=False,
-                        specs_path=None,
-                        settings=None,
-                        browser_settings=None,
-                        prefix_mcp="/m",
-                        prefix_openai="/o",
-                        logger=logger,
-                    )
+                      agents_server(
+                          hub=MagicMock(),
+                          name="srv",
+                          version="v",
+                          host="h",
+                          port=1,
+                          reload=False,
+                          specs_path=None,
+                          settings=MagicMock(),
+                          browser_settings=None,
+                          prefix_mcp="/m",
+                          prefix_openai="/o",
+                          logger=logger,
+                      )
 
         self.list_tools = captured["list_fn"]
         self.Tool = Tool
@@ -263,20 +263,20 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                 captured["sse_fn"] = dummy_handler
 
                 with patch("avalan.server.logger_replace"):
-                    agents_server(
-                        hub=MagicMock(),
-                        name="srv",
-                        version="v",
-                        host="h",
-                        port=1,
-                        reload=False,
-                        specs_path=None,
-                        settings=None,
-                        browser_settings=None,
-                        prefix_mcp="/m",
-                        prefix_openai="/o",
-                        logger=logger,
-                    )
+                      agents_server(
+                          hub=MagicMock(),
+                          name="srv",
+                          version="v",
+                          host="h",
+                          port=1,
+                          reload=False,
+                          specs_path=None,
+                          settings=MagicMock(),
+                          browser_settings=None,
+                          prefix_mcp="/m",
+                          prefix_openai="/o",
+                          logger=logger,
+                      )
 
         self.sse_handler = captured["sse_fn"]
         self.sse_instance = sse_instance
