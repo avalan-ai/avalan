@@ -25,6 +25,29 @@ class DiHelpersTestCase(TestCase):
         self.assertIs(di_get_orchestrator(request), orch)
 
 
+class AgentsServerValidationTestCase(TestCase):
+    def test_requires_configuration(self) -> None:
+        logger = MagicMock(spec=Logger)
+        logger.handlers = []
+        logger.level = 0
+        logger.propagate = False
+        with self.assertRaises(AssertionError):
+            agents_server(
+                hub=MagicMock(),
+                name="srv",
+                version="v",
+                host="h",
+                port=1,
+                reload=False,
+                specs_path=None,
+                settings=None,
+                browser_settings=None,
+                prefix_mcp="/m",
+                prefix_openai="/o",
+                logger=logger,
+            )
+
+
 class CallToolTestCase(IsolatedAsyncioTestCase):
     async def test_call_tool_handler(self) -> None:
         FastAPI = MagicMock()
@@ -122,7 +145,7 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
                     port=1,
                     reload=False,
                     specs_path=None,
-                    settings=None,
+                    settings=MagicMock(),
                     browser_settings=None,
                     prefix_mcp="/m",
                     prefix_openai="/o",

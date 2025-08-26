@@ -7,7 +7,11 @@ from ..utils import logger_replace
 from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 from logging import Logger
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from uvicorn import Server
 
 
 def agents_server(
@@ -23,14 +27,40 @@ def agents_server(
     prefix_mcp: str,
     prefix_openai: str,
     logger: Logger,
-):
+) -> "Server":
+    """Build a configured Uvicorn server for Avalan agents.
+
+    Exactly one of ``specs_path`` or ``settings`` must be provided to
+    construct the orchestrator.
+
+    Args:
+        hub: Model hub used to load model data.
+        name: Human readable server name.
+        version: Server version string.
+        host: Host address to bind.
+        port: Port to listen on.
+        reload: Whether Uvicorn should reload on changes.
+        specs_path: Optional path to an agent specification file.
+        settings: Optional in-memory orchestrator settings.
+        browser_settings: Optional browser tool configuration.
+        prefix_mcp: URL prefix for MCP endpoints.
+        prefix_openai: URL prefix for OpenAI-compatible endpoints.
+        logger: Application logger.
+
+    Returns:
+        Configured Uvicorn server instance.
+    """
+    assert (specs_path is None) ^ (
+        settings is None
+    ), "Provide either specs_path or settings, but not both"
+
     from ..server.routers import chat
     from mcp.server.lowlevel.server import Server as MCPServer
     from mcp.server.sse import SseServerTransport
     from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
+    from os import environ
     from starlette.requests import Request
     from uvicorn import Config, Server
-    from os import environ
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -132,13 +162,24 @@ def agents_server(
 
 
 def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
+    """Store dependencies on the application state."""
+    assert logger is not None
+    assert orchestrator is not None
     app.state.logger = logger
     app.state.orchestrator = orchestrator
 
 
 def di_get_logger(request: Request) -> Logger:
-    return request.app.state.logger
+    """Retrieve the application logger from the request."""
+    assert hasattr(request.app.state, "logger")
+    logger = request.app.state.logger
+    assert isinstance(logger, Logger)
+    return logger
 
 
 def di_get_orchestrator(request: Request) -> Orchestrator:
-    return request.app.state.orchestrator
+    """Retrieve the orchestrator from the request."""
+    assert hasattr(request.app.state, "orchestrator")
+    orchestrator = request.app.state.orchestrator
+    assert orchestrator is not None
+    return orchestrator
