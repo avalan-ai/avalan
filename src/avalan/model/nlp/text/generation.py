@@ -4,6 +4,9 @@ from ....entities import (
     GenerationSettings,
     Input,
     Message,
+    MessageContent,
+    MessageContentImage,
+    MessageContentText,
     MessageRole,
     ProbabilityDistribution,
     TextGenerationLoaderClass,
@@ -370,8 +373,53 @@ class TextGenerationModel(BaseNLPModel):
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
         messages = self._messages(input, system_prompt, tool)
+
+        def _format_content(
+            content: str | MessageContent | list[MessageContent],
+        ) -> str | list[dict[str, object]]:
+            if isinstance(content, str):
+                return content
+
+            if isinstance(content, MessageContentText):
+                return content.text
+
+            if isinstance(content, MessageContentImage):
+                if self._tokenizer.chat_template:
+                    return [
+                        {"type": "image_url", "image_url": content.image_url}
+                    ]
+                return ""
+
+            if isinstance(content, list):
+                if self._tokenizer.chat_template:
+                    blocks: list[dict[str, object]] = []
+                    for c in content:
+                        if isinstance(c, MessageContentImage):
+                            blocks.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": c.image_url,
+                                }
+                            )
+                        else:
+                            assert isinstance(c, MessageContentText)
+                            blocks.append({"type": "text", "text": c.text})
+                    return blocks
+
+                texts = [
+                    c.text
+                    for c in content
+                    if isinstance(c, MessageContentText)
+                ]
+                return "\n".join(texts)
+
+            return str(content)
+
         template_messages = [
-            {"role": message.role, "content": message.content}
+            {
+                "role": message.role,
+                "content": _format_content(message.content),
+            }
             for message in messages
         ]
 
