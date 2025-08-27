@@ -50,6 +50,8 @@ def cache_download(
             model_id,
             tqdm_class=create_live_tqdm_class(progress_template),
             workers=workers,
+            local_dir=args.local_dir,
+            local_dir_use_symlinks=args.local_dir_symlinks,
         )
         console.print(theme.download_finished(model_id, path))
     except HubAccessDeniedException:

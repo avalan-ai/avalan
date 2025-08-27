@@ -1,5 +1,8 @@
-from avalan.cli.commands import get_model_settings
-from avalan.cli.commands import model as model_cmds
+from avalan.cli.commands import (
+    cache as cache_cmds,
+    get_model_settings,
+    model as model_cmds,
+)
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator import OrchestratorResponse
 from avalan.entities import (
@@ -120,6 +123,39 @@ class CliModelTestCase(TestCase):
         confirm.assert_not_called()
         cache_download.assert_called_once_with(
             args, self.console, self.theme, self.hub
+        )
+
+    def test_model_install_passes_download_options(self):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            model="m",
+            skip_hub_access_check=False,
+            workers=7,
+            local_dir="/ld",
+            local_dir_symlinks=True,
+        )
+        engine_uri = SimpleNamespace(vendor=None, password=None, user=None)
+        self.theme._ = lambda s: s
+        self.theme.download_progress.return_value = ("tpl",)
+        self.hub.cache_dir = "/cache"
+        self.hub.model.return_value = "model"
+        self.hub.download.return_value = "/path"
+        with (
+            patch.object(
+                model_cmds.ModelManager, "parse_uri", return_value=engine_uri
+            ),
+            patch.object(
+                cache_cmds, "create_live_tqdm_class", return_value="C"
+            ),
+        ):
+            model_cmds.model_install(args, self.console, self.theme, self.hub)
+
+        self.hub.download.assert_called_once_with(
+            "m",
+            tqdm_class="C",
+            workers=7,
+            local_dir="/ld",
+            local_dir_use_symlinks=True,
         )
 
     def test_model_uninstall_secret(self):
