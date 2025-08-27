@@ -4,6 +4,7 @@ from ....entities import (
     GenerationSettings,
     Input,
     Message,
+    MessageContentText,
     MessageRole,
     ProbabilityDistribution,
     TextGenerationLoaderClass,
@@ -371,7 +372,14 @@ class TextGenerationModel(BaseNLPModel):
         _l = self._log
         messages = self._messages(input, system_prompt, tool)
         template_messages = [
-            {"role": message.role, "content": message.content}
+            {
+                "role": message.role,
+                "content": (
+                    message.content.text
+                    if isinstance(message.content, MessageContentText)
+                    else message.content
+                ),
+            }
             for message in messages
         ]
 

@@ -6,6 +6,7 @@ from ...entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningToken,
 )
 from ...event import Event
 from ...server.entities import (
@@ -105,7 +106,9 @@ async def create_chat_completion(
 
         async def generate_chunks():
             async for token in response:
-                if isinstance(token, Event):
+                if isinstance(token, Event) or isinstance(
+                    token, ReasoningToken
+                ):
                     continue
 
                 choice = ChatCompletionChunkChoice(
