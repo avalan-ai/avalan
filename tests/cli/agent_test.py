@@ -201,6 +201,8 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             prefix_mcp="mcp",
             reload=False,
             backend="transformers",
+            id=None,
+            participant="pid",
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -227,6 +229,8 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             port=80,
             reload=False,
             logger=logger,
+            agent_id=None,
+            participant_id="pid",
         )
         server.serve.assert_awaited_once()
 
@@ -262,6 +266,8 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             tools_confirm=False,
+            id=None,
+            participant="pid",
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -300,6 +306,8 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             port=80,
             reload=False,
             logger=logger,
+            agent_id=None,
+            participant_id="pid",
         )
         server.serve.assert_awaited_once()
 
@@ -335,6 +343,8 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             tools_confirm=False,
+            id=None,
+            participant="pid",
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -375,6 +385,8 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             tools_confirm=False,
+            id=None,
+            participant="pid",
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -402,6 +414,8 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
             reload=False,
             backend="transformers",
             engine_uri=None,
+            id=None,
+            participant="pid",
         )
         hub = MagicMock()
         logger = MagicMock()

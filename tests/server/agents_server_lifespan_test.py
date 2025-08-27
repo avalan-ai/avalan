@@ -142,6 +142,8 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                 args, kwargs = loader.from_file.await_args
                 self.assertEqual(args[0], "path.json")
                 self.assertIn("agent_id", kwargs)
+                _, loader_kwargs = Loader.call_args
+                self.assertIn("participant_id", loader_kwargs)
                 orchestrator_cm.__aenter__.assert_awaited_once()
                 orchestrator_cm.__aexit__.assert_awaited_once()
                 self.assertIs(app.state.orchestrator, orchestrator)
@@ -234,3 +236,5 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                 args, kwargs = loader.from_settings.await_args
                 self.assertEqual(args[0], settings)
                 self.assertEqual(kwargs["browser_settings"], browser_settings)
+                _, loader_kwargs = Loader.call_args
+                self.assertIn("participant_id", loader_kwargs)

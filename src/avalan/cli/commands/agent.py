@@ -575,6 +575,8 @@ async def agent_serve(
 ) -> None:
     assert args.host and args.port
     specs_path = args.specifications_file
+    agent_id = getattr(args, "id", None)
+    participant_id = args.participant
     engine_uri = getattr(args, "engine_uri", None)
     assert not (
         specs_path and engine_uri
@@ -592,7 +594,7 @@ async def agent_serve(
         )
         settings = get_orchestrator_settings(
             args,
-            agent_id=uuid4(),
+            agent_id=agent_id or uuid4(),
             memory_recent=memory_recent,
             tools=(args.tool or []) + (getattr(args, "tools", None) or []),
         )
@@ -613,6 +615,8 @@ async def agent_serve(
         port=args.port,
         reload=args.reload,
         logger=logger,
+        agent_id=agent_id,
+        participant_id=participant_id,
     )
     await server.serve()
 
