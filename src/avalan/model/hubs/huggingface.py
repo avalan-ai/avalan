@@ -142,6 +142,8 @@ class HuggingfaceHub:
         *,
         workers: int = 8,
         tqdm_class: type[tqdm] | Callable[..., tqdm] | None = None,
+        local_dir: str | None = None,
+        local_dir_use_symlinks: bool | None = None,
     ) -> str:
         try:
             path = self._hf.snapshot_download(
@@ -150,6 +152,12 @@ class HuggingfaceHub:
                 tqdm_class=tqdm_class,
                 force_download=False,
                 max_workers=workers,
+                local_dir=local_dir,
+                local_dir_use_symlinks=(
+                    local_dir_use_symlinks
+                    if local_dir_use_symlinks is not None
+                    else False
+                ),
             )
             return path
         except GatedRepoError as e:

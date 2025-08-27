@@ -357,6 +357,17 @@ class CLI:
             type=int,
             help="How many download workers to use",
         )
+        model_install_parser.add_argument(
+            "--local-dir",
+            type=str,
+            help="Local directory to download the model to",
+        )
+        model_install_parser.add_argument(
+            "--local-dir-symlinks",
+            action="store_true",
+            default=None,
+            help="Use symlinks when downloading to local dir",
+        )
 
         # Model options shared by commands: memory embeddings, model
         model_options_parser = ArgumentParser(add_help=False)

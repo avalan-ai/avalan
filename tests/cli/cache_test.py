@@ -71,7 +71,11 @@ class CliCacheDeleteTestCase(unittest.TestCase):
 class CliCacheDownloadTestCase(unittest.TestCase):
     def setUp(self):
         self.args = Namespace(
-            model="m", skip_hub_access_check=False, workers=8
+            model="m",
+            skip_hub_access_check=False,
+            workers=8,
+            local_dir=None,
+            local_dir_symlinks=None,
         )
         self.console = MagicMock()
         self.theme = MagicMock()
@@ -84,6 +88,8 @@ class CliCacheDownloadTestCase(unittest.TestCase):
     def test_successful_download(self):
         self.hub.download.return_value = "/path"
         self.hub.can_access.return_value = True
+        self.args.local_dir = "/ld"
+        self.args.local_dir_symlinks = True
         with patch.object(
             cache_cmds, "create_live_tqdm_class", return_value="C"
         ) as cltc:
@@ -94,7 +100,11 @@ class CliCacheDownloadTestCase(unittest.TestCase):
         self.theme.download_start.assert_called_once_with("m")
         cltc.assert_called_once_with(("tpl",))
         self.hub.download.assert_called_once_with(
-            "m", tqdm_class="C", workers=8
+            "m",
+            tqdm_class="C",
+            workers=8,
+            local_dir="/ld",
+            local_dir_use_symlinks=True,
         )
         self.theme.download_finished.assert_called_once_with("m", "/path")
         self.theme.download_access_denied.assert_not_called()

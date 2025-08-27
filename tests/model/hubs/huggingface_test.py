@@ -125,6 +125,8 @@ class HuggingfaceHubTestCase(TestCase):
             tqdm_class=None,
             force_download=False,
             max_workers=8,
+            local_dir=None,
+            local_dir_use_symlinks=False,
         )
         self.hf_instance.snapshot_download.side_effect = GatedRepoError(
             "denied"
