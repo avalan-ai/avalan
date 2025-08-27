@@ -580,16 +580,33 @@ class CLI:
             settings_cls=BrowserToolSettings,
         )
 
-        agent_run_parser = agent_command_parsers.add_parser(
-            name="run",
-            description="Run an AI agent",
-            parents=[global_parser, model_inference_display_parser],
-        )
-        agent_run_parser.add_argument(
+        agent_common_parser = ArgumentParser(add_help=False)
+        agent_common_parser.add_argument(
             "specifications_file",
             type=str,
             nargs="?",
             help="File that holds the agent specifications",
+        )
+        agent_common_parser.add_argument(
+            "--id", type=str, help="Use given ID as the agent ID"
+        )
+        agent_common_parser.add_argument(
+            "--participant",
+            default=uuid4(),
+            help=(
+                "If specified, this is the participant ID interacting with "
+                "the agent"
+            ),
+        )
+
+        agent_run_parser = agent_command_parsers.add_parser(
+            name="run",
+            description="Run an AI agent",
+            parents=[
+                global_parser,
+                model_inference_display_parser,
+                agent_common_parser,
+            ],
         )
         agent_run_parser.add_argument(
             "--conversation",
@@ -605,9 +622,6 @@ class CLI:
                 "Reload agent when the specification file changes "
                 "(only with --conversation)"
             ),
-        )
-        agent_run_parser.add_argument(
-            "--id", type=str, help="Use given ID as the agent ID"
         )
         agent_session_group = agent_run_parser.add_mutually_exclusive_group()
         agent_session_group.add_argument(
@@ -634,14 +648,6 @@ class CLI:
             "--load-recent-messages-limit",
             type=int,
             help="If specified, load up to these many recent messages",
-        )
-        agent_run_parser.add_argument(
-            "--participant",
-            default=uuid4(),
-            help=(
-                "If specified, this is the participant ID interacting with "
-                "the agent"
-            ),
         )
         agent_run_parser.add_argument(
             "--stats",
@@ -686,13 +692,7 @@ class CLI:
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
             description="Serve an AI agent as an API endpoint",
-            parents=[global_parser],
-        )
-        agent_serve_parser.add_argument(
-            "specifications_file",
-            type=str,
-            nargs="?",
-            help="File that holds the agent specifications",
+            parents=[global_parser, agent_common_parser],
         )
         CLI._add_agent_server_arguments(agent_serve_parser)
         CLI._add_agent_settings_arguments(agent_serve_parser)
@@ -705,7 +705,7 @@ class CLI:
         agent_proxy_parser = agent_command_parsers.add_parser(
             name="proxy",
             description="Serve a proxy agent as an API endpoint",
-            parents=[global_parser],
+            parents=[global_parser, agent_common_parser],
         )
         CLI._add_agent_server_arguments(agent_proxy_parser)
         CLI._add_agent_settings_arguments(agent_proxy_parser)

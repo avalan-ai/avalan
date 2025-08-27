@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 from logging import Logger
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -27,6 +27,8 @@ def agents_server(
     prefix_mcp: str,
     prefix_openai: str,
     logger: Logger,
+    agent_id: UUID | None = None,
+    participant_id: UUID | None = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents.
 
@@ -46,6 +48,8 @@ def agents_server(
         prefix_mcp: URL prefix for MCP endpoints.
         prefix_openai: URL prefix for OpenAI-compatible endpoints.
         logger: Application logger.
+        agent_id: Optional agent identifier.
+        participant_id: Optional participant identifier.
 
     Returns:
         Configured Uvicorn server instance.
@@ -71,13 +75,13 @@ def agents_server(
             loader = OrchestratorLoader(
                 hub=hub,
                 logger=logger,
-                participant_id=uuid4(),
+                participant_id=participant_id or uuid4(),
                 stack=stack,
             )
             if specs_path:
                 orchestrator = await loader.from_file(
                     specs_path,
-                    agent_id=uuid4(),
+                    agent_id=agent_id or uuid4(),
                 )
             else:
                 orchestrator = await loader.from_settings(
