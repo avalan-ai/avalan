@@ -7,6 +7,7 @@ import torch
 from avalan.entities import (
     GenerationSettings,
     Message,
+    MessageContentText,
     MessageRole,
     TransformerEngineSettings,
 )
@@ -87,6 +88,38 @@ class TokenizeInputPrefixTestCase(TestCase):
         expected_prompt = "sys\n\nAssistant: a\n"
         model._tokenizer.assert_called_once_with(
             expected_prompt, add_special_tokens=True, return_tensors="pt"
+        )
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+
+class TokenizeInputContentTextTestCase(TestCase):
+    def test_message_content_text_handled(self) -> None:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+        )
+        model._model = MagicMock(device="cpu")
+        model._tokenizer = MagicMock(chat_template=None)
+        token_out = MagicMock()
+        token_out.to.return_value = token_out
+        model._tokenizer.return_value = token_out
+        model._log = MagicMock()
+
+        message = Message(
+            role=MessageRole.USER,
+            content=MessageContentText(type="text", text="hi"),
+        )
+
+        result = model._tokenize_input(message, None, context=None)
+
+        model._tokenizer.assert_called_once()
+        args, kwargs = model._tokenizer.call_args
+        self.assertTrue(args[0].endswith("hi\n"))
+        self.assertEqual(
+            kwargs, {"add_special_tokens": True, "return_tensors": "pt"}
         )
         token_out.to.assert_called_once_with("cpu")
         self.assertIs(result, token_out)
