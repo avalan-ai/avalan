@@ -91,6 +91,11 @@ class TemplateEngineAgent(EngineAgent):
     def _prepare_call(
         self, specification: Specification, input: str, **kwargs: Any
     ) -> Any:
+        if specification.system_prompt is not None:
+            kwargs.setdefault("settings", specification.settings)
+            kwargs.setdefault("system_prompt", specification.system_prompt)
+            return kwargs
+
         template_id = specification.template_id or "agent.md"
         template_vars = specification.template_vars or {}
         template_vars.setdefault("name", self._name)

@@ -124,6 +124,11 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         )
         self.assertEqual(result["system_prompt"], expected_prompt)
 
+    def test_prepare_call_system_prompt(self):
+        spec = Specification(role=None, goal=None, system_prompt="sys")
+        result = self.agent._prepare_call(spec, "hi")
+        self.assertEqual(result["system_prompt"], "sys")
+
 
 class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
     async def test_call_invokes_run_with_prepared_arguments(self):

@@ -6,7 +6,7 @@ from logging import Logger
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from os import chmod, geteuid
 from uuid import uuid4
-from unittest import IsolatedAsyncioTestCase, main
+from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 from avalan.tool.browser import BrowserToolSettings
 
@@ -467,6 +467,161 @@ backend = "onnx"
                     settings.sentence_model_engine_config, {"backend": "onnx"}
                 )
             await stack.aclose()
+
+
+class LoaderTomlVariantsTestCase(IsolatedAsyncioTestCase):
+    async def _run_loader(self, config: str) -> dict:
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            sentence_model = MagicMock()
+            sentence_model.__enter__.return_value = sentence_model
+
+            model_manager = MagicMock()
+            model_manager.__enter__.return_value = model_manager
+            model_manager.parse_uri.return_value = "uri_obj"
+            model_manager.get_engine_settings.return_value = "settings_obj"
+
+            memory = MagicMock()
+            tool = MagicMock()
+            browser_toolset = MagicMock()
+            event_manager = MagicMock()
+
+            with (
+                patch(
+                    "avalan.agent.loader.SentenceTransformerModel",
+                    return_value=sentence_model,
+                ),
+                patch("avalan.agent.loader.TextPartitioner"),
+                patch(
+                    "avalan.agent.loader.MemoryManager.create_instance",
+                    new=AsyncMock(return_value=memory),
+                ),
+                patch(
+                    "avalan.agent.loader.ModelManager",
+                    return_value=model_manager,
+                ),
+                patch(
+                    "avalan.agent.loader.DefaultOrchestrator",
+                    return_value="orch",
+                ) as orch_patch,
+                patch(
+                    "avalan.agent.loader.ToolManager.create_instance",
+                    return_value=tool,
+                ),
+                patch(
+                    "avalan.agent.loader.BrowserToolSet",
+                    return_value=browser_toolset,
+                ),
+                patch(
+                    "avalan.agent.loader.EventManager",
+                    return_value=event_manager,
+                ),
+            ):
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    disable_memory=True,
+                )
+
+                kwargs = orch_patch.call_args.kwargs
+            await stack.aclose()
+            return kwargs
+
+    async def test_agent_system_only(self):
+        config = """
+[agent]
+system = \"sys\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["system"], "sys")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["instructions"])
+        self.assertIsNone(kwargs["rules"])
+
+    async def test_agent_role_task_only(self):
+        config = """
+[agent]
+role = \"assistant\"
+task = \"do\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["role"], "assistant")
+        self.assertEqual(kwargs["task"], "do")
+        self.assertIsNone(kwargs["instructions"])
+        self.assertIsNone(kwargs["system"])
+
+    async def test_agent_full_definition(self):
+        config = """
+[agent]
+role = \"assistant\"
+task = \"do\"
+instructions = \"how\"
+rules = [\"r1\", \"r2\"]
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["role"], "assistant")
+        self.assertEqual(kwargs["task"], "do")
+        self.assertEqual(kwargs["instructions"], "how")
+        self.assertEqual(kwargs["rules"], ["r1", "r2"])
+        self.assertIsNone(kwargs["system"])
+
+
+class LoadJsonOrchestratorVariantsTestCase(TestCase):
+    def test_system_only(self):
+        agent_id = uuid4()
+        engine_uri = MagicMock()
+        engine_settings = MagicMock()
+        logger = MagicMock()
+        model_manager = MagicMock()
+        memory = MagicMock()
+        tool = MagicMock()
+        event_manager = MagicMock()
+
+        config = {"json": {"value": {"type": "string", "description": "v"}}}
+        agent_config = {"system": "sys"}
+
+        with patch("avalan.agent.loader.JsonOrchestrator") as orch_patch:
+            OrchestratorLoader._load_json_orchestrator(
+                agent_id=agent_id,
+                engine_uri=engine_uri,
+                engine_settings=engine_settings,
+                logger=logger,
+                model_manager=model_manager,
+                memory=memory,
+                tool=tool,
+                event_manager=event_manager,
+                config=config,
+                agent_config=agent_config,
+                call_options=None,
+                template_vars=None,
+            )
+            kwargs = orch_patch.call_args.kwargs
+            self.assertEqual(kwargs["system"], "sys")
+            self.assertIsNone(kwargs["task"])
+            self.assertIsNone(kwargs["instructions"])
 
     async def test_browser_debug_source(self):
         with TemporaryDirectory() as tmp:

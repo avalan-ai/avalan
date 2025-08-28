@@ -93,23 +93,35 @@ class JsonOrchestrator(Orchestrator):
         output: type | list[Property],
         *,
         role: str | None = None,
-        task: str,
-        instructions: str,
+        task: str | None = None,
+        instructions: str | None = None,
         name: str | None = None,
         rules: list[str] | None = [],
+        system: str | None = None,
         template_id: str | None = None,
         settings: TransformerEngineSettings | None = None,
         call_options: dict | None = None,
         template_vars: dict | None = None,
     ):
-        specification = JsonSpecification(
-            output=output,
-            role=role,
-            goal=Goal(task=task, instructions=[instructions]),
-            rules=rules,
-            template_id=template_id or JsonOrchestrator.DEFAULT_FILE_NAME,
-            template_vars=template_vars,
-        )
+        if system is not None:
+            specification = JsonSpecification(
+                output=output,
+                goal=None,
+                rules=rules,
+                system_prompt=system,
+                template_id=template_id or JsonOrchestrator.DEFAULT_FILE_NAME,
+                template_vars=template_vars,
+            )
+        else:
+            assert task is not None and instructions is not None
+            specification = JsonSpecification(
+                output=output,
+                role=role,
+                goal=Goal(task=task, instructions=[instructions]),
+                rules=rules,
+                template_id=template_id or JsonOrchestrator.DEFAULT_FILE_NAME,
+                template_vars=template_vars,
+            )
         super().__init__(
             logger,
             model_manager,
