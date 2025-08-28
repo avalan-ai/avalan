@@ -1,5 +1,5 @@
 <h1 align="center">avalan</h1>
-<h3 align="center">The multi-backend, multi-modal framework for effortless AI agent development, orchestration, and deployment</h3>
+<h3 align="center">The multi-backend, multi-modal framework for AI agent development, orchestration, and deployment</h3>
 
 <p align="center">
   <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
