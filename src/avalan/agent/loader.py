@@ -386,13 +386,22 @@ class OrchestratorLoader:
                 id=settings.agent_id,
                 name=settings.agent_config.get("name"),
                 role=(
-                    settings.agent_config["role"]
-                    if "role" in settings.agent_config
-                    else None
+                    None
+                    if "system" in settings.agent_config
+                    else settings.agent_config.get("role")
                 ),
-                task=settings.agent_config.get("task"),
-                instructions=settings.agent_config.get("instructions"),
+                task=(
+                    None
+                    if "system" in settings.agent_config
+                    else settings.agent_config.get("task")
+                ),
+                instructions=(
+                    None
+                    if "system" in settings.agent_config
+                    else settings.agent_config.get("instructions")
+                ),
                 rules=settings.agent_config.get("rules"),
+                system=settings.agent_config.get("system"),
                 settings=engine_settings,
                 call_options=settings.call_options,
                 template_vars=settings.template_vars,
@@ -418,12 +427,13 @@ class OrchestratorLoader:
         template_vars: dict | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
-        assert (
-            "instructions" in agent_config
-        ), "No instructions defined in agent section of configuration"
-        assert (
-            "task" in agent_config
-        ), "No task defined in agent section of configuration"
+        if "system" not in agent_config:
+            assert (
+                "instructions" in agent_config
+            ), "No instructions defined in agent section of configuration"
+            assert (
+                "task" in agent_config
+            ), "No task defined in agent section of configuration"
 
         properties: list[Property] = []
         for property_name in config.get("json", []):
@@ -448,10 +458,19 @@ class OrchestratorLoader:
             properties,
             id=agent_id,
             name=agent_config["name"] if "name" in agent_config else None,
-            role=agent_config.get("role"),
-            task=agent_config["task"],
-            instructions=agent_config["instructions"],
-            rules=agent_config["rules"] if "rules" in agent_config else None,
+            role=(
+                None if "system" in agent_config else agent_config.get("role")
+            ),
+            task=(
+                None if "system" in agent_config else agent_config.get("task")
+            ),
+            instructions=(
+                None
+                if "system" in agent_config
+                else agent_config.get("instructions")
+            ),
+            rules=agent_config.get("rules"),
+            system=agent_config.get("system"),
             settings=engine_settings,
             call_options=call_options,
             template_vars=template_vars,

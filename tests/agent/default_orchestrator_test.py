@@ -72,6 +72,42 @@ class DefaultOrchestratorInitTestCase(TestCase):
         self.assertEqual(op.specification.template_id, "tmpl")
         self.assertEqual(op.specification.template_vars, {"y": 2})
 
+    def test_initialization_with_system(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        tool = MagicMock(spec=ToolManager)
+        event_manager = MagicMock(spec=EventManager)
+
+        orch = DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role=None,
+            task=None,
+            instructions=None,
+            rules=None,
+            system="sys",
+        )
+
+        op = orch.operations[0]
+        self.assertEqual(op.specification.system_prompt, "sys")
+        self.assertIsNone(op.specification.role)
+        self.assertIsNone(op.specification.goal)
+
 
 class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
     def setUp(self):

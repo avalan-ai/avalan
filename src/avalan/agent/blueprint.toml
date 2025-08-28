@@ -2,6 +2,11 @@
 {% if orchestrator.agent_config.get('name') %}
 name = "{{ orchestrator.agent_config['name'] }}"
 {% endif %}
+{% if orchestrator.agent_config.get('system') %}
+system = """
+{{ orchestrator.agent_config['system'] | indent(4) }}
+"""
+{% endif %}
 {% if orchestrator.agent_config.get('role') %}
 role = """
 {{ orchestrator.agent_config['role'] | indent(4) }}

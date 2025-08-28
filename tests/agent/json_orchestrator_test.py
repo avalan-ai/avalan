@@ -80,6 +80,40 @@ class JsonOrchestratorInitTestCase(TestCase):
         self.assertEqual(op.specification.output_type, OutputType.JSON)
         self.assertEqual(op.specification.input_type, InputType.TEXT)
 
+    def test_initialization_with_system(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m_json",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        tool = MagicMock(spec=ToolManager)
+        event_manager = MagicMock(spec=EventManager)
+        settings = TransformerEngineSettings()
+
+        orch = JsonOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            ExampleOutput,
+            name="Agent",
+            system="sys",
+            settings=settings,
+        )
+
+        op = orch.operations[0]
+        self.assertEqual(op.specification.system_prompt, "sys")
+        self.assertIsNone(op.specification.goal)
+
 
 class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
     def setUp(self):

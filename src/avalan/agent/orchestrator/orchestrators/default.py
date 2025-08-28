@@ -24,23 +24,34 @@ class DefaultOrchestrator(Orchestrator):
         task: str | None,
         instructions: str | None,
         rules: list[str] | None,
+        system: str | None = None,
         template_id: str | None = None,
         settings: TransformerEngineSettings | None = None,
         call_options: dict | None = None,
         template_vars: dict | None = None,
         id: UUID | None = None,
     ):
-        specification = Specification(
-            role=role,
-            goal=(
-                Goal(task=task, instructions=[instructions])
-                if task and instructions
-                else None
-            ),
-            rules=rules,
-            template_id=template_id or "agent.md",
-            template_vars=template_vars,
-        )
+        if system is not None:
+            specification = Specification(
+                role=None,
+                goal=None,
+                system_prompt=system,
+                rules=rules,
+                template_id=template_id or "agent.md",
+                template_vars=template_vars,
+            )
+        else:
+            specification = Specification(
+                role=role,
+                goal=(
+                    Goal(task=task, instructions=[instructions])
+                    if task and instructions
+                    else None
+                ),
+                rules=rules,
+                template_id=template_id or "agent.md",
+                template_vars=template_vars,
+            )
         super().__init__(
             logger,
             model_manager,
