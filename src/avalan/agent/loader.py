@@ -82,6 +82,9 @@ class OrchestratorLoader:
             ), "No uri defined in engine section of configuration"
 
             agent_config = config["agent"]
+            assert not (
+                "user" in agent_config and "user_template" in agent_config
+            ), "user and user_template are mutually exclusive"
 
             assert (
                 "engine" in config
@@ -402,6 +405,8 @@ class OrchestratorLoader:
                 ),
                 rules=settings.agent_config.get("rules"),
                 system=settings.agent_config.get("system"),
+                user=settings.agent_config.get("user"),
+                user_template=settings.agent_config.get("user_template"),
                 settings=engine_settings,
                 call_options=settings.call_options,
                 template_vars=settings.template_vars,
@@ -471,6 +476,8 @@ class OrchestratorLoader:
             ),
             rules=agent_config.get("rules"),
             system=agent_config.get("system"),
+            user=agent_config.get("user"),
+            user_template=agent_config.get("user_template"),
             settings=engine_settings,
             call_options=call_options,
             template_vars=template_vars,

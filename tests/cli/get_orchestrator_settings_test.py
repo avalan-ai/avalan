@@ -40,6 +40,37 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
         )
 
+    def test_user_and_user_template(self):
+        args = Namespace(
+            name="a",
+            role=None,
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+            user="hi {{input}}",
+            user_template=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000004")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(result.agent_config["user"], "hi {{input}}")
+
+        args.user = None
+        args.user_template = "u.md"
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(result.agent_config["user_template"], "u.md")
+
     def test_overrides(self):
         args = Namespace(
             name="n",

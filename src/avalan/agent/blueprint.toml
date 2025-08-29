@@ -22,6 +22,14 @@ instructions = """
 {{ orchestrator.agent_config['instructions'] | indent(4) }}
 """
 {% endif %}
+{% if orchestrator.agent_config.get('user') %}
+user = """
+{{ orchestrator.agent_config['user'] | indent(4) }}
+"""
+{% endif %}
+{% if orchestrator.agent_config.get('user_template') %}
+user_template = "{{ orchestrator.agent_config['user_template'] }}"
+{% endif %}
 
 [memory]
 recent = {{ orchestrator.memory_recent | lower }}

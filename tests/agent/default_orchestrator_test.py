@@ -1,8 +1,8 @@
 from avalan.agent import Goal, InputType, OutputType, Specification
 from avalan.agent.orchestrator.orchestrators.default import DefaultOrchestrator
-from avalan.agent.renderer import TemplateEngineAgent
-from avalan.event.manager import EventManager
+from avalan.agent.renderer import Renderer, TemplateEngineAgent
 from avalan.event import EventType
+from avalan.event.manager import EventManager
 from avalan.entities import (
     EngineUri,
     MessageRole,
@@ -13,13 +13,15 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
 from avalan.model import TextGenerationResponse
-from logging import getLogger
+from dataclasses import asdict
+from json import dumps
+from logging import Logger, getLogger
 from avalan.model.manager import ModelManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
-from logging import Logger
-from unittest import TestCase, IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, AsyncMock, patch
+from tempfile import TemporaryDirectory
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 
@@ -235,3 +237,123 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         )
 
         memory.__exit__.assert_called_once()
+
+    async def test_user_string_rendering(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        memory.has_permanent_message = False
+        memory.has_recent_message = False
+        memory.__exit__ = MagicMock()
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = True
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        settings = TransformerEngineSettings()
+
+        engine = MagicMock()
+        engine.__enter__.return_value = engine
+        engine.__exit__.return_value = False
+        engine.model_id = "m"
+        engine.tokenizer = MagicMock()
+        model_manager.load_engine.return_value = engine
+
+        agent_mock = AsyncMock()
+        agent_mock.engine = engine
+        agent_mock.return_value = MagicMock(spec=TextGenerationResponse)
+
+        orch = DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role="assistant",
+            task="do",
+            instructions="something",
+            rules=None,
+            user="hello {{input}} {{name}}",
+            template_vars={"name": "Bob"},
+            settings=settings,
+        )
+        environment_hash = dumps(asdict(orch.operations[0].environment))
+        orch._engine_agents = {environment_hash: agent_mock}
+        await orch("world")
+
+        spec_arg, msg_arg = agent_mock.await_args.args
+        self.assertEqual(msg_arg.content, b"hello world Bob")
+
+    async def test_user_template_rendering(self):
+        with TemporaryDirectory() as tmp:
+            template_path = f"{tmp}/user.md"
+            with open(template_path, "w", encoding="utf-8") as fh:
+                fh.write("hi {{input}} {{name}}")
+
+            engine_uri = EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor=None,
+                model_id="m",
+                params={},
+            )
+            logger = MagicMock(spec=Logger)
+            model_manager = MagicMock(spec=ModelManager)
+            memory = MagicMock(spec=MemoryManager)
+            memory.has_permanent_message = False
+            memory.has_recent_message = False
+            memory.__exit__ = MagicMock()
+            tool = MagicMock(spec=ToolManager)
+            tool.is_empty = True
+            event_manager = MagicMock(spec=EventManager)
+            event_manager.trigger = AsyncMock()
+            settings = TransformerEngineSettings()
+
+            engine = MagicMock()
+            engine.__enter__.return_value = engine
+            engine.__exit__.return_value = False
+            engine.model_id = "m"
+            engine.tokenizer = MagicMock()
+            model_manager.load_engine.return_value = engine
+
+            agent_mock = AsyncMock()
+            agent_mock.engine = engine
+            agent_mock.return_value = MagicMock(spec=TextGenerationResponse)
+
+            renderer = Renderer(templates_path=tmp)
+
+            orch = DefaultOrchestrator(
+                engine_uri,
+                logger,
+                model_manager,
+                memory,
+                tool,
+                event_manager,
+                name="Agent",
+                role="assistant",
+                task="do",
+                instructions="something",
+                rules=None,
+                user_template="user.md",
+                template_vars={"name": "Ann"},
+                settings=settings,
+            )
+            orch._renderer = renderer
+            environment_hash = dumps(asdict(orch.operations[0].environment))
+            orch._engine_agents = {environment_hash: agent_mock}
+            await orch("earth")
+
+        spec_arg, msg_arg = agent_mock.await_args.args
+        self.assertEqual(msg_arg.content, "hi earth Ann")
