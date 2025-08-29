@@ -106,8 +106,11 @@ async def create_chat_completion(
 
         async def generate_chunks():
             async for token in response:
-                if isinstance(token, (Event, ReasoningToken)):
+                if isinstance(token, Event):
                     continue
+
+                if isinstance(token, ReasoningToken):
+                    token = token.token
 
                 choice = ChatCompletionChunkChoice(
                     delta=ChatCompletionChunkChoiceDelta(content=token)

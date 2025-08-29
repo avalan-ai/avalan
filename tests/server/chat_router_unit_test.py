@@ -140,12 +140,10 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 3)
         orch.assert_awaited_once()
 
-    async def test_streaming_skips_reasoning_tokens(self) -> None:
-        from avalan.entities import ReasoningToken
-
+    async def test_streaming_includes_reasoning_tokens(self) -> None:
         async def output_gen():
             yield "a"
-            yield ReasoningToken(token="r")
+            yield "r"
             yield "b"
 
         logger = AsyncMock(spec=Logger)
@@ -160,8 +158,9 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
-        self.assertIn('"content":"b"', chunks[1])
-        self.assertEqual(len(chunks), 3)
+        self.assertIn('"content":"r"', chunks[1])
+        self.assertIn('"content":"b"', chunks[2])
+        self.assertEqual(len(chunks), 4)
         orch.assert_awaited_once()
 
     async def test_message_content_string(self) -> None:

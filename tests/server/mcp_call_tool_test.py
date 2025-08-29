@@ -115,20 +115,20 @@ class MCPCallToolTestCase(IsolatedAsyncioTestCase):
             Server.return_value = MagicMock()
 
             with patch("avalan.server.logger_replace"):
-                  agents_server(
-                      hub=MagicMock(),
-                      name="srv",
-                      version="v",
-                      host="h",
-                      port=1,
-                      reload=False,
-                      specs_path=None,
-                      settings=MagicMock(),
-                      browser_settings=None,
-                      prefix_mcp="/m",
-                      prefix_openai="/o",
-                      logger=logger,
-                  )
+                agents_server(
+                    hub=MagicMock(),
+                    name="srv",
+                    version="v",
+                    host="h",
+                    port=1,
+                    reload=False,
+                    specs_path=None,
+                    settings=MagicMock(),
+                    browser_settings=None,
+                    prefix_mcp="/m",
+                    prefix_openai="/o",
+                    logger=logger,
+                )
 
         self.call_tool = captured["fn"]
         self.TextContent = TextContent
