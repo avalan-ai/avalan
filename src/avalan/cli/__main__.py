@@ -1662,6 +1662,10 @@ class CLI:
         group.add_argument(
             "--instructions", type=str, help="Agent instructions"
         )
+        group.add_argument("--user", type=str, help="User message template")
+        group.add_argument(
+            "--user-template", type=str, help="User message template file"
+        )
         group.add_argument(
             "--memory-recent",
             dest="memory_recent",

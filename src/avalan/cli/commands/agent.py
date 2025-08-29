@@ -38,6 +38,8 @@ def get_orchestrator_settings(
     role: str | None = None,
     task: str | None = None,
     instructions: str | None = None,
+    user: str | None = None,
+    user_template: str | None = None,
     engine_uri: str | None = None,
     memory_recent: bool | None = None,
     memory_permanent_message: str | None = None,
@@ -51,6 +53,10 @@ def get_orchestrator_settings(
     cache_strategy: GenerationCacheStrategy | None = None,
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
+    assert not (
+        (user or getattr(args, "user", None))
+        and (user_template or getattr(args, "user_template", None))
+    )
     memory_recent = (
         memory_recent
         if memory_recent is not None
@@ -98,6 +104,14 @@ def get_orchestrator_settings(
                     instructions
                     if instructions is not None
                     else args.instructions
+                ),
+                "user": (
+                    user if user is not None else getattr(args, "user", None)
+                ),
+                "user_template": (
+                    user_template
+                    if user_template is not None
+                    else getattr(args, "user_template", None)
                 ),
             }.items()
             if v is not None

@@ -47,6 +47,8 @@ class Orchestrator:
     _call_options: dict | None = None
     _last_engine_agent: EngineAgent | None = None
     _exit_memory: bool = True
+    _user: str | None
+    _user_template: str | None
 
     def __init__(
         self,
@@ -62,7 +64,10 @@ class Orchestrator:
         id: UUID | None = None,
         name: str | None = None,
         renderer: Renderer | None = None,
+        user: str | None = None,
+        user_template: str | None = None,
     ):
+        assert not (user and user_template)
         self._logger = logger
         self._model_manager = model_manager
         self._memory = memory
@@ -79,6 +84,8 @@ class Orchestrator:
         self._renderer = renderer or Renderer()
         self._total_operations = len(self._operations)
         self._call_options = call_options
+        self._user = user
+        self._user_template = user_template
 
     @property
     def engine_agent(self) -> EngineAgent | None:
@@ -182,6 +189,21 @@ class Orchestrator:
 
         if input_type == InputType.TEXT and isinstance(input, str):
             input = Message(role=MessageRole.USER, content=input)
+
+        if self._user_template or self._user:
+            if isinstance(input, Message):
+                assert isinstance(input.content, str)
+                render_vars = {"input": input.content}
+                if operation.specification.template_vars:
+                    render_vars.update(operation.specification.template_vars)
+                content = (
+                    self._renderer(self._user_template, **render_vars)
+                    if self._user_template
+                    else self._renderer.from_string(
+                        self._user, template_vars=render_vars
+                    )
+                )
+                input = Message(role=MessageRole.USER, content=content)
 
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}

@@ -25,6 +25,8 @@ class DefaultOrchestrator(Orchestrator):
         instructions: str | None,
         rules: list[str] | None,
         system: str | None = None,
+        user: str | None = None,
+        user_template: str | None = None,
         template_id: str | None = None,
         settings: TransformerEngineSettings | None = None,
         call_options: dict | None = None,
@@ -68,4 +70,6 @@ class DefaultOrchestrator(Orchestrator):
             call_options=call_options,
             id=id,
             name=name,
+            user=user,
+            user_template=user_template,
         )

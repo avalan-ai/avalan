@@ -588,6 +588,30 @@ uri = \"ai://local/model\"
         self.assertEqual(kwargs["rules"], ["r1", "r2"])
         self.assertIsNone(kwargs["system"])
 
+    async def test_agent_user_only(self):
+        config = """
+[agent]
+user = \"hello {{input}}\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["user"], "hello {{input}}")
+        self.assertIsNone(kwargs.get("user_template"))
+
+    async def test_agent_user_template_only(self):
+        config = """
+[agent]
+user_template = \"u.md\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["user_template"], "u.md")
+        self.assertIsNone(kwargs.get("user"))
+
 
 class LoadJsonOrchestratorVariantsTestCase(TestCase):
     def test_system_only(self):
