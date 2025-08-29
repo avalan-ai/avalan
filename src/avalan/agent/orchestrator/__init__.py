@@ -1,14 +1,16 @@
 from .. import (
+    AgentOperation,
     EngineEnvironment,
     InputType,
     NoOperationAvailableException,
-    AgentOperation,
+    Specification,
 )
 from ..engine import EngineAgent
 from ...entities import (
     EngineMessage as EngineMessage,
     Input,
     Message,
+    MessageContentText,
     MessageRole,
 )
 from .response.orchestrator_response import OrchestratorResponse
@@ -178,32 +180,7 @@ class Orchestrator:
             Event(type=EventType.START, payload={"step": self._operation_step})
         )
 
-        # Validate input
-        input_type = operation.specification.input_type
-        assert (
-            input_type != InputType.TEXT
-            or isinstance(input, str)
-            or isinstance(input, Message)
-            or isinstance(input, list)
-        )
-
-        if input_type == InputType.TEXT and isinstance(input, str):
-            input = Message(role=MessageRole.USER, content=input)
-
-        if self._user_template or self._user:
-            if isinstance(input, Message):
-                assert isinstance(input.content, str)
-                render_vars = {"input": input.content}
-                if operation.specification.template_vars:
-                    render_vars.update(operation.specification.template_vars)
-                content = (
-                    self._renderer(self._user_template, **render_vars)
-                    if self._user_template
-                    else self._renderer.from_string(
-                        self._user, template_vars=render_vars
-                    )
-                )
-                input = Message(role=MessageRole.USER, content=content)
+        messages = self._input_messages(operation.specification, input)
 
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}
@@ -212,7 +189,7 @@ class Orchestrator:
             Event(
                 type=EventType.ENGINE_RUN_BEFORE,
                 payload={
-                    "input": input,
+                    "input": messages,
                     "specification": operation.specification,
                 },
                 started=start,
@@ -223,7 +200,7 @@ class Orchestrator:
             "Orchestrator calling engine agent %s", str(engine_agent)
         )
         result = await engine_agent(
-            operation.specification, input, **engine_args
+            operation.specification, messages, **engine_args
         )
         self._logger.info(
             "Engine agent %s responded to orchestrator", str(engine_agent)
@@ -235,7 +212,7 @@ class Orchestrator:
                 type=EventType.ENGINE_RUN_AFTER,
                 payload={
                     "result": result,
-                    "input": input,
+                    "input": messages,
                     "specification": operation.specification,
                 },
                 started=start,
@@ -247,7 +224,7 @@ class Orchestrator:
         self._last_engine_agent = engine_agent
 
         return OrchestratorResponse(
-            input,
+            messages,
             result,
             engine_agent,
             operation,
@@ -317,3 +294,60 @@ class Orchestrator:
     async def sync_messages(self) -> None:
         if self._last_engine_agent:
             await self._last_engine_agent.sync_messages()
+
+    def _input_messages(
+        self,
+        specification: Specification,
+        input: Input
+    ) -> Message | list[Message]:
+        input_type = specification.input_type
+        assert (
+            input_type != InputType.TEXT
+            or isinstance(input, str)
+            or isinstance(input, Message)
+            or isinstance(input, list)
+        )
+
+        if input_type == InputType.TEXT and isinstance(input, str):
+            input = Message(role=MessageRole.USER, content=input)
+
+        if self._user_template or self._user:
+            message = (
+                input if isinstance(input, Message)
+                else input[-1] if (
+                    isinstance(input, list) and input
+                    and isinstance(input[-1], Message)
+                )
+                else None
+            )
+
+            if message and (
+                isinstance(message.content, str)
+                or isinstance(message.content, MessageContentText)
+            ):
+                render_vars = (
+                    specification.template_vars
+                    if specification.template_vars
+                    else {}
+                )
+                message_content = (
+                    message.content.text
+                        if isinstance(message.content, MessageContentText)
+                    else message.content
+                )
+                render_vars.update({"input": message_content})
+                content = (
+                    self._renderer(self._user_template, **render_vars)
+                    if self._user_template
+                    else self._renderer.from_string(
+                        self._user, template_vars=render_vars
+                    )
+                )
+                message = Message(role=message.role, content=content)
+
+                if isinstance(input, list):
+                    input[-1] = message
+                else:
+                    input = message
+
+        return input
