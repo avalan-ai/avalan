@@ -1,27 +1,32 @@
 import unittest
+from dataclasses import asdict
+from json import dumps
+from os.path import join
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
-from avalan.agent.orchestrator import Orchestrator
 from avalan.agent import (
     AgentOperation,
-    Specification,
     EngineEnvironment,
     InputType,
     NoOperationAvailableException,
+    Specification,
 )
+from avalan.agent.orchestrator import Orchestrator
+from avalan.agent.renderer import Renderer
 from avalan.entities import (
     EngineUri,
-    TransformerEngineSettings,
     Message,
+    MessageContentText,
+    MessageRole,
+    TransformerEngineSettings,
 )
+from avalan.event import EventType
+from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
-from avalan.event.manager import EventManager
-from avalan.event import EventType
-from uuid import uuid4
-from json import dumps
-from dataclasses import asdict
 
 
 class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
@@ -183,3 +188,125 @@ class OrchestratorAenterTestCase(unittest.IsolatedAsyncioTestCase):
         tpatch.assert_called_once()
         model_manager.load_engine.assert_called_once()
         self.assertEqual(orch.model_ids, {"m"})
+
+
+class OrchestratorUserTransformationOptionsTestCase(unittest.TestCase):
+    def _create_orchestrator(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        environment = EngineEnvironment(
+            engine_uri=engine_uri, settings=TransformerEngineSettings()
+        )
+        specification = Specification(template_vars={"name": "Bob"})
+        operation = AgentOperation(
+            specification=specification, environment=environment
+        )
+        orchestrator = Orchestrator(
+            MagicMock(),
+            MagicMock(spec=ModelManager),
+            MagicMock(spec=MemoryManager),
+            MagicMock(spec=ToolManager),
+            MagicMock(spec=EventManager),
+            [operation],
+            user="hello {{input}} {{name}}",
+        )
+        orchestrator._renderer = Renderer()
+        return orchestrator, specification
+
+    def _message(self, text: str) -> Message:
+        return Message(
+            role=MessageRole.USER,
+            content=MessageContentText(type="text", text=text),
+        )
+
+    def test_user_string_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        message = orchestrator._input_messages(specification, "world")
+        self.assertEqual(message.content, b"hello world Bob")
+
+    def test_user_list_strings_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        result = orchestrator._input_messages(specification, ["world"])
+        self.assertEqual(result, ["world"])
+
+    def test_user_message_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        msg = self._message("earth")
+        message = orchestrator._input_messages(specification, msg)
+        self.assertEqual(message.content, b"hello earth Bob")
+
+    def test_user_list_messages_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        msg = self._message("moon")
+        messages = orchestrator._input_messages(specification, [msg])
+        self.assertEqual(messages[0].content, b"hello moon Bob")
+
+
+class OrchestratorUserTemplateTransformationOptionsTestCase(unittest.TestCase):
+    def _create_orchestrator(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        environment = EngineEnvironment(
+            engine_uri=engine_uri, settings=TransformerEngineSettings()
+        )
+        specification = Specification(template_vars={"name": "Ann"})
+        operation = AgentOperation(
+            specification=specification, environment=environment
+        )
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with open(join(tmp.name, "user.md"), "w", encoding="utf-8") as fh:
+            fh.write("hi {{input}} {{name}}")
+        orchestrator = Orchestrator(
+            MagicMock(),
+            MagicMock(spec=ModelManager),
+            MagicMock(spec=MemoryManager),
+            MagicMock(spec=ToolManager),
+            MagicMock(spec=EventManager),
+            [operation],
+            user_template="user.md",
+        )
+        orchestrator._renderer = Renderer(templates_path=tmp.name)
+        return orchestrator, specification
+
+    def _message(self, text: str) -> Message:
+        return Message(
+            role=MessageRole.USER,
+            content=MessageContentText(type="text", text=text),
+        )
+
+    def test_user_template_string_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        message = orchestrator._input_messages(specification, "earth")
+        self.assertEqual(message.content, "hi earth Ann")
+
+    def test_user_template_list_strings_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        result = orchestrator._input_messages(specification, ["earth"])
+        self.assertEqual(result, ["earth"])
+
+    def test_user_template_message_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        msg = self._message("earth")
+        message = orchestrator._input_messages(specification, msg)
+        self.assertEqual(message.content, "hi earth Ann")
+
+    def test_user_template_list_messages_transformation(self):
+        orchestrator, specification = self._create_orchestrator()
+        msg = self._message("earth")
+        messages = orchestrator._input_messages(specification, [msg])
+        self.assertEqual(messages[0].content, "hi earth Ann")
