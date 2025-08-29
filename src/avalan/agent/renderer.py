@@ -97,7 +97,13 @@ class TemplateEngineAgent(EngineAgent):
             return kwargs
 
         template_id = specification.template_id or "agent.md"
-        template_vars = specification.template_vars or {}
+        template_vars = (
+            specification.template_vars.copy()
+            if specification.template_vars
+            else {}
+        )
+        if specification.settings and specification.settings.template_vars:
+            template_vars.update(specification.settings.template_vars)
         template_vars.setdefault("name", self._name)
         template_vars.setdefault(
             "roles",

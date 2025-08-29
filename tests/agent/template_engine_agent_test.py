@@ -1,6 +1,11 @@
 from avalan.agent import Goal, Role, Specification
 from avalan.agent.renderer import Renderer, TemplateEngineAgent
-from avalan.entities import EngineMessage, EngineUri, MessageRole
+from avalan.entities import (
+    EngineMessage,
+    EngineUri,
+    MessageRole,
+    GenerationSettings,
+)
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
@@ -94,6 +99,24 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             goal=Goal(task="do {{verb}}", instructions=["inst {{verb}}"]),
             rules=["rule {{verb}}"],
             template_vars={"verb": "run"},
+        )
+        result = self.agent._prepare_call(spec, "hi")
+        expected_prompt = self.renderer(
+            "agent.md",
+            name="Bob",
+            roles=[b"role run"],
+            task=b"do run",
+            instructions=[b"inst run"],
+            rules=[b"rule run"],
+        )
+        self.assertEqual(result["system_prompt"], expected_prompt)
+
+    def test_prepare_call_with_settings_template_vars(self):
+        spec = Specification(
+            role=Role(persona=["role {{verb}}"]),
+            goal=Goal(task="do {{verb}}", instructions=["inst {{verb}}"]),
+            rules=["rule {{verb}}"],
+            settings=GenerationSettings(template_vars={"verb": "run"}),
         )
         result = self.agent._prepare_call(spec, "hi")
         expected_prompt = self.renderer(

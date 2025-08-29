@@ -296,9 +296,7 @@ class Orchestrator:
             await self._last_engine_agent.sync_messages()
 
     def _input_messages(
-        self,
-        specification: Specification,
-        input: Input
+        self, specification: Specification, input: Input
     ) -> Message | list[Message]:
         input_type = specification.input_type
         assert (
@@ -313,12 +311,17 @@ class Orchestrator:
 
         if self._user_template or self._user:
             message = (
-                input if isinstance(input, Message)
-                else input[-1] if (
-                    isinstance(input, list) and input
-                    and isinstance(input[-1], Message)
+                input
+                if isinstance(input, Message)
+                else (
+                    input[-1]
+                    if (
+                        isinstance(input, list)
+                        and input
+                        and isinstance(input[-1], Message)
+                    )
+                    else None
                 )
-                else None
             )
 
             if message and (
@@ -326,13 +329,18 @@ class Orchestrator:
                 or isinstance(message.content, MessageContentText)
             ):
                 render_vars = (
-                    specification.template_vars
+                    specification.template_vars.copy()
                     if specification.template_vars
                     else {}
                 )
+                if (
+                    specification.settings
+                    and specification.settings.template_vars
+                ):
+                    render_vars.update(specification.settings.template_vars)
                 message_content = (
                     message.content.text
-                        if isinstance(message.content, MessageContentText)
+                    if isinstance(message.content, MessageContentText)
                     else message.content
                 )
                 render_vars.update({"input": message_content})

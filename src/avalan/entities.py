@@ -381,6 +381,10 @@ class GenerationSettings:
     chat_settings: ChatSettings = field(default_factory=ChatSettings)
     reasoning: ReasoningSettings = field(default_factory=ReasoningSettings)
 
+    # Templating ------------------------------------------------------------
+    # Additional variables available during prompt and message rendering
+    template_vars: dict | None = None
+
     # Response settings ------------------------------------------------------
     # How to format the model response
     response_format: dict | None = None
