@@ -1,14 +1,14 @@
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import OrchestratorSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.tool.browser import BrowserToolSettings
 from contextlib import AsyncExitStack
 from logging import Logger
-from tempfile import NamedTemporaryFile, TemporaryDirectory
 from os import chmod, geteuid
-from uuid import uuid4
-from unittest import IsolatedAsyncioTestCase, TestCase, main
+from tempfile import NamedTemporaryFile, TemporaryDirectory
+from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
-from avalan.tool.browser import BrowserToolSettings
+from uuid import uuid4
 
 
 class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
@@ -613,7 +613,7 @@ uri = \"ai://local/model\"
         self.assertIsNone(kwargs.get("user"))
 
 
-class LoadJsonOrchestratorVariantsTestCase(TestCase):
+class LoadJsonOrchestratorVariantsTestCase(IsolatedAsyncioTestCase):
     def test_system_only(self):
         agent_id = uuid4()
         engine_uri = MagicMock()
