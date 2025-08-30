@@ -99,6 +99,7 @@ class AgentsServerTestCase(TestCase):
                         specs_path=None,
                         settings=MagicMock(),
                         browser_settings=None,
+                        database_settings=None,
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,

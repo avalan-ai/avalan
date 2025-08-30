@@ -10,15 +10,16 @@ from ..entities import (
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..memory.partitioner.text import TextPartitioner
+from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.browser import BrowserToolSet, BrowserToolSettings
+from ..tool.code import CodeToolSet
+from ..tool.database import DatabaseToolSet, DatabaseToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
-from ..tool.code import CodeToolSet
-from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from contextlib import AsyncExitStack
 from logging import Logger, DEBUG, INFO
 from os import access, R_OK
@@ -217,24 +218,31 @@ class OrchestratorLoader:
                 log_events=True,
             )
 
-            tool_config = config.get("tool", {}).get("browser", {}).get("open")
-            if not tool_config and "browser" in config.get("tool", {}):
-                tool_config = config["tool"]["browser"]
+            tool_section = config.get("tool", {})
+            browser_config = tool_section.get("browser", {}).get("open")
+            if not browser_config and "browser" in tool_section:
+                browser_config = tool_section["browser"]
             browser_settings = None
-            if tool_config:
-                if "debug_source" in tool_config and isinstance(
-                    tool_config["debug_source"], str
+            if browser_config:
+                if "debug_source" in browser_config and isinstance(
+                    browser_config["debug_source"], str
                 ):
-                    tool_config["debug_source"] = open(
-                        tool_config["debug_source"]
+                    browser_config["debug_source"] = open(
+                        browser_config["debug_source"]
                     )
-                browser_settings = BrowserToolSettings(**tool_config)
+                browser_settings = BrowserToolSettings(**browser_config)
+
+            database_settings = None
+            database_config = tool_section.get("database")
+            if database_config:
+                database_settings = DatabaseToolSettings(**database_config)
 
             _l("Loaded agent from %s", path, is_debug=False)
 
             return await self.from_settings(
                 settings,
                 browser_settings=browser_settings,
+                database_settings=database_settings,
             )
 
     async def from_settings(
@@ -242,6 +250,7 @@ class OrchestratorLoader:
         settings: OrchestratorSettings,
         *,
         browser_settings: BrowserToolSettings | None = None,
+        database_settings: DatabaseToolSettings | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
 
@@ -335,6 +344,12 @@ class OrchestratorLoader:
             MathToolSet(namespace="math"),
             MemoryToolSet(memory, namespace="memory"),
         ]
+        if database_settings:
+            available_toolsets.append(
+                DatabaseToolSet(
+                    settings=database_settings, namespace="database"
+                )
+            )
 
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,

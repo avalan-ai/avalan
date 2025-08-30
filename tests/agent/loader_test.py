@@ -1,7 +1,6 @@
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import OrchestratorSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.tool.browser import BrowserToolSettings
 from contextlib import AsyncExitStack
 from logging import Logger
 from os import chmod, geteuid
@@ -9,6 +8,8 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+from avalan.tool.browser import BrowserToolSettings
+from avalan.tool.database import DatabaseToolSettings
 
 
 class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
@@ -310,6 +311,47 @@ engine = \"chromium\"
                 bs = bts_patch.call_args.kwargs["settings"]
                 self.assertIsInstance(bs, BrowserToolSettings)
                 self.assertEqual(bs.engine, "chromium")
+            await stack.aclose()
+
+    async def test_load_database_tool_settings(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.database]
+dsn = \"sqlite:///db.sqlite\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                )
+
+                dbs = lfs_patch.call_args.kwargs["database_settings"]
+                self.assertIsInstance(dbs, DatabaseToolSettings)
+                self.assertEqual(dbs.dsn, "sqlite:///db.sqlite")
             await stack.aclose()
 
     async def test_load_json_orchestrator(self):
@@ -697,6 +739,8 @@ debug_source = \"{debug_path}\"
                 self.assertIsNotNone(browser_settings.debug_source)
                 self.assertEqual(browser_settings.debug_source.read(), "debug")
                 browser_settings.debug_source.close()
+                dbs = lfs_patch.call_args.kwargs["database_settings"]
+                self.assertIsNone(dbs)
             await stack.aclose()
 
     async def test_json_settings_provided(self):
