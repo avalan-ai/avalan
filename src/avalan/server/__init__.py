@@ -3,6 +3,7 @@ from ..agent.orchestrator import Orchestrator
 from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.browser import BrowserToolSettings
+from ..tool.database import DatabaseToolSettings
 from ..utils import logger_replace
 from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
@@ -24,6 +25,7 @@ def agents_server(
     specs_path: str | None,
     settings: OrchestratorSettings | None,
     browser_settings: BrowserToolSettings | None,
+    database_settings: DatabaseToolSettings | None,
     prefix_mcp: str,
     prefix_openai: str,
     logger: Logger,
@@ -45,6 +47,7 @@ def agents_server(
         specs_path: Optional path to an agent specification file.
         settings: Optional in-memory orchestrator settings.
         browser_settings: Optional browser tool configuration.
+        database_settings: Optional database tool configuration.
         prefix_mcp: URL prefix for MCP endpoints.
         prefix_openai: URL prefix for OpenAI-compatible endpoints.
         logger: Application logger.
@@ -87,6 +90,7 @@ def agents_server(
                 orchestrator = await loader.from_settings(
                     settings,
                     browser_settings=browser_settings,
+                    database_settings=database_settings,
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
             di_set(app, logger=logger, orchestrator=orchestrator)

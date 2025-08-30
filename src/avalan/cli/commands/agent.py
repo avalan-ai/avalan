@@ -16,6 +16,7 @@ from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
+from ...tool.database import DatabaseToolSettings
 from argparse import Namespace
 from contextlib import AsyncExitStack
 from dataclasses import fields
@@ -288,9 +289,13 @@ async def agent_message_search(
                 browser_settings = get_tool_settings(
                     args, prefix="browser", settings_cls=BrowserToolSettings
                 )
+                database_settings = get_tool_settings(
+                    args, prefix="database", settings_cls=DatabaseToolSettings
+                )
                 orchestrator = await loader.from_settings(
                     settings,
                     browser_settings=browser_settings,
+                    database_settings=database_settings,
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
 
@@ -423,9 +428,13 @@ async def agent_run(
             browser_settings = get_tool_settings(
                 args, prefix="browser", settings_cls=BrowserToolSettings
             )
+            database_settings = get_tool_settings(
+                args, prefix="database", settings_cls=DatabaseToolSettings
+            )
             orchestrator = await loader.from_settings(
                 settings,
                 browser_settings=browser_settings,
+                database_settings=database_settings,
             )
         orchestrator.event_manager.add_listener(_event_listener)
 
@@ -601,6 +610,7 @@ async def agent_serve(
 
     settings: OrchestratorSettings | None = None
     browser_settings: BrowserToolSettings | None = None
+    database_settings: DatabaseToolSettings | None = None
 
     if not specs_path:
         memory_recent = (
@@ -615,6 +625,9 @@ async def agent_serve(
         browser_settings = get_tool_settings(
             args, prefix="browser", settings_cls=BrowserToolSettings
         )
+        database_settings = get_tool_settings(
+            args, prefix="database", settings_cls=DatabaseToolSettings
+        )
 
     server = agents_server(
         hub=hub,
@@ -625,6 +638,7 @@ async def agent_serve(
         specs_path=specs_path,
         settings=settings,
         browser_settings=browser_settings,
+        database_settings=database_settings,
         host=args.host,
         port=args.port,
         reload=args.reload,
@@ -714,6 +728,12 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         settings_cls=BrowserToolSettings,
         open_files=False,
     )
+    database_tool = get_tool_settings(
+        args,
+        prefix="database",
+        settings_cls=DatabaseToolSettings,
+        open_files=False,
+    )
 
     env = Environment(
         loader=FileSystemLoader(join(dirname(__file__), "..", "..", "agent")),
@@ -722,6 +742,8 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     )
     template = env.get_template("blueprint.toml")
     rendered = template.render(
-        orchestrator=settings, browser_tool=browser_tool
+        orchestrator=settings,
+        browser_tool=browser_tool,
+        database_tool=database_tool,
     )
     console.print(Syntax(rendered, "toml"))

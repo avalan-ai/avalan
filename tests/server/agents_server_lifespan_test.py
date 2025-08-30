@@ -125,6 +125,7 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                         specs_path="path.json",
                         settings=None,
                         browser_settings=None,
+                        database_settings=None,
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,
@@ -215,6 +216,7 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                         specs_path=None,
                         settings=settings,
                         browser_settings=browser_settings,
+                        database_settings=None,
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,
@@ -236,5 +238,6 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                 args, kwargs = loader.from_settings.await_args
                 self.assertEqual(args[0], settings)
                 self.assertEqual(kwargs["browser_settings"], browser_settings)
+                self.assertIsNone(kwargs["database_settings"])
                 _, loader_kwargs = Loader.call_args
                 self.assertIn("participant_id", loader_kwargs)
