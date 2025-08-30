@@ -62,3 +62,14 @@ skip_special_tokens = {{ orchestrator.call_options['skip_special_tokens'] | lowe
 {% endif %}
 {% endfor %}
 {% endif %}
+
+{% if database_tool %}
+[tool.database]
+{% for k, v in database_tool.items() %}
+{% if v is number %}
+{{ k }} = {{ v }}
+{% else %}
+{{ k }} = "{{ v }}"
+{% endif %}
+{% endfor %}
+{% endif %}

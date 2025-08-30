@@ -81,6 +81,7 @@ from transformers.utils import (
 from typing import get_args, Optional, get_origin, get_args as get_type_args
 from dataclasses import fields
 from ..tool.browser import BrowserToolSettings
+from ..tool.database import DatabaseToolSettings
 from uuid import uuid4
 from warnings import filterwarnings
 
@@ -579,6 +580,11 @@ class CLI:
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_message_search_parser,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+        )
 
         agent_common_parser = ArgumentParser(add_help=False)
         agent_common_parser.add_argument(
@@ -688,6 +694,11 @@ class CLI:
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_run_parser,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+        )
 
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
@@ -701,6 +712,11 @@ class CLI:
             prefix="browser",
             settings_cls=BrowserToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_serve_parser,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+        )
 
         agent_proxy_parser = agent_command_parsers.add_parser(
             name="proxy",
@@ -713,6 +729,11 @@ class CLI:
             agent_proxy_parser,
             prefix="browser",
             settings_cls=BrowserToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            agent_proxy_parser,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
         )
 
         agent_init_parser = agent_command_parsers.add_parser(

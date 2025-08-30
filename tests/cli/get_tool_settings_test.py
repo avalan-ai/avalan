@@ -5,6 +5,7 @@ from tempfile import NamedTemporaryFile
 
 from avalan.cli.commands import agent as agent_cmds
 from avalan.tool.browser import BrowserToolSettings
+from avalan.tool.database import DatabaseToolSettings
 
 
 class GetToolSettingsTestCase(unittest.TestCase):
@@ -63,3 +64,11 @@ class GetToolSettingsTestCase(unittest.TestCase):
             open_files=False,
         )
         self.assertEqual(settings.engine, "chromium")
+
+    def test_database_settings(self):
+        args = Namespace(tool_database_dsn="sqlite:///db.sqlite")
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="database", settings_cls=DatabaseToolSettings
+        )
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.dsn, "sqlite:///db.sqlite")

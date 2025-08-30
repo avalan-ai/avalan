@@ -1,9 +1,10 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 from argparse import Namespace
 from uuid import uuid4
 from tempfile import NamedTemporaryFile
+from dataclasses import asdict, dataclass
 
 from rich.syntax import Syntax
 
@@ -39,6 +40,7 @@ from avalan.entities import (
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
 from avalan.tool.browser import BrowserToolSettings
+from avalan.tool.database import DatabaseToolSettings
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -216,22 +218,23 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             ) as asrv:
                 await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
-        asrv.assert_called_once_with(
-            hub=hub,
-            name="name",
-            version="1.0",
-            prefix_openai="oa",
-            prefix_mcp="mcp",
-            specs_path=spec.name,
-            settings=None,
-            browser_settings=None,
-            host="0.0.0.0",
-            port=80,
-            reload=False,
-            logger=logger,
-            agent_id=None,
-            participant_id="pid",
-        )
+            asrv.assert_called_once_with(
+                hub=hub,
+                name="name",
+                version="1.0",
+                prefix_openai="oa",
+                prefix_mcp="mcp",
+                specs_path=spec.name,
+                settings=None,
+                browser_settings=None,
+                database_settings=None,
+                host="0.0.0.0",
+                port=80,
+                reload=False,
+                logger=logger,
+                agent_id=None,
+                participant_id="pid",
+            )
         server.serve.assert_awaited_once()
 
     async def test_agent_serve_from_settings(self):
@@ -281,7 +284,9 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "get_orchestrator_settings", return_value=settings
             ) as gos,
             patch.object(
-                agent_cmds, "get_tool_settings", return_value=browser_settings
+                agent_cmds,
+                "get_tool_settings",
+                side_effect=[browser_settings, None],
             ) as gts,
             patch.object(
                 agent_cmds, "agents_server", return_value=server
@@ -290,8 +295,13 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
         gos.assert_called_once()
-        gts.assert_called_once_with(
-            args, prefix="browser", settings_cls=BrowserToolSettings
+        gts.assert_has_calls(
+            [
+                call(args, prefix="browser", settings_cls=BrowserToolSettings),
+                call(
+                    args, prefix="database", settings_cls=DatabaseToolSettings
+                ),
+            ]
         )
         asrv.assert_called_once_with(
             hub=hub,
@@ -302,6 +312,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             specs_path=None,
             settings=settings,
             browser_settings=browser_settings,
+            database_settings=None,
             host="0.0.0.0",
             port=80,
             reload=False,
@@ -499,17 +510,26 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme._ = lambda s: s
 
+        @dataclass(frozen=True, kw_only=True, slots=True)
+        class PatchedDatabaseToolSettings(DatabaseToolSettings):
+            def items(self):
+                return asdict(self).items()
+
         with (
             patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
             patch.object(
                 agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
             ),
+            patch.object(
+                agent_cmds, "DatabaseToolSettings", PatchedDatabaseToolSettings
+            ),
         ):
             await agent_cmds.agent_init(args, console, theme)
 
         output = console.print.call_args.args[0].code
         self.assertNotIn("[tool.browser.open]", output)
+        self.assertNotIn("[tool.database]", output)
 
     async def test_agent_init_tool_settings_output(self):
         args = Namespace(
@@ -539,11 +559,19 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme._ = lambda s: s
 
+        @dataclass(frozen=True, kw_only=True, slots=True)
+        class PatchedDatabaseToolSettings(DatabaseToolSettings):
+            def items(self):
+                return asdict(self).items()
+
         with (
             patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
             patch.object(
                 agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+            patch.object(
+                agent_cmds, "DatabaseToolSettings", PatchedDatabaseToolSettings
             ),
         ):
             await agent_cmds.agent_init(args, console, theme)
@@ -552,6 +580,53 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[tool.browser.open]", output)
         self.assertIn('engine = "chromium"', output)
         self.assertIn("search = true", output)
+
+    async def test_agent_init_database_tool_settings_output(self):
+        args = Namespace(
+            name="N",
+            role="R",
+            task="T",
+            instructions="I",
+            memory_recent=True,
+            memory_permanent_message="",
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=True,
+            tool=None,
+            tool_database_dsn="sqlite:///db.sqlite",
+            backend="transformers",
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        @dataclass(frozen=True, kw_only=True, slots=True)
+        class PatchedDatabaseToolSettings(DatabaseToolSettings):
+            def items(self):
+                return asdict(self).items()
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
+            patch.object(
+                agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+            patch.object(
+                agent_cmds, "DatabaseToolSettings", PatchedDatabaseToolSettings
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("[tool.database]", output)
+        self.assertIn('dsn = "sqlite:///db.sqlite"', output)
 
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
@@ -1049,6 +1124,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(settings.call_options["skip_special_tokens"])
         browser_settings = fs_patch.call_args.kwargs["browser_settings"]
         self.assertIsNone(browser_settings)
+        dbs = fs_patch.call_args.kwargs["database_settings"]
+        self.assertIsNone(dbs)
         ff_patch.assert_not_called()
 
     async def test_run_sets_hidden_states(self):
@@ -1147,6 +1224,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bs.debug)
         self.assertTrue(bs.search)
         self.assertEqual(bs.search_context, 5)
+        dbs = fs_patch.call_args.kwargs["database_settings"]
+        self.assertIsNone(dbs)
 
     async def test_run_start_session_and_print_recent(self):
         self.args.session = None
