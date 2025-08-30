@@ -4,9 +4,9 @@ from abc import ABC
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from sqlalchemy import inspect, text
-from sqlalchemy.engine.base import Connection
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -24,23 +24,17 @@ class Table:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class DatabaseToolSettings(dict):
+class DatabaseToolSettings:
     dsn: str
-
-    def __post_init__(self):
-        self["dsn"] = self.dsn
 
 
 class DatabaseTool(ABC):
     @staticmethod
     def _schemas(
         connection: Connection, inspector: Inspector
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str | None, list[str | None]]:
         default_schema = inspector.default_schema_name
-        dialect = connection.dialect.name
-
-        if dialect == "postgresql":
-            # all non-system schemas in this DB
+        if connection.dialect.name == "postgresql":
             sys = {"information_schema", "pg_catalog"}
             schemas = [
                 s
@@ -68,57 +62,51 @@ class DatabaseInspectTool(Tool):
         The table schema.
     """
 
-    def __init__(
-        self,
-        settings: DatabaseToolSettings,
-    ) -> None:
+    def __init__(self, settings: DatabaseToolSettings) -> None:
         super().__init__()
         self._settings = settings
         self.__name__ = "inspect"
 
     async def __call__(
-        self,
-        table_name: str,
-        schema: str | None = None
+        self, table_name: str, schema: str | None = None
     ) -> Table:
-        engine = create_async_engine(self._settings.dsn)
-
+        engine: AsyncEngine | None = getattr(self, "_client", None)
+        own_engine = engine is None
+        if own_engine:
+            engine = create_async_engine(
+                self._settings.dsn, pool_pre_ping=True
+            )
         try:
             async with engine.connect() as conn:
-                tables = await conn.run_sync(
+                return await conn.run_sync(
                     DatabaseInspectTool._collect,
                     schema=schema,
-                    table_name=table_name
+                    table_name=table_name,
                 )
         finally:
-            await engine.dispose()
-        return tables
+            if own_engine:
+                await engine.dispose()
 
     @staticmethod
     def _collect(
-        connection: Connection,
-        *,
-        schema: str | None,
-        table_name: str
-    ):
+        connection: Connection, *, schema: str | None, table_name: str
+    ) -> Table:
         inspector = inspect(connection)
-        default_schema, schemas = DatabaseTool._schemas(connection, inspector)
-        if not schema:
-            schema = default_schema
+        default_schema, _ = DatabaseTool._schemas(connection, inspector)
+        sch = schema or default_schema
 
         columns = {
             c["name"]: str(c["type"])
-            for c in inspector.get_columns(table_name, schema=schema)
+            for c in inspector.get_columns(table_name, schema=sch)
         }
 
         fkeys: list[ForeignKey] = []
-        for fk in inspector.get_foreign_keys(table_name, schema=schema):
-            schema = fk.get("referred_schema")
-            table = fk["referred_table"]
+        for fk in inspector.get_foreign_keys(table_name, schema=sch):
+            ref_schema = fk.get("referred_schema")
             ref_table = (
-                f"{schema}.{table}"
-                if schema
-                else None
+                f"{ref_schema}.{fk['referred_table']}"
+                if ref_schema
+                else fk["referred_table"]
             )
             for source, target in zip(
                 fk.get("constrained_columns", []),
@@ -126,19 +114,16 @@ class DatabaseInspectTool(Tool):
             ):
                 fkeys.append(
                     ForeignKey(
-                        field=source,
-                        ref_table=ref_table,
-                        ref_field=target,
+                        field=source, ref_table=ref_table, ref_field=target
                     )
                 )
 
         name = (
             table_name
-            if schema in (None, default_schema)
-            else f"{schema}.{table_name}"
+            if sch in (None, default_schema)
+            else f"{sch}.{table_name}"
         )
-        table = Table(name=name, columns=columns, foreign_keys=fkeys)
-        return table
+        return Table(name=name, columns=columns, foreign_keys=fkeys)
 
 
 class DatabaseRunTool(Tool):
@@ -152,24 +137,27 @@ class DatabaseRunTool(Tool):
         The SQL execution results.
     """
 
-    def __init__(
-        self,
-        settings: DatabaseToolSettings,
-    ) -> None:
+    def __init__(self, settings: DatabaseToolSettings) -> None:
         super().__init__()
         self._settings = settings
         self.__name__ = "run"
 
     async def __call__(self, sql: str) -> list[dict]:
-        engine = create_async_engine(self._settings.dsn)
-
+        engine: AsyncEngine | None = getattr(self, "_client", None)
+        own_engine = engine is None
+        if own_engine:
+            engine = create_async_engine(
+                self._settings.dsn, pool_pre_ping=True
+            )
         try:
-            async with engine.connect() as conn:
+            async with engine.begin() as conn:
                 result = await conn.execute(text(sql))
-                rows = result.mappings().all()
-                return [dict(row) for row in rows]
+                if result.returns_rows:
+                    return [dict(row) for row in result.mappings().all()]
+                return []
         finally:
-            await engine.dispose()
+            if own_engine:
+                await engine.dispose()
 
 
 class DatabaseTablesTool(Tool):
@@ -180,38 +168,33 @@ class DatabaseTablesTool(Tool):
         A list of table names indexed by schema.
     """
 
-    def __init__(
-        self,
-        settings: DatabaseToolSettings,
-    ) -> None:
+    def __init__(self, settings: DatabaseToolSettings) -> None:
         super().__init__()
         self._settings = settings
         self.__name__ = "tables"
 
-    async def __call__(self) -> dict[str, list[str]]:
-        engine = create_async_engine(self._settings.dsn)
-
+    async def __call__(self) -> dict[str | None, list[str]]:
+        engine: AsyncEngine | None = getattr(self, "_client", None)
+        own_engine = engine is None
+        if own_engine:
+            engine = create_async_engine(
+                self._settings.dsn, pool_pre_ping=True
+            )
         try:
             async with engine.connect() as conn:
-                tables = await conn.run_sync(DatabaseTablesTool._collect)
+                return await conn.run_sync(DatabaseTablesTool._collect)
         finally:
-            await engine.dispose()
-        return tables
+            if own_engine:
+                await engine.dispose()
 
     @staticmethod
-    def _collect(connection: Connection) -> dict[str, list[str]]:
+    def _collect(connection: Connection) -> dict[str | None, list[str]]:
         inspector = inspect(connection)
         _, schemas = DatabaseTool._schemas(connection, inspector)
-
-        tables: dict[str, list[str]] = {}
-        for schema in schemas:
-            if schema not in tables:
-                tables[schema] = []
-            tables[schema].extend([
-                table_name
-                for table_name in inspector.get_table_names(schema=schema)
-            ])
-        return tables
+        return {
+            schema: inspector.get_table_names(schema=schema)
+            for schema in schemas
+        }
 
 
 class DatabaseToolSet(ToolSet):
@@ -223,19 +206,30 @@ class DatabaseToolSet(ToolSet):
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
     ):
-        assert settings
+        self._settings = settings
+        self._engine: AsyncEngine | None = None
         tools = [
             DatabaseInspectTool(settings),
             DatabaseRunTool(settings),
-            DatabaseTablesTool(settings)
+            DatabaseTablesTool(settings),
         ]
-        return super().__init__(
+        super().__init__(
             exit_stack=exit_stack, namespace=namespace, tools=tools
         )
 
     @override
     async def __aenter__(self) -> "DatabaseToolSet":
-        self._client = await self._exit_stack.enter_async_context(self._client)
+        self._engine = create_async_engine(
+            self._settings.dsn, pool_pre_ping=True
+        )
         for i, tool in enumerate(self._tools):
-            self._tools[i] = tool.with_client(self._client)
+            self._tools[i] = tool.with_client(self._engine)
         return await super().__aenter__()
+
+    @override
+    async def __aexit__(self, exc_type, exc, tb):
+        try:
+            if self._engine is not None:
+                await self._engine.dispose()
+        finally:
+            return await super().__aexit__(exc_type, exc, tb)
