@@ -28,7 +28,22 @@ class EventManager:
     ) -> None:
         types = list(event_types) if event_types else list(EventType)
         for event_type in types:
-            self._listeners[event_type].append(listener)
+            listeners = self._listeners[event_type]
+            if listener not in listeners:
+                listeners.append(listener)
+
+    def remove_listener(
+        self,
+        listener: Listener,
+        event_types: Iterable[EventType] | None = None,
+    ) -> None:
+        types = list(event_types) if event_types else list(EventType)
+        for event_type in types:
+            listeners = self._listeners.get(event_type)
+            if listeners and listener in listeners:
+                listeners.remove(listener)
+                if not listeners:
+                    self._listeners.pop(event_type)
 
     async def trigger(self, event: Event) -> None:
         self._history.append(event)
@@ -39,11 +54,14 @@ class EventManager:
             if iscoroutine(result):
                 await result
 
-    async def listen(self, stop_signal: EventSignal, timeout: float = 0.2):
+    async def listen(
+        self, stop_signal: EventSignal | None = None, timeout: float = 0.2
+    ):
         while True:
             try:
-                evt = await wait_for(self._queue.get(), timeout=timeout)
-                yield evt
+                yield await wait_for(self._queue.get(), timeout=timeout)
             except TimeoutError:
-                if stop_signal.is_set() and self._queue.empty():
+                if self._queue.empty() and (
+                    stop_signal is None or stop_signal.is_set()
+                ):
                     break

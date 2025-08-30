@@ -64,6 +64,45 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         await task
         self.assertEqual(events, [])
 
+    async def test_add_listener_once(self):
+        manager = EventManager()
+        count = 0
+
+        def listener(event: Event):
+            nonlocal count
+            count += 1
+
+        manager.add_listener(listener, [EventType.START])
+        manager.add_listener(listener, [EventType.START])
+        await manager.trigger(Event(type=EventType.START))
+        self.assertEqual(count, 1)
+
+    async def test_remove_listener(self):
+        manager = EventManager()
+        called: list[EventType] = []
+
+        def listener(event: Event):
+            called.append(event.type)
+
+        manager.add_listener(listener)
+        await manager.trigger(Event(type=EventType.START))
+        manager.remove_listener(listener)
+        await manager.trigger(Event(type=EventType.END))
+        self.assertEqual(called, [EventType.START])
+
+    async def test_listen_without_stop_signal(self):
+        manager = EventManager()
+        events: list[Event] = []
+
+        async def iterate():
+            async for event in manager.listen(stop_signal=None, timeout=0.01):
+                events.append(event)
+
+        task = asyncio.create_task(iterate())
+        await asyncio.sleep(0.02)
+        self.assertTrue(task.done())
+        self.assertEqual(events, [])
+
 
 if __name__ == "__main__":
     main()
