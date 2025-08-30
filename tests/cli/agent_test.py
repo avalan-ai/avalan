@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 from argparse import Namespace
 from uuid import uuid4
 from tempfile import NamedTemporaryFile
+from dataclasses import asdict, dataclass
 
 from rich.syntax import Syntax
 
@@ -509,11 +510,19 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme._ = lambda s: s
 
+        @dataclass(frozen=True, kw_only=True, slots=True)
+        class PatchedDatabaseToolSettings(DatabaseToolSettings):
+            def items(self):
+                return asdict(self).items()
+
         with (
             patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
             patch.object(
                 agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+            patch.object(
+                agent_cmds, "DatabaseToolSettings", PatchedDatabaseToolSettings
             ),
         ):
             await agent_cmds.agent_init(args, console, theme)
@@ -550,11 +559,19 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme._ = lambda s: s
 
+        @dataclass(frozen=True, kw_only=True, slots=True)
+        class PatchedDatabaseToolSettings(DatabaseToolSettings):
+            def items(self):
+                return asdict(self).items()
+
         with (
             patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
             patch.object(
                 agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+            patch.object(
+                agent_cmds, "DatabaseToolSettings", PatchedDatabaseToolSettings
             ),
         ):
             await agent_cmds.agent_init(args, console, theme)
@@ -590,11 +607,19 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme._ = lambda s: s
 
+        @dataclass(frozen=True, kw_only=True, slots=True)
+        class PatchedDatabaseToolSettings(DatabaseToolSettings):
+            def items(self):
+                return asdict(self).items()
+
         with (
             patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
             patch.object(
                 agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+            patch.object(
+                agent_cmds, "DatabaseToolSettings", PatchedDatabaseToolSettings
             ),
         ):
             await agent_cmds.agent_init(args, console, theme)

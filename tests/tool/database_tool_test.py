@@ -11,7 +11,7 @@ from avalan.tool.database import (
 )
 
 
-def dummy_create_async_engine(dsn: str):
+def dummy_create_async_engine(dsn: str, **kwargs):
     engine = create_engine(dsn)
 
     class DummyAsyncConn:
@@ -45,6 +45,9 @@ def dummy_create_async_engine(dsn: str):
             self.engine = engine
 
         def connect(self):
+            return DummyConnCtx(self.engine)
+
+        def begin(self):
             return DummyConnCtx(self.engine)
 
         async def dispose(self):
