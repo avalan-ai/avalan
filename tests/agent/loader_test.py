@@ -1213,6 +1213,107 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     )
                 await stack.aclose()
 
+    async def test_database_tool_from_settings(self):
+        hub = MagicMock(spec=HuggingfaceHub)
+        logger = MagicMock(spec=Logger)
+        stack = AsyncExitStack()
+
+        sentence_model = MagicMock()
+        sentence_model.__enter__.return_value = sentence_model
+
+        model_manager = MagicMock()
+        model_manager.__enter__.return_value = model_manager
+        model_manager.parse_uri.return_value = "uri_obj"
+        model_manager.get_engine_settings.return_value = "settings_obj"
+
+        memory = MagicMock()
+        tool = MagicMock()
+        tool.__aenter__.return_value = tool
+        event_manager = MagicMock()
+
+        settings = OrchestratorSettings(
+            agent_id=uuid4(),
+            orchestrator_type=None,
+            agent_config={"role": "assistant"},
+            uri="ai://local/model",
+            engine_config={},
+            tools=None,
+            call_options=None,
+            template_vars=None,
+            memory_permanent_message=None,
+            permanent_memory=None,
+            memory_recent=False,
+            sentence_model_id=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            sentence_model_engine_config=None,
+            sentence_model_max_tokens=500,
+            sentence_model_overlap_size=125,
+            sentence_model_window_size=250,
+            json_config=None,
+            log_events=True,
+        )
+
+        db_settings = DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+
+        browser_tool = MagicMock()
+        code_tool = MagicMock()
+        math_tool = MagicMock()
+        memory_tool = MagicMock()
+        db_tool = MagicMock()
+
+        with (
+            patch(
+                "avalan.agent.loader.SentenceTransformerModel",
+                return_value=sentence_model,
+            ),
+            patch("avalan.agent.loader.TextPartitioner"),
+            patch(
+                "avalan.agent.loader.MemoryManager.create_instance",
+                new=AsyncMock(return_value=memory),
+            ),
+            patch(
+                "avalan.agent.loader.ModelManager", return_value=model_manager
+            ),
+            patch(
+                "avalan.agent.loader.DefaultOrchestrator", return_value="orch"
+            ),
+            patch(
+                "avalan.agent.loader.ToolManager.create_instance",
+                return_value=tool,
+            ) as tm_patch,
+            patch(
+                "avalan.agent.loader.EventManager", return_value=event_manager
+            ),
+            patch(
+                "avalan.agent.loader.BrowserToolSet", return_value=browser_tool
+            ),
+            patch("avalan.agent.loader.CodeToolSet", return_value=code_tool),
+            patch("avalan.agent.loader.MathToolSet", return_value=math_tool),
+            patch(
+                "avalan.agent.loader.MemoryToolSet", return_value=memory_tool
+            ),
+            patch(
+                "avalan.agent.loader.DatabaseToolSet",
+                return_value=db_tool,
+            ) as db_patch,
+        ):
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            result = await loader.from_settings(
+                settings, database_settings=db_settings
+            )
+
+            self.assertEqual(result, "orch")
+            db_patch.assert_called_once_with(
+                settings=db_settings, namespace="database"
+            )
+            available = tm_patch.call_args.kwargs["available_toolsets"]
+            self.assertIn(db_tool, available)
+        await stack.aclose()
+
     async def test_load_json_orchestrator_from_settings(self):
         hub = MagicMock(spec=HuggingfaceHub)
         logger = MagicMock(spec=Logger)
