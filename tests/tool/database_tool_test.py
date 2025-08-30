@@ -1,12 +1,15 @@
 from sqlalchemy import create_engine, text
 from tempfile import TemporaryDirectory
-from unittest import IsolatedAsyncioTestCase
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 
 from avalan.tool.database import (
     DatabaseInspectTool,
     DatabaseRunTool,
     DatabaseTablesTool,
+    DatabaseTool,
+    DatabaseToolSet,
     DatabaseToolSettings,
 )
 
@@ -43,6 +46,7 @@ def dummy_create_async_engine(dsn: str, **kwargs):
     class DummyAsyncEngine:
         def __init__(self, engine):
             self.engine = engine
+            self.disposed = False
 
         def connect(self):
             return DummyConnCtx(self.engine)
@@ -52,6 +56,7 @@ def dummy_create_async_engine(dsn: str, **kwargs):
 
         async def dispose(self):
             self.engine.dispose()
+            self.disposed = True
 
     return DummyAsyncEngine(engine)
 
@@ -67,9 +72,9 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             )
             conn.execute(
                 text(
-                    "CREATE TABLE books(id INTEGER PRIMARY KEY, author_id"
-                    " INTEGER, title TEXT, FOREIGN KEY(author_id) REFERENCES"
-                    " authors(id))"
+                    "CREATE TABLE books(id INTEGER PRIMARY KEY, author_id "
+                    "INTEGER, title TEXT, FOREIGN KEY(author_id) REFERENCES "
+                    "authors(id))"
                 )
             )
             conn.execute(text("INSERT INTO authors(name) VALUES ('Author')"))
@@ -93,6 +98,11 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         rows = await tool("SELECT id, title FROM books")
         self.assertEqual(rows, [{"id": 1, "title": "Book"}])
 
+    async def test_run_tool_no_rows(self):
+        tool = DatabaseRunTool(self.settings)
+        rows = await tool("INSERT INTO authors(name) VALUES ('Other')")
+        self.assertEqual(rows, [])
+
     async def test_tables_tool_lists_tables(self):
         tool = DatabaseTablesTool(self.settings)
         tables = await tool()
@@ -111,3 +121,70 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(fk.field, "author_id")
         self.assertEqual(fk.ref_table, "main.authors")
         self.assertEqual(fk.ref_field, "id")
+
+    async def test_toolset_reuses_engine_and_disposes(self):
+        def with_client(self, client):
+            self._client = client
+            return self
+
+        with (
+            patch.object(
+                DatabaseInspectTool, "with_client", with_client, create=True
+            ),
+            patch.object(
+                DatabaseRunTool, "with_client", with_client, create=True
+            ),
+            patch.object(
+                DatabaseTablesTool, "with_client", with_client, create=True
+            ),
+        ):
+            async with DatabaseToolSet(self.settings) as toolset:
+                inspect_tool, run_tool, tables_tool = toolset.tools
+                rows = await run_tool("SELECT id FROM authors")
+                self.assertEqual(rows, [{"id": 1}])
+                table = await inspect_tool("books")
+                self.assertEqual(table.name, "books")
+                tables = await tables_tool()
+                self.assertIn("books", tables["main"])
+            self.assertTrue(toolset._engine.disposed)
+
+
+class DatabaseInspectCollectTestCase(TestCase):
+    def test_collect_prefixes_schema_name(self):
+        inspector = SimpleNamespace(
+            default_schema_name="public",
+            get_columns=lambda table_name, schema: [
+                {"name": "id", "type": "INTEGER"}
+            ],
+            get_foreign_keys=lambda table_name, schema: [],
+        )
+
+        with (
+            patch("avalan.tool.database.inspect", return_value=inspector),
+            patch(
+                "avalan.tool.database.DatabaseTool._schemas",
+                return_value=("public", []),
+            ),
+        ):
+            table = DatabaseInspectTool._collect(
+                SimpleNamespace(), schema="other", table_name="t"
+            )
+        self.assertEqual(table.name, "other.t")
+
+
+class DatabaseSchemasTestCase(TestCase):
+    def test_postgresql_schemas(self):
+        connection = SimpleNamespace(
+            dialect=SimpleNamespace(name="postgresql")
+        )
+        inspector = SimpleNamespace(
+            default_schema_name="public",
+            get_schema_names=lambda: [
+                "information_schema",
+                "pg_catalog",
+                "other",
+            ],
+        )
+        default, schemas = DatabaseTool._schemas(connection, inspector)
+        self.assertEqual(default, "public")
+        self.assertEqual(schemas, ["other", "public"])
