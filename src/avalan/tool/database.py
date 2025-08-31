@@ -1,4 +1,4 @@
-from . import ToolSet
+from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from abc import ABC
@@ -29,12 +29,13 @@ class DatabaseToolSettings:
     dsn: str
 
 
-class DatabaseTool(ABC):
+class DatabaseTool(Tool, ABC):
     def __init__(
         self, engine: AsyncEngine, settings: DatabaseToolSettings
     ) -> None:
         self._engine = engine
         self._settings = settings
+        super().__init__()
 
     @staticmethod
     def _schemas(
@@ -53,6 +54,15 @@ class DatabaseTool(ABC):
         else:
             schemas = [default_schema]
         return default_schema, schemas
+
+    @override
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: BaseException | None,
+    ) -> bool:
+        return await super().__aexit__(exc_type, exc_value, traceback)
 
 
 class DatabaseInspectTool(DatabaseTool):
