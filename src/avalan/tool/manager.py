@@ -152,9 +152,9 @@ class ToolManager(ContextDecorator):
                     call, context = modified
 
         is_native_tool = isinstance(tool, Tool) or True
-        #print("TOOL", tool)
-        #print("NATIVE", is_native_tool)
-        #raise SystemError("205 GOON")
+        # print("TOOL", tool)
+        # print("NATIVE", is_native_tool)
+        # raise SystemError("205 GOON")
 
         result = (
             await tool(*call.arguments.values(), context=context)

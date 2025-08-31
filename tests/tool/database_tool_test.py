@@ -96,14 +96,19 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
     async def test_run_tool_returns_rows(self):
         engine = create_engine(self.dsn)
         tool = DatabaseRunTool(engine, self.settings)
-        rows = await tool("SELECT id, title FROM books", context=ToolCallContext())
+        rows = await tool(
+            "SELECT id, title FROM books", context=ToolCallContext()
+        )
         self.assertEqual(rows, [{"id": 1, "title": "Book"}])
         engine.dispose()
 
     async def test_run_tool_no_rows(self):
         engine = create_engine(self.dsn)
         tool = DatabaseRunTool(engine, self.settings)
-        rows = await tool("INSERT INTO authors(name) VALUES ('Other')", context=ToolCallContext())
+        rows = await tool(
+            "INSERT INTO authors(name) VALUES ('Other')",
+            context=ToolCallContext(),
+        )
         self.assertEqual(rows, [])
         engine.dispose()
 
@@ -133,7 +138,9 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
             inspect_tool, run_tool, tables_tool = toolset.tools
-            rows = await run_tool("SELECT id FROM authors", context=ToolCallContext())
+            rows = await run_tool(
+                "SELECT id FROM authors", context=ToolCallContext()
+            )
             self.assertEqual(rows, [{"id": 1}])
             table = await inspect_tool("books", context=ToolCallContext())
             self.assertEqual(table.name, "books")

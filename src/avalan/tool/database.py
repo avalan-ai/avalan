@@ -1,4 +1,4 @@
-from . import Tool, ToolSet
+from . import ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from abc import ABC
@@ -31,9 +31,7 @@ class DatabaseToolSettings:
 
 class DatabaseTool(ABC):
     def __init__(
-        self,
-        engine: AsyncEngine,
-        settings: DatabaseToolSettings
+        self, engine: AsyncEngine, settings: DatabaseToolSettings
     ) -> None:
         self._engine = engine
         self._settings = settings
@@ -72,9 +70,7 @@ class DatabaseInspectTool(DatabaseTool):
     """
 
     def __init__(
-        self,
-        engine: AsyncEngine,
-        settings: DatabaseToolSettings
+        self, engine: AsyncEngine, settings: DatabaseToolSettings
     ) -> None:
         super().__init__(engine, settings)
         self.__name__ = "inspect"
@@ -84,7 +80,7 @@ class DatabaseInspectTool(DatabaseTool):
         table_name: str,
         schema: str | None = None,
         *,
-        context: ToolCallContext
+        context: ToolCallContext,
     ) -> Table:
         async with self._engine.connect() as conn:
             return await conn.run_sync(
@@ -144,18 +140,13 @@ class DatabaseRunTool(DatabaseTool):
     """
 
     def __init__(
-        self,
-        engine: AsyncEngine,
-        settings: DatabaseToolSettings
+        self, engine: AsyncEngine, settings: DatabaseToolSettings
     ) -> None:
         super().__init__(engine, settings)
         self.__name__ = "run"
 
     async def __call__(
-        self,
-        sql: str,
-        *,
-        context: ToolCallContext
+        self, sql: str, *, context: ToolCallContext
     ) -> list[dict]:
         async with self._engine.begin() as conn:
             result = await conn.execute(text(sql))
@@ -173,17 +164,13 @@ class DatabaseTablesTool(DatabaseTool):
     """
 
     def __init__(
-        self,
-        engine: AsyncEngine,
-        settings: DatabaseToolSettings
+        self, engine: AsyncEngine, settings: DatabaseToolSettings
     ) -> None:
         super().__init__(engine, settings)
         self.__name__ = "tables"
 
     async def __call__(
-        self,
-        *,
-        context: ToolCallContext
+        self, *, context: ToolCallContext
     ) -> dict[str | None, list[str]]:
         async with self._engine.connect() as conn:
             return await conn.run_sync(DatabaseTablesTool._collect)
