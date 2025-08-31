@@ -6,7 +6,7 @@ from avalan.entities import (
     ToolFilter,
     ToolTransformer,
 )
-from avalan.tool import ToolSet
+from avalan.tool import Tool, ToolSet
 from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase, TestCase, main
@@ -93,6 +93,15 @@ class DummyAdderAlt(DummyAdder):
         self.__name__ = "adder_alt"
 
 
+class DummyNoArgTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+        self.__name__ = "no_arg_tool"
+
+    async def __call__(self, *, context: ToolCallContext) -> str:
+        return "done"
+
+
 class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         calculator = CalculatorTool()
@@ -112,6 +121,30 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1, "b": 2})
         result = await manager(call, context=ToolCallContext())
         self.assertEqual(result.result, 3)
+
+    async def test_native_tool_no_arguments(self):
+        tool = DummyNoArgTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["no_arg_tool"],
+            available_toolsets=[ToolSet(tools=[tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id=_uuid4(), name="no_arg_tool", arguments={})
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, "done")
+
+    async def test_async_function_no_arguments(self):
+        async def fn() -> str:
+            return "ok"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["fn"],
+            available_toolsets=[ToolSet(tools=[fn])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id=_uuid4(), name="fn", arguments={})
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, "ok")
 
     async def test_call_no_tool_call(self):
         calls = self.manager.get_calls("no tools here")

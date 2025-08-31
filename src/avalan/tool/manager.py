@@ -10,6 +10,7 @@ from ..entities import (
 )
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
+from inspect import isawaitable
 from uuid import uuid4
 
 
@@ -153,19 +154,17 @@ class ToolManager(ContextDecorator):
 
         is_native_tool = isinstance(tool, Tool)
 
-        result = (
-            await tool(*call.arguments.values(), context=context)
-            if is_native_tool and call.arguments
-            else (
-                tool(context=context)
-                if is_native_tool
-                else (
-                    await tool(*call.arguments.values())
-                    if call.arguments
-                    else tool()
-                )
+        args = list(call.arguments.values()) if call.arguments else []
+
+        if is_native_tool:
+            result = await tool(*args, context=context)
+        else:
+            maybe_result = tool(*args)
+            result = (
+                await maybe_result
+                if isawaitable(maybe_result)
+                else maybe_result
             )
-        )
 
         if self._settings.transformers:
             for t in self._settings.transformers:

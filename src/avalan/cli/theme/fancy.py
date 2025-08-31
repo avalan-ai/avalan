@@ -2247,7 +2247,7 @@ class FancyTheme(Theme):
                                             or []
                                         ),
                                         result="[spring_green3]"
-                                        + event.payload["result"].result
+                                        + str(event.payload["result"].result)
                                         + "[/spring_green3]",
                                     )
                                     if event.type == EventType.TOOL_RESULT
