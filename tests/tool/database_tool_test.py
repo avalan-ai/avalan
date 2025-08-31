@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
-
+from avalan.entities import ToolCallContext
 from avalan.tool.database import (
     DatabaseInspectTool,
     DatabaseRunTool,
@@ -94,25 +94,32 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.tmp.cleanup()
 
     async def test_run_tool_returns_rows(self):
-        tool = DatabaseRunTool(self.settings)
-        rows = await tool("SELECT id, title FROM books")
+        engine = create_engine(self.dsn)
+        tool = DatabaseRunTool(engine, self.settings)
+        rows = await tool("SELECT id, title FROM books", context=ToolCallContext())
         self.assertEqual(rows, [{"id": 1, "title": "Book"}])
+        engine.dispose()
 
     async def test_run_tool_no_rows(self):
-        tool = DatabaseRunTool(self.settings)
-        rows = await tool("INSERT INTO authors(name) VALUES ('Other')")
+        engine = create_engine(self.dsn)
+        tool = DatabaseRunTool(engine, self.settings)
+        rows = await tool("INSERT INTO authors(name) VALUES ('Other')", context=ToolCallContext())
         self.assertEqual(rows, [])
+        engine.dispose()
 
     async def test_tables_tool_lists_tables(self):
-        tool = DatabaseTablesTool(self.settings)
-        tables = await tool()
+        engine = create_engine(self.dsn)
+        tool = DatabaseTablesTool(engine, self.settings)
+        tables = await tool(context=ToolCallContext())
         self.assertIn("main", tables)
         self.assertIn("authors", tables["main"])
         self.assertIn("books", tables["main"])
+        engine.dispose()
 
     async def test_inspect_tool_returns_schema(self):
-        tool = DatabaseInspectTool(self.settings)
-        table = await tool("books")
+        engine = create_engine(self.dsn)
+        tool = DatabaseInspectTool(engine, self.settings)
+        table = await tool("books", context=ToolCallContext())
         self.assertEqual(table.name, "books")
         self.assertEqual(table.columns["id"], "INTEGER")
         self.assertEqual(table.columns["title"], "TEXT")
@@ -121,32 +128,18 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(fk.field, "author_id")
         self.assertEqual(fk.ref_table, "main.authors")
         self.assertEqual(fk.ref_field, "id")
+        engine.dispose()
 
     async def test_toolset_reuses_engine_and_disposes(self):
-        def with_client(self, client):
-            self._client = client
-            return self
-
-        with (
-            patch.object(
-                DatabaseInspectTool, "with_client", with_client, create=True
-            ),
-            patch.object(
-                DatabaseRunTool, "with_client", with_client, create=True
-            ),
-            patch.object(
-                DatabaseTablesTool, "with_client", with_client, create=True
-            ),
-        ):
-            async with DatabaseToolSet(self.settings) as toolset:
-                inspect_tool, run_tool, tables_tool = toolset.tools
-                rows = await run_tool("SELECT id FROM authors")
-                self.assertEqual(rows, [{"id": 1}])
-                table = await inspect_tool("books")
-                self.assertEqual(table.name, "books")
-                tables = await tables_tool()
-                self.assertIn("books", tables["main"])
-            self.assertTrue(toolset._engine.disposed)
+        async with DatabaseToolSet(self.settings) as toolset:
+            inspect_tool, run_tool, tables_tool = toolset.tools
+            rows = await run_tool("SELECT id FROM authors", context=ToolCallContext())
+            self.assertEqual(rows, [{"id": 1}])
+            table = await inspect_tool("books", context=ToolCallContext())
+            self.assertEqual(table.name, "books")
+            tables = await tables_tool(context=ToolCallContext())
+            self.assertIn("books", tables["main"])
+        self.assertTrue(toolset._engine.disposed)
 
 
 class DatabaseInspectCollectTestCase(TestCase):
