@@ -93,11 +93,12 @@ class DatabaseInspectTool(DatabaseTool):
         context: ToolCallContext,
     ) -> Table:
         async with self._engine.connect() as conn:
-            return await conn.run_sync(
+            result = await conn.run_sync(
                 DatabaseInspectTool._collect,
                 schema=schema,
                 table_name=table_name,
             )
+            return result
 
     @staticmethod
     def _collect(
