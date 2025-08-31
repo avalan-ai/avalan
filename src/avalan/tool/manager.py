@@ -157,7 +157,7 @@ class ToolManager(ContextDecorator):
             await tool(*call.arguments.values(), context=context)
             if is_native_tool and call.arguments
             else (
-                tool(context=context)
+                await tool(context=context)
                 if is_native_tool
                 else (
                     await tool(*call.arguments.values())
