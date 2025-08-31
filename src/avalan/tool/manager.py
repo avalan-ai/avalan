@@ -151,10 +151,7 @@ class ToolManager(ContextDecorator):
                     assert isinstance(modified, tuple) and len(modified) == 2
                     call, context = modified
 
-        is_native_tool = isinstance(tool, Tool) or True
-        # print("TOOL", tool)
-        # print("NATIVE", is_native_tool)
-        # raise SystemError("205 GOON")
+        is_native_tool = isinstance(tool, Tool)
 
         result = (
             await tool(*call.arguments.values(), context=context)
