@@ -1,7 +1,7 @@
-from ast import literal_eval
 from ..entities import ToolCall, ToolFormat
+from ast import literal_eval
 from json import JSONDecodeError, loads
-from re import DOTALL, search
+from re import DOTALL, finditer, search
 from typing import Any
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -32,7 +32,11 @@ class ToolCallParser:
                     else (
                         self._parse_openai_json(text)
                         if self._tool_format is ToolFormat.OPENAI
-                        else None
+                        else (
+                            self._parse_harmony(text)
+                            if self._tool_format is ToolFormat.HARMONY
+                            else None
+                        )
                     )
                 )
             )
@@ -87,6 +91,24 @@ class ToolCallParser:
                 return name, args
         except JSONDecodeError:
             pass
+        return None
+
+    def _parse_harmony(self, text: str) -> list[ToolCall] | None:
+        tool_calls: list[ToolCall] = []
+        pattern = (
+            r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)\s*"
+            r"<\|constrain\|>json<\|message\|>(\{.*?\})<\|call\|>commentary"
+        )
+        for match in finditer(pattern, text, DOTALL):
+            try:
+                args = loads(match.group(2))
+            except JSONDecodeError:
+                continue
+            tool_calls.append(
+                ToolCall(id=uuid4(), name=match.group(1), arguments=args)
+            )
+        if tool_calls:
+            return tool_calls
         return None
 
     def _parse_tag(self, text: str) -> tuple[str, dict[str, Any]] | None:

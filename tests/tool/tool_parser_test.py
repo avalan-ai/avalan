@@ -72,6 +72,45 @@ class ToolCallParserFormatTestCase(TestCase):
         self.assertEqual(parser(text), ("calculator", {"expression": "3"}))
 
 
+class ToolCallParserHarmonyTestCase(TestCase):
+    def test_multiple(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>commentary to=functions.database.tables "
+            "<|constrain|>json<|message|>{}<|call|>commentary"
+            "<|channel|>commentary to=functions.database.run "
+            "<|constrain|>json<|message|>"
+            '{"sql":"SELECT COUNT(*) AS product_count FROM products;"}'
+            "<|call|>commentary"
+        )
+        first_id = _uuid4()
+        second_id = _uuid4()
+        with patch(
+            "avalan.tool.parser.uuid4", side_effect=[first_id, second_id]
+        ):
+            expected = [
+                ToolCall(id=first_id, name="database.tables", arguments={}),
+                ToolCall(
+                    id=second_id,
+                    name="database.run",
+                    arguments={
+                        "sql": (
+                            "SELECT COUNT(*) AS product_count FROM products;"
+                        )
+                    },
+                ),
+            ]
+            self.assertEqual(parser(text), expected)
+
+    def test_invalid_json(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>commentary to=functions.calc "
+            "<|constrain|>json<|message|>{<|call|>commentary"
+        )
+        self.assertIsNone(parser(text))
+
+
 class ToolCallParserTagTestCase(TestCase):
     def setUp(self):
         self.parser = ToolCallParser()
