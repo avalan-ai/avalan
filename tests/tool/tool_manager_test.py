@@ -6,7 +6,7 @@ from avalan.entities import (
     ToolFilter,
     ToolTransformer,
 )
-from avalan.tool import ToolSet
+from avalan.tool import Tool, ToolSet
 from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
 from unittest import IsolatedAsyncioTestCase, TestCase, main
@@ -91,6 +91,78 @@ class DummyAdder:
 class DummyAdderAlt(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "adder_alt"
+
+
+class NativeAdderTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+        self.__name__ = "native_adder"
+
+    async def __call__(self, a: int, b: int, context: ToolCallContext) -> int:
+        return a + b
+
+
+class NativeNoArgTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+        self.__name__ = "native_noarg"
+
+    async def __call__(self, context: ToolCallContext) -> str:
+        return "hi"
+
+
+class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
+    async def test_native_tool_with_arguments(self):
+        tool = NativeAdderTool()
+        manager = ToolManager.create_instance(
+            enable_tools=[tool.__name__],
+            available_toolsets=[ToolSet(tools=[tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name=tool.__name__, arguments={"a": 1, "b": 2}
+        )
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, 3)
+
+    async def test_native_tool_without_arguments(self):
+        tool = NativeNoArgTool()
+        manager = ToolManager.create_instance(
+            enable_tools=[tool.__name__],
+            available_toolsets=[ToolSet(tools=[tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id=_uuid4(), name=tool.__name__, arguments={})
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, "hi")
+
+    async def test_non_native_tool_with_arguments(self):
+        async def adder(a: int, b: int) -> int:
+            return a + b
+
+        manager = ToolManager.create_instance(
+            enable_tools=[adder.__name__],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name=adder.__name__, arguments={"a": 1, "b": 2}
+        )
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, 3)
+
+    async def test_non_native_tool_without_arguments(self):
+        def greet() -> str:
+            return "hi"
+
+        manager = ToolManager.create_instance(
+            enable_tools=[greet.__name__],
+            available_toolsets=[ToolSet(tools=[greet])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id=_uuid4(), name=greet.__name__, arguments={})
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, "hi")
 
 
 class ToolManagerCallTestCase(IsolatedAsyncioTestCase):

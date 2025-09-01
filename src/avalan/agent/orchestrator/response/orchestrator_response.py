@@ -16,8 +16,9 @@ from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....model.response.parsers.tool import ToolCallParser
 from ....cli import CommandAbortException
-from queue import Queue
 from inspect import iscoroutine
+from json import dumps
+from queue import Queue
 from time import perf_counter
 from typing import Any, AsyncIterator, Callable
 from uuid import UUID
@@ -224,7 +225,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     role=MessageRole.TOOL,
                     name=e.payload["result"].name,
                     arguments=e.payload["result"].arguments,
-                    content=e.payload["result"].result,
+                    content=dumps(e.payload["result"].result),
                 )
                 for e in result_events
             ]
@@ -272,6 +273,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 },
             )
             await self._event_manager.trigger(event_tool_model_response)
+
             return event_tool_model_response
 
         try:
@@ -288,6 +290,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if self._event_manager and not self._finished:
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))
+
             raise
 
         return await self._emit(token)

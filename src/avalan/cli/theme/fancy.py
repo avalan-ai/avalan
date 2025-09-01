@@ -28,6 +28,7 @@ from humanize import (
     naturalsize,
     precisedelta,
 )
+from json import dumps
 from locale import format_string
 from logging import Logger
 from math import ceil, inf
@@ -2247,7 +2248,11 @@ class FancyTheme(Theme):
                                             or []
                                         ),
                                         result="[spring_green3]"
-                                        + event.payload["result"].result
+                                        + (
+                                            dumps(
+                                                event.payload["result"].result
+                                            )
+                                        )
                                         + "[/spring_green3]",
                                     )
                                     if event.type == EventType.TOOL_RESULT
