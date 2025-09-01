@@ -65,6 +65,34 @@ class DatabaseTool(Tool, ABC):
         return await super().__aexit__(exc_type, exc_value, traceback)
 
 
+class DatabaseCountTool(DatabaseTool):
+    """
+    Count rows in the given table.
+
+    Args:
+        table_name: Table to count rows from.
+
+    Returns:
+        Number of rows in the table.
+    """
+
+    def __init__(
+        self, engine: AsyncEngine, settings: DatabaseToolSettings
+    ) -> None:
+        super().__init__(engine, settings)
+        self.__name__ = "count"
+
+    async def __call__(
+        self, table_name: str, *, context: ToolCallContext
+    ) -> int:
+        assert table_name, "table_name must not be empty"
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                text(f"SELECT COUNT(*) FROM {table_name}")
+            )
+            return result.scalar_one()
+
+
 class DatabaseInspectTool(DatabaseTool):
     """
     Gets the schema for a given table using introspection.
@@ -214,6 +242,7 @@ class DatabaseToolSet(ToolSet):
         )
 
         tools = [
+            DatabaseCountTool(self._engine, settings),
             DatabaseInspectTool(self._engine, settings),
             DatabaseRunTool(self._engine, settings),
             DatabaseTablesTool(self._engine, settings),

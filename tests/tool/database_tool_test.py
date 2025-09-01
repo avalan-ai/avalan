@@ -1,10 +1,12 @@
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 from avalan.entities import ToolCallContext
 from avalan.tool.database import (
+    DatabaseCountTool,
     DatabaseInspectTool,
     DatabaseRunTool,
     DatabaseTablesTool,
@@ -77,6 +79,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
                     "authors(id))"
                 )
             )
+            conn.execute(text("CREATE TABLE empty(id INTEGER PRIMARY KEY)"))
             conn.execute(text("INSERT INTO authors(name) VALUES ('Author')"))
             conn.execute(
                 text("INSERT INTO books(author_id, title) VALUES (1, 'Book')")
@@ -135,9 +138,32 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(fk.ref_field, "id")
         await engine.dispose()
 
+    async def test_count_tool_returns_count(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseCountTool(engine, self.settings)
+        count = await tool("authors", context=ToolCallContext())
+        self.assertEqual(count, 1)
+        await engine.dispose()
+
+    async def test_count_tool_empty_table(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseCountTool(engine, self.settings)
+        count = await tool("empty", context=ToolCallContext())
+        self.assertEqual(count, 0)
+        await engine.dispose()
+
+    async def test_count_tool_wrong_table_error(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseCountTool(engine, self.settings)
+        with self.assertRaises(OperationalError):
+            await tool("missing", context=ToolCallContext())
+        await engine.dispose()
+
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
-            inspect_tool, run_tool, tables_tool = toolset.tools
+            count_tool, inspect_tool, run_tool, tables_tool = toolset.tools
+            count = await count_tool("authors", context=ToolCallContext())
+            self.assertEqual(count, 1)
             rows = await run_tool(
                 "SELECT id FROM authors", context=ToolCallContext()
             )
