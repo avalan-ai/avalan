@@ -21,6 +21,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             skip_hub_access_check=False,
             tool_events=0,
             tool=None,
+            tool_format=None,
             run_max_new_tokens=100,
             backend="transformers",
             memory_recent=None,

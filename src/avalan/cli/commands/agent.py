@@ -10,6 +10,7 @@ from ...entities import (
     GenerationCacheStrategy,
     OrchestratorSettings,
     ToolCall,
+    ToolFormat,
 )
 from ...event import EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
@@ -431,10 +432,14 @@ async def agent_run(
             database_settings = get_tool_settings(
                 args, prefix="database", settings_cls=DatabaseToolSettings
             )
+            tool_format = (
+                ToolFormat(args.tool_format) if args.tool_format else None
+            )
             orchestrator = await loader.from_settings(
                 settings,
                 browser_settings=browser_settings,
                 database_settings=database_settings,
+                tool_format=tool_format,
             )
         orchestrator.event_manager.add_listener(_event_listener)
 

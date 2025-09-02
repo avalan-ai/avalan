@@ -179,6 +179,7 @@ def make_args() -> Namespace:
         tty=None,
         tool_events=2,
         tool=["math.calculator"],
+        tool_format=None,
         run_max_new_tokens=1024,
         run_skip_special_tokens=False,
         engine_uri="NousResearch/Hermes-3-Llama-3.1-8B",
