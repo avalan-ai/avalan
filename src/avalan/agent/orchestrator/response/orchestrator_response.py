@@ -225,27 +225,31 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             tool_messages = []
             for e in result_events:
                 tool_result = e.payload["result"]
-                tool_messages.append(Message(
-                    role=MessageRole.ASSISTANT,
-                    tool_calls=[
-                        MessageToolCall(
-                            id=tool_result.call.id,
-                            name=tool_result.name,
-                            arguments=tool_result.arguments
-                        )
-                    ]
-                ))
+                tool_messages.append(
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        tool_calls=[
+                            MessageToolCall(
+                                id=tool_result.call.id,
+                                name=tool_result.name,
+                                arguments=tool_result.arguments,
+                            )
+                        ],
+                    )
+                )
                 tool_output = e.payload["result"].result
-                tool_messages.append(Message(
-                    role=MessageRole.TOOL,
-                    name=e.payload["result"].name,
-                    arguments=e.payload["result"].arguments,
-                    content=dumps(
-                        asdict(tool_output)
-                        if is_dataclass(tool_output)
-                        else tool_output
-                    ),
-                ))
+                tool_messages.append(
+                    Message(
+                        role=MessageRole.TOOL,
+                        name=e.payload["result"].name,
+                        arguments=e.payload["result"].arguments,
+                        content=dumps(
+                            asdict(tool_output)
+                            if is_dataclass(tool_output)
+                            else tool_output
+                        ),
+                    )
+                )
 
             assert self._input and (
                 (
@@ -409,10 +413,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 content=(
                     result.result
                     if isinstance(result.result, str)
-                    else dumps(result.result)
-                    if result.result is not None
-                    else ""
-                )
+                    else (
+                        dumps(result.result)
+                        if result.result is not None
+                        else ""
+                    )
+                ),
             )
             for result in results
         ]

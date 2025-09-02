@@ -173,7 +173,7 @@ class TokenizeInputContentImageTestCase(TestCase):
                     "thinking": "",
                     "arguments": None,
                     "name": None,
-                    "tool_calls": []
+                    "tool_calls": [],
                 }
             ],
         )
@@ -244,7 +244,7 @@ class TokenizeInputContentListTestCase(TestCase):
                     "thinking": "",
                     "arguments": None,
                     "name": None,
-                    "tool_calls": []
+                    "tool_calls": [],
                 }
             ],
         )

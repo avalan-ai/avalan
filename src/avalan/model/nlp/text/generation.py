@@ -420,10 +420,12 @@ class TextGenerationModel(BaseNLPModel):
             message_dict = asdict(message)
             if not message_dict["tool_calls"]:
                 message_dict["tool_calls"] = []
-            template_messages.append({
-                **message_dict,
-                **{"content": _format_content(message.content)}
-            })
+            template_messages.append(
+                {
+                    **message_dict,
+                    **{"content": _format_content(message.content)},
+                }
+            )
 
         if not self._tokenizer.chat_template:
             _l("Model does not support template messages, so staying plain")
