@@ -35,3 +35,31 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(parser._inside_call)
 
         self.assertEqual(await parser.flush(), [])
+
+    async def test_trigger_without_calls(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = True
+        manager.get_calls.return_value = None
+        event_manager = MagicMock()
+        event_manager.trigger = AsyncMock()
+
+        parser = ToolCallParser(manager, event_manager)
+        items = await parser.push("no_call")
+
+        self.assertEqual(items, ["no_call"])
+        event_manager.trigger.assert_awaited_once()
+        manager.get_calls.assert_called_once_with("no_call")
+
+    async def test_self_closing_tag(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = True
+        manager.get_calls.return_value = [MagicMock()]
+
+        parser = ToolCallParser(manager, None)
+        items = await parser.push('<tool_call name="calc"/>')
+
+        self.assertEqual(items[0], '<tool_call name="calc"/>')
+        self.assertEqual(items[1].type, EventType.TOOL_PROCESS)
+        manager.get_calls.assert_called_once_with('<tool_call name="calc"/>')
+        self.assertFalse(parser._inside_call)
+        self.assertEqual(parser._buffer.getvalue(), "")
