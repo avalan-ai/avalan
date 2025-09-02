@@ -170,6 +170,10 @@ class TokenizeInputContentImageTestCase(TestCase):
                     "content": [
                         {"type": "image_url", "image_url": {"url": "u"}},
                     ],
+                    "thinking": "",
+                    "arguments": None,
+                    "name": None,
+                    "tool_calls": [],
                 }
             ],
         )
@@ -237,6 +241,10 @@ class TokenizeInputContentListTestCase(TestCase):
                         {"type": "image_url", "image_url": {"url": "u"}},
                         {"type": "text", "text": "hi"},
                     ],
+                    "thinking": "",
+                    "arguments": None,
+                    "name": None,
+                    "tool_calls": [],
                 }
             ],
         )

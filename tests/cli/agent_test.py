@@ -25,7 +25,7 @@ from avalan.agent.engine import EngineAgent
 from avalan.memory import RecentMessageMemory
 from avalan.memory.manager import MemoryManager
 from avalan.event.manager import EventManager
-from avalan.tool.manager import ToolManager
+from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.cli.commands import agent as agent_cmds
 from avalan.event import Event, EventType
 from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
@@ -36,6 +36,7 @@ from avalan.entities import (
     GenerationCacheStrategy,
     OrchestratorSettings,
     ReasoningSettings,
+    ToolFormat,
 )
 from avalan.model.response.parsers.tool import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
@@ -650,6 +651,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             tty=None,
             tool_events=2,
             tool=None,
+            tool_format=None,
             run_max_new_tokens=100,
             run_skip_special_tokens=False,
             engine_uri=None,
@@ -1651,6 +1653,47 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(model_manager.passed_tool, tool_manager)
         self.assertIs(DummyEngine.last_tool, tool_manager)
+
+    async def test_tool_format_sets_tool_manager_format(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.tool_format = ToolFormat.REACT.value
+
+        async def from_settings_side_effect(
+            _settings,
+            *,
+            browser_settings=None,
+            database_settings=None,
+            tool_format=None,
+        ):
+            self.orch.tool = ToolManager.create_instance(
+                available_toolsets=[],
+                enable_tools=None,
+                settings=ToolManagerSettings(tool_format=tool_format),
+            )
+            return self.orch
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(side_effect=from_settings_side_effect),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.assertEqual(
+            self.orch.tool._settings.tool_format, ToolFormat.REACT
+        )
 
     async def test_run_engine_uri_only_generates_id(self):
         self.args.specifications_file = None

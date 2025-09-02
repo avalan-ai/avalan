@@ -132,14 +132,14 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 await self._trigger_consumed()
                 raise
 
+            token_str = token if isinstance(token, str) else token.token
+            self._buffer.write(token_str)
+
             if not self._reasoning_parser or (
                 self._reasoning_parser.is_thinking_budget_exhausted
                 and not self._reasoning_parser.is_thinking
             ):
                 return token
-
-            token_str = token if isinstance(token, str) else token.token
-            self._buffer.write(token_str)
 
             try:
                 items = await self._reasoning_parser.push(token_str)

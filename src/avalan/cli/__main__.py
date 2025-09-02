@@ -44,6 +44,7 @@ from ..entities import (
     GenerationCacheStrategy,
     User,
     WeightType,
+    ToolFormat,
 )
 from ..memory.permanent import VectorFunction
 from ..model.hubs.huggingface import HuggingfaceHub
@@ -680,6 +681,12 @@ class CLI:
             "--tools-confirm",
             action="store_true",
             help="Confirm tool calls before execution",
+        )
+        agent_run_parser.add_argument(
+            "--tool-format",
+            type=str,
+            choices=[t.value for t in ToolFormat],
+            help="Tool format",
         )
         agent_run_parser.add_argument(
             "--reasoning-tag",

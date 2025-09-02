@@ -4,6 +4,7 @@ from ....entities import (
     Input,
     Message,
     MessageRole,
+    MessageToolCall,
     Token,
     TokenDetail,
     ToolCall,
@@ -16,6 +17,7 @@ from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....model.response.parsers.tool import ToolCallParser
 from ....cli import CommandAbortException
+from dataclasses import asdict, is_dataclass
 from inspect import iscoroutine
 from json import dumps
 from queue import Queue
@@ -220,15 +222,34 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 result_event = self._tool_result_events.get()
                 result_events.append(result_event)
 
-            tool_messages = [
-                Message(
-                    role=MessageRole.TOOL,
-                    name=e.payload["result"].name,
-                    arguments=e.payload["result"].arguments,
-                    content=dumps(e.payload["result"].result),
+            tool_messages = []
+            for e in result_events:
+                tool_result = e.payload["result"]
+                tool_messages.append(
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        tool_calls=[
+                            MessageToolCall(
+                                id=tool_result.call.id,
+                                name=tool_result.name,
+                                arguments=tool_result.arguments,
+                            )
+                        ],
+                    )
                 )
-                for e in result_events
-            ]
+                tool_output = e.payload["result"].result
+                tool_messages.append(
+                    Message(
+                        role=MessageRole.TOOL,
+                        name=e.payload["result"].name,
+                        arguments=e.payload["result"].arguments,
+                        content=dumps(
+                            asdict(tool_output)
+                            if is_dataclass(tool_output)
+                            else tool_output
+                        ),
+                    )
+                )
 
             assert self._input and (
                 (
@@ -241,6 +262,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             messages = list(
                 self._input if isinstance(self._input, list) else [self._input]
             )
+
             messages.extend(tool_messages)
 
             event_tool_model_run = Event(
@@ -388,7 +410,15 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 role=MessageRole.TOOL,
                 name=result.name,
                 arguments=result.arguments,
-                content=result.result,
+                content=(
+                    result.result
+                    if isinstance(result.result, str)
+                    else (
+                        dumps(result.result)
+                        if result.result is not None
+                        else ""
+                    )
+                ),
             )
             for result in results
         ]

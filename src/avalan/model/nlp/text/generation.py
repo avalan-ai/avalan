@@ -18,9 +18,9 @@ from ....model.response.text import TextGenerationResponse
 from ....model.vendor import TextGenerationVendor
 from ....model.nlp import BaseNLPModel
 from ....model.engine import Engine
-from diffusers import DiffusionPipeline
 from ....tool.manager import ToolManager
 from dataclasses import asdict, replace
+from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Thread
@@ -415,13 +415,17 @@ class TextGenerationModel(BaseNLPModel):
 
             return str(content)
 
-        template_messages = [
-            {
-                "role": message.role,
-                "content": _format_content(message.content),
-            }
-            for message in messages
-        ]
+        template_messages = []
+        for message in messages:
+            message_dict = asdict(message)
+            if not message_dict["tool_calls"]:
+                message_dict["tool_calls"] = []
+            template_messages.append(
+                {
+                    **message_dict,
+                    **{"content": _format_content(message.content)},
+                }
+            )
 
         if not self._tokenizer.chat_template:
             _l("Model does not support template messages, so staying plain")
