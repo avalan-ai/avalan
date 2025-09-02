@@ -22,7 +22,9 @@ def confirm(console: Console, prompt: str) -> bool:
     return Confirm.ask(prompt)
 
 
-def confirm_tool_call(console: Console, call: ToolCall) -> str:
+def confirm_tool_call(
+    console: Console, call: ToolCall, *, tty_path: str = "/dev/tty"
+) -> str:
     """Return user's decision on executing ``call``."""
     console.print(
         Syntax(
@@ -30,11 +32,15 @@ def confirm_tool_call(console: Console, call: ToolCall) -> str:
             "json",
         )
     )
-    return Prompt.ask(
-        "Execute tool call? ([y]es/[a]ll/[n]o)",
-        choices=["y", "a", "n"],
-        default="n",
-    )
+    kwargs = {"choices": ["y", "a", "n"], "default": "n"}
+    stdin_is_tty = stdin.isatty()
+    with open(tty_path) if not stdin_is_tty else nullcontext() as tty:
+        if not stdin_is_tty:
+            kwargs["stream"] = tty
+        return Prompt.ask(
+            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            **kwargs,
+        )
 
 
 def has_input(console: Console) -> bool:

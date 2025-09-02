@@ -236,11 +236,14 @@ async def agent_message_search(
 
     assert agent_id and participant_id and session_id
 
+    tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
+
     input_string = get_input(
         console,
         _i["user_input"] + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
+        tty_path=tty_path,
     )
     if not input_string:
         return
@@ -372,9 +375,10 @@ async def agent_run(
     load_recent_messages_limit = args.load_recent_messages_limit
 
     event_stats = EventStats()
+    tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
     def _confirm_call(call: ToolCall) -> str:
-        return confirm_tool_call(console, call)
+        return confirm_tool_call(console, call, tty_path=tty_path)
 
     async def _event_listener(event):
         nonlocal event_stats
@@ -547,7 +551,7 @@ async def agent_run(
                 echo_stdin=not args.no_repl,
                 force_prompt=in_conversation,
                 is_quiet=args.quiet,
-                tty_path=args.tty,
+                tty_path=tty_path,
             )
             if not input_string:
                 logger.debug("Finishing session with orchestrator")
@@ -676,6 +680,7 @@ async def agent_proxy(
 
 async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     _ = theme._
+    tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
     name = args.name or Prompt.ask(_("Agent name"))
     role = args.role or get_input(
@@ -683,6 +688,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         _("Agent role") + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
+        tty_path=tty_path,
     )
 
     task = args.task or get_input(
@@ -690,12 +696,14 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         _("Agent task") + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
+        tty_path=tty_path,
     )
     instructions = args.instructions or get_input(
         console,
         _("Agent instructions") + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
+        tty_path=tty_path,
     )
 
     memory_recent = (

@@ -382,6 +382,7 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             self.theme.icons["user_input"] + " ",
             echo_stdin=not self.args.no_repl,
             is_quiet=self.args.quiet,
+            tty_path="/dev/tty",
         )
         gms_patch.assert_called_once_with(
             self.args,
@@ -655,6 +656,7 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
             self.theme.icons["user_input"] + " ",
             echo_stdin=not self.args.no_repl,
             is_quiet=self.args.quiet,
+            tty_path="/dev/tty",
         )
         tp_patch.assert_called_once_with(
             model,

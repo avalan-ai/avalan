@@ -85,7 +85,7 @@ sequence_parallel,replicate}]
               [--locale LOCALE]
               [--loader-class {auto,gemma3,gpt-oss,mistral3}]
               [--backend {transformers,mlx,vllm}] [--locales LOCALES]
-              [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--record]
+              [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
               [--revision REVISION] [--skip-hub-access-check] [--verbose]
               [--version]
               [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -136,6 +136,7 @@ sequence_parallel,replicate}
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --tty TTY             TTY stream to use for interactive prompts
   --record              If specified, the current console output will be
                         regularly saved to SVG files.
   --revision REVISION   Model revision to use
@@ -162,7 +163,7 @@ sequence_parallel,replicate}]
                     [--locale LOCALE]
                     [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                     [--backend {transformers,mlx,vllm}] [--locales LOCALES]
-                    [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet]
+                    [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY]
                     [--record] [--revision REVISION] [--skip-hub-access-check]
                     [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -212,6 +213,7 @@ sequence_parallel,replicate}
                         is displayed in model run (sets --disable-loading-
                         progress-bar, --skip-hub-access-check, --skip-special-
                         tokens automatically)
+  --tty TTY             TTY stream to use for interactive prompts
   --record              If specified, the current console output will be
                         regularly saved to SVG files.
   --revision REVISION   Model revision to use
@@ -516,7 +518,7 @@ sequence_parallel,replicate}]
                         [--skip-load-recent-messages]
                         [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
                         [--participant PARTICIPANT] [--stats] [--sync]
-                        [--tty TTY] [--tools-confirm]
+                        [--tools-confirm]
                         [--reasoning-tag {think,channel}]
                         [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE]
                         [--task TASK] [--instructions INSTRUCTIONS]
@@ -652,8 +654,6 @@ sequence_parallel,replicate}
                         with the agent
   --stats               Show token generation statistics for agent output
   --sync                Don't use an async generator (token streaming)
-  --tty TTY             TTY stream (only applicable if combining
-                        --conversation with input piping)
   --tools-confirm       Confirm tool calls before execution
   --reasoning-tag {think,channel}
                         Reasoning tag style
