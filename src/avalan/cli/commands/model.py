@@ -176,12 +176,15 @@ async def model_run(
         with manager.load(**model_settings) as model:
             logger.debug("Loaded model %s", model.config.__repr__())
 
+            tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
+
             if operation.requires_input or has_input(console):
                 input_string = get_input(
                     console,
                     _i["user_input"] + " ",
                     echo_stdin=not args.no_repl,
                     is_quiet=args.quiet,
+                    tty_path=tty_path,
                 )
                 if not input_string:
                     return

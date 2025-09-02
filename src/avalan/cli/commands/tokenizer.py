@@ -57,11 +57,14 @@ async def tokenize(
             console.print(theme.saved_tokenizer_files(args.save, total_files))
             return
 
+        tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
+
         input_string = get_input(
             console,
             _i["user_input"] + " ",
             echo_stdin=not args.no_repl,
             is_quiet=args.quiet,
+            tty_path=tty_path,
         )
         if input_string:
             logger.debug("Loaded model %s", lm.config.__repr__())

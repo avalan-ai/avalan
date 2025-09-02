@@ -201,6 +201,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
             self.theme.icons["user_input"] + " ",
             echo_stdin=not args.no_repl,
             is_quiet=args.quiet,
+            tty_path="/dev/tty",
         )
         self.theme.tokenizer_tokens.assert_called_once_with(
             ["tok"],

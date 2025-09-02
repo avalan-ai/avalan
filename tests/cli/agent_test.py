@@ -1489,6 +1489,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_tools_confirm_calls_callback(self):
         self.args.tools_confirm = True
+        self.args.tty = "/tmp/tty"
         self.orch.tool = MagicMock(is_empty=False)
         call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
 
@@ -1530,7 +1531,68 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             "hi", use_async_generator=True, tool_confirm=unittest.mock.ANY
         )
         tg.assert_awaited_once()
-        ctc.assert_called_once_with(self.console, call_obj)
+        ctc.assert_called_once_with(
+            self.console, call_obj, tty_path="/tmp/tty"
+        )
+        self.assertEqual(self.callback_result, "y")
+
+    async def test_run_tools_confirm_stdin_not_tty(self):
+        self.args.tools_confirm = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(*args, tool_confirm=None, **kwargs):
+            self.assertIsNotNone(tool_confirm)
+            self.callback_result = tool_confirm(call_obj)
+            return DummyOrchestratorResponse()
+
+        self.orch.side_effect = orch_call
+
+        fake_tty = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__.return_value = fake_tty
+        ctx.__exit__.return_value = False
+        stdin_mock = MagicMock(isatty=MagicMock(return_value=False))
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch("avalan.cli.stdin", stdin_mock),
+            patch("avalan.cli.open", return_value=ctx) as open_patch,
+            patch("avalan.cli.Prompt.ask", return_value="y") as ask,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        open_patch.assert_called_once_with("/tmp/tty")
+        ask.assert_called_once_with(
+            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            choices=["y", "a", "n"],
+            default="n",
+            stream=fake_tty,
+        )
+        self.orch.assert_awaited_once_with(
+            "hi", use_async_generator=True, tool_confirm=unittest.mock.ANY
+        )
+        tg.assert_awaited_once()
         self.assertEqual(self.callback_result, "y")
 
     async def test_run_passes_tool_manager_to_model_call(self):

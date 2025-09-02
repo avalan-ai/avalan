@@ -156,6 +156,7 @@ async def memory_embeddings(
     searches = args.search or None
     search_k = args.search_k or 1
     sort_by: DistanceType = args.sort or DistanceType.L2
+    tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
     sort_key = {
         DistanceType.COSINE: lambda s: s.cosine_distance,
@@ -182,6 +183,7 @@ async def memory_embeddings(
                 _i["user_input"] + " ",
                 echo_stdin=not args.no_repl,
                 is_quiet=args.quiet,
+                tty_path=tty_path,
             )
             if not input_string:
                 return
@@ -380,12 +382,14 @@ async def memory_search(
     namespace = args.namespace
     dsn = args.dsn
     limit = args.limit
+    tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
     input_string = get_input(
         console,
         _i["user_input"] + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
+        tty_path=tty_path,
     )
     if not input_string:
         return

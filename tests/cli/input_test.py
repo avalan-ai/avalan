@@ -109,7 +109,11 @@ class CliConfirmToolCallTestCase(TestCase):
     def test_confirm_tool_call(self):
         console = MagicMock()
         call = ToolCall(id=uuid4(), name="calc", arguments={"x": 1})
-        with patch("avalan.cli.Prompt.ask", return_value="y") as ask:
+        stdin_mock = MagicMock(isatty=MagicMock(return_value=True))
+        with (
+            patch("avalan.cli.stdin", stdin_mock),
+            patch("avalan.cli.Prompt.ask", return_value="y") as ask,
+        ):
             result = confirm_tool_call(console, call)
 
         printed = console.print.call_args.args[0]
@@ -120,5 +124,53 @@ class CliConfirmToolCallTestCase(TestCase):
             "Execute tool call? ([y]es/[a]ll/[n]o)",
             choices=["y", "a", "n"],
             default="n",
+        )
+        self.assertEqual(result, "y")
+
+    def test_confirm_tool_call_uses_tty_when_stdin_not_tty(self):
+        console = MagicMock()
+        call = ToolCall(id=uuid4(), name="calc", arguments={"x": 1})
+        fake_tty = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__.return_value = fake_tty
+        ctx.__exit__.return_value = False
+        stdin_mock = MagicMock(isatty=MagicMock(return_value=False))
+        with (
+            patch("avalan.cli.stdin", stdin_mock),
+            patch("avalan.cli.open", return_value=ctx) as open_patch,
+            patch("avalan.cli.Prompt.ask", return_value="y") as ask,
+        ):
+            result = confirm_tool_call(console, call)
+
+        open_patch.assert_called_once_with("/dev/tty")
+        ask.assert_called_once_with(
+            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            choices=["y", "a", "n"],
+            default="n",
+            stream=fake_tty,
+        )
+        self.assertEqual(result, "y")
+
+    def test_confirm_tool_call_custom_tty_path(self):
+        console = MagicMock()
+        call = ToolCall(id=uuid4(), name="calc", arguments={"x": 1})
+        fake_tty = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__.return_value = fake_tty
+        ctx.__exit__.return_value = False
+        stdin_mock = MagicMock(isatty=MagicMock(return_value=False))
+        with (
+            patch("avalan.cli.stdin", stdin_mock),
+            patch("avalan.cli.open", return_value=ctx) as open_patch,
+            patch("avalan.cli.Prompt.ask", return_value="y") as ask,
+        ):
+            result = confirm_tool_call(console, call, tty_path="/tmp/tty")
+
+        open_patch.assert_called_once_with("/tmp/tty")
+        ask.assert_called_once_with(
+            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            choices=["y", "a", "n"],
+            default="n",
+            stream=fake_tty,
         )
         self.assertEqual(result, "y")

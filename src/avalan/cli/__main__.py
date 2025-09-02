@@ -260,6 +260,11 @@ class CLI:
             + " automatically)",
         )
         global_parser.add_argument(
+            "--tty",
+            default="/dev/tty",
+            help="TTY stream to use for interactive prompts",
+        )
+        global_parser.add_argument(
             "--record",
             action="store_true",
             default=False,
@@ -668,14 +673,6 @@ class CLI:
             action="store_true",
             default=False,
             help="Don't use an async generator (token streaming)",
-        )
-        agent_run_parser.add_argument(
-            "--tty",
-            default="/dev/tty",
-            help=(
-                "TTY stream (only applicable if combining --conversation "
-                "with input piping)"
-            ),
         )
         agent_run_parser.add_argument(
             "--tools-confirm",
@@ -1902,7 +1899,7 @@ class CLI:
                 prompt_kwargs = {}
                 if has_input(console):
                     try:
-                        prompt_kwargs["stream"] = open("/dev/tty")
+                        prompt_kwargs["stream"] = open(args.tty)
                     except OSError:
                         pass
                 access_token = Prompt.ask(
