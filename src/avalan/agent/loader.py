@@ -5,6 +5,7 @@ from ..entities import (
     EngineUri,
     OrchestratorSettings,
     TransformerEngineSettings,
+    ToolFormat,
     ToolManagerSettings,
 )
 from ..event.manager import EventManager
@@ -237,12 +238,18 @@ class OrchestratorLoader:
             if database_config:
                 database_settings = DatabaseToolSettings(**database_config)
 
+            tool_format = None
+            tool_format_str = tool_section.get("format")
+            if tool_format_str:
+                tool_format = ToolFormat(tool_format_str)
+
             _l("Loaded agent from %s", path, is_debug=False)
 
             return await self.from_settings(
                 settings,
                 browser_settings=browser_settings,
                 database_settings=database_settings,
+                tool_format=tool_format,
             )
 
     async def from_settings(
@@ -251,6 +258,7 @@ class OrchestratorLoader:
         *,
         browser_settings: BrowserToolSettings | None = None,
         database_settings: DatabaseToolSettings | None = None,
+        tool_format: ToolFormat | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
 
@@ -354,7 +362,7 @@ class OrchestratorLoader:
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,
             enable_tools=settings.tools,
-            settings=ToolManagerSettings(),
+            settings=ToolManagerSettings(tool_format=tool_format),
         )
         tool = await self._stack.enter_async_context(tool)
 

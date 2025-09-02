@@ -1,5 +1,5 @@
 from avalan.agent.loader import OrchestratorLoader
-from avalan.entities import OrchestratorSettings
+from avalan.entities import OrchestratorSettings, ToolFormat
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from contextlib import AsyncExitStack
 from logging import Logger
@@ -352,6 +352,82 @@ dsn = \"sqlite:///db.sqlite\"
                 dbs = lfs_patch.call_args.kwargs["database_settings"]
                 self.assertIsInstance(dbs, DatabaseToolSettings)
                 self.assertEqual(dbs.dsn, "sqlite:///db.sqlite")
+            await stack.aclose()
+
+    async def test_tool_format_setting(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool]
+format = \"react\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            sentence_model = MagicMock()
+            sentence_model.__enter__.return_value = sentence_model
+
+            model_manager = MagicMock()
+            model_manager.__enter__.return_value = model_manager
+            model_manager.parse_uri.return_value = "uri_obj"
+            model_manager.get_engine_settings.return_value = "settings_obj"
+
+            memory = MagicMock()
+            tool = MagicMock()
+            browser_toolset = MagicMock()
+            event_manager = MagicMock()
+
+            with (
+                patch(
+                    "avalan.agent.loader.SentenceTransformerModel",
+                    return_value=sentence_model,
+                ),
+                patch("avalan.agent.loader.TextPartitioner"),
+                patch(
+                    "avalan.agent.loader.MemoryManager.create_instance",
+                    new=AsyncMock(return_value=memory),
+                ),
+                patch(
+                    "avalan.agent.loader.ModelManager",
+                    return_value=model_manager,
+                ),
+                patch(
+                    "avalan.agent.loader.DefaultOrchestrator",
+                    return_value="orch",
+                ),
+                patch(
+                    "avalan.agent.loader.ToolManager.create_instance",
+                    return_value=tool,
+                ) as tm_patch,
+                patch(
+                    "avalan.agent.loader.BrowserToolSet",
+                    return_value=browser_toolset,
+                ),
+                patch(
+                    "avalan.agent.loader.EventManager",
+                    return_value=event_manager,
+                ),
+            ):
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(path, agent_id=uuid4())
+
+                settings = tm_patch.call_args.kwargs["settings"]
+                self.assertEqual(settings.tool_format, ToolFormat.REACT)
             await stack.aclose()
 
     async def test_load_json_orchestrator(self):
