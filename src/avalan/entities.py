@@ -463,11 +463,21 @@ MessageContent = MessageContentText | MessageContentImage
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class MessageToolCall:
+    id: str | None = None
+    name: str
+    arguments: list
+    content_type: Literal["json"] = "json"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
-    content: str | MessageContent | list[MessageContent]
+    thinking: str | None = ""
+    content: str | MessageContent | list[MessageContent] | None = None
     name: str | None = None
     arguments: dict | None = None
+    tool_calls: list[MessageToolCall] | None = None
 
 
 Input = str | list[str] | Message | list[Message]
