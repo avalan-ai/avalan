@@ -97,7 +97,7 @@ class ToolCallParser:
         tool_calls: list[ToolCall] = []
         pattern = (
             r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)\s*"
-            r"<\|constrain\|>json<\|message\|>(\{.*?\})<\|call\|>commentary"
+            r"<\|constrain\|>json<\|message\|>(\{.*?\})<\|call\|>"
         )
         for match in finditer(pattern, text, DOTALL):
             try:

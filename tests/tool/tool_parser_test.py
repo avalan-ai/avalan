@@ -73,7 +73,7 @@ class ToolCallParserFormatTestCase(TestCase):
 
 
 class ToolCallParserHarmonyTestCase(TestCase):
-    def test_multiple(self):
+    def test_multiple_with_commentary(self):
         parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         text = (
             "<|channel|>commentary to=functions.database.tables "
@@ -82,6 +82,35 @@ class ToolCallParserHarmonyTestCase(TestCase):
             "<|constrain|>json<|message|>"
             '{"sql":"SELECT COUNT(*) AS product_count FROM products;"}'
             "<|call|>commentary"
+        )
+        first_id = _uuid4()
+        second_id = _uuid4()
+        with patch(
+            "avalan.tool.parser.uuid4", side_effect=[first_id, second_id]
+        ):
+            expected = [
+                ToolCall(id=first_id, name="database.tables", arguments={}),
+                ToolCall(
+                    id=second_id,
+                    name="database.run",
+                    arguments={
+                        "sql": (
+                            "SELECT COUNT(*) AS product_count FROM products;"
+                        )
+                    },
+                ),
+            ]
+            self.assertEqual(parser(text), expected)
+
+    def test_multiple_without_commentary(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>commentary to=functions.database.tables "
+            "<|constrain|>json<|message|>{}<|call|>"
+            "<|channel|>commentary to=functions.database.run "
+            "<|constrain|>json<|message|>"
+            '{"sql":"SELECT COUNT(*) AS product_count FROM products;"}'
+            "<|call|>"
         )
         first_id = _uuid4()
         second_id = _uuid4()
