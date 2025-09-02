@@ -139,6 +139,25 @@ class ToolCallParserHarmonyTestCase(TestCase):
         )
         self.assertIsNone(parser(text))
 
+    def test_invalid_json_followed_by_valid(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>commentary to=functions.bad "
+            '<|constrain|>json<|message|>{"foo": }<|call|>commentary'
+            "<|channel|>commentary to=functions.database.run "
+            '<|constrain|>json<|message|>{"sql":"SELECT 1"}<|call|>'
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="database.run",
+                    arguments={"sql": "SELECT 1"},
+                )
+            ]
+            self.assertEqual(parser(text), expected)
+
 
 class ToolCallParserTagTestCase(TestCase):
     def setUp(self):
