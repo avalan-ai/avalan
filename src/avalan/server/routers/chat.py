@@ -79,7 +79,7 @@ async def create_chat_completion(
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
-            }
+            },
         )
 
     # Non streaming

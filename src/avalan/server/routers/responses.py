@@ -29,32 +29,41 @@ async def create_response(
         async def generate():
             seq = 0
 
-            yield _sse("response.created", {
-                "type": "response.created",
-                "response": {
-                    "id": str(response_id),
-                    "created_at": timestamp,
-                    "model": request.model,
-                    "type": "response",
-                    "status": "in_progress",
+            yield _sse(
+                "response.created",
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": str(response_id),
+                        "created_at": timestamp,
+                        "model": request.model,
+                        "type": "response",
+                        "status": "in_progress",
+                    },
                 },
-            })
+            )
 
             async for token in iter_tokens(response):
-                yield _sse("response.output_text.delta", {
-                    "type": "response.output_text.delta",
-                    "delta": token,
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,  # optional
-                })
+                yield _sse(
+                    "response.output_text.delta",
+                    {
+                        "type": "response.output_text.delta",
+                        "delta": token,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,  # optional
+                    },
+                )
                 seq += 1
 
-            yield _sse("response.output_text.done", {
-                "type": "response.output_text.done",
-                "output_index": 0,
-                "content_index": 0,
-            })
+            yield _sse(
+                "response.output_text.done",
+                {
+                    "type": "response.output_text.done",
+                    "output_index": 0,
+                    "content_index": 0,
+                },
+            )
 
             yield _sse("response.completed", {"type": "response.completed"})
 
@@ -89,4 +98,6 @@ async def create_response(
 
 
 def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\n" + f"data: {dumps(data, separators=(',', ':'))}\n\n"
+    return (
+        f"event: {event}\n" + f"data: {dumps(data, separators=(',', ':'))}\n\n"
+    )
