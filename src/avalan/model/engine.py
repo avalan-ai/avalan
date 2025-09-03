@@ -107,6 +107,16 @@ class Engine(ABC):
         return parallel.value
 
     @staticmethod
+    def _get_distributed_config(
+        distributed_config: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        if distributed_config is None:
+            return None
+        config = {"enable_expert_parallel": False}
+        config.update(distributed_config)
+        return config
+
+    @staticmethod
     def weight(weight_type: WeightType) -> Literal["auto"] | dtype:
         return Engine._WEIGHTS.get(weight_type, "auto")
 

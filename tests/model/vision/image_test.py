@@ -75,6 +75,7 @@ class ImageToTextModelInstantiationTestCase(TestCase):
                 self.model_id,
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                distributed_config=None,
             )
             model_instance.eval.assert_called_once()
             tokenizer_mock.assert_called_once_with(

@@ -60,6 +60,7 @@ class AudioClassificationModelInstantiationTestCase(TestCase):
                 self.model_id,
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                distributed_config=None,
                 subfolder="",
             )
             model_instance.to.assert_called_once_with(model._device)

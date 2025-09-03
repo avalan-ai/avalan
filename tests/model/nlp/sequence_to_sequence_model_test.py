@@ -82,6 +82,7 @@ class SequenceToSequenceModelInstantiationTestCase(TestCase):
                 token=None,
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                distributed_config=None,
             )
             auto_tokenizer_mock.assert_called_once_with(
                 self.model_id, use_fast=True, subfolder=""

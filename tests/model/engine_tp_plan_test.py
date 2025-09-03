@@ -17,3 +17,20 @@ class GetTPPlanTestCase(unittest.TestCase):
     def test_dict(self) -> None:
         plan = Engine._get_tp_plan({"a": ParallelStrategy.ROWWISE})
         self.assertEqual(plan, {"a": "rowwise"})
+
+
+class GetDistributedConfigTestCase(unittest.TestCase):
+    def test_none(self) -> None:
+        self.assertIsNone(Engine._get_distributed_config(None))
+
+    def test_empty(self) -> None:
+        self.assertEqual(
+            Engine._get_distributed_config({}),
+            {"enable_expert_parallel": False},
+        )
+
+    def test_override(self) -> None:
+        self.assertEqual(
+            Engine._get_distributed_config({"enable_expert_parallel": True}),
+            {"enable_expert_parallel": True},
+        )

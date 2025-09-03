@@ -209,6 +209,7 @@ class EngineSettings:
     disable_loading_progress_bar: bool = True
     enable_eval: bool = True
     parallel: ParallelStrategy | dict[str, ParallelStrategy] | None = None
+    distributed_config: dict[str, object] | None = None
     trust_remote_code: bool = False
     tokenizer_name_or_path: str | None = None
     subfolder: str | None = None

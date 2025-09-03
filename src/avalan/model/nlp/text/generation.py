@@ -103,6 +103,9 @@ class TextGenerationModel(BaseNLPModel):
             quantization_config=bnb_config,
             revision=self._settings.revision,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            distributed_config=Engine._get_distributed_config(
+                self._settings.distributed_config
+            ),
         )
         if model_args["quantization_config"] is None:
             model_args.pop("quantization_config", None)

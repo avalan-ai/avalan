@@ -125,6 +125,7 @@ class TextGenerationModelTestCase(TestCase):
                     token=None,
                     revision=None,
                     tp_plan=None,
+                    distributed_config=None,
                 )
                 auto_tokenizer_mock.assert_called_once_with(
                     model_id, use_fast=True, subfolder=""

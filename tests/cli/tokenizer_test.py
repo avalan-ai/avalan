@@ -41,6 +41,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
             ) -> None:
                 self.device = device
                 self.cache_dir = cache_dir
+                self.distributed_config = None
                 for key, value in kwargs.items():
                     setattr(self, key, value)
 
