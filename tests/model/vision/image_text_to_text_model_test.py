@@ -85,6 +85,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
                 torch_dtype="dtype",
                 device_map=model._device,
                 tp_plan=None,
+                distributed_config=None,
             )
 
     def test_instantiation_default_loader(self):
@@ -130,6 +131,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
                 torch_dtype="dtype",
                 device_map=model._device,
                 tp_plan=None,
+                distributed_config=None,
             )
 
     def test_instantiation_gemma3_loader(self):
@@ -174,6 +176,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
                 torch_dtype="dtype",
                 device_map=model._device,
                 tp_plan=None,
+                distributed_config=None,
             )
 
     def test_instantiation_invalid_loader(self):

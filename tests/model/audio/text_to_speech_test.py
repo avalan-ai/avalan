@@ -60,6 +60,7 @@ class TextToSpeechModelInstantiationTestCase(TestCase):
                 trust_remote_code=False,
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                distributed_config=None,
                 subfolder="",
             )
 

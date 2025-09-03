@@ -28,6 +28,9 @@ class TextToSpeechModel(BaseAudioModel):
             trust_remote_code=self._settings.trust_remote_code,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            distributed_config=Engine._get_distributed_config(
+                self._settings.distributed_config
+            ),
             subfolder=self._settings.subfolder or "",
         )
         return model

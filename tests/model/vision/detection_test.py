@@ -81,6 +81,7 @@ class ObjectDetectionModelInstantiationTestCase(TestCase):
                 revision="no_timm",
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                distributed_config=None,
             )
 
 

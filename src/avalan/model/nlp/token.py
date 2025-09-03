@@ -36,6 +36,9 @@ class TokenClassificationModel(BaseNLPModel):
             token=self._settings.access_token,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            distributed_config=Engine._get_distributed_config(
+                self._settings.distributed_config
+            ),
         )
         labels = (
             getattr(model.config, "id2label", None)

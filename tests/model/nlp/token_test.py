@@ -112,6 +112,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 token=None,
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
+                distributed_config=None,
             )
             auto_tokenizer_mock.assert_called_once_with(
                 self.model_id, use_fast=True, subfolder=""
@@ -161,6 +162,7 @@ class TokenClassificationModelInstantiationTestCase(TestCase):
                 token=None,
                 device_map=Engine.get_default_device(),
                 tp_plan="colwise",
+                distributed_config=None,
             )
             self.assertIs(model.model, model_instance)
 

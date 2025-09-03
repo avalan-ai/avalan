@@ -49,6 +49,9 @@ class SentenceTransformerModel(BaseNLPModel):
                 ),
                 "device_map": self._device,
                 "tp_plan": Engine._get_tp_plan(self._settings.parallel),
+                "distributed_config": Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
             },
             backend="torch",
             similarity_fn_name=None,

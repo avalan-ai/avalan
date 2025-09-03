@@ -40,6 +40,9 @@ class SequenceClassificationModel(BaseNLPModel):
             token=self._settings.access_token,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            distributed_config=Engine._get_distributed_config(
+                self._settings.distributed_config
+            ),
         )
         return model
 
@@ -106,6 +109,9 @@ class SequenceToSequenceModel(BaseNLPModel):
             token=self._settings.access_token,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            distributed_config=Engine._get_distributed_config(
+                self._settings.distributed_config
+            ),
         )
         return model
 

@@ -24,6 +24,9 @@ class AudioGenerationModel(BaseAudioModel):
             self._model_id,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            distributed_config=Engine._get_distributed_config(
+                self._settings.distributed_config
+            ),
             subfolder=self._settings.subfolder or "",
         ).to(self._device)
         return model
