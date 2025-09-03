@@ -16,14 +16,19 @@ from typing import AsyncIterator
 
 
 class OpenAIStream(TextGenerationVendorStream):
+    _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
+
     def __init__(self, stream: AsyncStream):
         super().__init__(stream.__aiter__())
 
     async def __anext__(self) -> Token | TokenDetail | str:
         while True:
             event = await self._generator.__anext__()
-            if getattr(event, "type", "") == "response.output_text.delta":
-                return event.delta
+            type = getattr(event, "type", None)
+            if type and type in self._TEXT_DELTA_EVENTS:
+                delta = getattr(event, "delta", None)
+                if delta and isinstance(delta, str):
+                    return event.delta
 
 
 class OpenAIClient(TextGenerationVendor):

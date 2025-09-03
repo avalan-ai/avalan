@@ -1,10 +1,3 @@
-"""Shared utilities for chat and responses routers."""
-
-from logging import Logger
-from time import time
-from typing import AsyncIterator
-from uuid import uuid4
-
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     GenerationSettings,
@@ -15,6 +8,10 @@ from ...entities import (
 )
 from ...event import Event
 from ...server.entities import ChatCompletionRequest, ContentImage, ContentText
+from logging import Logger
+from time import time
+from typing import AsyncIterator
+from uuid import uuid4
 
 
 async def orchestrate(
@@ -22,7 +19,6 @@ async def orchestrate(
     logger: Logger,
     orchestrator: Orchestrator,
 ):
-    """Call the orchestrator and prepare response metadata."""
     messages = [
         Message(role=req.role, content=to_message_content(req.content))
         for req in request.messages
@@ -55,7 +51,6 @@ async def orchestrate(
 
 
 async def iter_tokens(response: AsyncIterator):
-    """Iterate over tokens, skipping events and extracting reasoning tokens."""
     async for token in response:
         if isinstance(token, Event):
             continue
@@ -65,7 +60,6 @@ async def iter_tokens(response: AsyncIterator):
 
 
 def to_message_content(item):
-    """Convert API content item to internal message content."""
     if isinstance(item, list):
         return [
             to_message_content(i)

@@ -73,7 +73,13 @@ async def create_chat_completion(
         )
 
         return StreamingResponse(
-            generate_chunks(), media_type="text/event-stream"
+            generate_chunks(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
         )
 
     # Non streaming
