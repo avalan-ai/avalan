@@ -1,7 +1,7 @@
+from . import iter_tokens, orchestrate
 from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
 from ...server.entities import ResponsesRequest
-from ._shared import iter_tokens, orchestrate
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from json import dumps

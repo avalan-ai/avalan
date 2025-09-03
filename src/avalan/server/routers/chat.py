@@ -1,3 +1,4 @@
+from . import iter_tokens, orchestrate
 from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
 from ...entities import MessageRole
@@ -11,7 +12,6 @@ from ...server.entities import (
     ChatMessage,
     ChatCompletionUsage,
 )
-from ._shared import iter_tokens, orchestrate
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from logging import Logger
