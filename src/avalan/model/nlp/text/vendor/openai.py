@@ -20,9 +20,10 @@ class OpenAIStream(TextGenerationVendorStream):
         super().__init__(stream.__aiter__())
 
     async def __anext__(self) -> Token | TokenDetail | str:
-        chunk = await self._generator.__anext__()
-        text = chunk.choices[0].delta.content or ""
-        return text
+        while True:
+            event = await self._generator.__anext__()
+            if getattr(event, "type", "") == "response.output_text.delta":
+                return event.delta
 
 
 class OpenAIClient(TextGenerationVendor):
@@ -49,32 +50,30 @@ class OpenAIClient(TextGenerationVendor):
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
             "model": model_id,
-            "messages": template_messages,
+            "input": template_messages,
             "stream": use_async_generator,
             "timeout": timeout,
         }
         if settings:
-            if settings.response_format:
-                kwargs["response_format"] = settings.response_format
             if settings.max_new_tokens is not None:
-                kwargs["max_tokens"] = settings.max_new_tokens
+                kwargs["max_output_tokens"] = settings.max_new_tokens
             if settings.temperature is not None:
                 kwargs["temperature"] = settings.temperature
             if settings.top_p is not None:
                 kwargs["top_p"] = settings.top_p
             if settings.stop_strings is not None:
-                kwargs["stop"] = settings.stop_strings
+                kwargs["text"] = {"stop": settings.stop_strings}
         if tool:
             schemas = tool.json_schemas()
             if schemas:
                 kwargs["tools"] = schemas
-        client_stream = await self._client.chat.completions.create(**kwargs)
+        client_stream = await self._client.responses.create(**kwargs)
 
         stream = (
             OpenAIStream(stream=client_stream)
             if use_async_generator
             else TextGenerationSingleStream(
-                client_stream.choices[0].message.content
+                client_stream.output[0].content[0].text
             )
         )
 

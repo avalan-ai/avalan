@@ -34,6 +34,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.openai_stub = types.ModuleType("openai")
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
         self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
         self.patch.start()
         importlib.reload(
@@ -47,17 +48,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.patch.stop()
 
     async def test_stream_client_and_model(self):
-        chunk = SimpleNamespace(
-            choices=[SimpleNamespace(delta=SimpleNamespace(content="x"))]
-        )
+        chunk = SimpleNamespace(type="response.output_text.delta", delta="x")
         stream = self.mod.OpenAIStream(AsyncIter([chunk]))
         self.assertEqual(await stream.__anext__(), "x")
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
         stream_instance = AsyncIter([])
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create = (
-            AsyncMock(return_value=stream_instance)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=stream_instance
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
@@ -66,13 +65,13 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.openai_stub.AsyncOpenAI.assert_called_once_with(
             base_url="b", api_key="k"
         )
-        client._client.chat.completions.create.assert_awaited_once_with(
+        client._client.responses.create.assert_awaited_once_with(
             extra_headers={
                 "X-Title": "Avalan",
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
             model="m",
-            messages=[{"c": 1}],
+            input=[{"c": 1}],
             stream=True,
             timeout=None,
         )
@@ -93,8 +92,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
     async def test_generation_settings_and_tools(self):
         stream_instance = AsyncIter([])
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create = (
-            AsyncMock(return_value=stream_instance)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=stream_instance
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
@@ -113,20 +112,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             settings=settings,
             tool=tool,
         )
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create.assert_awaited_once_with(
+        self.openai_stub.AsyncOpenAI.return_value.responses.create.assert_awaited_once_with(
             extra_headers={
                 "X-Title": "Avalan",
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
             model="m",
-            messages=[{"c": 1}],
+            input=[{"c": 1}],
             stream=True,
             timeout=None,
-            response_format={"type": "json_schema"},
-            max_tokens=10,
+            max_output_tokens=10,
             temperature=0.5,
             top_p=0.8,
-            stop=["stop"],
+            text={"stop": ["stop"]},
             tools=[{"a": 1}],
         )
 
@@ -136,6 +134,7 @@ class VendorClientsTestCase(TestCase):
         self.openai_stub = types.ModuleType("openai")
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
         self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
         self.patch.start()
         importlib.reload(
@@ -197,24 +196,8 @@ class VendorClientsTestCase(TestCase):
 class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         self.openai_stub = types.ModuleType("openai")
-
-        class ChatCompletionsSpec:
-            async def create(self, *args, **kwargs):
-                pass
-
-        class ChatSpec:
-            completions: ChatCompletionsSpec
-
-        class AsyncOpenAISpec:
-            chat: ChatSpec
-
-        self.openai_stub.AsyncOpenAI = MagicMock(spec=AsyncOpenAISpec)
-        self.openai_stub.AsyncOpenAI.return_value.chat = MagicMock(
-            spec=ChatSpec
-        )
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions = MagicMock(
-            spec=ChatCompletionsSpec
-        )
+        self.openai_stub.AsyncOpenAI = MagicMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
         self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
         self.patch.start()
@@ -230,10 +213,10 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 
     async def test_response_single_stream(self):
         resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
         )
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create = (
-            AsyncMock(return_value=resp)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=resp
         )
         settings = TransformerEngineSettings(
             auto_load_model=False,
@@ -248,13 +231,13 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
         self.openai_stub.AsyncOpenAI.assert_called_once_with(
             base_url="url", api_key="tok"
         )
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create.assert_awaited_once_with(
+        self.openai_stub.AsyncOpenAI.return_value.responses.create.assert_awaited_once_with(
             extra_headers={
                 "X-Title": "Avalan",
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
             model="m",
-            messages=[{"role": "user", "content": "hi"}],
+            input=[{"role": "user", "content": "hi"}],
             stream=False,
             timeout=None,
             temperature=1.0,
@@ -270,22 +253,9 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         self.openai_stub = types.ModuleType("openai")
-
-        class ChatCompletionsSpec:
-            async def create(self, *args, **kwargs):
-                pass
-
-        class ChatSpec:
-            completions: ChatCompletionsSpec
-
         self.openai_stub.AsyncOpenAI = MagicMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
-        self.openai_stub.AsyncOpenAI.return_value.chat = MagicMock(
-            spec=ChatSpec
-        )
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions = MagicMock(
-            spec=ChatCompletionsSpec
-        )
         self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
         self.patch.start()
         importlib.reload(
@@ -300,21 +270,21 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
 
     async def _assert_messages(self, content, expected_content):
         resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="x"))]
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
         )
-        self.openai_stub.AsyncOpenAI.return_value.chat.completions.create = (
-            AsyncMock(return_value=resp)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=resp
         )
         client = self.mod.OpenAIClient(api_key="key", base_url="url")
         message = Message(role=MessageRole.USER, content=content)
         await client("model", [message], use_async_generator=False)
         create_mock = (
-            self.openai_stub.AsyncOpenAI.return_value.chat.completions.create
+            self.openai_stub.AsyncOpenAI.return_value.responses.create
         )
         create_mock.assert_awaited_once()
         kwargs = create_mock.await_args.kwargs
         self.assertEqual(
-            kwargs["messages"], [{"role": "user", "content": expected_content}]
+            kwargs["input"], [{"role": "user", "content": expected_content}]
         )
 
     async def test_string_message(self):
