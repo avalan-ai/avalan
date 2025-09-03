@@ -43,7 +43,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             model="m",
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         self.assertEqual(resp.object, "chat.completion")
         self.assertEqual(resp.choices[0].message.content, "ok")
@@ -60,7 +60,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             n=3,
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         self.assertEqual(len(resp.choices), 3)
         self.assertEqual([c.index for c in resp.choices], [0, 1, 2])
@@ -95,7 +95,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             stream=True,
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
@@ -132,7 +132,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             stream=True,
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
@@ -154,7 +154,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             stream=True,
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
@@ -175,7 +175,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             model="m",
             messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             await self.chat.create_chat_completion(req, logger, orch)
 
         orch.assert_awaited_once()
@@ -206,7 +206,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 )
             ],
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             await self.chat.create_chat_completion(req, logger, orch)
 
         orch.assert_awaited_once()
@@ -233,7 +233,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 )
             ],
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             await self.chat.create_chat_completion(req, logger, orch)
 
         msg = orch.await_args.args[0][0]
@@ -264,7 +264,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 )
             ],
         )
-        with patch("avalan.server.routers.chat.time", return_value=1):
+        with patch("avalan.server.routers._shared.time", return_value=1):
             await self.chat.create_chat_completion(req, logger, orch)
 
         msg = orch.await_args.args[0][0]
@@ -275,5 +275,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(msg.content[1].image_url, {"url": "img"})
 
     async def test_to_message_content_invalid_type(self) -> None:
+        from avalan.server.routers._shared import to_message_content
+
         with self.assertRaises(TypeError):
-            self.chat._to_message_content(123)
+            to_message_content(123)

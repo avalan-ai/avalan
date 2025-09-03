@@ -48,9 +48,13 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.patch.stop()
 
     async def test_stream_client_and_model(self):
-        chunk = SimpleNamespace(type="response.output_text.delta", delta="x")
-        stream = self.mod.OpenAIStream(AsyncIter([chunk]))
+        chunks = [
+            SimpleNamespace(type="response.output_text.delta", delta="x"),
+            SimpleNamespace(type="response.output_text.delta", delta="y"),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(chunks))
         self.assertEqual(await stream.__anext__(), "x")
+        self.assertEqual(await stream.__anext__(), "y")
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
@@ -77,6 +81,23 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         StreamMock.assert_called_once_with(stream=stream_instance)
         self.assertIs(result, StreamMock.return_value)
+
+    async def test_client_consumes_tokens(self):
+        chunks = [
+            SimpleNamespace(type="response.output_text.delta", delta="a"),
+            SimpleNamespace(type="response.output_text.delta", delta="b"),
+        ]
+        stream_instance = AsyncIter(chunks)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=stream_instance
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._template_messages = MagicMock(return_value=[{"c": 1}])
+        result = await client("m", [])
+        self.assertEqual(await result.__anext__(), "a")
+        self.assertEqual(await result.__anext__(), "b")
+        with self.assertRaises(StopAsyncIteration):
+            await result.__anext__()
 
         with patch.object(self.mod, "OpenAIClient") as ClientMock:
             settings = TransformerEngineSettings(
