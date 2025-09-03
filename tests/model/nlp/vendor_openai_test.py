@@ -48,7 +48,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.patch.stop()
 
     async def test_stream_client_and_model(self):
-        chunk = SimpleNamespace(type="response.text.delta", delta="x")
+        chunk = SimpleNamespace(type="response.output_text.delta", delta="x")
         stream = self.mod.OpenAIStream(AsyncIter([chunk]))
         self.assertEqual(await stream.__anext__(), "x")
         with self.assertRaises(StopAsyncIteration):

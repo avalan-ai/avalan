@@ -21,9 +21,9 @@ class OpenAIStream(TextGenerationVendorStream):
 
     async def __anext__(self) -> Token | TokenDetail | str:
         while True:
-            chunk = await self._generator.__anext__()
-            if getattr(chunk, "type", "") == "response.text.delta":
-                return chunk.delta
+            event = await self._generator.__anext__()
+            if getattr(event, "type", "") == "response.output_text.delta":
+                return event.delta
 
 
 class OpenAIClient(TextGenerationVendor):
