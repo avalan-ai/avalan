@@ -1272,7 +1272,7 @@ avalan agent serve docs/examples/agent_tool.toml -vvv
 ```
 
 > [!NOTE]
-> Avalan's OpenAI-compatible endpoint supports both the legacy completions API and the newer [Responses API](https://platform.openai.com/docs/guides/responses).
+> Avalan's OpenAI-compatible endpoint supports both the legacy completions API and the newer [Responses API](https://platform.openai.com/docs/guides/migrate-to-responses).
 
 Agents listen on port 9001 by default.
 
