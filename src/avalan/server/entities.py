@@ -147,6 +147,22 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Literal["auto", "none", "required"] | str | dict | None = None
 
 
+class ResponsesRequest(BaseModel):
+    model: str
+    input: list[ChatMessage] = Field(...)
+    temperature: float | None = 1.0
+    top_p: float | None = 1.0
+    n: int | None = 1
+    stream: bool | None = False
+    stop: str | list[str] | None = None
+    max_tokens: int | None = None
+    response_format: ResponseFormat | None = None
+
+    @property
+    def messages(self) -> list[ChatMessage]:  # type: ignore[override]
+        return self.input
+
+
 class ChatCompletionChunkChoiceDelta(BaseModel):
     content: str
 

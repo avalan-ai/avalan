@@ -62,6 +62,7 @@ def agents_server(
     ), "Provide either specs_path or settings, but not both"
 
     from ..server.routers import chat
+    from ..server.routers import responses
     from mcp.server.lowlevel.server import Server as MCPServer
     from mcp.server.sse import SseServerTransport
     from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
@@ -105,6 +106,7 @@ def agents_server(
 
     logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)
+    app.include_router(responses.router, prefix=prefix_openai)
 
     logger.debug("Creating MCP server with SSE")
     mcp_server = MCPServer(name=name)
