@@ -23,6 +23,22 @@ class StreamingOrchestrator(Orchestrator):
         )
 
 
+class SimpleOrchestrator(Orchestrator):
+    def __init__(self) -> None:  # type: ignore[no-untyped-def]
+        self.synced = False
+
+    async def __call__(self, messages, settings=None):
+        def output_fn():
+            return "c"
+
+        return TextGenerationResponse(
+            output_fn, logger=getLogger(), use_async_generator=False
+        )
+
+    async def sync_messages(self):  # type: ignore[override]
+        self.synced = True
+
+
 class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from fastapi import FastAPI
@@ -86,3 +102,21 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("event: response.completed", lines)
         self.assertEqual(lines[-1], "")
+
+    async def test_non_streaming_response(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        payload = {
+            "model": "m",
+            "input": [{"role": "user", "content": "hi"}],
+            "stream": False,
+        }
+        resp = client.post("/responses", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["output"][0]["content"][0]["text"], "c")
+        self.assertTrue(orchestrator.synced)
