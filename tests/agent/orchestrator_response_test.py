@@ -220,10 +220,18 @@ class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(resp.input_token_count, 3)
+        self.assertEqual(resp.output_token_count, 0)
+        self.assertTrue(resp.can_think)
+        self.assertFalse(resp.is_thinking)
+        resp.set_thinking(True)
+        self.assertTrue(resp.is_thinking)
         self.assertEqual(await resp.to_str(), '{"value": "ok"}')
+        self.assertEqual(resp.output_token_count, len('{"value": "ok"}'))
         self.assertEqual(await resp.to_json(), '{"value": "ok"}')
         result = await resp.to(Example)
         self.assertEqual(result, Example(value="ok"))
+        resp.set_thinking(False)
+        self.assertFalse(resp.is_thinking)
 
 
 class OrchestratorResponseEventTestCase(IsolatedAsyncioTestCase):

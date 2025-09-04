@@ -109,3 +109,21 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
         resp._tool_parser = MagicMock()
         resp._tool_parser.push = AsyncMock(return_value=[event])
         self.assertIs(await resp._emit("text"), event)
+
+    async def test_tool_parser_disabled(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = False
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+        self.assertIsNone(resp._tool_parser)
