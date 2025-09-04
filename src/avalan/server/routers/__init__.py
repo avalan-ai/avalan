@@ -4,8 +4,8 @@ from ...entities import (
     Message,
     MessageContentImage,
     MessageContentText,
-    ReasoningToken,
-    ToolCallToken,
+    ReasoningToken as ReasoningToken,
+    ToolCallToken as ToolCallToken,
 )
 from ...event import Event
 from ...server.entities import ChatCompletionRequest, ContentImage, ContentText
@@ -55,8 +55,6 @@ async def iter_tokens(response: AsyncIterator):
     async for token in response:
         if isinstance(token, Event):
             continue
-        if isinstance(token, (ReasoningToken, ToolCallToken)):
-            token = token.token
         yield token
 
 

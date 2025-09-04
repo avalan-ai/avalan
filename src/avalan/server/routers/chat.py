@@ -1,7 +1,7 @@
 from . import iter_tokens, orchestrate
 from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
-from ...entities import MessageRole
+from ...entities import MessageRole, ReasoningToken, ToolCallToken
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -54,6 +54,9 @@ async def create_chat_completion(
 
         async def generate_chunks():
             async for token in iter_tokens(response):
+                if isinstance(token, (ReasoningToken, ToolCallToken)):
+                    token = token.token
+
                 choice = ChatCompletionChunkChoice(
                     delta=ChatCompletionChunkChoiceDelta(content=token)
                 )
