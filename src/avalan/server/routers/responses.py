@@ -55,7 +55,9 @@ async def create_response(
             state: ResponseState | None = None
 
             async for token in iter_tokens(response):
-                state = _switch_state(state, token)
+                state, event = _switch_state(state, token)
+                if event:
+                    yield event
 
                 if isinstance(token, ReasoningToken):
                     yield _sse(
@@ -92,7 +94,9 @@ async def create_response(
                     )
                 seq += 1
 
-            _switch_state(state, None)
+            _, event = _switch_state(state, None)
+            if event:
+                yield event
 
             yield _sse("response.completed", {"type": "response.completed"})
 
@@ -137,7 +141,7 @@ def _sse(event: str, data: dict) -> str:
 def _switch_state(
     state: ResponseState | None,
     token: str | ReasoningToken | ToolCallToken | None,
-) -> ResponseState | None:
+) -> tuple[ResponseState | None, str | None]:
     new_state: ResponseState | None = state
 
     if (
@@ -155,13 +159,14 @@ def _switch_state(
     elif token is None:
         new_state = None
 
+    event: str | None = None
     if (
         (state is None and new_state is not None)
         or (state is not None and new_state is None)
         or (new_state != state)
     ):
         if state is ResponseState.REASONING:
-            yield _sse(
+            event = _sse(
                 "response.reasoning_text.done",
                 {
                     "type": "response.reasoning_text.done",
@@ -170,7 +175,7 @@ def _switch_state(
                 },
             )
         elif state is ResponseState.TOOL_CALLING:
-            yield _sse(
+            event = _sse(
                 "response.custom_tool_call_input.done",
                 {
                     "type": "response.custom_tool_call_input.done",
@@ -179,7 +184,7 @@ def _switch_state(
                 },
             )
         elif state is ResponseState.ANSWERING:
-            yield _sse(
+            event = _sse(
                 "response.output_text.done",
                 {
                     "type": "response.output_text.done",
@@ -188,4 +193,4 @@ def _switch_state(
                 },
             )
 
-    return new_state
+    return new_state, event
