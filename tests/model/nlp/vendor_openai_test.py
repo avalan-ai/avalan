@@ -146,6 +146,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             temperature=0.5,
             top_p=0.8,
             text={"stop": ["stop"]},
+            response_format={"type": "json_schema"},
             tools=[{"a": 1}],
         )
 
