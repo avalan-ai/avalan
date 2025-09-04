@@ -654,6 +654,11 @@ async def agent_serve(
         logger=logger,
         agent_id=agent_id,
         participant_id=participant_id,
+        allow_origins=args.cors_origin,
+        allow_origin_regex=args.cors_origin_regex,
+        allow_methods=args.cors_method,
+        allow_headers=args.cors_header,
+        allow_credentials=args.cors_credentials,
     )
     await server.serve()
 

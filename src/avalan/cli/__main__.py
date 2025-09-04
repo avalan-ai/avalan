@@ -1673,6 +1673,32 @@ class CLI:
             default=False,
             help="Hot reload on code changes",
         )
+        parser.add_argument(
+            "--cors-origin",
+            action="append",
+            help="Allowed CORS origin; may be specified multiple times",
+        )
+        parser.add_argument(
+            "--cors-origin-regex",
+            type=str,
+            help="Allowed CORS origin regex",
+        )
+        parser.add_argument(
+            "--cors-method",
+            action="append",
+            help="Allowed CORS method; may be specified multiple times",
+        )
+        parser.add_argument(
+            "--cors-header",
+            action="append",
+            help="Allowed CORS header; may be specified multiple times",
+        )
+        parser.add_argument(
+            "--cors-credentials",
+            action="store_true",
+            default=False,
+            help="Allow CORS credentials",
+        )
         return parser
 
     @staticmethod
