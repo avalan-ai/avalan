@@ -7,6 +7,7 @@ from ..tool.database import DatabaseToolSettings
 from ..utils import logger_replace
 from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from logging import Logger
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -31,6 +32,11 @@ def agents_server(
     logger: Logger,
     agent_id: UUID | None = None,
     participant_id: UUID | None = None,
+    allow_origins: list[str] | None = None,
+    allow_origin_regex: str | None = None,
+    allow_methods: list[str] | None = None,
+    allow_headers: list[str] | None = None,
+    allow_credentials: bool = False,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents.
 
@@ -53,6 +59,11 @@ def agents_server(
         logger: Application logger.
         agent_id: Optional agent identifier.
         participant_id: Optional participant identifier.
+        allow_origins: Optional list of allowed CORS origins.
+        allow_origin_regex: Optional regex for allowed CORS origins.
+        allow_methods: Optional list of allowed CORS methods.
+        allow_headers: Optional list of allowed CORS headers.
+        allow_credentials: Whether to allow CORS credentials.
 
     Returns:
         Configured Uvicorn server instance.
@@ -103,6 +114,24 @@ def agents_server(
 
     logger.debug("Creating %s server", name)
     app = FastAPI(title=name, version=version, lifespan=lifespan)
+
+    if any(
+        [
+            allow_origins,
+            allow_origin_regex,
+            allow_methods,
+            allow_headers,
+            allow_credentials,
+        ]
+    ):
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allow_origins or [],
+            allow_origin_regex=allow_origin_regex,
+            allow_credentials=allow_credentials,
+            allow_methods=allow_methods or ["*"],
+            allow_headers=allow_headers or ["*"],
+        )
 
     logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)

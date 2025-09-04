@@ -74,6 +74,11 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
             reload=False,
             id="aid",
             participant="pid",
+            cors_origin=None,
+            cors_origin_regex=None,
+            cors_method=None,
+            cors_header=None,
+            cors_credentials=False,
         )
         hub = MagicMock()
         logger = MagicMock(spec=Logger)

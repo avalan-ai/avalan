@@ -206,6 +206,11 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             backend="transformers",
             id=None,
             participant="pid",
+            cors_origin=None,
+            cors_origin_regex=None,
+            cors_method=None,
+            cors_header=None,
+            cors_credentials=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -235,6 +240,64 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 logger=logger,
                 agent_id=None,
                 participant_id="pid",
+                allow_origins=None,
+                allow_origin_regex=None,
+                allow_methods=None,
+                allow_headers=None,
+                allow_credentials=False,
+            )
+        server.serve.assert_awaited_once()
+
+    async def test_agent_serve_cors_args_forwarded(self):
+        args = Namespace(
+            host="0.0.0.0",
+            port=80,
+            specifications_file=None,
+            prefix_openai="oa",
+            prefix_mcp="mcp",
+            reload=False,
+            backend="transformers",
+            id=None,
+            participant="pid",
+            cors_origin=["https://a"],
+            cors_origin_regex="^https://.*$",
+            cors_method=["GET"],
+            cors_header=["X-Test"],
+            cors_credentials=True,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with NamedTemporaryFile("w") as spec:
+            args.specifications_file = spec.name
+            with patch.object(
+                agent_cmds, "agents_server", return_value=server
+            ) as asrv:
+                await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
+            asrv.assert_called_once_with(
+                hub=hub,
+                name="name",
+                version="1.0",
+                prefix_openai="oa",
+                prefix_mcp="mcp",
+                specs_path=spec.name,
+                settings=None,
+                browser_settings=None,
+                database_settings=None,
+                host="0.0.0.0",
+                port=80,
+                reload=False,
+                logger=logger,
+                agent_id=None,
+                participant_id="pid",
+                allow_origins=["https://a"],
+                allow_origin_regex="^https://.*$",
+                allow_methods=["GET"],
+                allow_headers=["X-Test"],
+                allow_credentials=True,
             )
         server.serve.assert_awaited_once()
 
@@ -272,6 +335,11 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             tools_confirm=False,
             id=None,
             participant="pid",
+            cors_origin=None,
+            cors_origin_regex=None,
+            cors_method=None,
+            cors_header=None,
+            cors_credentials=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -320,6 +388,11 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             logger=logger,
             agent_id=None,
             participant_id="pid",
+            allow_origins=None,
+            allow_origin_regex=None,
+            allow_methods=None,
+            allow_headers=None,
+            allow_credentials=False,
         )
         server.serve.assert_awaited_once()
 
@@ -357,6 +430,11 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             tools_confirm=False,
             id=None,
             participant="pid",
+            cors_origin=None,
+            cors_origin_regex=None,
+            cors_method=None,
+            cors_header=None,
+            cors_credentials=False,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -399,6 +477,11 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
             tools_confirm=False,
             id=None,
             participant="pid",
+            cors_origin=["https://a"],
+            cors_origin_regex="^https://.*$",
+            cors_method=["GET"],
+            cors_header=["X-Test"],
+            cors_credentials=True,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -416,6 +499,11 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
             "postgresql://avalan:password@localhost:5432/avalan",
         )
         self.assertIsNone(args.specifications_file)
+        self.assertEqual(args.cors_origin, ["https://a"])
+        self.assertEqual(args.cors_origin_regex, "^https://.*$")
+        self.assertEqual(args.cors_method, ["GET"])
+        self.assertEqual(args.cors_header, ["X-Test"])
+        self.assertTrue(args.cors_credentials)
 
     async def test_agent_proxy_requires_engine(self):
         args = Namespace(
@@ -428,6 +516,11 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
             engine_uri=None,
             id=None,
             participant="pid",
+            cors_origin=None,
+            cors_origin_regex=None,
+            cors_method=None,
+            cors_header=None,
+            cors_credentials=False,
         )
         hub = MagicMock()
         logger = MagicMock()

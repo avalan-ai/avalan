@@ -98,6 +98,57 @@ class CliAgentPortTestCase(TestCase):
         self.assertEqual(args.port, 9001)
 
 
+class CliAgentCorsTestCase(TestCase):
+    def setUp(self) -> None:
+        self.logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            self.cli = CLI(self.logger)
+
+    def test_agent_serve_cors_options(self) -> None:
+        args = self.cli._parser.parse_args(
+            [
+                "agent",
+                "serve",
+                "--cors-origin",
+                "https://a",
+                "--cors-origin",
+                "https://b",
+                "--cors-origin-regex",
+                "^https://example.com$",
+                "--cors-method",
+                "GET",
+                "--cors-method",
+                "POST",
+                "--cors-header",
+                "X-Test",
+                "--cors-header",
+                "X-Other",
+                "--cors-credentials",
+            ]
+        )
+        self.assertEqual(args.cors_origin, ["https://a", "https://b"])
+        self.assertEqual(args.cors_origin_regex, "^https://example.com$")
+        self.assertEqual(args.cors_method, ["GET", "POST"])
+        self.assertEqual(args.cors_header, ["X-Test", "X-Other"])
+        self.assertTrue(args.cors_credentials)
+
+    def test_agent_proxy_cors_options(self) -> None:
+        args = self.cli._parser.parse_args(
+            [
+                "agent",
+                "proxy",
+                "--engine-uri",
+                "uri",
+                "--cors-origin",
+                "https://a",
+                "--cors-method",
+                "GET",
+            ]
+        )
+        self.assertEqual(args.cors_origin, ["https://a"])
+        self.assertEqual(args.cors_method, ["GET"])
+
+
 class CliCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from logging import getLogger
