@@ -36,6 +36,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     ]
     _output_fn: OutputFunction
     _input_token_count: int = 0
+    _output_token_count: int = 0
     _output: OutputGenerator | None = None
     _buffer: StringIO = StringIO()
     _on_consumed: Callable[[], Awaitable[None] | None] | None = None
@@ -60,6 +61,8 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         self._logger = logger
         self._use_async_generator = use_async_generator
         self._generation_settings = generation_settings
+        self._output_token_count = 0
+        self._buffer = StringIO()
         if generation_settings and generation_settings.reasoning.enabled:
             self._parser_queue = Queue()
             self._reasoning_parser = ReasoningParser(
@@ -87,6 +90,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     @property
     def input_token_count(self) -> int:
         return self._input_token_count
+
+    @property
+    def output_token_count(self) -> int:
+        return self._output_token_count
 
     @property
     def can_think(self) -> bool:
@@ -119,6 +126,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
         while True:
             if self._parser_queue and not self._parser_queue.empty():
+                self._output_token_count += 1
                 return self._parser_queue.get()
 
             try:
@@ -139,6 +147,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 self._reasoning_parser.is_thinking_budget_exhausted
                 and not self._reasoning_parser.is_thinking
             ):
+                self._output_token_count += 1
                 return token
 
             try:
@@ -175,6 +184,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 self._parser_queue.put(parsed)
 
             if not self._parser_queue.empty():
+                self._output_token_count += 1
                 return self._parser_queue.get()
 
     async def to_str(self) -> str:
@@ -182,9 +192,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             result = self._output_fn(*self._args, **self._kwargs)
             if isinstance(result, TextGenerationSingleStream):
                 result = result.content
-            self._buffer.write(result)
+            token_str = result if isinstance(result, str) else result.token
+            self._buffer.write(token_str)
+            self._output_token_count = len(token_str)
             await self._trigger_consumed()
-            return result
+            return token_str
 
         # Ensure buffer is filled, wether we were already iterating or not
         if not self._output:
@@ -192,6 +204,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
         async for token in self._output:
             self._buffer.write(token)
+            self._output_token_count += 1
 
         await self._trigger_consumed()
         return self._buffer.getvalue()

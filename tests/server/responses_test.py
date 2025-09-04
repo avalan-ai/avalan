@@ -28,11 +28,14 @@ class SimpleOrchestrator(Orchestrator):
         self.synced = False
 
     async def __call__(self, messages, settings=None):
-        def output_fn():
+        def output_fn(**_):
             return "c"
 
         return TextGenerationResponse(
-            output_fn, logger=getLogger(), use_async_generator=False
+            output_fn,
+            logger=getLogger(),
+            use_async_generator=False,
+            inputs={"input_ids": [[1, 2, 3]]},
         )
 
     async def sync_messages(self):  # type: ignore[override]
@@ -120,3 +123,11 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
         body = resp.json()
         self.assertEqual(body["output"][0]["content"][0]["text"], "c")
         self.assertTrue(orchestrator.synced)
+        self.assertEqual(
+            body["usage"],
+            {
+                "input_text_tokens": 3,
+                "output_text_tokens": 1,
+                "total_tokens": 4,
+            },
+        )
