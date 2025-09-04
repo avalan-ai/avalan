@@ -79,6 +79,8 @@ server = [
   "uvicorn==0.35.0",
 ]
 test = [
+  "aiomysql==0.2.0",
+  "asyncpg==0.30.0",
   "boto3==1.40.3",
   "diffusers==0.34.0",
   "elasticsearch==9.1.0",
@@ -114,6 +116,8 @@ test = [
   "tree-sitter-python==0.23.6",
 ]
 tool = [
+  "aiomysql==0.2.0",
+  "asyncpg==0.30.0",
   "playwright==1.54.0",
   "RestrictedPython==8.0",
   "SQLAlchemy==2.0.43",
@@ -163,7 +167,9 @@ nvidia = [
 ]
 all = [
   "accelerate==1.9.0",
+  "aiomysql==0.2.0",
   "anthropic==0.61.0",
+  "asyncpg==0.30.0",
   "boto3==1.40.3",
   "faiss-cpu==1.11.0.post1",
   "fastapi==0.116.1",

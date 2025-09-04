@@ -1,6 +1,7 @@
 build/
 docs/images/*.mov
 __pycache__/
+.codex/
 .venv/
 *.egg-info/
 dist/
