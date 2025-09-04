@@ -88,9 +88,11 @@ async def create_response(
         "type": "response",
         "output": [{"content": [{"type": "output_text", "text": text}]}],
         "usage": {
-            "input_text_tokens": 0,
-            "output_text_tokens": 0,
-            "total_tokens": 0,
+            "input_text_tokens": response.input_token_count,
+            "output_text_tokens": response.output_token_count,
+            "total_tokens": (
+                response.input_token_count + response.output_token_count
+            ),
         },
     }
     await orchestrator.sync_messages()

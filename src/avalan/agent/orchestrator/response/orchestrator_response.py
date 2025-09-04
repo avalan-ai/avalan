@@ -94,6 +94,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return self._response.input_token_count
 
     @property
+    def output_token_count(self) -> int:
+        return self._response.output_token_count
+
+    @property
     def can_think(self) -> bool:
         return self._response.can_think
 
