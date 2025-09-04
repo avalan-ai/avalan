@@ -68,6 +68,8 @@ class OpenAIClient(TextGenerationVendor):
                 kwargs["top_p"] = settings.top_p
             if settings.stop_strings is not None:
                 kwargs["text"] = {"stop": settings.stop_strings}
+            if settings.response_format is not None:
+                kwargs["response_format"] = settings.response_format
         if tool:
             schemas = tool.json_schemas()
             if schemas:
