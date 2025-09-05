@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import MessageRole, ReasoningToken, ToolCallToken
+from avalan.event import Event, EventType
 from avalan.model import TextGenerationResponse
 from avalan.server.entities import ChatMessage, ResponsesRequest
 
@@ -187,4 +188,62 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn('"delta":"t4"', data_lines[14])
         self.assertIn('"delta":"a3"', data_lines[16])
         self.assertIn('"delta":"a4"', data_lines[17])
+        orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_ignores_events(self) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        tokens = [Event(type=EventType.START), "a"]
+
+        class DummyResponse:
+            def __init__(self, items) -> None:  # type: ignore[no-untyped-def]
+                self._items = items
+                self.input_token_count = 0
+                self.output_token_count = 0
+
+            def __aiter__(self):  # type: ignore[override]
+                async def gen():
+                    for item in self._items:
+                        yield item
+
+                return gen()
+
+        response = DummyResponse(tokens)
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        text = "".join(chunks)
+        blocks = [b for b in text.strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+
+        expected = [
+            "response.created",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.completed",
+            "done",
+        ]
+
+        self.assertEqual(events, expected)
+        self.assertIn('"delta":"a"', blocks[1])
         orchestrator.sync_messages.assert_awaited_once()
