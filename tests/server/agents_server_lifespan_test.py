@@ -12,6 +12,7 @@ def make_modules():
     fastapi_mod = ModuleType("fastapi")
     fastapi_mod.FastAPI = FastAPI
     fastapi_mod.APIRouter = APIRouter
+    fastapi_mod.HTTPException = Exception
 
     MCPServer = MagicMock()
     SseServerTransport = MagicMock()

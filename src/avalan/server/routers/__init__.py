@@ -11,6 +11,7 @@ from ...server.entities import ChatCompletionRequest, ContentImage, ContentText
 from logging import Logger
 from time import time
 from uuid import uuid4
+from fastapi import HTTPException
 
 
 async def orchestrate(
@@ -24,7 +25,10 @@ async def orchestrate(
     ]
 
     if request.stream and (request.n or 1) > 1:
-        raise ValueError("Streaming multiple completions is not supported")
+        raise HTTPException(
+            status_code=400,
+            detail="Streaming multiple completions is not supported",
+        )
 
     response_id = uuid4()
     timestamp = int(time())
