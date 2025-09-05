@@ -1,7 +1,8 @@
-from . import iter_tokens, orchestrate
+from . import orchestrate
 from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
-from ...entities import ReasoningToken, ToolCallToken
+from ...entities import ReasoningToken, ToolCallToken, Token, TokenDetail
+from ...event import Event
 from ...server.entities import ResponsesRequest
 from enum import Enum, auto
 from fastapi import APIRouter, Depends
@@ -54,44 +55,16 @@ async def create_response(
 
             state: ResponseState | None = None
 
-            async for token in iter_tokens(response):
+            async for token in response:
+                if isinstance(token, Event):
+                    continue
+
                 state, event = _switch_state(state, token)
                 if event:
                     yield event
 
-                if isinstance(token, ReasoningToken):
-                    yield _sse(
-                        "response.reasoning_text.delta",
-                        {
-                            "type": "response.reasoning_text.delta",
-                            "delta": token.token,
-                            "output_index": 0,
-                            "content_index": 0,
-                            "sequence_number": seq,  # optional
-                        },
-                    )
-                elif isinstance(token, ToolCallToken):
-                    yield _sse(
-                        "response.custom_tool_call_input.delta",
-                        {
-                            "type": "response.custom_tool_call_input.delta",
-                            "delta": token.token,
-                            "output_index": 0,
-                            "content_index": 0,
-                            "sequence_number": seq,  # optional
-                        },
-                    )
-                else:
-                    yield _sse(
-                        "response.output_text.delta",
-                        {
-                            "type": "response.output_text.delta",
-                            "delta": token,
-                            "output_index": 0,
-                            "content_index": 0,
-                            "sequence_number": seq,  # optional
-                        },
-                    )
+                yield _token_to_sse(token, seq)
+
                 seq += 1
 
             _, event = _switch_state(state, None)
@@ -132,39 +105,65 @@ async def create_response(
     return body
 
 
-def _sse(event: str, data: dict) -> str:
-    return (
-        f"event: {event}\n" + f"data: {dumps(data, separators=(',', ':'))}\n\n"
-    )
+def _token_to_sse(
+    token: ReasoningToken | ToolCallToken | Token | TokenDetail | str, seq: int
+) -> str:
+    result: str | None = None
+
+    if isinstance(token, ReasoningToken):
+        result = _sse(
+            "response.reasoning_text.delta",
+            {
+                "type": "response.reasoning_text.delta",
+                "delta": token.token,
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": seq,
+            },
+        )
+    elif isinstance(token, ToolCallToken):
+        result = _sse(
+            "response.custom_tool_call_input.delta",
+            {
+                "type": "response.custom_tool_call_input.delta",
+                "delta": token.token,
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": seq,
+            },
+        )
+    else:
+        result = _sse(
+            "response.output_text.delta",
+            {
+                "type": "response.output_text.delta",
+                "delta": token,
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": seq,
+            },
+        )
+    assert result
+    return result
 
 
 def _switch_state(
     state: ResponseState | None,
-    token: str | ReasoningToken | ToolCallToken | None,
+    token: ReasoningToken | ToolCallToken | Token | TokenDetail | str | None,
 ) -> tuple[ResponseState | None, str | None]:
-    new_state: ResponseState | None = state
+    new_state: ResponseState
 
-    if (
-        isinstance(token, ReasoningToken)
-        and state is not ResponseState.REASONING
-    ):
+    if isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
-    elif (
-        isinstance(token, ToolCallToken)
-        and state is not ResponseState.TOOL_CALLING
-    ):
+    elif isinstance(token, ToolCallToken):
         new_state = ResponseState.TOOL_CALLING
-    elif token is not None and state is not ResponseState.ANSWERING:
+    elif token is not None:
         new_state = ResponseState.ANSWERING
-    elif token is None:
+    else:
         new_state = None
 
     event: str | None = None
-    if (
-        (state is None and new_state is not None)
-        or (state is not None and new_state is None)
-        or (new_state != state)
-    ):
+    if state is not new_state:
         if state is ResponseState.REASONING:
             event = _sse(
                 "response.reasoning_text.done",
@@ -194,3 +193,9 @@ def _switch_state(
             )
 
     return new_state, event
+
+
+def _sse(event: str, data: dict) -> str:
+    return (
+        f"event: {event}\n" + f"data: {dumps(data, separators=(',', ':'))}\n\n"
+    )

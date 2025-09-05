@@ -7,11 +7,9 @@ from ...entities import (
     ReasoningToken as ReasoningToken,
     ToolCallToken as ToolCallToken,
 )
-from ...event import Event
 from ...server.entities import ChatCompletionRequest, ContentImage, ContentText
 from logging import Logger
 from time import time
-from typing import AsyncIterator
 from uuid import uuid4
 
 
@@ -49,13 +47,6 @@ async def orchestrate(
 
     response = await orchestrator(messages, settings=settings)
     return response, response_id, timestamp
-
-
-async def iter_tokens(response: AsyncIterator):
-    async for token in response:
-        if isinstance(token, Event):
-            continue
-        yield token
 
 
 def to_message_content(item):
