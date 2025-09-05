@@ -80,20 +80,37 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         expected = [
             "response.created",
+            "response.output_item.added",
             "response.reasoning_text.delta",
             "response.reasoning_text.done",
+            "response.output_item.done",
+            "response.output_item.added",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.done",
+            "response.output_item.done",
+            "response.output_item.added",
+            "response.content_part.added",
             "response.output_text.delta",
             "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
             "response.completed",
             "done",
         ]
 
         self.assertEqual(events, expected)
-        self.assertIn('"delta":"r"', data_lines[1])
-        self.assertIn('"delta":"t"', data_lines[3])
-        self.assertIn('"delta":"a"', data_lines[5])
+        self.assertIn(
+            '"delta":"r"',
+            data_lines[events.index("response.reasoning_text.delta")],
+        )
+        self.assertIn(
+            '"delta":"t"',
+            data_lines[events.index("response.custom_tool_call_input.delta")],
+        )
+        self.assertIn(
+            '"delta":"a"',
+            data_lines[events.index("response.output_text.delta")],
+        )
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_emits_done_events_for_multiple_groups(
@@ -153,41 +170,72 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         expected = [
             "response.created",
+            "response.output_item.added",
             "response.reasoning_text.delta",
             "response.reasoning_text.delta",
             "response.reasoning_text.done",
+            "response.output_item.done",
+            "response.output_item.added",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.done",
+            "response.output_item.done",
+            "response.output_item.added",
+            "response.content_part.added",
             "response.output_text.delta",
             "response.output_text.delta",
             "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.output_item.added",
             "response.reasoning_text.delta",
             "response.reasoning_text.delta",
             "response.reasoning_text.done",
+            "response.output_item.done",
+            "response.output_item.added",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.done",
+            "response.output_item.done",
+            "response.output_item.added",
+            "response.content_part.added",
             "response.output_text.delta",
             "response.output_text.delta",
             "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
             "response.completed",
             "done",
         ]
 
         self.assertEqual(events, expected)
-        self.assertIn('"delta":"r1"', data_lines[1])
-        self.assertIn('"delta":"r2"', data_lines[2])
-        self.assertIn('"delta":"t1"', data_lines[4])
-        self.assertIn('"delta":"t2"', data_lines[5])
-        self.assertIn('"delta":"a1"', data_lines[7])
-        self.assertIn('"delta":"a2"', data_lines[8])
-        self.assertIn('"delta":"r3"', data_lines[10])
-        self.assertIn('"delta":"r4"', data_lines[11])
-        self.assertIn('"delta":"t3"', data_lines[13])
-        self.assertIn('"delta":"t4"', data_lines[14])
-        self.assertIn('"delta":"a3"', data_lines[16])
-        self.assertIn('"delta":"a4"', data_lines[17])
+        reasoning_indices = [
+            i
+            for i, e in enumerate(events)
+            if e == "response.reasoning_text.delta"
+        ]
+        self.assertIn('"delta":"r1"', data_lines[reasoning_indices[0]])
+        self.assertIn('"delta":"r2"', data_lines[reasoning_indices[1]])
+        tool_indices = [
+            i
+            for i, e in enumerate(events)
+            if e == "response.custom_tool_call_input.delta"
+        ]
+        self.assertIn('"delta":"t1"', data_lines[tool_indices[0]])
+        self.assertIn('"delta":"t2"', data_lines[tool_indices[1]])
+        answer_indices = [
+            i
+            for i, e in enumerate(events)
+            if e == "response.output_text.delta"
+        ]
+        self.assertIn('"delta":"a1"', data_lines[answer_indices[0]])
+        self.assertIn('"delta":"a2"', data_lines[answer_indices[1]])
+        self.assertIn('"delta":"r3"', data_lines[reasoning_indices[2]])
+        self.assertIn('"delta":"r4"', data_lines[reasoning_indices[3]])
+        self.assertIn('"delta":"t3"', data_lines[tool_indices[2]])
+        self.assertIn('"delta":"t4"', data_lines[tool_indices[3]])
+        self.assertIn('"delta":"a3"', data_lines[answer_indices[2]])
+        self.assertIn('"delta":"a4"', data_lines[answer_indices[3]])
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_ignores_events(self) -> None:
@@ -238,12 +286,17 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         expected = [
             "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
             "response.output_text.delta",
             "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
             "response.completed",
             "done",
         ]
 
         self.assertEqual(events, expected)
-        self.assertIn('"delta":"a"', blocks[1])
+        delta_index = events.index("response.output_text.delta")
+        self.assertIn('"delta":"a"', blocks[delta_index])
         orchestrator.sync_messages.assert_awaited_once()

@@ -59,16 +59,16 @@ async def create_response(
                 if isinstance(token, Event):
                     continue
 
-                state, event = _switch_state(state, token)
-                if event:
+                state, events = _switch_state(state, token)
+                for event in events:
                     yield event
 
                 yield _token_to_sse(token, seq)
 
                 seq += 1
 
-            _, event = _switch_state(state, None)
-            if event:
+            _, events = _switch_state(state, None)
+            for event in events:
                 yield event
 
             yield _sse("response.completed", {"type": "response.completed"})
@@ -150,8 +150,8 @@ def _token_to_sse(
 def _switch_state(
     state: ResponseState | None,
     token: ReasoningToken | ToolCallToken | Token | TokenDetail | str | None,
-) -> tuple[ResponseState | None, str | None]:
-    new_state: ResponseState
+) -> tuple[ResponseState | None, list[str]]:
+    new_state: ResponseState | None
 
     if isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
@@ -162,37 +162,107 @@ def _switch_state(
     else:
         new_state = None
 
-    event: str | None = None
+    events: list[str] = []
     if state is not new_state:
         if state is ResponseState.REASONING:
-            event = _sse(
-                "response.reasoning_text.done",
-                {
-                    "type": "response.reasoning_text.done",
-                    "output_index": 0,
-                    "content_index": 0,
-                },
-            )
+            events.append(_reasoning_text_done())
+            events.append(_output_item_done())
         elif state is ResponseState.TOOL_CALLING:
-            event = _sse(
-                "response.custom_tool_call_input.done",
-                {
-                    "type": "response.custom_tool_call_input.done",
-                    "output_index": 0,
-                    "content_index": 0,
-                },
-            )
+            events.append(_custom_tool_call_input_done())
+            events.append(_output_item_done())
         elif state is ResponseState.ANSWERING:
-            event = _sse(
-                "response.output_text.done",
-                {
-                    "type": "response.output_text.done",
-                    "output_index": 0,
-                    "content_index": 0,
-                },
-            )
+            events.append(_output_text_done())
+            events.append(_content_part_done())
+            events.append(_output_item_done())
 
-    return new_state, event
+        if new_state is ResponseState.REASONING:
+            events.append(_output_item_added(new_state))
+        elif new_state is ResponseState.TOOL_CALLING:
+            events.append(_output_item_added(new_state))
+        elif new_state is ResponseState.ANSWERING:
+            events.append(_output_item_added(new_state))
+            events.append(_content_part_added())
+
+    return new_state, events
+
+
+def _output_item_added(state: ResponseState) -> str:
+    item_types = {
+        ResponseState.REASONING: "reasoning_text",
+        ResponseState.TOOL_CALLING: "custom_tool_call_input",
+        ResponseState.ANSWERING: "output_text",
+    }
+    return _sse(
+        "response.output_item.added",
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {"type": item_types[state]},
+        },
+    )
+
+
+def _output_item_done() -> str:
+    return _sse(
+        "response.output_item.done",
+        {"type": "response.output_item.done", "output_index": 0},
+    )
+
+
+def _reasoning_text_done() -> str:
+    return _sse(
+        "response.reasoning_text.done",
+        {
+            "type": "response.reasoning_text.done",
+            "output_index": 0,
+            "content_index": 0,
+        },
+    )
+
+
+def _custom_tool_call_input_done() -> str:
+    return _sse(
+        "response.custom_tool_call_input.done",
+        {
+            "type": "response.custom_tool_call_input.done",
+            "output_index": 0,
+            "content_index": 0,
+        },
+    )
+
+
+def _output_text_done() -> str:
+    return _sse(
+        "response.output_text.done",
+        {
+            "type": "response.output_text.done",
+            "output_index": 0,
+            "content_index": 0,
+        },
+    )
+
+
+def _content_part_added() -> str:
+    return _sse(
+        "response.content_part.added",
+        {
+            "type": "response.content_part.added",
+            "output_index": 0,
+            "content_index": 0,
+            "part": {"type": "output_text"},
+        },
+    )
+
+
+def _content_part_done() -> str:
+    return _sse(
+        "response.content_part.done",
+        {
+            "type": "response.content_part.done",
+            "output_index": 0,
+            "content_index": 0,
+        },
+    )
 
 
 def _sse(event: str, data: dict) -> str:
