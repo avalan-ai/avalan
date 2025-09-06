@@ -1,9 +1,3 @@
-from avalan.server.entities import (
-    ChatCompletionRequest,
-    ChatMessage,
-    ContentImage,
-    ContentText,
-)
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
     MessageContentImage,
@@ -11,6 +5,13 @@ from avalan.entities import (
     MessageRole,
 )
 from avalan.model import TextGenerationResponse
+from avalan.server.entities import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ContentImage,
+    ContentText,
+)
+from fastapi import HTTPException
 from logging import Logger, getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -112,7 +113,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             stream=True,
             n=2,
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaises(HTTPException):
             await self.chat.create_chat_completion(req, logger, orch)
         orch.assert_not_awaited()
 
