@@ -504,6 +504,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         if isinstance(item, str) and self._tool_parser:
             items = await self._tool_parser.push(item)
+            if not items:
+                return await self.__anext__()
         else:
             items = [item]
 

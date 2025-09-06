@@ -1,36 +1,37 @@
+from asyncio import wait_for
+from collections.abc import AsyncIterator
+from avalan.agent import AgentOperation, EngineEnvironment, Specification
+from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from avalan.agent import EngineEnvironment, AgentOperation, Specification
 from avalan.entities import (
     EngineUri,
+    GenerationSettings,
     Message,
     MessageRole,
+    ReasoningSettings,
+    ReasoningToken,
+    ToolCall,
     ToolCallContext,
+    ToolCallResult,
+    ToolCallToken,
+    ToolFormat,
     Token,
     TokenDetail,
     TransformerEngineSettings,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
-from avalan.agent.engine import EngineAgent
 from avalan.model import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
-from logging import getLogger
 from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.tool.parser import ToolCallParser
-from avalan.entities import (
-    ReasoningToken,
-    ToolCallToken,
-    GenerationSettings,
-    ReasoningSettings,
-)
-
-from unittest import IsolatedAsyncioTestCase
-from dataclasses import dataclass
 from avalan.tool.manager import ToolManager
-from avalan.entities import ToolCall, ToolCallResult
+from avalan.tool.parser import ToolCallParser
+from dataclasses import dataclass
 from io import StringIO
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -179,6 +180,55 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             token_events[1].payload,
             {"token_id": 5, "model_id": "m", "token": "b", "step": 1},
         )
+
+    async def test_harmony_streaming_handles_split_prefix(self) -> None:
+        engine = _DummyEngine()
+        engine.tokenizer.encode.return_value = [1]
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def gen() -> AsyncIterator[str]:
+            yield "<|start|>assistant"
+            yield "<|channel|>commentary to=mytool <|message|>{}<|call|>"
+
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        tool_manager = MagicMock(spec=ToolManager)
+        tool_manager.is_potential_tool_call.side_effect = (
+            base_parser.is_potential_tool_call
+        )
+        tool_manager.tool_call_status.side_effect = (
+            base_parser.tool_call_status
+        )
+        tool_manager.get_calls.side_effect = base_parser
+        tool_manager.is_empty = False
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool_manager,
+        )
+
+        iterator = resp.__aiter__()
+        first = await wait_for(iterator.__anext__(), 1)
+        second = await wait_for(iterator.__anext__(), 1)
+        self.assertIsInstance(first, ToolCallToken)
+        self.assertIsInstance(second, ToolCallToken)
 
 
 @dataclass
