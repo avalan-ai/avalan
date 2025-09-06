@@ -1,7 +1,8 @@
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from logging import getLogger
-from avalan.model.response.parsers.tool import ToolCallParser
+from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.tool.parser import ToolCallParser
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
@@ -21,7 +22,9 @@ async def _complex_generator():
     tm = MagicMock()
     tm.is_potential_tool_call.return_value = True
     tm.get_calls.return_value = None
-    tp = ToolCallParser(tm, None)
+    base_parser = ToolCallParser()
+    tm.tool_call_status.side_effect = base_parser.tool_call_status
+    tp = ToolCallResponseParser(tm, None)
 
     sequence = [
         "X",

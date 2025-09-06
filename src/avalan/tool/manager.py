@@ -4,8 +4,9 @@ from ..entities import (
     ToolCall,
     ToolCallContext,
     ToolCallResult,
-    ToolManagerSettings,
     ToolFilter,
+    ToolFormat,
+    ToolManagerSettings,
     ToolTransformer,
 )
 from collections.abc import Callable, Sequence
@@ -52,6 +53,11 @@ class ToolManager(ContextDecorator):
     def tools(self) -> list[Callable] | None:
         return list(self._tools.values()) if self._tools else None
 
+    @property
+    def tool_format(self) -> ToolFormat | None:
+        """Return the tool format configured for this manager."""
+        return self._parser.tool_format
+
     def json_schemas(self) -> list[dict] | None:
         schemas = []
         for toolset in self._toolsets:
@@ -94,6 +100,12 @@ class ToolManager(ContextDecorator):
     def is_potential_tool_call(self, buffer: str, token_str: str) -> bool:
         """Proxy :meth:`ToolCallParser.is_potential_tool_call`."""
         return self._parser.is_potential_tool_call(buffer, token_str)
+
+    def tool_call_status(
+        self, buffer: str
+    ) -> ToolCallParser.ToolCallBufferStatus:
+        """Proxy :meth:`ToolCallParser.tool_call_status`."""
+        return self._parser.tool_call_status(buffer)
 
     def get_calls(self, text: str) -> list[ToolCall] | None:
         return self._parser(text)

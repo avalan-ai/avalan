@@ -52,6 +52,28 @@ class ToolCallParserExtraTestCase(TestCase):
         self.assertFalse(parser.is_potential_tool_call("", ""))
         self.assertTrue(parser.is_potential_tool_call("", "a"))
 
+    def test_tool_format_property(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        self.assertIs(parser.tool_format, ToolFormat.REACT)
+
+    def test_set_eos_token_method(self):
+        parser = ToolCallParser()
+        parser.set_eos_token("<END>")
+        call_id = _uuid4()
+        text = (
+            '<tool_call>{"name": "calculator", "arguments": {"expression": '
+            '"2"}}</tool_call><END>'
+        )
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="calculator",
+                    arguments={"expression": "2"},
+                )
+            ]
+            self.assertEqual(parser(text), expected)
+
 
 if __name__ == "__main__":
     main()
