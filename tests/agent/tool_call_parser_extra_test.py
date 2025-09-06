@@ -1,5 +1,5 @@
 from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.entities import ToolCallToken
+from avalan.entities import ToolCallToken, ToolFormat
 from avalan.tool.parser import ToolCallParser
 from avalan.event import EventType
 from unittest import IsolatedAsyncioTestCase
@@ -74,3 +74,35 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager.get_calls.assert_called_once_with('<tool_call name="calc"/>')
         self.assertFalse(parser._inside_call)
         self.assertEqual(parser._buffer.getvalue(), "")
+
+    async def test_harmony_long_call_followed_by_final_channel(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = True
+
+        def _get_calls(text: str):
+            return [MagicMock()] if "<|call|>" in text else None
+
+        manager.get_calls.side_effect = _get_calls
+        manager.tool_format = ToolFormat.HARMONY
+        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+
+        parser = ToolCallResponseParser(manager, None)
+        long_content = "x" * 100
+        parts = [
+            "<|channel|>commentary to=functions.db.run code<|message|>{"
+            + long_content,
+            "}<|call|>",
+            "<|channel|>final<|message|>",
+            "done",
+        ]
+        tokens: list = []
+        for part in parts:
+            tokens.extend(await parser.push(part))
+
+        self.assertIsInstance(tokens[0], ToolCallToken)
+        self.assertNotIsInstance(tokens[-2], ToolCallToken)
+        self.assertNotIsInstance(tokens[-1], ToolCallToken)
+        self.assertEqual(tokens[-2], "<|channel|>final<|message|>")
+        self.assertEqual(tokens[-1], "done")
+        self.assertFalse(parser._inside_call)
