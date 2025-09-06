@@ -19,6 +19,11 @@ class ToolCallParser:
         self._tool_format = tool_format
         self._eos_token = eos_token
 
+    @property
+    def tool_format(self) -> ToolFormat | None:
+        """Return the tool format used by the parser."""
+        return self._tool_format
+
     def __call__(self, text: str) -> list[ToolCall] | None:
         calls = (
             self._parse_json(text)

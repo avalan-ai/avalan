@@ -58,7 +58,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         parser = ToolCallParser(manager, None)
         items = await parser.push('<tool_call name="calc"/>')
 
-        self.assertEqual(items[0], '<tool_call name="calc"/>')
+        self.assertIsInstance(items[0], ToolCallToken)
         self.assertEqual(items[1].type, EventType.TOOL_PROCESS)
         manager.get_calls.assert_called_once_with('<tool_call name="calc"/>')
         self.assertFalse(parser._inside_call)

@@ -2,8 +2,9 @@ from avalan.entities import (
     ToolCall,
     ToolCallContext,
     ToolCallResult,
-    ToolManagerSettings,
     ToolFilter,
+    ToolFormat,
+    ToolManagerSettings,
     ToolTransformer,
 )
 from avalan.tool import Tool, ToolSet
@@ -41,6 +42,11 @@ class ToolManagerCreationTestCase(TestCase):
         )
         self.assertTrue(manager.is_empty)
         self.assertIsNone(manager.tools)
+
+    def test_tool_format_property(self):
+        settings = ToolManagerSettings(tool_format=ToolFormat.HARMONY)
+        manager = ToolManager.create_instance(settings=settings)
+        self.assertEqual(manager.tool_format, ToolFormat.HARMONY)
 
     def test_toolset_without_tools(self):
         manager = ToolManager.create_instance(

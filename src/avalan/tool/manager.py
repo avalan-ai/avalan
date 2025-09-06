@@ -4,8 +4,9 @@ from ..entities import (
     ToolCall,
     ToolCallContext,
     ToolCallResult,
-    ToolManagerSettings,
     ToolFilter,
+    ToolFormat,
+    ToolManagerSettings,
     ToolTransformer,
 )
 from collections.abc import Callable, Sequence
@@ -51,6 +52,11 @@ class ToolManager(ContextDecorator):
     @property
     def tools(self) -> list[Callable] | None:
         return list(self._tools.values()) if self._tools else None
+
+    @property
+    def tool_format(self) -> ToolFormat | None:
+        """Return the tool format configured for this manager."""
+        return self._parser.tool_format
 
     def json_schemas(self) -> list[dict] | None:
         schemas = []
