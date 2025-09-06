@@ -174,11 +174,23 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(token_events), 2)
         self.assertEqual(
             token_events[0].payload,
-            {"token_id": 42, "model_id": "m", "token": "a", "step": 0},
+            {
+                "token_id": 42,
+                "token_type": "str",
+                "model_id": "m",
+                "token": "a",
+                "step": 0,
+            },
         )
         self.assertEqual(
             token_events[1].payload,
-            {"token_id": 5, "model_id": "m", "token": "b", "step": 1},
+            {
+                "token_id": 5,
+                "token_type": "Token",
+                "model_id": "m",
+                "token": "b",
+                "step": 1,
+            },
         )
 
     async def test_harmony_streaming_handles_split_prefix(self) -> None:
