@@ -1,5 +1,6 @@
 from ..entities import ToolCall, ToolFormat
 from ast import literal_eval
+from enum import Enum
 from json import JSONDecodeError, loads
 from re import DOTALL, finditer, search
 from typing import Any
@@ -62,6 +63,40 @@ class ToolCallParser:
         """
         return bool(token_str and token_str.strip())
 
+    class ToolCallBufferStatus(Enum):
+        """Status of a buffer relative to a tool call."""
+
+        NONE = 0
+        PREFIX = 1
+        OPEN = 2
+        CLOSED = 3
+
+    def tool_call_status(
+        self, buffer: str
+    ) -> "ToolCallParser.ToolCallBufferStatus":
+        start = ["<tool_call", "<tool ", "<tool>"]
+        end = ["</tool_call>", "</tool>", "/>", "<|call|>"]
+        if self._tool_format is ToolFormat.HARMONY:
+            start.extend(
+                [
+                    "<|channel|>commentary",
+                    "<|start|>assistant<|channel|>commentary",
+                ]
+            )
+        max_len = max(len(s) for s in start)
+        tail = buffer[-max_len:]
+        for s in start:
+            if s.startswith(tail) and tail != s:
+                return self.ToolCallBufferStatus.PREFIX
+        for s in start:
+            idx = buffer.rfind(s)
+            if idx != -1:
+                after = buffer[idx + len(s) :]
+                if any(e in after for e in end):
+                    return self.ToolCallBufferStatus.CLOSED
+                return self.ToolCallBufferStatus.OPEN
+        return self.ToolCallBufferStatus.NONE
+
     def _parse_json(self, text: str) -> tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)
@@ -101,6 +136,7 @@ class ToolCallParser:
     def _parse_harmony(self, text: str) -> list[ToolCall] | None:
         tool_calls: list[ToolCall] = []
         pattern = (
+            r"(?:<\|start\|>assistant)?"
             r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)"
             r"[^<]*"
             r"(?:<\|constrain\|>json)?<\|message\|>(\{.*?\})<\|call\|>"

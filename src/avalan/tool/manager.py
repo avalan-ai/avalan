@@ -101,6 +101,12 @@ class ToolManager(ContextDecorator):
         """Proxy :meth:`ToolCallParser.is_potential_tool_call`."""
         return self._parser.is_potential_tool_call(buffer, token_str)
 
+    def tool_call_status(
+        self, buffer: str
+    ) -> ToolCallParser.ToolCallBufferStatus:
+        """Proxy :meth:`ToolCallParser.tool_call_status`."""
+        return self._parser.tool_call_status(buffer)
+
     def get_calls(self, text: str) -> list[ToolCall] | None:
         return self._parser(text)
 

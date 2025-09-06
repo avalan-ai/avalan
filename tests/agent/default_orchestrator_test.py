@@ -229,11 +229,23 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(token_events), 2)
         self.assertEqual(
             token_events[0].payload,
-            {"token_id": 1, "model_id": "m", "token": "a", "step": 0},
+            {
+                "token_id": 1,
+                "token_type": "str",
+                "model_id": "m",
+                "token": "a",
+                "step": 0,
+            },
         )
         self.assertEqual(
             token_events[1].payload,
-            {"token_id": 2, "model_id": "m", "token": "b", "step": 1},
+            {
+                "token_id": 2,
+                "token_type": "str",
+                "model_id": "m",
+                "token": "b",
+                "step": 1,
+            },
         )
 
         memory.__exit__.assert_called_once()
