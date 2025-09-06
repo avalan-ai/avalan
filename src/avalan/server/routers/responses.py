@@ -166,6 +166,7 @@ def _switch_state(
     if state is not new_state:
         if state is ResponseState.REASONING:
             events.append(_reasoning_text_done())
+            events.append(_content_part_done())
             events.append(_output_item_done())
         elif state is ResponseState.TOOL_CALLING:
             events.append(_custom_tool_call_input_done())
@@ -177,11 +178,12 @@ def _switch_state(
 
         if new_state is ResponseState.REASONING:
             events.append(_output_item_added(new_state))
+            events.append(_content_part_added("reasoning_text"))
         elif new_state is ResponseState.TOOL_CALLING:
             events.append(_output_item_added(new_state))
         elif new_state is ResponseState.ANSWERING:
             events.append(_output_item_added(new_state))
-            events.append(_content_part_added())
+            events.append(_content_part_added("output_text"))
 
     return new_state, events
 
@@ -242,14 +244,14 @@ def _output_text_done() -> str:
     )
 
 
-def _content_part_added() -> str:
+def _content_part_added(part_type: str) -> str:
     return _sse(
         "response.content_part.added",
         {
             "type": "response.content_part.added",
             "output_index": 0,
             "content_index": 0,
-            "part": {"type": "output_text"},
+            "part": {"type": part_type},
         },
     )
 
