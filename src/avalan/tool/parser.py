@@ -83,6 +83,7 @@ class ToolCallParser:
                     "<|start|>assistant<|channel|>commentary",
                 ]
             )
+            end.append("<|channel|>final<|message|>")
         max_len = max(len(s) for s in start)
         tail = buffer[-max_len:]
         for s in start:
