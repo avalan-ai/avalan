@@ -131,6 +131,45 @@ class ToolCallParserHarmonyTestCase(TestCase):
             ]
             self.assertEqual(parser(text), expected)
 
+    def test_without_constrain_trailing_text(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|start|>assistant<|channel|>commentary to=functions.database.run"
+            ' code<|message|>{"sql":"SELECT count(*) AS total_products FROM'
+            ' product;"}<|call|>'
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="database.run",
+                    arguments={
+                        "sql": (
+                            "SELECT count(*) AS total_products FROM product;"
+                        )
+                    },
+                )
+            ]
+            self.assertEqual(parser(text), expected)
+
+    def test_without_constrain_without_trailing_text(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>commentary to=functions.database.run"
+            '<|message|>{"sql":"SELECT 1"}<|call|>'
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="database.run",
+                    arguments={"sql": "SELECT 1"},
+                )
+            ]
+            self.assertEqual(parser(text), expected)
+
     def test_invalid_json(self):
         parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         text = (

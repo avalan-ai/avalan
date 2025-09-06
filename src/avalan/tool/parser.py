@@ -96,8 +96,9 @@ class ToolCallParser:
     def _parse_harmony(self, text: str) -> list[ToolCall] | None:
         tool_calls: list[ToolCall] = []
         pattern = (
-            r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)\s*"
-            r"<\|constrain\|>json<\|message\|>(\{.*?\})<\|call\|>"
+            r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)"
+            r"[^<]*"
+            r"(?:<\|constrain\|>json)?<\|message\|>(\{.*?\})<\|call\|>"
         )
         for match in finditer(pattern, text, DOTALL):
             try:
