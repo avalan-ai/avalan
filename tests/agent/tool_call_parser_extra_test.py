@@ -1,5 +1,6 @@
-from avalan.model.response.parsers.tool import ToolCallParser
+from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.entities import ToolCallToken
+from avalan.tool.parser import ToolCallParser
 from avalan.event import EventType
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +10,10 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
     async def test_tag_buffer_trim_no_check(self):
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = False
-        parser = ToolCallParser(manager, None)
+        manager.tool_call_status.return_value = (
+            ToolCallParser.ToolCallBufferStatus.NONE
+        )
+        parser = ToolCallResponseParser(manager, None)
 
         long_token = "a" * 65
         result = await parser.push(long_token)
@@ -21,10 +25,12 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = True
         manager.get_calls.return_value = [MagicMock()]
+        base_parser = ToolCallParser()
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
 
-        parser = ToolCallParser(manager, event_manager)
+        parser = ToolCallResponseParser(manager, event_manager)
         items = await parser.push("<tool_call>")
 
         self.assertIsInstance(items[0], ToolCallToken)
@@ -40,10 +46,13 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = True
         manager.get_calls.return_value = None
+        manager.tool_call_status.return_value = (
+            ToolCallParser.ToolCallBufferStatus.NONE
+        )
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
 
-        parser = ToolCallParser(manager, event_manager)
+        parser = ToolCallResponseParser(manager, event_manager)
         items = await parser.push("no_call")
 
         self.assertEqual(items, ["no_call"])
@@ -54,8 +63,10 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = True
         manager.get_calls.return_value = [MagicMock()]
+        base_parser = ToolCallParser()
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallParser(manager, None)
+        parser = ToolCallResponseParser(manager, None)
         items = await parser.push('<tool_call name="calc"/>')
 
         self.assertIsInstance(items[0], ToolCallToken)

@@ -31,7 +31,8 @@ from avalan.entities import (
 )
 from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
-from avalan.model.response.parsers.tool import ToolCallParser
+from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.tool.parser import ToolCallParser
 import asyncio
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
@@ -5123,7 +5124,9 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
             tm = MagicMock()
             tm.is_potential_tool_call.return_value = True
             tm.get_calls.return_value = None
-            tp = ToolCallParser(tm, None)
+            base_parser = ToolCallParser()
+            tm.tool_call_status.side_effect = base_parser.tool_call_status
+            tp = ToolCallResponseParser(tm, None)
             sequence = [
                 "X",
                 "<think>",

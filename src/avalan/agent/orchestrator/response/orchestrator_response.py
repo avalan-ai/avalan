@@ -15,7 +15,7 @@ from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
-from ....model.response.parsers.tool import ToolCallParser
+from ....model.response.parsers.tool import ToolCallResponseParser
 from ....cli import CommandAbortException
 from dataclasses import asdict, is_dataclass
 from inspect import iscoroutine
@@ -47,7 +47,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _participant_id: UUID | None
     _session_id: UUID | None
     _parser_queue: Queue[Token | TokenDetail | Event] | None
-    _tool_parser: ToolCallParser | None
+    _tool_parser: ToolCallResponseParser | None
 
     def __init__(
         self,
@@ -84,7 +84,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._tool_confirm_all = False
         self._parser_queue = Queue()
         self._tool_parser = (
-            ToolCallParser(self._tool_manager, self._event_manager)
+            ToolCallResponseParser(self._tool_manager, self._event_manager)
             if enable_tool_parsing and self._tool_manager
             else None
         )
