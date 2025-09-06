@@ -81,8 +81,10 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         expected = [
             "response.created",
             "response.output_item.added",
+            "response.content_part.added",
             "response.reasoning_text.delta",
             "response.reasoning_text.done",
+            "response.content_part.done",
             "response.output_item.done",
             "response.output_item.added",
             "response.custom_tool_call_input.delta",
@@ -110,6 +112,19 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn(
             '"delta":"a"',
             data_lines[events.index("response.output_text.delta")],
+        )
+        content_indices = [
+            i
+            for i, e in enumerate(events)
+            if e == "response.content_part.added"
+        ]
+        self.assertIn(
+            '"part":{"type":"reasoning_text"}',
+            data_lines[content_indices[0]],
+        )
+        self.assertIn(
+            '"part":{"type":"output_text"}',
+            data_lines[content_indices[1]],
         )
         orchestrator.sync_messages.assert_awaited_once()
 
@@ -171,9 +186,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         expected = [
             "response.created",
             "response.output_item.added",
+            "response.content_part.added",
             "response.reasoning_text.delta",
             "response.reasoning_text.delta",
             "response.reasoning_text.done",
+            "response.content_part.done",
             "response.output_item.done",
             "response.output_item.added",
             "response.custom_tool_call_input.delta",
@@ -188,9 +205,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.content_part.done",
             "response.output_item.done",
             "response.output_item.added",
+            "response.content_part.added",
             "response.reasoning_text.delta",
             "response.reasoning_text.delta",
             "response.reasoning_text.done",
+            "response.content_part.done",
             "response.output_item.done",
             "response.output_item.added",
             "response.custom_tool_call_input.delta",
@@ -236,6 +255,27 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn('"delta":"t4"', data_lines[tool_indices[3]])
         self.assertIn('"delta":"a3"', data_lines[answer_indices[2]])
         self.assertIn('"delta":"a4"', data_lines[answer_indices[3]])
+        content_indices = [
+            i
+            for i, e in enumerate(events)
+            if e == "response.content_part.added"
+        ]
+        self.assertIn(
+            '"part":{"type":"reasoning_text"}',
+            data_lines[content_indices[0]],
+        )
+        self.assertIn(
+            '"part":{"type":"output_text"}',
+            data_lines[content_indices[1]],
+        )
+        self.assertIn(
+            '"part":{"type":"reasoning_text"}',
+            data_lines[content_indices[2]],
+        )
+        self.assertIn(
+            '"part":{"type":"output_text"}',
+            data_lines[content_indices[3]],
+        )
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_ignores_events(self) -> None:
