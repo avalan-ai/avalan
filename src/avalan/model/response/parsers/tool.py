@@ -65,7 +65,11 @@ class ToolCallResponseParser:
         else:
             result.append(ToolCallToken(token_str))
             status = self._tool_manager.tool_call_status(self._tag_buffer)
-            if status is ToolCallParser.ToolCallBufferStatus.CLOSED:
+            if (
+                status is ToolCallParser.ToolCallBufferStatus.CLOSED
+                or "<|call|>" in self._tag_buffer
+                or "<|channel|>final<|message|>" in self._tag_buffer
+            ):
                 self._inside_call = False
 
         if not result:

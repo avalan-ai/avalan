@@ -489,6 +489,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         "token_id": token_id,
                         "model_id": self._engine_agent.engine.model_id,
                         "token": token_str,
+                        "token_type": type(item).__qualname__,
                         "step": self._step,
                     },
                 )
@@ -504,6 +505,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         if isinstance(item, str) and self._tool_parser:
             items = await self._tool_parser.push(item)
+            if not items:
+                return await self.__anext__()
         else:
             items = [item]
 
