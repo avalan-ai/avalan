@@ -472,6 +472,20 @@ class MessageToolCall:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolCall:
+    id: UUID | str
+    name: str
+    arguments: dict[str, ToolValue] | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolCallResult(ToolCall):
+    id: UUID | str
+    call: ToolCall
+    result: ToolValue | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
     thinking: str | None = ""
@@ -479,6 +493,7 @@ class Message:
     name: str | None = None
     arguments: dict | None = None
     tool_calls: list[MessageToolCall] | None = None
+    tool_call_result: ToolCallResult | None = None
 
 
 Input = str | list[str] | Message | list[Message]
@@ -723,7 +738,7 @@ class TokenizerConfig:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Token:
-    id: Tensor | int
+    id: Tensor | int | None = None
     token: str
     probability: float | None = None
 
@@ -751,23 +766,7 @@ class ReasoningToken(Token):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallToken(Token):
-    """Token produced while the model emits a tool call."""
-
-    def __init__(
-        self,
-        token: str,
-        *,
-        id: Tensor | int = -1,
-        probability: float | None = None,
-    ) -> None:
-        Token.__init__(self, id=id, token=token, probability=probability)
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class ToolCall:
-    id: UUID
-    name: str
-    arguments: dict[str, ToolValue] | None = None
+    call: ToolCall | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -777,13 +776,6 @@ class ToolCallContext:
     participant_id: UUID | None = None
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class ToolCallResult(ToolCall):
-    id: UUID
-    call: ToolCall
-    result: ToolValue | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

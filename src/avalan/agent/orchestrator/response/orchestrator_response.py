@@ -10,6 +10,7 @@ from ....entities import (
     ToolCall,
     ToolCallContext,
     ToolCallResult,
+    ToolCallToken,
 )
 from ....event import Event, EventType
 from ....event.manager import EventManager
@@ -229,6 +230,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             tool_messages = []
             for e in result_events:
                 tool_result = e.payload["result"]
+                tool_output = tool_result.result
                 tool_messages.append(
                     Message(
                         role=MessageRole.ASSISTANT,
@@ -241,17 +243,17 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         ],
                     )
                 )
-                tool_output = e.payload["result"].result
                 tool_messages.append(
                     Message(
                         role=MessageRole.TOOL,
-                        name=e.payload["result"].name,
-                        arguments=e.payload["result"].arguments,
+                        name=tool_result.name,
+                        arguments=tool_result.arguments,
                         content=dumps(
                             asdict(tool_output)
                             if is_dataclass(tool_output)
                             else tool_output
                         ),
+                        tool_call_result=tool_result,
                     )
                 )
 
@@ -304,6 +306,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         try:
             token = await self._response_iterator.__anext__()
+            if isinstance(token, ToolCallToken) and token.call:
+                self._calls.put(token.call)
         except StopAsyncIteration:
             if self._tool_parser:
                 for item in await self._tool_parser.flush():

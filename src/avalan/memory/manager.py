@@ -137,10 +137,7 @@ class MemoryManager:
             and engine_message.message
             and engine_message.message.content
         ):
-            self._logger.info(
-                "Skipping non engine message %s",
-                engine_message
-            )
+            self._logger.info("Skipping non engine message %s", engine_message)
             return
 
         self._logger.debug("<Memory> Appending message")

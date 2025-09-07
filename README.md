@@ -992,7 +992,7 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
       --tool "math.calculator" \
       --memory-recent \
-      --run-max-new-tokens 1024 \
+      --run-max-new-tokens 8192 \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
@@ -1008,14 +1008,18 @@ Notice the GPU utilization at the bottom:
 You can give your GPU some breathing type by running the same on a vendor model, like Anthropic:
 
 ```bash
-echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
-    avalan agent run \
-    --engine-uri "ai://$ANTHROPIC_API_KEY@anthropic/claude-3-5-sonnet-latest" \
-    --tool "math.calculator" \
-    --memory-recent \
-    --name "Tool" \
-    --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-    --run-max-new-tokens 8192
+echo "What is (4 + 6) and then that result times 5, divided by 2?" \
+  | avalan agent run \
+      --engine-uri "ai://$ANTHROPIC_API_KEY@anthropic/claude-3-5-sonnet-latest" \
+      --tool "math.calculator" \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools \
+      --conversation
 ```
 
 Below is an agent that leverages the `code.run` tool to execute Python code

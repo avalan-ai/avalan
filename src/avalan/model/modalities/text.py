@@ -69,7 +69,9 @@ class TextGenerationModality:
                     return TextGenerationModel(**model_load_args)
         match engine_uri.vendor:
             case "anthropic":
-                from ..nlp.text.vendor.anthropic import AnthropicModel as Loader
+                from ..nlp.text.vendor.anthropic import (
+                    AnthropicModel as Loader,
+                )
 
                 return Loader(**model_load_args, exit_stack=exit_stack)
 
