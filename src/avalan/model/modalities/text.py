@@ -68,6 +68,11 @@ class TextGenerationModality:
                 case _:
                     return TextGenerationModel(**model_load_args)
         match engine_uri.vendor:
+            case "anthropic":
+                from ..nlp.text.vendor.anthropic import AnthropicModel as Loader
+
+                return Loader(**model_load_args, exit_stack=exit_stack)
+
             case "openai":
                 from ..nlp.text.vendor.openai import OpenAIModel as Loader
 
