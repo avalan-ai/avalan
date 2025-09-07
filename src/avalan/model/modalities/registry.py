@@ -14,6 +14,7 @@ from ...tool.manager import ToolManager
 
 from argparse import Namespace
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from inspect import isclass
 from logging import Logger
 from typing import Any, Protocol
@@ -33,6 +34,7 @@ class ModalityHandler(Protocol):
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> Any: ...
 
     def get_operation_from_arguments(
@@ -71,9 +73,12 @@ class ModalityRegistry:
         engine_settings: TransformerEngineSettings,
         modality: Modality,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> Any:
         handler = cls.get(modality)
-        return handler.load_engine(engine_uri, engine_settings, logger)
+        return handler.load_engine(
+            engine_uri, engine_settings, logger, exit_stack
+        )
 
     @classmethod
     def get_operation_from_arguments(

@@ -10,7 +10,8 @@ from avalan.model.engine import (
     TokenizerAlreadyLoadedException,
 )
 from unittest import TestCase
-from unittest.mock import MagicMock, patch, PropertyMock
+from contextlib import AsyncExitStack
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 import logging
 import sys
 import types
@@ -172,7 +173,7 @@ class EngineContextTestCase(TestCase):
             auto_load_model=False, auto_load_tokenizer=False
         )
         engine = DummyEngine(settings=settings)
-        engine._exit_stack = MagicMock()
+        engine._exit_stack = AsyncMock(spec=AsyncExitStack)
         engine._transformers_logging_logger = MagicMock(level=logging.WARNING)
         engine._transformers_logging_level = logging.INFO
         with patch(
@@ -186,16 +187,14 @@ class EngineContextTestCase(TestCase):
         ) as sl:
             engine.__exit__(None, None, None)
             sl.assert_called_once_with(logging.INFO)
-            engine._exit_stack.__exit__.assert_called_once_with(
-                None, None, None
-            )
+            engine._exit_stack.aclose.assert_awaited_once()
 
     def test_enter_exit_no_change(self):
         settings = EngineSettings(
             auto_load_model=False, auto_load_tokenizer=False
         )
         engine = DummyEngine(settings=settings)
-        engine._exit_stack = MagicMock()
+        engine._exit_stack = AsyncMock(spec=AsyncExitStack)
         engine._transformers_logging_logger = None
         with patch(
             "avalan.model.engine.transformers_logging.set_verbosity_error"
@@ -203,7 +202,7 @@ class EngineContextTestCase(TestCase):
             self.assertIs(engine.__enter__(), engine)
             sve.assert_not_called()
         engine.__exit__(None, None, None)
-        engine._exit_stack.__exit__.assert_called_once_with(None, None, None)
+        engine._exit_stack.aclose.assert_awaited_once()
 
 
 class EngineLoadTestCase(TestCase):

@@ -389,11 +389,14 @@ class ManagerLoadEngineTestCase(TestCase):
                                 else Modality.TEXT_GENERATION
                             ),
                         )
-                        Model.assert_called_once_with(
+                        expected_kwargs = dict(
                             model_id=model_id,
                             settings=settings,
                             logger=self.logger_mock,
                         )
+                        if vendor not in {"local", "sentence"}:
+                            expected_kwargs["exit_stack"] = manager._stack
+                        Model.assert_called_once_with(**expected_kwargs)
                         manager._stack.enter_context.assert_called_once_with(
                             Model.return_value
                         )

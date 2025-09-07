@@ -15,7 +15,8 @@ from ..model import (
     TokenizerNotSupportedException,
 )
 from ..model.vendor import TextGenerationVendor
-from contextlib import ExitStack
+import asyncio
+from contextlib import AsyncExitStack
 from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
@@ -34,15 +35,15 @@ from torch import (
     uint8,
 )
 from torch.backends import mps
-from transformers import logging as transformers_logging
-from transformers.utils.logging import (
-    disable_progress_bar,
-    enable_progress_bar,
-)
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
+)
+from transformers import logging as transformers_logging
+from transformers.utils.logging import (
+    disable_progress_bar,
+    enable_progress_bar,
 )
 from typing import Any, Final, Literal
 
@@ -64,7 +65,7 @@ class Engine(ABC):
     _tokenizer_config: TokenizerConfig | None = None
     _parameter_types: set[str] | None = None
     _parameter_count: int | None = None
-    _exit_stack: ExitStack = ExitStack()
+    _exit_stack: AsyncExitStack = AsyncExitStack()
 
     DTYPE_SIZES: dict[str, int] = {
         "bool": 1,
@@ -273,7 +274,13 @@ class Engine(ABC):
                 "Restored transformers logging level to %s",
                 self._transformers_logging_level,
             )
-        return self._exit_stack.__exit__(exc_type, exc_value, traceback)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self._exit_stack.aclose())
+        else:
+            loop.create_task(self._exit_stack.aclose())
+        return False
 
     def _load(
         self, *args, load_tokenizer: bool, tokenizer_name_or_path: str | None

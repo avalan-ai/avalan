@@ -49,7 +49,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             stream=True,
         )
 
-        tokens = [ReasoningToken("r"), ToolCallToken("t"), "a"]
+        tokens = [ReasoningToken("r"), ToolCallToken(token="t"), "a"]
 
         async def gen():
             for token in tokens:
@@ -144,14 +144,14 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         tokens = [
             ReasoningToken("r1"),
             ReasoningToken("r2"),
-            ToolCallToken("t1"),
-            ToolCallToken("t2"),
+            ToolCallToken(token="t1"),
+            ToolCallToken(token="t2"),
             "a1",
             "a2",
             ReasoningToken("r3"),
             ReasoningToken("r4"),
-            ToolCallToken("t3"),
-            ToolCallToken("t4"),
+            ToolCallToken(token="t3"),
+            ToolCallToken(token="t4"),
             "a3",
             "a4",
         ]

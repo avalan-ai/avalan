@@ -22,6 +22,7 @@ from ...entities import (
 from ...tool.manager import ToolManager
 
 from argparse import Namespace
+from contextlib import AsyncExitStack
 from logging import Logger
 from typing import Any
 
@@ -33,7 +34,9 @@ class VisionEncoderDecoderModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> VisionEncoderDecoderModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return VisionEncoderDecoderModel(
@@ -90,7 +93,9 @@ class VisionImageClassificationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> ImageClassificationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return ImageClassificationModel(
@@ -140,7 +145,9 @@ class VisionImageToTextModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> ImageToTextModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return ImageToTextModel(
@@ -196,7 +203,9 @@ class VisionImageTextToTextModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> ImageTextToTextModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return ImageTextToTextModel(
@@ -258,7 +267,9 @@ class VisionObjectDetectionModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> ObjectDetectionModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return ObjectDetectionModel(
@@ -317,7 +328,9 @@ class VisionTextToImageModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TextToImageModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return TextToImageModel(
@@ -383,7 +396,9 @@ class VisionTextToAnimationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TextToAnimationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return TextToAnimationModel(
@@ -449,7 +464,9 @@ class VisionTextToVideoModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TextToVideoModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return TextToVideoModel(
@@ -531,7 +548,9 @@ class VisionSemanticSegmentationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> SemanticSegmentationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return SemanticSegmentationModel(

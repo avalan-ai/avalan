@@ -16,6 +16,7 @@ from ...entities import (
 from ...tool.manager import ToolManager
 
 from argparse import Namespace
+from contextlib import AsyncExitStack
 from logging import Logger
 from typing import Any
 
@@ -27,7 +28,9 @@ class AudioClassificationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> AudioClassificationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return AudioClassificationModel(
@@ -82,7 +85,9 @@ class AudioSpeechRecognitionModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> SpeechRecognitionModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return SpeechRecognitionModel(
@@ -137,7 +142,9 @@ class AudioTextToSpeechModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TextToSpeechModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return TextToSpeechModel(
@@ -198,7 +205,9 @@ class AudioGenerationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> AudioGenerationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return AudioGenerationModel(

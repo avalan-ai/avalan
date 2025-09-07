@@ -167,7 +167,9 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                         token=it.token, id=token_id, probability=it.probability
                     )
                 elif isinstance(token, ToolCallToken):
-                    parsed = ToolCallToken(token=str(it), id=token.id)
+                    parsed = ToolCallToken(
+                        token=str(it), id=token.id, call=token.call
+                    )
                 elif isinstance(token, TokenDetail):
                     parsed = TokenDetail(
                         id=token.id,

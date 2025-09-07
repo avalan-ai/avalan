@@ -131,12 +131,14 @@ class MemoryManager:
         self._permanent_memories.pop(namespace, None)
 
     async def append_message(self, engine_message: EngineMessage) -> None:
-        assert (
+        if not (
             isinstance(engine_message, EngineMessage)
             and engine_message.agent_id
             and engine_message.message
             and engine_message.message.content
-        )
+        ):
+            self._logger.info("Skipping non engine message %s", engine_message)
+            return
 
         self._logger.debug("<Memory> Appending message")
 

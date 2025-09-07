@@ -23,6 +23,7 @@ from ...entities import (
 from ...tool.manager import ToolManager
 
 from argparse import Namespace
+from contextlib import AsyncExitStack
 from logging import Logger
 from typing import Any
 
@@ -47,6 +48,7 @@ class TextGenerationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TextGenerationModel | MlxLmModel:
         model_load_args = dict(
             model_id=engine_uri.model_id,
@@ -66,58 +68,65 @@ class TextGenerationModality:
                 case _:
                     return TextGenerationModel(**model_load_args)
         match engine_uri.vendor:
+            case "anthropic":
+                from ..nlp.text.vendor.anthropic import (
+                    AnthropicModel as Loader,
+                )
+
+                return Loader(**model_load_args, exit_stack=exit_stack)
+
             case "openai":
                 from ..nlp.text.vendor.openai import OpenAIModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "openrouter":
                 from ..nlp.text.vendor.openrouter import (
                     OpenRouterModel as Loader,
                 )
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "anyscale":
                 from ..nlp.text.vendor.anyscale import AnyScaleModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "together":
                 from ..nlp.text.vendor.together import TogetherModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "deepseek":
                 from ..nlp.text.vendor.deepseek import DeepSeekModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "deepinfra":
                 from ..nlp.text.vendor.deepinfra import (
                     DeepInfraModel as Loader,
                 )
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "groq":
                 from ..nlp.text.vendor.groq import GroqModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "ollama":
                 from ..nlp.text.vendor.ollama import OllamaModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "huggingface":
                 from ..nlp.text.vendor.huggingface import (
                     HuggingfaceModel as Loader,
                 )
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "hyperbolic":
                 from ..nlp.text.vendor.hyperbolic import (
                     HyperbolicModel as Loader,
                 )
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "litellm":
                 from ..nlp.text.vendor.litellm import LiteLLMModel as Loader
 
-                return Loader(**model_load_args)
+                return Loader(**model_load_args, exit_stack=exit_stack)
         raise NotImplementedError()
 
     def get_operation_from_arguments(
@@ -186,7 +195,9 @@ class TextQuestionAnsweringModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> QuestionAnsweringModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return QuestionAnsweringModel(
@@ -242,7 +253,9 @@ class TextSequenceClassificationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> SequenceClassificationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return SequenceClassificationModel(
@@ -283,7 +296,9 @@ class TextSequenceToSequenceModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> SequenceToSequenceModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return SequenceToSequenceModel(
@@ -334,7 +349,9 @@ class TextTokenClassificationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TokenClassificationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return TokenClassificationModel(
@@ -385,7 +402,9 @@ class TextTranslationModality:
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         logger: Logger,
+        exit_stack: AsyncExitStack,
     ) -> TranslationModel:
+        _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
         return TranslationModel(
