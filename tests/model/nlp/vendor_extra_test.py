@@ -10,6 +10,7 @@ from avalan.entities import (
     GenerationSettings,
     Message,
     MessageRole,
+    ToolCallToken,
     TransformerEngineSettings,
 )
 
@@ -31,8 +32,9 @@ class AsyncIter:
 class AnthropicTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         class DeltaEvent:
-            def __init__(self, delta):
+            def __init__(self, delta, index=0):
                 self.delta = delta
+                self.index = index
 
         class StopEvent:
             pass
@@ -67,7 +69,9 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             yield Stop()
 
         stream = self.mod.AnthropicStream(agen())
-        self.assertEqual(await stream.__anext__(), "val")
+        token = await stream.__anext__()
+        self.assertIsInstance(token, ToolCallToken)
+        self.assertEqual(token.token, "val")
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
