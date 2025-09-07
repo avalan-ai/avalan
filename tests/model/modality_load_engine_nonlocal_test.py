@@ -1,8 +1,3 @@
-from logging import Logger
-from unittest.mock import MagicMock
-
-import pytest
-
 from avalan.entities import EngineUri, TransformerEngineSettings
 from avalan.model.modalities.audio import (
     AudioSpeechRecognitionModality,
@@ -24,6 +19,10 @@ from avalan.model.modalities.vision import (
     VisionTextToImageModality,
     VisionTextToVideoModality,
 )
+from contextlib import AsyncExitStack
+from logging import Logger
+import pytest
+from unittest.mock import MagicMock
 
 
 @pytest.mark.parametrize(
@@ -59,4 +58,4 @@ def test_load_engine_non_local_raises(modality):
     logger = MagicMock(spec=Logger)
 
     with pytest.raises(NotImplementedError):
-        modality.load_engine(engine_uri, settings, logger)
+        modality.load_engine(engine_uri, settings, logger, AsyncExitStack())

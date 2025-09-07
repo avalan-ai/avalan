@@ -40,8 +40,9 @@ from ..model.vision.segmentation import SemanticSegmentationModel
 from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
 from ..tool.manager import ToolManager
+import asyncio
 from argparse import Namespace
-from contextlib import ContextDecorator, ExitStack
+from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
 from time import perf_counter
 from typing import Any, TypeAlias, get_args
@@ -73,7 +74,7 @@ ModelType: TypeAlias = (
 
 class ModelManager(ContextDecorator):
     _hub: HuggingfaceHub
-    _stack: ExitStack
+    _stack: AsyncExitStack
     _logger: Logger
     _secrets: KeyringSecrets
     _event_manager: EventManager | None
@@ -86,7 +87,7 @@ class ModelManager(ContextDecorator):
         event_manager: EventManager | None = None,
     ):
         self._hub, self._logger = hub, logger
-        self._stack = ExitStack()
+        self._stack = AsyncExitStack()
         self._secrets = secrets or KeyringSecrets()
         self._event_manager = event_manager
 
@@ -99,7 +100,24 @@ class ModelManager(ContextDecorator):
         exc_value: BaseException | None,
         traceback: Any | None,
     ):
-        return self._stack.__exit__(exc_type, exc_value, traceback)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self._stack.aclose())
+        else:
+            loop.create_task(self._stack.aclose())
+        return False
+
+    async def __aenter__(self) -> "ModelManager":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any | None,
+    ) -> bool:
+        return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
     async def __call__(
         self,
@@ -266,7 +284,11 @@ class ModelManager(ContextDecorator):
             )
         else:
             model = ModalityRegistry.load_engine(
-                engine_uri, engine_settings, modality, self._logger
+                engine_uri,
+                engine_settings,
+                modality,
+                self._logger,
+                self._stack,
             )
         self._stack.enter_context(model)
         return model

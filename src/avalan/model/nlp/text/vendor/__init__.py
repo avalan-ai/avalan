@@ -6,17 +6,18 @@ from .....entities import (
 )
 from .....model.response.text import TextGenerationResponse
 from .....model.vendor import TextGenerationVendor
-from diffusers import DiffusionPipeline
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
+from .....compat import override
+from contextlib import AsyncExitStack
 from dataclasses import replace
+from diffusers import DiffusionPipeline
 from logging import Logger, getLogger
 from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
-from transformers.tokenization_utils_base import BatchEncoding
 from transformers import PreTrainedModel
+from transformers.tokenization_utils_base import BatchEncoding
 from typing import Literal
-from .....compat import override
 
 
 class TextGenerationVendorModel(TextGenerationModel, ABC):
@@ -27,6 +28,8 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         model_id: str,
         settings: TransformerEngineSettings | None = None,
         logger: Logger = getLogger(__name__),
+        *,
+        exit_stack: AsyncExitStack | None = None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
         assert (
@@ -34,6 +37,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         ), "API key needed for vendor"
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
+        self._exit_stack = exit_stack or AsyncExitStack()
 
     @abstractmethod
     def _load_model(

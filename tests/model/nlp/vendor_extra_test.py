@@ -4,6 +4,7 @@ import types
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import AsyncExitStack
 
 from avalan.entities import (
     GenerationSettings,
@@ -70,13 +71,20 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
-        stream_instance = AsyncIter([])
-        self.stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
-            return_value=stream_instance
+        ctx_instance = SimpleNamespace(
+            __aenter__=AsyncMock(return_value=AsyncIter([])),
+            __aexit__=AsyncMock(return_value=False),
+        )
+        self.stub.AsyncAnthropic.return_value.messages.stream = MagicMock(
+            return_value=ctx_instance
         )
 
+        exit_stack = AsyncMock(spec=AsyncExitStack)
+
         with patch.object(self.mod, "AnthropicStream") as StreamMock:
-            client = self.mod.AnthropicClient("tok", "url")
+            client = self.mod.AnthropicClient(
+                "tok", "url", exit_stack=exit_stack
+            )
             client._system_prompt = MagicMock(return_value="sys")
             client._template_messages = MagicMock(
                 return_value=[{"content": "c"}]
@@ -86,8 +94,11 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
         self.stub.AsyncAnthropic.assert_called_once_with(
             api_key="tok", base_url="url"
         )
-        client._client.messages.create.assert_awaited_once()
-        StreamMock.assert_called_once_with(stream=stream_instance)
+        client._client.messages.stream.assert_called_once()
+        exit_stack.enter_async_context.assert_awaited_once_with(ctx_instance)
+        StreamMock.assert_called_once_with(
+            events=exit_stack.enter_async_context.return_value
+        )
         self.assertIs(result, StreamMock.return_value)
 
         with patch.object(self.mod, "AnthropicClient") as ClientMock:
@@ -99,7 +110,9 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             )
             model = self.mod.AnthropicModel("m", settings)
             loaded = model._load_model()
-        ClientMock.assert_called_once_with(api_key="t", base_url="b")
+        ClientMock.assert_called_once_with(
+            api_key="t", base_url="b", exit_stack=model._exit_stack
+        )
         self.assertIs(loaded, ClientMock.return_value)
 
 
