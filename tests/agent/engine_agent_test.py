@@ -97,7 +97,7 @@ class EngineAgentPropertyTestCase(IsolatedAsyncioTestCase):
 
 
 class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
-    def _make_agent(self, last_output=None):
+    def _make_agent(self, last_output=None, params=None):
         memory = FakeMemory()
         engine = DummyEngine()
         tool = MagicMock(spec=ToolManager)
@@ -112,7 +112,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             password=None,
             vendor=None,
             model_id="m",
-            params={},
+            params=params or {},
         )
         agent = DummyAgent(
             engine,
@@ -211,3 +211,13 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         args = manager.await_args.args
         self.assertEqual(args[2].generation_settings.temperature, 0.4)
         self.assertFalse(args[2].generation_settings.do_sample)
+
+    async def test_run_defaults_from_uri(self):
+        agent, engine, _, manager = self._make_agent(
+            params={"temperature": 0.6, "max_new_tokens": 5}
+        )
+        await agent._run(Message(role=MessageRole.USER, content="hi"))
+        manager.assert_awaited_once()
+        settings = manager.await_args.args[2].generation_settings
+        self.assertEqual(settings.temperature, 0.6)
+        self.assertEqual(settings.max_new_tokens, 5)
