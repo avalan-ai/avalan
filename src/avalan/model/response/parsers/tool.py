@@ -50,7 +50,9 @@ class ToolCallResponseParser:
                 ToolCallParser.ToolCallBufferStatus.CLOSED,
             ):
                 self._pending_tokens.append(token_str)
-                result.extend(ToolCallToken(token=t) for t in self._pending_tokens)
+                result.extend(
+                    ToolCallToken(token=t) for t in self._pending_tokens
+                )
                 self._pending_tokens.clear()
                 self._pending_str = ""
                 self._inside_call = (

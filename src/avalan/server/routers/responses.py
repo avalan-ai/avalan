@@ -137,7 +137,9 @@ def _token_to_sse(
             "response.output_text.delta",
             {
                 "type": "response.output_text.delta",
-                "delta": token,
+                "delta": (
+                    token.token if isinstance(token, Token) else str(token)
+                ),
                 "output_index": 0,
                 "content_index": 0,
                 "sequence_number": seq,
