@@ -16,7 +16,9 @@ from .....tool.manager import ToolManager
 from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
 from contextlib import AsyncExitStack
+from dataclasses import asdict, is_dataclass
 from diffusers import DiffusionPipeline
+from json import dumps
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 
@@ -170,7 +172,11 @@ class AnthropicClient(TextGenerationVendor):
                     {
                         "type": "tool_result",
                         "tool_use_id": result.call.id,
-                        "content": result.result,
+                        "content": dumps(
+                            asdict(result.result)
+                            if is_dataclass(result.result)
+                            else result.result
+                        ),
                     }
                 ],
             )
@@ -179,6 +185,7 @@ class AnthropicClient(TextGenerationVendor):
             else:
                 messages.append(result_message)
 
+        # @TODO Ensure this doesn't happen from upstream
         if len(messages) > 1 and (messages[0] == messages[-1]):
             messages.pop()
 
