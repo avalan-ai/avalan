@@ -1,6 +1,4 @@
-from ..agent.loader import OrchestratorLoader
 from ..entities import MessageRole, OrchestratorSettings
-from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.browser import BrowserToolSettings
 from ..tool.database import DatabaseToolSettings
 from dataclasses import dataclass
@@ -13,8 +11,6 @@ JSONType = Literal["bool", "float", "int", "object", "string"]
 
 @dataclass(kw_only=True, frozen=True)
 class OrchestratorContext:
-    loader: OrchestratorLoader
-    hub: HuggingfaceHub
     participant_id: UUID
     specs_path: str | None = None
     settings: OrchestratorSettings | None = None

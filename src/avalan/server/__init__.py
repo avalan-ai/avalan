@@ -97,8 +97,6 @@ def agents_server(
                 stack=stack,
             )
             ctx = OrchestratorContext(
-                loader=loader,
-                hub=hub,
                 participant_id=pid,
                 specs_path=specs_path,
                 settings=settings,
@@ -107,6 +105,7 @@ def agents_server(
             )
             app.state.ctx = ctx
             app.state.stack = stack
+            app.state.loader = loader
             if ctx.specs_path:
                 orchestrator_cm = await loader.from_file(
                     ctx.specs_path,
