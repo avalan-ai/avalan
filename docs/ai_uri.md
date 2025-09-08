@@ -16,7 +16,7 @@ This document describes the formal structure of the `ai://` Uniform Resource Ide
 ```
 
 - The URI **scheme** must be `ai`.  If omitted, the parser assumes the prefix `ai://`.
-- `<userinfo>` is optional. When only the username is present it is interpreted as the vendor access key. If a password is also supplied, the username denotes a secret storage identifier and the password the key used to retrieve the vendor access token.
+- `<userinfo>` is optional. When only the username is present it is interpreted as the vendor access key. If a password is also supplied, the username denotes the token lookup mechanism and the password the key used to retrieve the vendor access token. Use `secret` to read from the secret backend or `env` to read from an environment variable.
 - `<host>` identifies either a known vendor (from the list above) or a local model host.  When the host is not a recognised vendor or equals `local`, the URI is interpreted as a local model reference.
 - `<path>` denotes the model identifier.  For local models the first segment of the path can contain a host component that becomes part of the model identifier.  For remote vendors the path is used directly as the model identifier.
 - `<query>` parameters are parsed into key–value pairs and attached to the resulting `EngineUri` object.
@@ -30,8 +30,8 @@ Parsing an AI URI results in an `EngineUri` structure containing:
 | `vendor`  | Vendor name if `<host>` matches a recognised vendor, otherwise `None`. |
 | `host`    | `<host>` when it is a vendor, else `None`.                    |
 | `port`    | Optional port when supplied for a vendor.                     |
-| `user`    | Value of `<user>` when the password is omitted, otherwise the secret storage identifier. |
-| `password`| Value of `<password>` when supplied; used as the key in the chosen secret storage. |
+| `user`    | Value of `<user>` when the password is omitted, otherwise the token lookup mechanism (`secret` or `env`). |
+| `password`| Value of `<password>` when supplied; used as the lookup key or environment variable name. |
 | `model_id`| Normalised model identifier derived from `<path>`.            |
 | `params`  | Mapping of query parameters.                                  |
 
@@ -46,6 +46,7 @@ When `vendor` is `None`, the model is considered local.  Otherwise, the URI desc
 | `ai://messi_api_key@openai/gpt-4o`         | vendor `openai`, user `messi_api_key`, model `gpt-4o`          |
 | `ai://hf_key:@huggingface/meta-llama/Llama-3-8B-Instruct` | vendor `huggingface`, user `hf_key`, model `meta-llama/Llama-3-8B-Instruct` |
 | `ai://secret:openai_key@openai/gpt-4o`     | vendor `openai`, secret key `openai_key`, model `gpt-4o`       |
+| `ai://env:ANTHROPIC_API_KEY@anthropic/claude-3-5-sonnet-latest` | vendor `anthropic`, env var `ANTHROPIC_API_KEY`, model `claude-3-5-sonnet-latest` |
 | `ai://ollama/llama3`                        | vendor `ollama`, model `llama3`                                |
 | `ai://litellm/gpt-3.5-turbo`                | vendor `litellm`, model `gpt-3.5-turbo`                        |
 | `ai://tg_key@together/mistral-7b`           | vendor `together`, model `mistral-7b`                          |

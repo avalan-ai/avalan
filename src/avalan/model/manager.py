@@ -44,6 +44,7 @@ import asyncio
 from argparse import Namespace
 from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
+from os import environ
 from time import perf_counter
 from typing import Any, TypeAlias, get_args
 from urllib.parse import parse_qsl, urlparse
@@ -191,6 +192,8 @@ class ModelManager(ContextDecorator):
             if engine_uri.password and engine_uri.user:
                 if engine_uri.user == "secret":
                     token = self._secrets.read(engine_uri.password)
+                elif engine_uri.user == "env":
+                    token = environ.get(engine_uri.password)
                 else:
                     token = None
             elif engine_uri.user:
