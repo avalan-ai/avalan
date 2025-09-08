@@ -18,6 +18,7 @@ from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
 from ....model.response.parsers.tool import ToolCallResponseParser
 from ....cli import CommandAbortException
+from base64 import b64encode
 from dataclasses import asdict, is_dataclass
 from inspect import iscoroutine
 from json import dumps
@@ -243,16 +244,22 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         ],
                     )
                 )
+                tool_result_output = dumps(
+                    asdict(tool_output)
+                    if is_dataclass(tool_output)
+                    else tool_output,
+                    default=lambda o: (
+                        b64encode(o).decode()
+                        if isinstance(o, (bytes, bytearray))
+                        else str(o)
+                    )
+                )
                 tool_messages.append(
                     Message(
                         role=MessageRole.TOOL,
                         name=tool_result.name,
                         arguments=tool_result.arguments,
-                        content=dumps(
-                            asdict(tool_output)
-                            if is_dataclass(tool_output)
-                            else tool_output
-                        ),
+                        content=tool_result_output,
                         tool_call_result=tool_result,
                     )
                 )
