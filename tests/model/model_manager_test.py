@@ -3,6 +3,7 @@ from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from avalan.secrets import KeyringSecrets
 from logging import Logger
+from os import environ
 from unittest import main, TestCase
 from unittest.mock import MagicMock, patch
 
@@ -273,6 +274,16 @@ class ManagerEngineSettingsTestCase(TestCase):
             settings = manager.get_engine_settings(uri)
             self.assertEqual(settings.access_token, "val")
         self.secrets_mock.read.assert_called_once_with("pass")
+
+    def test_env_token_lookup(self):
+        with patch.dict(environ, {"ENV_KEY": "val"}):
+            with ModelManager(
+                self.hub_mock, self.logger_mock, self.secrets_mock
+            ) as manager:
+                uri = manager.parse_uri("ai://env:ENV_KEY@openai/gpt-4o")
+                settings = manager.get_engine_settings(uri)
+                self.assertEqual(settings.access_token, "val")
+        self.secrets_mock.read.assert_not_called()
 
     def test_sentence_transformer_no_token(self):
         with ModelManager(
