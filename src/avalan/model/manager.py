@@ -233,6 +233,8 @@ class ModelManager(ContextDecorator):
         trust_remote_code: bool | None = None,
         weight_type: WeightType = "auto",
     ) -> ModelType:
+        if "backend" in engine_uri.params:
+            backend = Backend(engine_uri.params["backend"])
         engine_settings_args = dict(
             base_url=base_url,
             cache_dir=self._hub.cache_dir,
@@ -313,7 +315,18 @@ class ModelManager(ContextDecorator):
             vendor = None
         use_host = bool(vendor)
         path_prefixed = parsed.path.startswith("/")
-        params = dict(parse_qsl(parsed.query))
+        params: dict[str, str | int | float | bool] = {}
+        for key, value in parse_qsl(parsed.query):
+            if value.lower() in {"true", "false"}:
+                params[key] = value.lower() == "true"
+            else:
+                try:
+                    params[key] = int(value)
+                except ValueError:
+                    try:
+                        params[key] = float(value)
+                    except ValueError:
+                        params[key] = value
 
         # urlparse() normalizes hostname to lowercase, so keep original case
         authority = parsed.netloc.rsplit("@", 1)[-1]

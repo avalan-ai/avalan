@@ -1,8 +1,21 @@
-from ..entities import MessageRole
+from ..entities import MessageRole, OrchestratorSettings
+from ..tool.browser import BrowserToolSettings
+from ..tool.database import DatabaseToolSettings
+from dataclasses import dataclass
 from pydantic import BaseModel, Field
 from typing import Annotated, Literal
+from uuid import UUID
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
+
+
+@dataclass(kw_only=True, frozen=True)
+class OrchestratorContext:
+    participant_id: UUID
+    specs_path: str | None = None
+    settings: OrchestratorSettings | None = None
+    browser_settings: BrowserToolSettings | None = None
+    database_settings: DatabaseToolSettings | None = None
 
 
 class ResponseFormatText(BaseModel):
@@ -212,3 +225,7 @@ class ModelInfo(BaseModel):
 class ModelList(BaseModel):
     object: str = "list"
     data: list[ModelInfo]
+
+
+class EngineRequest(BaseModel):
+    uri: str

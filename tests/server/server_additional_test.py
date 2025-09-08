@@ -110,6 +110,10 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
 
         chat_module = ModuleType("avalan.server.routers.chat")
         chat_module.router = MagicMock()
+        engine_module = ModuleType("avalan.server.routers.engine")
+        engine_module.router = MagicMock()
+        responses_module = ModuleType("avalan.server.routers.responses")
+        responses_module.router = MagicMock()
 
         modules = {
             "fastapi": fastapi_mod,
@@ -120,6 +124,8 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
             "mcp.types": types_mod,
             "uvicorn": ModuleType("uvicorn"),
             "avalan.server.routers.chat": chat_module,
+            "avalan.server.routers.engine": engine_module,
+            "avalan.server.routers.responses": responses_module,
         }
         modules["mcp.server.lowlevel.server"].Server = MCPServer
         modules["mcp.server.sse"].SseServerTransport = SseServerTransport

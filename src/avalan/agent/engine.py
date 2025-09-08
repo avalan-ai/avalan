@@ -1,4 +1,3 @@
-from abc import ABC, abstractmethod
 from ..agent import Specification
 from ..entities import (
     EngineMessage,
@@ -12,19 +11,24 @@ from ..entities import (
     OperationParameters,
     OperationTextParameters,
 )
-from ..memory.manager import MemoryManager
-from ..model.response.text import TextGenerationResponse
-from ..model.engine import Engine
-from ..tool.manager import ToolManager
-from ..model.manager import ModelManager
 from ..event import Event, EventType
 from ..event.manager import EventManager
-from dataclasses import replace
+from ..memory.manager import MemoryManager
+from ..model.engine import Engine
+from ..model.manager import ModelManager
+from ..model.response.text import TextGenerationResponse
+from ..tool.manager import ToolManager
+
+from abc import ABC, abstractmethod
+from dataclasses import Field, fields
 from typing import Any
 from uuid import UUID, uuid4
 
 
 class EngineAgent(ABC):
+    _GENERATION_FIELDS: dict[str, Field[Any]] = {
+        field.name: field for field in fields(GenerationSettings)
+    }
     _id: UUID
     _name: str | None
     _model: Engine
@@ -147,13 +151,29 @@ class EngineAgent(ABC):
         skip_special_tokens=True,
         **kwargs,
     ) -> TextGenerationResponse:
-        # Process settings
-        if settings and kwargs:
-            settings = replace(settings, **kwargs)
-        elif not settings:
-            kwargs.setdefault("temperature", None)
-            kwargs.setdefault("do_sample", False)
-            settings = GenerationSettings(**kwargs)
+        generation_fields = self._GENERATION_FIELDS
+        uri_defaults = {
+            k: v
+            for k, v in self._engine_uri.params.items()
+            if k in generation_fields
+        }
+        if settings:
+            settings_dict = {
+                name: getattr(settings, name) for name in generation_fields
+            }
+            field_defaults = {
+                name: field.default
+                for name, field in generation_fields.items()
+            }
+            for key, value in uri_defaults.items():
+                if settings_dict.get(key) == field_defaults[key]:
+                    settings_dict[key] = value
+        else:
+            settings_dict = {**uri_defaults}
+            settings_dict.setdefault("temperature", None)
+            settings_dict.setdefault("do_sample", False)
+        settings_dict.update(kwargs)
+        settings = GenerationSettings(**settings_dict)
         assert settings
 
         # Prepare memory

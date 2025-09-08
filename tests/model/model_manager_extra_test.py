@@ -1,4 +1,9 @@
-from avalan.entities import EngineUri, Modality, TransformerEngineSettings
+from avalan.entities import (
+    Backend,
+    EngineUri,
+    Modality,
+    TransformerEngineSettings,
+)
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from logging import Logger
@@ -16,6 +21,15 @@ class ModelManagerExtraTestCase(TestCase):
         manager = ModelManager(self.hub, self.logger)
         with self.assertRaises(ValueError):
             manager.parse_uri("http://openai/gpt-4o")
+
+    def test_parse_uri_params(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri(
+            "ai://openai/gpt-4o?temperature=0.6&max_new_tokens=8192&backend=mlx"
+        )
+        self.assertEqual(uri.params["temperature"], 0.6)
+        self.assertEqual(uri.params["max_new_tokens"], 8192)
+        self.assertEqual(uri.params["backend"], "mlx")
 
     def test_get_engine_settings_user_password_no_secret(self):
         manager = ModelManager(self.hub, self.logger)
@@ -66,6 +80,27 @@ class ModelManagerExtraTestCase(TestCase):
             uri, get_mock.return_value, Modality.TEXT_GENERATION
         )
         self.assertEqual(result, "model")
+
+    def test_load_backend_from_uri(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="model",
+            params={"backend": "mlx"},
+        )
+        with (
+            patch.object(manager, "get_engine_settings") as get_mock,
+            patch.object(manager, "load_engine") as load_mock,
+        ):
+            get_mock.return_value = TransformerEngineSettings()
+            load_mock.return_value = "model"
+            manager.load(uri)
+        args = get_mock.call_args.args[1]
+        self.assertEqual(args["backend"], Backend.MLXLM)
 
     def test_load_engine_invalid_modality(self):
         manager = ModelManager(self.hub, self.logger)
