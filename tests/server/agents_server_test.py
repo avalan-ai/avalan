@@ -41,6 +41,8 @@ class AgentsServerTestCase(TestCase):
         chat_module = ModuleType("avalan.server.routers.chat")
         chat_router = MagicMock()
         chat_module.router = chat_router
+        engine_module = ModuleType("avalan.server.routers.engine")
+        engine_module.router = MagicMock()
         responses_module = ModuleType("avalan.server.routers.responses")
         responses_module.router = MagicMock()
 
@@ -63,6 +65,7 @@ class AgentsServerTestCase(TestCase):
             "uvicorn": uvicorn_mod,
             "starlette.requests": starlette_requests_mod,
             "avalan.server.routers.chat": chat_module,
+            "avalan.server.routers.engine": engine_module,
             "avalan.server.routers.responses": responses_module,
         }
 
@@ -170,6 +173,8 @@ class AgentsServerTestCase(TestCase):
 
         chat_module = ModuleType("avalan.server.routers.chat")
         chat_module.router = MagicMock()
+        engine_module = ModuleType("avalan.server.routers.engine")
+        engine_module.router = MagicMock()
         responses_module = ModuleType("avalan.server.routers.responses")
         responses_module.router = MagicMock()
 
@@ -192,6 +197,7 @@ class AgentsServerTestCase(TestCase):
             "uvicorn": uvicorn_mod,
             "starlette.requests": starlette_requests_mod,
             "avalan.server.routers.chat": chat_module,
+            "avalan.server.routers.engine": engine_module,
             "avalan.server.routers.responses": responses_module,
         }
 

@@ -5,6 +5,7 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.browser import BrowserToolSettings
 from ..tool.database import DatabaseToolSettings
 from ..utils import logger_replace
+from .entities import OrchestratorContext
 from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +74,7 @@ def agents_server(
     ), "Provide either specs_path or settings, but not both"
 
     from ..server.routers import chat
+    from ..server.routers import engine
     from ..server.routers import responses
     from mcp.server.lowlevel.server import Server as MCPServer
     from mcp.server.sse import SseServerTransport
@@ -87,28 +89,41 @@ def agents_server(
         environ["TOKENIZERS_PARALLELISM"] = "false"
         async with AsyncExitStack() as stack:
             logger.info("Loading OrchestratorLoader in app lifespan")
+            pid = participant_id or uuid4()
             loader = OrchestratorLoader(
                 hub=hub,
                 logger=logger,
-                participant_id=participant_id or uuid4(),
+                participant_id=pid,
                 stack=stack,
             )
-            if specs_path:
-                orchestrator = await loader.from_file(
-                    specs_path,
+            ctx = OrchestratorContext(
+                loader=loader,
+                hub=hub,
+                participant_id=pid,
+                specs_path=specs_path,
+                settings=settings,
+                browser_settings=browser_settings,
+                database_settings=database_settings,
+            )
+            app.state.ctx = ctx
+            app.state.stack = stack
+            if ctx.specs_path:
+                orchestrator_cm = await loader.from_file(
+                    ctx.specs_path,
                     agent_id=agent_id or uuid4(),
                 )
             else:
-                orchestrator = await loader.from_settings(
-                    settings,
-                    browser_settings=browser_settings,
-                    database_settings=database_settings,
+                orchestrator_cm = await loader.from_settings(
+                    ctx.settings,
+                    browser_settings=ctx.browser_settings,
+                    database_settings=ctx.database_settings,
                 )
-            orchestrator = await stack.enter_async_context(orchestrator)
+            orchestrator = await stack.enter_async_context(orchestrator_cm)
             di_set(app, logger=logger, orchestrator=orchestrator)
+            app.state.agent_id = orchestrator.id
             logger.info(
                 "Agent loaded from %s in app lifespan",
-                specs_path if specs_path else "inline settings",
+                ctx.specs_path if ctx.specs_path else "inline settings",
             )
             yield
 
@@ -136,6 +151,7 @@ def agents_server(
     logger.debug("Adding routes to %s server", name)
     app.include_router(chat.router, prefix=prefix_openai)
     app.include_router(responses.router, prefix=prefix_openai)
+    app.include_router(engine.router)
 
     logger.debug("Creating MCP server with SSE")
     mcp_server = MCPServer(name=name)

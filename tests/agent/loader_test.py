@@ -534,6 +534,40 @@ uri = \"ai://local/model\"
                 await loader.from_file(path, agent_id=uuid4())
         await stack.aclose()
 
+    async def test_from_file_overrides_uri(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://old/model\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            with patch.object(
+                loader,
+                "from_settings",
+                AsyncMock(return_value=MagicMock()),
+            ) as fs:
+                await loader.from_file(
+                    path, agent_id=uuid4(), uri="ai://new/model"
+                )
+            settings_arg = fs.await_args.args[0]
+            self.assertEqual(settings_arg.uri, "ai://new/model")
+        await stack.aclose()
+
     async def test_sentence_model_engine_config(self):
         config = """
 [agent]

@@ -54,6 +54,8 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
 
         chat_module = ModuleType("avalan.server.routers.chat")
         chat_module.router = MagicMock()
+        engine_module = ModuleType("avalan.server.routers.engine")
+        engine_module.router = MagicMock()
         responses_module = ModuleType("avalan.server.routers.responses")
         responses_module.router = MagicMock()
 
@@ -76,6 +78,7 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
             "uvicorn": uvicorn_mod,
             "starlette.requests": starlette_requests_mod,
             "avalan.server.routers.chat": chat_module,
+            "avalan.server.routers.engine": engine_module,
             "avalan.server.routers.responses": responses_module,
         }
 
@@ -184,6 +187,8 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
 
         chat_module = ModuleType("avalan.server.routers.chat")
         chat_module.router = MagicMock()
+        engine_module = ModuleType("avalan.server.routers.engine")
+        engine_module.router = MagicMock()
         responses_module = ModuleType("avalan.server.routers.responses")
         responses_module.router = MagicMock()
 
@@ -206,6 +211,7 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
             "uvicorn": uvicorn_mod,
             "starlette.requests": starlette_requests_mod,
             "avalan.server.routers.chat": chat_module,
+            "avalan.server.routers.engine": engine_module,
             "avalan.server.routers.responses": responses_module,
         }
 

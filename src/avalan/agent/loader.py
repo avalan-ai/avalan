@@ -54,12 +54,21 @@ class OrchestratorLoader:
         self._participant_id = participant_id
         self._stack = stack
 
+    @property
+    def hub(self) -> HuggingfaceHub:
+        return self._hub
+
+    @property
+    def participant_id(self) -> UUID:
+        return self._participant_id
+
     async def from_file(
         self,
         path: str,
         *,
         agent_id: UUID | None,
         disable_memory: bool = False,
+        uri: str | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
 
@@ -95,7 +104,7 @@ class OrchestratorLoader:
                 "uri" in config["engine"]
             ), "No uri defined in engine section of configuration"
 
-            uri = config["engine"]["uri"]
+            uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
             enable_tools = (
                 engine_config["tools"] if "tools" in engine_config else None

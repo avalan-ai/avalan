@@ -39,6 +39,8 @@ def make_modules():
 
     chat_mod = ModuleType("avalan.server.routers.chat")
     chat_mod.router = MagicMock()
+    engine_mod = ModuleType("avalan.server.routers.engine")
+    engine_mod.router = MagicMock()
     responses_mod = ModuleType("avalan.server.routers.responses")
     responses_mod.router = MagicMock()
 
@@ -50,6 +52,7 @@ def make_modules():
         "uvicorn": uvicorn_mod,
         "starlette.requests": starlette_requests_mod,
         "avalan.server.routers.chat": chat_mod,
+        "avalan.server.routers.engine": engine_mod,
         "avalan.server.routers.responses": responses_mod,
     }
 
