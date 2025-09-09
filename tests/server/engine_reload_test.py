@@ -2,6 +2,7 @@ from avalan.server.entities import EngineRequest, OrchestratorContext
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 from dataclasses import dataclass
+from pydantic import ValidationError
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -218,3 +219,57 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         di_set.assert_called_once_with(
             request.app, logger=logger, orchestrator=orchestrator
         )
+
+    async def test_reload_with_only_database(self) -> None:
+        import avalan.server.routers.engine as eng
+
+        @dataclass
+        class DummySettings:
+            uri: str
+
+        settings = DummySettings(uri="old")
+        pid = uuid4()
+        orchestrator = MagicMock()
+        orchestrator.id = uuid4()
+        orchestrator_cm = MagicMock()
+        database_settings = DatabaseToolSettings(dsn="old")
+        tool_settings = ToolSettingsContext(database=database_settings)
+        loader = SimpleNamespace(
+            from_settings=AsyncMock(return_value=orchestrator_cm)
+        )
+        stack = SimpleNamespace(
+            aclose=AsyncMock(),
+            enter_async_context=AsyncMock(return_value=orchestrator),
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    ctx=OrchestratorContext(
+                        participant_id=pid,
+                        settings=settings,
+                        tool_settings=tool_settings,
+                    ),
+                    stack=stack,
+                    loader=loader,
+                )
+            )
+        )
+        with patch.object(eng, "di_set"):
+            logger = MagicMock()
+            await eng.set_engine(
+                request, EngineRequest(database="postgres://db"), logger
+            )
+        stack.aclose.assert_called_once()
+        loader.from_settings.assert_called_once()
+        passed_tool_settings = loader.from_settings.call_args.kwargs[
+            "tool_settings"
+        ]
+        self.assertEqual(passed_tool_settings.database.dsn, "postgres://db")
+        self.assertEqual(
+            request.app.state.ctx.tool_settings.database.dsn, "postgres://db"
+        )
+        self.assertEqual(request.app.state.ctx.settings.uri, "old")
+
+    def test_engine_request_requires_uri_or_database(self) -> None:
+        with self.assertRaises(ValidationError):
+            EngineRequest()
