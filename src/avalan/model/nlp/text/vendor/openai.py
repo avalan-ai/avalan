@@ -1,34 +1,109 @@
 from .....model.stream import TextGenerationSingleStream
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
+    ReasoningToken,
     Token,
     TokenDetail,
+    ToolCall,
+    ToolCallToken,
 )
 from .....tool.manager import ToolManager
 from diffusers import DiffusionPipeline
-from openai import AsyncOpenAI, AsyncStream
+from json import loads
+from openai import AsyncOpenAI
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 
 
 class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
+    _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
 
-    def __init__(self, stream: AsyncStream):
-        super().__init__(stream.__aiter__())
+    def __init__(self, stream: AsyncIterator):
+        async def generator() -> AsyncIterator[Token | TokenDetail | str]:
+            tool_calls: dict[str, dict] = {}
+
+            async for event in stream:
+                etype = getattr(event, "type", None)
+
+                if etype == "response.output_item.added":
+                    item = getattr(event, "item", None)
+                    if item:
+                        custom = getattr(item, "custom_tool_call", None)
+                        if custom:
+                            call_id = getattr(
+                                custom, "id", getattr(item, "id", None)
+                            )
+                            tool_calls[call_id] = {
+                                "name": getattr(custom, "name", None),
+                                "args_fragments": [],
+                            }
+                    continue
+
+                if (
+                    etype == "response.custom_tool_call_input.delta"
+                    or etype == "response.function_call_arguments.delta"
+                ):
+                    call_id = getattr(event, "id", None)
+                    delta = getattr(event, "delta", None)
+                    if call_id is not None and delta:
+                        tc = tool_calls.setdefault(
+                            call_id, {"name": None, "args_fragments": []}
+                        )
+                        tc["args_fragments"].append(delta)
+                        yield ToolCallToken(token=delta)
+                    continue
+
+                if etype in self._REASONING_DELTA_EVENTS:
+                    delta = getattr(event, "delta", None)
+                    if isinstance(delta, str):
+                        yield ReasoningToken(token=delta)
+                    continue
+
+                if etype in self._TEXT_DELTA_EVENTS:
+                    delta = getattr(event, "delta", None)
+                    if isinstance(delta, str):
+                        yield Token(token=delta)
+                    continue
+
+                if etype == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if (
+                        item is not None
+                        and getattr(item, "type", None) == "function_call"
+                    ):
+                        tool_name = getattr(item, "name", None)
+                        tool_id = getattr(item, "id", None)
+
+                        if tool_id and tool_name:
+                            arguments = getattr(item, "arguments", None)
+                            if arguments:
+                                arguments = loads(arguments)
+                            tool_call = ToolCall(
+                                id=tool_id,
+                                name=TextGenerationVendor.decode_tool_name(
+                                    tool_name
+                                ),
+                                arguments=arguments or None,
+                            )
+
+                            token = ToolCallToken(
+                                token="<tool_use>", call=tool_call
+                            )
+                            yield token
+
+                    continue
+
+
+
+        super().__init__(generator())
 
     async def __anext__(self) -> Token | TokenDetail | str:
-        while True:
-            event = await self._generator.__anext__()
-            type = getattr(event, "type", None)
-            if type and type in self._TEXT_DELTA_EVENTS:
-                delta = getattr(event, "delta", None)
-                if delta and isinstance(delta, str):
-                    return event.delta
+        return await self._generator.__anext__()
 
 
 class OpenAIClient(TextGenerationVendor):
@@ -89,19 +164,23 @@ class OpenAIClient(TextGenerationVendor):
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict] | None:
         schemas = tool.json_schemas()
-        return [
-            {
-                "type": t["type"],
-                **t["function"],
-                **{
-                    "name": TextGenerationVendor.encode_tool_name(
-                        t["function"]["name"]
-                    )
+        return (
+            [
+                {
+                    "type": t["type"],
+                    **t["function"],
+                    **{
+                        "name": TextGenerationVendor.encode_tool_name(
+                            t["function"]["name"]
+                        )
+                    },
                 }
-            }
-            for t in tool.json_schemas()
-            if t["type"] == "function"
-        ] if schemas else None
+                for t in tool.json_schemas()
+                if t["type"] == "function"
+            ]
+            if schemas
+            else None
+        )
 
 
 class OpenAIModel(TextGenerationVendorModel):
