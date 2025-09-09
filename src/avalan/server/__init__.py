@@ -107,6 +107,7 @@ def agents_server(
                 orchestrator_cm = await loader.from_file(
                     ctx.specs_path,
                     agent_id=agent_id or uuid4(),
+                    tool_settings=ctx.tool_settings,
                 )
             else:
                 orchestrator_cm = await loader.from_settings(

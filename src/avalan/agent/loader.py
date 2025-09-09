@@ -70,6 +70,7 @@ class OrchestratorLoader:
         agent_id: UUID | None,
         disable_memory: bool = False,
         uri: str | None = None,
+        tool_settings: ToolSettingsContext | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
 
@@ -248,8 +249,17 @@ class OrchestratorLoader:
             if database_config:
                 database_settings = DatabaseToolSettings(**database_config)
 
+            if tool_settings:
+                browser_settings = tool_settings.browser or browser_settings
+                database_settings = tool_settings.database or database_settings
+                extra = tool_settings.extra
+            else:
+                extra = None
+
             tool_settings = ToolSettingsContext(
-                browser=browser_settings, database=database_settings
+                browser=browser_settings,
+                database=database_settings,
+                extra=extra,
             )
 
             tool_format = None
