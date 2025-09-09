@@ -1,4 +1,5 @@
 from avalan.server.entities import EngineRequest, OrchestratorContext
+from avalan.tool.context import ToolSettingsContext
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -59,6 +60,9 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         orchestrator_cm = MagicMock()
         browser_settings = MagicMock()
         database_settings = MagicMock()
+        tool_settings = ToolSettingsContext(
+            browser=browser_settings, database=database_settings
+        )
         loader = SimpleNamespace(
             from_settings=AsyncMock(return_value=orchestrator_cm)
         )
@@ -72,8 +76,7 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
                     ctx=OrchestratorContext(
                         participant_id=pid,
                         settings=settings,
-                        browser_settings=browser_settings,
-                        database_settings=database_settings,
+                        tool_settings=tool_settings,
                     ),
                     stack=stack,
                     loader=loader,
@@ -90,9 +93,7 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         stack.aclose.assert_called_once()
         repl.assert_called_once_with(settings, uri="new")
         loader.from_settings.assert_called_once_with(
-            new_settings,
-            browser_settings=browser_settings,
-            database_settings=database_settings,
+            new_settings, tool_settings=tool_settings
         )
         stack.enter_async_context.assert_called_once_with(orchestrator_cm)
         di_set.assert_called_once_with(

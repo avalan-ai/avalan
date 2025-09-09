@@ -2,8 +2,7 @@ from ..agent.loader import OrchestratorLoader
 from ..agent.orchestrator import Orchestrator
 from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
-from ..tool.browser import BrowserToolSettings
-from ..tool.database import DatabaseToolSettings
+from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
 from .entities import OrchestratorContext
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -26,8 +25,7 @@ def agents_server(
     reload: bool,
     specs_path: str | None,
     settings: OrchestratorSettings | None,
-    browser_settings: BrowserToolSettings | None,
-    database_settings: DatabaseToolSettings | None,
+    tool_settings: ToolSettingsContext | None,
     prefix_mcp: str,
     prefix_openai: str,
     logger: Logger,
@@ -53,8 +51,7 @@ def agents_server(
         reload: Whether Uvicorn should reload on changes.
         specs_path: Optional path to an agent specification file.
         settings: Optional in-memory orchestrator settings.
-        browser_settings: Optional browser tool configuration.
-        database_settings: Optional database tool configuration.
+        tool_settings: Optional tool configuration context.
         prefix_mcp: URL prefix for MCP endpoints.
         prefix_openai: URL prefix for OpenAI-compatible endpoints.
         logger: Application logger.
@@ -96,12 +93,12 @@ def agents_server(
                 participant_id=pid,
                 stack=stack,
             )
+            tool_ctx = tool_settings
             ctx = OrchestratorContext(
                 participant_id=pid,
                 specs_path=specs_path,
                 settings=settings,
-                browser_settings=browser_settings,
-                database_settings=database_settings,
+                tool_settings=tool_ctx,
             )
             app.state.ctx = ctx
             app.state.stack = stack
@@ -114,8 +111,7 @@ def agents_server(
             else:
                 orchestrator_cm = await loader.from_settings(
                     ctx.settings,
-                    browser_settings=ctx.browser_settings,
-                    database_settings=ctx.database_settings,
+                    tool_settings=ctx.tool_settings,
                 )
             orchestrator = await stack.enter_async_context(orchestrator_cm)
             di_set(app, logger=logger, orchestrator=orchestrator)

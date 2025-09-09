@@ -9,6 +9,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from avalan.tool.browser import BrowserToolSettings
+from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 
 
@@ -349,7 +350,8 @@ dsn = \"sqlite:///db.sqlite\"
                     agent_id=uuid4(),
                 )
 
-                dbs = lfs_patch.call_args.kwargs["database_settings"]
+                tool_settings = lfs_patch.call_args.kwargs["tool_settings"]
+                dbs = tool_settings.database
                 self.assertIsInstance(dbs, DatabaseToolSettings)
                 self.assertEqual(dbs.dsn, "sqlite:///db.sqlite")
             await stack.aclose()
@@ -842,14 +844,13 @@ debug_source = \"{debug_path}\"
 
                 self.assertEqual(result, "orch")
                 lfs_patch.assert_awaited_once()
-                browser_settings = lfs_patch.call_args.kwargs[
-                    "browser_settings"
-                ]
+                tool_settings = lfs_patch.call_args.kwargs["tool_settings"]
+                browser_settings = tool_settings.browser
                 self.assertTrue(browser_settings.debug)
                 self.assertIsNotNone(browser_settings.debug_source)
                 self.assertEqual(browser_settings.debug_source.read(), "debug")
                 browser_settings.debug_source.close()
-                dbs = lfs_patch.call_args.kwargs["database_settings"]
+                dbs = tool_settings.database
                 self.assertIsNone(dbs)
             await stack.aclose()
 
@@ -1413,7 +1414,8 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 stack=stack,
             )
             result = await loader.from_settings(
-                settings, database_settings=db_settings
+                settings,
+                tool_settings=ToolSettingsContext(database=db_settings),
             )
 
             self.assertEqual(result, "orch")

@@ -5,6 +5,8 @@ from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from avalan.tool.context import ToolSettingsContext
+
 
 def make_modules():
     FastAPI = MagicMock()
@@ -131,8 +133,7 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                         reload=False,
                         specs_path="path.json",
                         settings=None,
-                        browser_settings=None,
-                        database_settings=None,
+                        tool_settings=None,
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,
@@ -222,8 +223,9 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                         reload=False,
                         specs_path=None,
                         settings=settings,
-                        browser_settings=browser_settings,
-                        database_settings=None,
+                        tool_settings=ToolSettingsContext(
+                            browser=browser_settings
+                        ),
                         prefix_mcp="/m",
                         prefix_openai="/o",
                         logger=logger,
@@ -244,7 +246,9 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                 self.assertIs(app.state.logger, logger)
                 args, kwargs = loader.from_settings.await_args
                 self.assertEqual(args[0], settings)
-                self.assertEqual(kwargs["browser_settings"], browser_settings)
-                self.assertIsNone(kwargs["database_settings"])
+                self.assertIs(
+                    kwargs["tool_settings"].browser, browser_settings
+                )
+                self.assertIsNone(kwargs["tool_settings"].database)
                 _, loader_kwargs = Loader.call_args
                 self.assertIn("participant_id", loader_kwargs)
