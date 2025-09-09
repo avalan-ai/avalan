@@ -365,6 +365,12 @@ class OrchestratorLoader:
         browser_settings = tool_settings.browser if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None
 
+        _l(
+            "Tool settings: browser=%s, database=%s",
+            browser_settings,
+            database_settings,
+        )
+
         available_toolsets = [
             BrowserToolSet(
                 settings=browser_settings or BrowserToolSettings(),

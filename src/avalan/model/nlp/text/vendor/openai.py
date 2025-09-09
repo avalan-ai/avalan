@@ -71,7 +71,7 @@ class OpenAIClient(TextGenerationVendor):
             if settings.response_format is not None:
                 kwargs["response_format"] = settings.response_format
         if tool:
-            schemas = tool.json_schemas()
+            schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
                 kwargs["tools"] = schemas
         client_stream = await self._client.responses.create(**kwargs)
@@ -85,6 +85,23 @@ class OpenAIClient(TextGenerationVendor):
         )
 
         return stream
+
+    @staticmethod
+    def _tool_schemas(tool: ToolManager) -> list[dict] | None:
+        schemas = tool.json_schemas()
+        return [
+            {
+                "type": t["type"],
+                **t["function"],
+                **{
+                    "name": TextGenerationVendor.encode_tool_name(
+                        t["function"]["name"]
+                    )
+                }
+            }
+            for t in tool.json_schemas()
+            if t["type"] == "function"
+        ] if schemas else None
 
 
 class OpenAIModel(TextGenerationVendorModel):
