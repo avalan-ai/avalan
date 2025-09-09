@@ -1,4 +1,3 @@
-from .....model.stream import TextGenerationSingleStream
 from . import TextGenerationVendorModel
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -10,13 +9,13 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
-    ToolCall,
     ToolCallToken,
 )
+from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from dataclasses import asdict, is_dataclass
 from diffusers import DiffusionPipeline
-from json import dumps, loads
+from json import dumps
 from openai import AsyncOpenAI
 from transformers import PreTrainedModel
 from typing import AsyncIterator
@@ -78,15 +77,11 @@ class OpenAIStream(TextGenerationVendorStream):
                     call_id = getattr(item, "id", None) if item else None
                     cached = tool_calls.pop(call_id, None)
                     if cached:
-                        tool_call = ToolCall(
-                            id=call_id,
-                            name=TextGenerationVendor.decode_tool_name(
-                                cached.get("name")
-                            ),
-                            arguments="".join(cached["args_fragments"])
-                            or None,
+                        yield TextGenerationVendor.build_tool_call_token(
+                            call_id,
+                            cached.get("name"),
+                            "".join(cached["args_fragments"]) or None,
                         )
-                        yield ToolCallToken(token="<tool_use>", call=tool_call)
                     elif (
                         item is not None
                         and getattr(item, "type", None) == "function_call"
@@ -95,19 +90,10 @@ class OpenAIStream(TextGenerationVendorStream):
                         tool_id = getattr(item, "id", None)
 
                         if tool_id and tool_name:
-                            arguments = getattr(item, "arguments", None)
-                            if arguments:
-                                arguments = loads(arguments)
-                            tool_call = ToolCall(
-                                id=tool_id,
-                                name=TextGenerationVendor.decode_tool_name(
-                                    tool_name
-                                ),
-                                arguments=arguments or None,
-                            )
-
-                            token = ToolCallToken(
-                                token="<tool_use>", call=tool_call
+                            token = TextGenerationVendor.build_tool_call_token(
+                                tool_id,
+                                tool_name,
+                                getattr(item, "arguments", None),
                             )
                             yield token
 
@@ -193,7 +179,7 @@ class OpenAIClient(TextGenerationVendor):
                     result.call.name
                 ),
                 "call_id": result.call.id,
-                "arguments": dumps(result.call.arguments)
+                "arguments": dumps(result.call.arguments),
             }
             messages.append(call_message)
 

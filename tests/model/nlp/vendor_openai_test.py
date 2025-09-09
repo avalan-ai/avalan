@@ -175,7 +175,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(t5, ToolCallToken)
         self.assertEqual(t5.call.id, "c1")
         self.assertEqual(t5.call.name, "pkg.func")
-        self.assertEqual(t5.call.arguments, "{}")
+        self.assertEqual(t5.call.arguments, {})
+        self.assertEqual(
+            t5.token,
+            '<tool_call>{"name": "pkg.func", "arguments": {}}</tool_call>',
+        )
         t6 = await stream.__anext__()
         self.assertIsInstance(t6, Token)
         self.assertEqual(t6.token, "hi")

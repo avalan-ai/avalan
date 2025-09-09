@@ -6,9 +6,12 @@ from ..entities import (
     MessageContent,
     MessageContentImage,
     MessageContentText,
+    ToolCall,
+    ToolCallToken,
 )
 from ..tool.manager import ToolManager
 from abc import ABC
+from json import JSONDecodeError, dumps, loads
 from typing import AsyncGenerator
 
 
@@ -77,6 +80,26 @@ class TextGenerationVendor(ABC):
     @staticmethod
     def decode_tool_name(tool_name: str) -> str:
         return tool_name.replace("__", ".")
+
+    @staticmethod
+    def build_tool_call_token(
+        call_id: str | None,
+        tool_name: str | None,
+        arguments: str | dict | None,
+    ) -> ToolCallToken:
+        name = TextGenerationVendor.decode_tool_name(tool_name or "")
+        if isinstance(arguments, str):
+            try:
+                args: dict = loads(arguments)
+            except JSONDecodeError:
+                args = {}
+        else:
+            args = arguments or {}
+        call = ToolCall(id=call_id, name=name, arguments=args)
+        token_json = dumps({"name": name, "arguments": args})
+        return ToolCallToken(
+            token=f"<tool_call>{token_json}</tool_call>", call=call
+        )
 
 
 class TextGenerationVendorStream(TextGenerationStream):
