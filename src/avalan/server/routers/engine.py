@@ -28,16 +28,13 @@ async def set_engine(
         assert ctx.settings
         settings = replace(ctx.settings, uri=engine.uri)
         orchestrator_cm = await loader.from_settings(
-            settings,
-            browser_settings=ctx.browser_settings,
-            database_settings=ctx.database_settings,
+            settings, tool_settings=ctx.tool_settings
         )
         ctx = OrchestratorContext(
             participant_id=ctx.participant_id,
             specs_path=ctx.specs_path,
             settings=settings,
-            browser_settings=ctx.browser_settings,
-            database_settings=ctx.database_settings,
+            tool_settings=ctx.tool_settings,
         )
     request.app.state.ctx = ctx
     orchestrator = await stack.enter_async_context(orchestrator_cm)

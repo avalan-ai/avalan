@@ -42,6 +42,7 @@ from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.tool.parser import ToolCallParser
 from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
 from avalan.tool.browser import BrowserToolSettings
+from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 
 
@@ -233,8 +234,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 prefix_mcp="mcp",
                 specs_path=spec.name,
                 settings=None,
-                browser_settings=None,
-                database_settings=None,
+                tool_settings=ToolSettingsContext(),
                 host="0.0.0.0",
                 port=80,
                 reload=False,
@@ -286,8 +286,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 prefix_mcp="mcp",
                 specs_path=spec.name,
                 settings=None,
-                browser_settings=None,
-                database_settings=None,
+                tool_settings=ToolSettingsContext(),
                 host="0.0.0.0",
                 port=80,
                 reload=False,
@@ -381,8 +380,9 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             prefix_mcp="mcp",
             specs_path=None,
             settings=settings,
-            browser_settings=browser_settings,
-            database_settings=None,
+            tool_settings=ToolSettingsContext(
+                browser=browser_settings, database=None
+            ),
             host="0.0.0.0",
             port=80,
             reload=False,
@@ -1218,10 +1218,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         fs_patch.assert_awaited_once()
         settings = fs_patch.call_args.args[0]
         self.assertTrue(settings.call_options["skip_special_tokens"])
-        browser_settings = fs_patch.call_args.kwargs["browser_settings"]
-        self.assertIsNone(browser_settings)
-        dbs = fs_patch.call_args.kwargs["database_settings"]
-        self.assertIsNone(dbs)
+        tool_settings = fs_patch.call_args.kwargs["tool_settings"]
+        self.assertIsNone(tool_settings.browser)
+        self.assertIsNone(tool_settings.database)
         ff_patch.assert_not_called()
 
     async def test_run_sets_hidden_states(self):
@@ -1315,12 +1314,13 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         fs_patch.assert_awaited_once()
-        bs = fs_patch.call_args.kwargs["browser_settings"]
+        tool_settings = fs_patch.call_args.kwargs["tool_settings"]
+        bs = tool_settings.browser
         self.assertEqual(bs.engine, "chromium")
         self.assertTrue(bs.debug)
         self.assertTrue(bs.search)
         self.assertEqual(bs.search_context, 5)
-        dbs = fs_patch.call_args.kwargs["database_settings"]
+        dbs = tool_settings.database
         self.assertIsNone(dbs)
 
     async def test_run_start_session_and_print_recent(self):
@@ -1818,8 +1818,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         async def from_settings_side_effect(
             _settings,
             *,
-            browser_settings=None,
-            database_settings=None,
+            tool_settings=None,
             tool_format=None,
         ):
             self.orch.tool = ToolManager.create_instance(

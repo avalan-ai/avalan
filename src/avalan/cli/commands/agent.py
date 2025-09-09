@@ -17,6 +17,7 @@ from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
+from ...tool.context import ToolSettingsContext
 from ...tool.database import DatabaseToolSettings
 from argparse import Namespace
 from contextlib import AsyncExitStack
@@ -296,10 +297,11 @@ async def agent_message_search(
                 database_settings = get_tool_settings(
                     args, prefix="database", settings_cls=DatabaseToolSettings
                 )
+                tool_settings = ToolSettingsContext(
+                    browser=browser_settings, database=database_settings
+                )
                 orchestrator = await loader.from_settings(
-                    settings,
-                    browser_settings=browser_settings,
-                    database_settings=database_settings,
+                    settings, tool_settings=tool_settings
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
 
@@ -436,14 +438,14 @@ async def agent_run(
             database_settings = get_tool_settings(
                 args, prefix="database", settings_cls=DatabaseToolSettings
             )
+            tool_settings = ToolSettingsContext(
+                browser=browser_settings, database=database_settings
+            )
             tool_format = (
                 ToolFormat(args.tool_format) if args.tool_format else None
             )
             orchestrator = await loader.from_settings(
-                settings,
-                browser_settings=browser_settings,
-                database_settings=database_settings,
-                tool_format=tool_format,
+                settings, tool_settings=tool_settings, tool_format=tool_format
             )
         orchestrator.event_manager.add_listener(_event_listener)
 
@@ -638,6 +640,10 @@ async def agent_serve(
             args, prefix="database", settings_cls=DatabaseToolSettings
         )
 
+    tool_settings = ToolSettingsContext(
+        browser=browser_settings, database=database_settings
+    )
+
     server = agents_server(
         hub=hub,
         name=name,
@@ -646,8 +652,7 @@ async def agent_serve(
         prefix_mcp=args.prefix_mcp,
         specs_path=specs_path,
         settings=settings,
-        browser_settings=browser_settings,
-        database_settings=database_settings,
+        tool_settings=tool_settings,
         host=args.host,
         port=args.port,
         reload=args.reload,

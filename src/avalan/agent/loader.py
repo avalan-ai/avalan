@@ -17,6 +17,7 @@ from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.code import CodeToolSet
+from ..tool.context import ToolSettingsContext
 from ..tool.database import DatabaseToolSet, DatabaseToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
@@ -247,6 +248,10 @@ class OrchestratorLoader:
             if database_config:
                 database_settings = DatabaseToolSettings(**database_config)
 
+            tool_settings = ToolSettingsContext(
+                browser=browser_settings, database=database_settings
+            )
+
             tool_format = None
             tool_format_str = tool_section.get("format")
             if tool_format_str:
@@ -255,18 +260,14 @@ class OrchestratorLoader:
             _l("Loaded agent from %s", path, is_debug=False)
 
             return await self.from_settings(
-                settings,
-                browser_settings=browser_settings,
-                database_settings=database_settings,
-                tool_format=tool_format,
+                settings, tool_settings=tool_settings, tool_format=tool_format
             )
 
     async def from_settings(
         self,
         settings: OrchestratorSettings,
         *,
-        browser_settings: BrowserToolSettings | None = None,
-        database_settings: DatabaseToolSettings | None = None,
+        tool_settings: ToolSettingsContext | None = None,
         tool_format: ToolFormat | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
@@ -350,6 +351,9 @@ class OrchestratorLoader:
             settings.sentence_model_overlap_size,
             settings.sentence_model_window_size,
         )
+
+        browser_settings = tool_settings.browser if tool_settings else None
+        database_settings = tool_settings.database if tool_settings else None
 
         available_toolsets = [
             BrowserToolSet(

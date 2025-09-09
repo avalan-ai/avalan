@@ -1,6 +1,5 @@
 from ..entities import MessageRole, OrchestratorSettings
-from ..tool.browser import BrowserToolSettings
-from ..tool.database import DatabaseToolSettings
+from ..tool.context import ToolSettingsContext
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 from typing import Annotated, Literal
@@ -14,8 +13,7 @@ class OrchestratorContext:
     participant_id: UUID
     specs_path: str | None = None
     settings: OrchestratorSettings | None = None
-    browser_settings: BrowserToolSettings | None = None
-    database_settings: DatabaseToolSettings | None = None
+    tool_settings: ToolSettingsContext | None = None
 
 
 class ResponseFormatText(BaseModel):
