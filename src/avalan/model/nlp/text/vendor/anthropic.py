@@ -9,7 +9,6 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
-    ToolCall,
     ToolCallToken,
 )
 from .....tool.manager import ToolManager
@@ -79,16 +78,10 @@ class AnthropicStream(TextGenerationVendorStream):
                         tool_id = getattr(cb, "id", None)
 
                         if tool_id and tool_name:
-                            tool_call = ToolCall(
-                                id=tool_id,
-                                name=TextGenerationVendor.decode_tool_name(
-                                    tool_name
-                                ),
-                                arguments=getattr(cb, "input", None),
-                            )
-
-                            token = ToolCallToken(
-                                token="<tool_use>", call=tool_call
+                            token = TextGenerationVendor.build_tool_call_token(
+                                tool_id,
+                                tool_name,
+                                getattr(cb, "input", None),
                             )
                             yield token
 
@@ -223,20 +216,24 @@ class AnthropicClient(TextGenerationVendor):
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict] | None:
         schemas = tool.json_schemas()
-        return [
-            {
-                "name": TextGenerationVendor.encode_tool_name(
-                    t["function"]["name"]
-                ),
-                "description": t["function"]["description"],
-                "input_schema": {
-                    **t["function"]["parameters"],
-                    "additionalProperties": False,
-                },
-            }
-            for t in tool.json_schemas()
-            if t["type"] == "function"
-        ] if schemas else None
+        return (
+            [
+                {
+                    "name": TextGenerationVendor.encode_tool_name(
+                        t["function"]["name"]
+                    ),
+                    "description": t["function"]["description"],
+                    "input_schema": {
+                        **t["function"]["parameters"],
+                        "additionalProperties": False,
+                    },
+                }
+                for t in tool.json_schemas()
+                if t["type"] == "function"
+            ]
+            if schemas
+            else None
+        )
 
 
 class AnthropicModel(TextGenerationVendorModel):
