@@ -221,3 +221,13 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         settings = manager.await_args.args[2].generation_settings
         self.assertEqual(settings.temperature, 0.6)
         self.assertEqual(settings.max_new_tokens, 5)
+
+    async def test_run_settings_overridden_by_uri(self):
+        agent, engine, _, manager = self._make_agent(params={"top_p": 0.5})
+        await agent._run(
+            Message(role=MessageRole.USER, content="hi"),
+            settings=GenerationSettings(),
+        )
+        manager.assert_awaited_once()
+        used_settings = manager.await_args.args[2].generation_settings
+        self.assertEqual(used_settings.top_p, 0.5)

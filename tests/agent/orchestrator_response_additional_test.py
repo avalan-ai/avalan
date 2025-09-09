@@ -9,6 +9,7 @@ from avalan.entities import (
     MessageRole,
     ToolCall,
     ToolCallResult,
+    ToolCallToken,
     Token,
     TransformerEngineSettings,
 )
@@ -78,6 +79,31 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         result = await resp.__anext__()
         self.assertEqual(result, event)
         self.assertEqual(resp._tool_call_events.get_nowait(), event)
+
+    async def test_tool_call_token_enqueued(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id=uuid4(), name="calc", arguments=None)
+
+        async def output_gen():
+            yield ToolCallToken(token="c", call=call)
+
+        response = TextGenerationResponse(
+            output_gen, logger=getLogger(), use_async_generator=True
+        )
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        await resp.__anext__()
+        self.assertIs(resp._calls.get_nowait(), call)
 
     async def test_tool_call_confirm_all(self):
         engine = _DummyEngine()
