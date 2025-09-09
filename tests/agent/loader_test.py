@@ -13,6 +13,20 @@ from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 
 
+class LoaderPropertyTestCase(IsolatedAsyncioTestCase):
+    async def test_hub_and_participant_id(self):
+        stack = AsyncExitStack()
+        hub = MagicMock(spec=HuggingfaceHub)
+        logger = MagicMock(spec=Logger)
+        participant_id = uuid4()
+        loader = OrchestratorLoader(
+            hub=hub, logger=logger, participant_id=participant_id, stack=stack
+        )
+        self.assertIs(loader.hub, hub)
+        self.assertEqual(loader.participant_id, participant_id)
+        await stack.aclose()
+
+
 class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
     async def test_file_not_found(self):
         stack = AsyncExitStack()
@@ -430,6 +444,51 @@ format = \"react\"
 
                 settings = tm_patch.call_args.kwargs["settings"]
                 self.assertEqual(settings.tool_format, ToolFormat.REACT)
+            await stack.aclose()
+
+    async def test_tool_settings_argument(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            tool_settings = ToolSettingsContext(
+                browser=BrowserToolSettings(engine="webkit"),
+                database=DatabaseToolSettings(dsn="sqlite:///db.sqlite"),
+                extra={"x": 1},
+            )
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as fs_patch:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(
+                    path, agent_id=uuid4(), tool_settings=tool_settings
+                )
+                self.assertEqual(result, "orch")
+                fs_patch.assert_awaited_once()
+                passed = fs_patch.call_args.kwargs["tool_settings"]
+                self.assertEqual(passed.browser.engine, "webkit")
+                self.assertEqual(passed.database.dsn, "sqlite:///db.sqlite")
+                self.assertEqual(passed.extra, {"x": 1})
             await stack.aclose()
 
     async def test_load_json_orchestrator(self):
