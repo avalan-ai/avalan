@@ -1,3 +1,5 @@
+import asyncio
+
 from avalan.entities import (
     Backend,
     EngineUri,
@@ -146,3 +148,18 @@ class ModelManagerExtraTestCase(TestCase):
                         self.assertEqual(args["output_hidden_states"], value)
                     le.assert_called_once_with(uri, ges.return_value, modality)
                     self.assertEqual(result, "model")
+
+    def test_parse_uri_boolean_params(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri("ai://openai/gpt-4o?stream=true&debug=false")
+        self.assertTrue(uri.params["stream"])
+        self.assertFalse(uri.params["debug"])
+
+    def test_async_context_manager(self):
+        manager = ModelManager(self.hub, self.logger)
+
+        async def run():
+            async with manager as mm:
+                self.assertIs(mm, manager)
+
+        asyncio.run(run())
