@@ -106,3 +106,30 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[-2], "<|channel|>final<|message|>")
         self.assertEqual(tokens[-1], "done")
         self.assertFalse(parser._inside_call)
+
+    async def test_pending_tokens_flushed_on_status_none(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = False
+        base_parser = ToolCallParser()
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+
+        parser = ToolCallResponseParser(manager, None)
+        await parser.push("<to")
+        result = await parser.push("x")
+
+        self.assertEqual(result, ["<to", "x"])
+        self.assertEqual(parser._pending_tokens, [])
+        self.assertEqual(parser._pending_str, "")
+
+    async def test_flush_returns_pending_tokens(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = False
+        base_parser = ToolCallParser()
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+
+        parser = ToolCallResponseParser(manager, None)
+        await parser.push("<tool")
+
+        self.assertEqual(await parser.flush(), ["<tool"])
+        self.assertEqual(parser._pending_tokens, [])
+        self.assertEqual(parser._pending_str, "")
