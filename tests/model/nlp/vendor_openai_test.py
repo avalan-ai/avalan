@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,9 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningToken,
+    Token,
+    ToolCallToken,
     TransformerEngineSettings,
 )
 
@@ -32,6 +36,7 @@ class AsyncIter:
 class OpenAITestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         self.openai_stub = types.ModuleType("openai")
+        self.openai_stub.__spec__ = ModuleSpec("openai", loader=None)
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
         self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
@@ -53,8 +58,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.output_text.delta", delta="y"),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(chunks))
-        self.assertEqual(await stream.__anext__(), "x")
-        self.assertEqual(await stream.__anext__(), "y")
+        t1 = await stream.__anext__()
+        self.assertIsInstance(t1, Token)
+        self.assertEqual(t1.token, "x")
+        t2 = await stream.__anext__()
+        self.assertIsInstance(t2, Token)
+        self.assertEqual(t2.token, "y")
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
@@ -94,8 +103,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
         result = await client("m", [])
-        self.assertEqual(await result.__anext__(), "a")
-        self.assertEqual(await result.__anext__(), "b")
+        t1 = await result.__anext__()
+        self.assertIsInstance(t1, Token)
+        self.assertEqual(t1.token, "a")
+        t2 = await result.__anext__()
+        self.assertIsInstance(t2, Token)
+        self.assertEqual(t2.token, "b")
         with self.assertRaises(StopAsyncIteration):
             await result.__anext__()
 
@@ -111,6 +124,64 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ClientMock.assert_called_once_with(base_url="u", api_key="t")
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_stream_event_types(self):
+        events = [
+            SimpleNamespace(type="response.output_item.added"),
+            SimpleNamespace(type="response.content_part.added"),
+            SimpleNamespace(type="response.reasoning_text.delta", delta="r1"),
+            SimpleNamespace(type="response.reasoning_text.delta", delta="r2"),
+            SimpleNamespace(type="response.output_item.done"),
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    id="c1",
+                    custom_tool_call=SimpleNamespace(
+                        id="c1", name="pkg__func"
+                    ),
+                ),
+            ),
+            SimpleNamespace(
+                type="response.custom_tool_call_input.delta",
+                id="c1",
+                delta="{",
+            ),
+            SimpleNamespace(
+                type="response.custom_tool_call_input.delta",
+                id="c1",
+                delta="}",
+            ),
+            SimpleNamespace(
+                type="response.output_item.done", item=SimpleNamespace(id="c1")
+            ),
+            SimpleNamespace(type="response.output_item.added"),
+            SimpleNamespace(type="response.content_part.added"),
+            SimpleNamespace(type="response.output_text.delta", delta="hi"),
+            SimpleNamespace(type="response.output_item.done"),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+        t1 = await stream.__anext__()
+        self.assertIsInstance(t1, ReasoningToken)
+        self.assertEqual(t1.token, "r1")
+        t2 = await stream.__anext__()
+        self.assertIsInstance(t2, ReasoningToken)
+        self.assertEqual(t2.token, "r2")
+        t3 = await stream.__anext__()
+        self.assertIsInstance(t3, ToolCallToken)
+        self.assertEqual(t3.token, "{")
+        t4 = await stream.__anext__()
+        self.assertIsInstance(t4, ToolCallToken)
+        self.assertEqual(t4.token, "}")
+        t5 = await stream.__anext__()
+        self.assertIsInstance(t5, ToolCallToken)
+        self.assertEqual(t5.call.id, "c1")
+        self.assertEqual(t5.call.name, "pkg.func")
+        self.assertEqual(t5.call.arguments, "{}")
+        t6 = await stream.__anext__()
+        self.assertIsInstance(t6, Token)
+        self.assertEqual(t6.token, "hi")
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
     async def test_generation_settings_and_tools(self):
         stream_instance = AsyncIter([])
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
@@ -119,7 +190,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
         tool = MagicMock()
-        tool.json_schemas.return_value = [{"a": 1}]
+        tool.json_schemas.return_value = [
+            {"type": "function", "function": {"name": "pkg.func"}}
+        ]
         settings = GenerationSettings(
             temperature=0.5,
             top_p=0.8,
@@ -147,13 +220,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             top_p=0.8,
             text={"stop": ["stop"]},
             response_format={"type": "json_schema"},
-            tools=[{"a": 1}],
+            tools=[{"type": "function", "name": "pkg__func"}],
         )
 
 
 class VendorClientsTestCase(TestCase):
     def setUp(self):
         self.openai_stub = types.ModuleType("openai")
+        self.openai_stub.__spec__ = ModuleSpec("openai", loader=None)
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
         self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()

@@ -70,6 +70,14 @@ class TextGenerationVendor(ABC):
 
         return out
 
+    @staticmethod
+    def encode_tool_name(tool_name: str) -> str:
+        return tool_name.replace(".", "__")
+
+    @staticmethod
+    def decode_tool_name(tool_name: str) -> str:
+        return tool_name.replace("__", ".")
+
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncGenerator

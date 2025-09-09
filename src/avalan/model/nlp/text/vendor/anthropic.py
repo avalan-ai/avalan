@@ -81,7 +81,9 @@ class AnthropicStream(TextGenerationVendorStream):
                         if tool_id and tool_name:
                             tool_call = ToolCall(
                                 id=tool_id,
-                                name=AnthropicClient._name_from(tool_name),
+                                name=TextGenerationVendor.decode_tool_name(
+                                    tool_name
+                                ),
                                 arguments=getattr(cb, "input", None),
                             )
 
@@ -121,6 +123,31 @@ class AnthropicClient(TextGenerationVendor):
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._exit_stack = exit_stack
 
+    @override
+    async def __call__(
+        self,
+        model_id: str,
+        messages: list[Message],
+        settings: GenerationSettings | None = None,
+        *,
+        tool: ToolManager | None = None,
+        use_async_generator: bool = True,
+    ) -> AsyncIterator[Token | TokenDetail | str]:
+        settings = settings or GenerationSettings()
+        system_prompt = self._system_prompt(messages)
+        template_messages = self._template_messages(messages, ["system"])
+        stream = self._client.messages.stream(
+            model=model_id,
+            system=system_prompt,
+            messages=template_messages,
+            max_tokens=settings.max_new_tokens,
+            temperature=settings.temperature,
+            tools=AnthropicClient._tool_schemas(tool) if tool else None,
+            tool_choice={"type": "auto"},
+        )
+        events = await self._exit_stack.enter_async_context(stream)
+        return AnthropicStream(events=events)
+
     def _template_messages(
         self,
         messages: list[Message],
@@ -157,7 +184,9 @@ class AnthropicClient(TextGenerationVendor):
                         {
                             "type": "tool_use",
                             "id": r.call.id,
-                            "name": AnthropicClient._name_to(r.call.name),
+                            "name": TextGenerationVendor.encode_tool_name(
+                                r.call.name
+                            ),
                             "input": r.call.arguments,
                         }
                         for r in tool_results
@@ -191,44 +220,14 @@ class AnthropicClient(TextGenerationVendor):
 
         return messages
 
-    @override
-    async def __call__(
-        self,
-        model_id: str,
-        messages: list[Message],
-        settings: GenerationSettings | None = None,
-        *,
-        tool: ToolManager | None = None,
-        use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
-        settings = settings or GenerationSettings()
-        system_prompt = self._system_prompt(messages)
-        template_messages = self._template_messages(messages, ["system"])
-        stream = self._client.messages.stream(
-            model=model_id,
-            system=system_prompt,
-            messages=template_messages,
-            max_tokens=settings.max_new_tokens,
-            temperature=settings.temperature,
-            tools=AnthropicClient._tool_schemas(tool) if tool else None,
-            tool_choice={"type": "auto"},
-        )
-        events = await self._exit_stack.enter_async_context(stream)
-        return AnthropicStream(events=events)
-
     @staticmethod
-    def _name_to(tool_name: str) -> str:
-        return tool_name.replace(".", "__")
-
-    @staticmethod
-    def _name_from(tool_name: str) -> str:
-        return tool_name.replace("__", ".")
-
-    @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict]:
+    def _tool_schemas(tool: ToolManager) -> list[dict] | None:
+        schemas = tool.json_schemas()
         return [
             {
-                "name": AnthropicClient._name_to(t["function"]["name"]),
+                "name": TextGenerationVendor.encode_tool_name(
+                    t["function"]["name"]
+                ),
                 "description": t["function"]["description"],
                 "input_schema": {
                     **t["function"]["parameters"],
@@ -237,7 +236,7 @@ class AnthropicClient(TextGenerationVendor):
             }
             for t in tool.json_schemas()
             if t["type"] == "function"
-        ]
+        ] if schemas else None
 
 
 class AnthropicModel(TextGenerationVendorModel):
