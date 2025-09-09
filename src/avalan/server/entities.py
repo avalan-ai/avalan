@@ -227,3 +227,4 @@ class ModelList(BaseModel):
 
 class EngineRequest(BaseModel):
     uri: str
+    database: str | None = None

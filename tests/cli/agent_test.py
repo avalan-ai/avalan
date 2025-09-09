@@ -2093,7 +2093,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args.quiet = True
 
                 async def from_file(
-                    self_loader, path, agent_id, disable_memory
+                    self_loader,
+                    path,
+                    agent_id,
+                    disable_memory=None,
+                    **kwargs,
                 ):
                     import tomllib
 
@@ -2160,7 +2164,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args.quiet = True
 
                 async def from_file(
-                    self_loader, path, agent_id, disable_memory
+                    self_loader,
+                    path,
+                    agent_id,
+                    disable_memory=None,
+                    **kwargs,
                 ):
                     import tomllib
 
