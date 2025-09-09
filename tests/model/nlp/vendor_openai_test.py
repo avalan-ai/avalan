@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,6 +33,7 @@ class AsyncIter:
 class OpenAITestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         self.openai_stub = types.ModuleType("openai")
+        self.openai_stub.__spec__ = ModuleSpec("openai", loader=None)
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
         self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
@@ -119,7 +121,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
         tool = MagicMock()
-        tool.json_schemas.return_value = [{"a": 1}]
+        tool.json_schemas.return_value = [
+            {"type": "function", "function": {"name": "pkg.func"}}
+        ]
         settings = GenerationSettings(
             temperature=0.5,
             top_p=0.8,
@@ -147,13 +151,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             top_p=0.8,
             text={"stop": ["stop"]},
             response_format={"type": "json_schema"},
-            tools=[{"a": 1}],
+            tools=[{"type": "function", "name": "pkg__func"}],
         )
 
 
 class VendorClientsTestCase(TestCase):
     def setUp(self):
         self.openai_stub = types.ModuleType("openai")
+        self.openai_stub.__spec__ = ModuleSpec("openai", loader=None)
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
         self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
