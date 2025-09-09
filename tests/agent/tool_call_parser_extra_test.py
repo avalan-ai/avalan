@@ -133,3 +133,21 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(await parser.flush(), ["<tool"])
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
+
+    async def test_open_status_returns_empty_without_tokens(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = True
+        manager.tool_call_status.return_value = (
+            ToolCallParser.ToolCallBufferStatus.OPEN
+        )
+
+        parser = ToolCallResponseParser(manager, None)
+
+        class EmptyIterList(list):
+            def __iter__(self):
+                return iter([])
+
+        parser._pending_tokens = EmptyIterList()
+
+        self.assertEqual(await parser.push("<tool_call>"), [])
+        self.assertTrue(parser._inside_call)
