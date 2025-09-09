@@ -72,7 +72,19 @@ class OpenAIStream(TextGenerationVendorStream):
 
                 if etype == "response.output_item.done":
                     item = getattr(event, "item", None)
-                    if (
+                    call_id = getattr(item, "id", None) if item else None
+                    cached = tool_calls.pop(call_id, None)
+                    if cached:
+                        tool_call = ToolCall(
+                            id=call_id,
+                            name=TextGenerationVendor.decode_tool_name(
+                                cached.get("name")
+                            ),
+                            arguments="".join(cached["args_fragments"])
+                            or None,
+                        )
+                        yield ToolCallToken(token="<tool_use>", call=tool_call)
+                    elif (
                         item is not None
                         and getattr(item, "type", None) == "function_call"
                     ):
@@ -97,8 +109,6 @@ class OpenAIStream(TextGenerationVendorStream):
                             yield token
 
                     continue
-
-
 
         super().__init__(generator())
 
