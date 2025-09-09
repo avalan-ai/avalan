@@ -1,7 +1,7 @@
 from ..entities import MessageRole, OrchestratorSettings
 from ..tool.context import ToolSettingsContext
 from dataclasses import dataclass
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -226,5 +226,11 @@ class ModelList(BaseModel):
 
 
 class EngineRequest(BaseModel):
-    uri: str
+    uri: str | None = None
     database: str | None = None
+
+    @model_validator(mode="after")
+    def check_uri_or_database(self) -> "EngineRequest":
+        if self.uri is None and self.database is None:
+            raise ValueError("Provide uri or database")
+        return self

@@ -14,7 +14,7 @@ async def set_engine(
     request: Request,
     engine: EngineRequest,
     logger: Logger = Depends(di_get_logger),
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     """Reload orchestrator with a new engine URI."""
     stack = request.app.state.stack
     await stack.aclose()
@@ -43,7 +43,11 @@ async def set_engine(
         )
     else:
         assert ctx.settings
-        settings = replace(ctx.settings, uri=engine.uri)
+        settings = (
+            replace(ctx.settings, uri=engine.uri)
+            if engine.uri is not None
+            else ctx.settings
+        )
         orchestrator_cm = await loader.from_settings(
             settings, tool_settings=tool_settings
         )
@@ -57,4 +61,4 @@ async def set_engine(
     orchestrator = await stack.enter_async_context(orchestrator_cm)
     request.app.state.agent_id = orchestrator.id
     di_set(request.app, logger=logger, orchestrator=orchestrator)
-    return {"uri": engine.uri}
+    return {"uri": ctx.settings.uri if ctx.settings else engine.uri}
