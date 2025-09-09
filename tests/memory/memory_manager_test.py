@@ -475,5 +475,26 @@ class MemoryManagerEventTestCase(IsolatedAsyncioTestCase):
         )
 
 
+class MemoryManagerEdgeCaseTestCase(IsolatedAsyncioTestCase):
+    async def test_append_message_skips_non_engine_message(self):
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=RecentMessageMemory(),
+            text_partitioner=AsyncMock(),
+            logger=MagicMock(),
+            event_manager=None,
+        )
+
+        await manager.append_message("bad")
+
+        manager._logger.info.assert_called_once_with(
+            "Skipping non engine message %s", "bad"
+        )
+        manager._text_partitioner.assert_not_called()
+        self.assertTrue(manager.recent_message.is_empty)
+
+
 if __name__ == "__main__":
     main()
