@@ -1,10 +1,12 @@
 from .....model.stream import TextGenerationSingleStream
 from . import TextGenerationVendorModel
+from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
+    MessageRole,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -12,8 +14,9 @@ from .....entities import (
     ToolCallToken,
 )
 from .....tool.manager import ToolManager
+from dataclasses import asdict, is_dataclass
 from diffusers import DiffusionPipeline
-from json import loads
+from json import dumps, loads
 from openai import AsyncOpenAI
 from transformers import PreTrainedModel
 from typing import AsyncIterator
@@ -170,6 +173,41 @@ class OpenAIClient(TextGenerationVendor):
         )
 
         return stream
+
+    def _template_messages(
+        self,
+        messages: list[Message],
+        exclude_roles: list[TemplateMessageRole] | None = None,
+    ) -> list[TemplateMessage]:
+        tool_results = [
+            message.tool_call_result
+            for message in messages
+            if message.role == MessageRole.TOOL and message.tool_call_result
+        ]
+        do_exclude_roles = [*(exclude_roles or []), "tool"]
+        messages = super()._template_messages(messages, do_exclude_roles)
+        for result in tool_results:
+            call_message = {
+                "type": "function_call",
+                "name": TextGenerationVendor.encode_tool_name(
+                    result.call.name
+                ),
+                "call_id": result.call.id,
+                "arguments": dumps(result.call.arguments)
+            }
+            messages.append(call_message)
+
+            result_message = {
+                "type": "function_call_output",
+                "call_id": result.call.id,
+                "output": dumps(
+                    asdict(result.result)
+                    if is_dataclass(result.result)
+                    else result.result
+                ),
+            }
+            messages.append(result_message)
+        return messages
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict] | None:

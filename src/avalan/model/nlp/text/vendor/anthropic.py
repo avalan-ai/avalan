@@ -123,6 +123,31 @@ class AnthropicClient(TextGenerationVendor):
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._exit_stack = exit_stack
 
+    @override
+    async def __call__(
+        self,
+        model_id: str,
+        messages: list[Message],
+        settings: GenerationSettings | None = None,
+        *,
+        tool: ToolManager | None = None,
+        use_async_generator: bool = True,
+    ) -> AsyncIterator[Token | TokenDetail | str]:
+        settings = settings or GenerationSettings()
+        system_prompt = self._system_prompt(messages)
+        template_messages = self._template_messages(messages, ["system"])
+        stream = self._client.messages.stream(
+            model=model_id,
+            system=system_prompt,
+            messages=template_messages,
+            max_tokens=settings.max_new_tokens,
+            temperature=settings.temperature,
+            tools=AnthropicClient._tool_schemas(tool) if tool else None,
+            tool_choice={"type": "auto"},
+        )
+        events = await self._exit_stack.enter_async_context(stream)
+        return AnthropicStream(events=events)
+
     def _template_messages(
         self,
         messages: list[Message],
@@ -194,31 +219,6 @@ class AnthropicClient(TextGenerationVendor):
             messages.pop()
 
         return messages
-
-    @override
-    async def __call__(
-        self,
-        model_id: str,
-        messages: list[Message],
-        settings: GenerationSettings | None = None,
-        *,
-        tool: ToolManager | None = None,
-        use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
-        settings = settings or GenerationSettings()
-        system_prompt = self._system_prompt(messages)
-        template_messages = self._template_messages(messages, ["system"])
-        stream = self._client.messages.stream(
-            model=model_id,
-            system=system_prompt,
-            messages=template_messages,
-            max_tokens=settings.max_new_tokens,
-            temperature=settings.temperature,
-            tools=AnthropicClient._tool_schemas(tool) if tool else None,
-            tool_choice={"type": "auto"},
-        )
-        events = await self._exit_stack.enter_async_context(stream)
-        return AnthropicStream(events=events)
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict] | None:
