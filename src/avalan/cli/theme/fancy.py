@@ -2251,11 +2251,19 @@ class FancyTheme(Theme):
                                         result="[spring_green3]"
                                         + (
                                             dumps(
-                                                asdict(event.payload["result"].result)
-                                                if is_dataclass(
-                                                    event.payload["result"].result
+                                                asdict(
+                                                    event.payload[
+                                                        "result"
+                                                    ].result
                                                 )
-                                                else event.payload["result"].result
+                                                if is_dataclass(
+                                                    event.payload[
+                                                        "result"
+                                                    ].result
+                                                )
+                                                else event.payload[
+                                                    "result"
+                                                ].result
                                             )
                                         )
                                         + "[/spring_green3]",

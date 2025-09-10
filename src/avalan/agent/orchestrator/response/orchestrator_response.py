@@ -245,14 +245,16 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     )
                 )
                 tool_result_output = dumps(
-                    asdict(tool_output)
-                    if is_dataclass(tool_output)
-                    else tool_output,
+                    (
+                        asdict(tool_output)
+                        if is_dataclass(tool_output)
+                        else tool_output
+                    ),
                     default=lambda o: (
                         b64encode(o).decode()
                         if isinstance(o, (bytes, bytearray))
                         else str(o)
-                    )
+                    ),
                 )
                 tool_messages.append(
                     Message(
