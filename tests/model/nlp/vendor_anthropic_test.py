@@ -182,6 +182,17 @@ def test_template_messages_and_exclude_roles(anthropic_mod):
     assert templated[1]["content"][1]["name"] == "pkg__tool"
     assert templated[2]["content"][0]["tool_use_id"] == "id1"
 
+    no_assistant = client._template_messages(
+        [
+            Message(role=MessageRole.SYSTEM, content="s"),
+            Message(role=MessageRole.USER, content="hi"),
+            Message(role=MessageRole.TOOL, tool_call_result=result),
+        ],
+        ["system"],
+    )
+    assert no_assistant[-1]["content"][0]["tool_use_id"] == "id1"
+    assert no_assistant[-1]["role"] == "user"
+
     dup = client._template_messages(
         [
             Message(role=MessageRole.USER, content="x"),
