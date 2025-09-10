@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -14,6 +15,8 @@ from avalan.entities import (
     MessageRole,
     ReasoningToken,
     Token,
+    ToolCall,
+    ToolCallResult,
     ToolCallToken,
     TransformerEngineSettings,
 )
@@ -33,15 +36,62 @@ class AsyncIter:
             raise StopAsyncIteration from exc
 
 
+def patch_openai_imports():
+    openai_stub = types.ModuleType("openai")
+    openai_stub.__spec__ = ModuleSpec("openai", loader=None)
+    openai_stub.AsyncOpenAI = MagicMock()
+    openai_stub.AsyncStream = MagicMock()
+    openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
+
+    transformers_stub = types.ModuleType("transformers")
+    transformers_stub.__spec__ = ModuleSpec("transformers", loader=None)
+    transformers_stub.PreTrainedModel = MagicMock()
+    transformers_stub.PreTrainedTokenizer = MagicMock()
+    transformers_stub.PreTrainedTokenizerFast = MagicMock()
+    transformers_stub.__getattr__ = lambda name: MagicMock()
+
+    transformers_utils_stub = types.ModuleType("transformers.utils")
+    transformers_utils_stub.get_json_schema = MagicMock()
+    transformers_logging_stub = types.ModuleType("transformers.utils.logging")
+    transformers_logging_stub.disable_progress_bar = MagicMock()
+    transformers_logging_stub.enable_progress_bar = MagicMock()
+    transformers_utils_stub.logging = transformers_logging_stub
+    transformers_tokenization_stub = types.ModuleType(
+        "transformers.tokenization_utils_base"
+    )
+    transformers_tokenization_stub.BatchEncoding = MagicMock()
+    transformers_stub.tokenization_utils_base = transformers_tokenization_stub
+    transformers_generation_stub = types.ModuleType("transformers.generation")
+    transformers_generation_stub.StoppingCriteria = MagicMock()
+    transformers_generation_stub.StoppingCriteriaList = MagicMock()
+    transformers_stub.generation = transformers_generation_stub
+    transformers_stub.utils = transformers_utils_stub
+
+    diffusers_stub = types.ModuleType("diffusers")
+    diffusers_stub.__spec__ = ModuleSpec("diffusers", loader=None)
+    diffusers_stub.DiffusionPipeline = MagicMock()
+
+    patcher = patch.dict(
+        sys.modules,
+        {
+            "openai": openai_stub,
+            "transformers": transformers_stub,
+            "transformers.utils": transformers_utils_stub,
+            "transformers.utils.logging": transformers_logging_stub,
+            "transformers.tokenization_utils_base": (
+                transformers_tokenization_stub
+            ),
+            "transformers.generation": transformers_generation_stub,
+            "diffusers": diffusers_stub,
+        },
+    )
+    patcher.start()
+    return openai_stub, patcher
+
+
 class OpenAITestCase(IsolatedAsyncioTestCase):
     def setUp(self):
-        self.openai_stub = types.ModuleType("openai")
-        self.openai_stub.__spec__ = ModuleSpec("openai", loader=None)
-        self.openai_stub.AsyncOpenAI = MagicMock()
-        self.openai_stub.AsyncStream = MagicMock()
-        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
-        self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
-        self.patch.start()
+        self.openai_stub, self.patch = patch_openai_imports()
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.vendor.openai")
         )
@@ -186,6 +236,44 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
+    async def test_function_call_events(self):
+        events = [
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                id="c2",
+                delta="{",
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                id="c2",
+                delta="}",
+            ),
+            SimpleNamespace(
+                type="response.output_item.done", item=SimpleNamespace(id="c2")
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="c3",
+                    name="pkg__f",
+                    arguments='{"p": 1}',
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+        await stream.__anext__()
+        await stream.__anext__()
+        t3 = await stream.__anext__()
+        self.assertEqual(t3.call.id, "c2")
+        self.assertEqual(t3.call.arguments, {})
+        t4 = await stream.__anext__()
+        self.assertEqual(t4.call.id, "c3")
+        self.assertEqual(t4.call.name, "pkg.f")
+        self.assertEqual(t4.call.arguments, {"p": 1})
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
     async def test_generation_settings_and_tools(self):
         stream_instance = AsyncIter([])
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
@@ -230,13 +318,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
 class VendorClientsTestCase(TestCase):
     def setUp(self):
-        self.openai_stub = types.ModuleType("openai")
-        self.openai_stub.__spec__ = ModuleSpec("openai", loader=None)
-        self.openai_stub.AsyncOpenAI = MagicMock()
-        self.openai_stub.AsyncStream = MagicMock()
-        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
-        self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
-        self.patch.start()
+        self.openai_stub, self.patch = patch_openai_imports()
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.vendor.openai")
         )
@@ -295,12 +377,7 @@ class VendorClientsTestCase(TestCase):
 
 class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
-        self.openai_stub = types.ModuleType("openai")
-        self.openai_stub.AsyncOpenAI = MagicMock()
-        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
-        self.openai_stub.AsyncStream = MagicMock()
-        self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
-        self.patch.start()
+        self.openai_stub, self.patch = patch_openai_imports()
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.vendor.openai")
         )
@@ -352,12 +429,7 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 
 class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
-        self.openai_stub = types.ModuleType("openai")
-        self.openai_stub.AsyncOpenAI = MagicMock()
-        self.openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
-        self.openai_stub.AsyncStream = MagicMock()
-        self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
-        self.patch.start()
+        self.openai_stub, self.patch = patch_openai_imports()
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.vendor.openai")
         )
@@ -410,6 +482,79 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
             [
                 {"type": "text", "text": "hi"},
                 {"type": "image_url", "image_url": {"url": "u"}},
+            ],
+        )
+
+
+class TemplateAndToolSchemaTestCase(TestCase):
+    def setUp(self):
+        self.openai_stub, self.patch = patch_openai_imports()
+        importlib.reload(
+            importlib.import_module("avalan.model.nlp.text.vendor.openai")
+        )
+        self.mod = importlib.import_module(
+            "avalan.model.nlp.text.vendor.openai"
+        )
+
+    def tearDown(self):
+        self.patch.stop()
+
+    def test_tool_schemas_none(self):
+        tool = MagicMock()
+        tool.json_schemas.return_value = None
+        self.assertIsNone(self.mod.OpenAIClient._tool_schemas(tool))
+        tool.json_schemas.return_value = [{"type": "x"}]
+        self.assertEqual(self.mod.OpenAIClient._tool_schemas(tool), [])
+
+    def test_template_messages_tool_results(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+
+        @dataclass
+        class R:
+            v: int
+
+        call1 = ToolCall(id="c1", name="pkg.func", arguments={"a": 1})
+        result1 = ToolCallResult(
+            id="c1",
+            name="pkg.func",
+            arguments={"a": 1},
+            call=call1,
+            result=R(v=2),
+        )
+        msg1 = Message(role=MessageRole.TOOL, tool_call_result=result1)
+
+        call2 = ToolCall(id="c2", name="pkg.func2")
+        result2 = ToolCallResult(
+            id="c2", name="pkg.func2", call=call2, result={"x": 3}
+        )
+        msg2 = Message(role=MessageRole.TOOL, tool_call_result=result2)
+
+        templated = client._template_messages([msg1, msg2])
+        self.assertEqual(
+            templated,
+            [
+                {
+                    "type": "function_call",
+                    "name": "pkg__func",
+                    "call_id": "c1",
+                    "arguments": '{"a": 1}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": '{"v": 2}',
+                },
+                {
+                    "type": "function_call",
+                    "name": "pkg__func2",
+                    "call_id": "c2",
+                    "arguments": "null",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "c2",
+                    "output": '{"x": 3}',
+                },
             ],
         )
 
