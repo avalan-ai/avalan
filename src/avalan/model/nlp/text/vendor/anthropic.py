@@ -12,12 +12,11 @@ from .....entities import (
     ToolCallToken,
 )
 from .....tool.manager import ToolManager
+from .....utils import to_json
 from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
 from contextlib import AsyncExitStack
-from dataclasses import asdict, is_dataclass
 from diffusers import DiffusionPipeline
-from json import dumps
 from transformers import PreTrainedModel
 from typing import AsyncIterator
 
@@ -194,11 +193,7 @@ class AnthropicClient(TextGenerationVendor):
                     {
                         "type": "tool_result",
                         "tool_use_id": result.call.id,
-                        "content": dumps(
-                            asdict(result.result)
-                            if is_dataclass(result.result)
-                            else result.result
-                        ),
+                        "content": to_json(result.result),
                     }
                 ],
             )
