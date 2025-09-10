@@ -3,6 +3,8 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningToken,
+    ToolCallToken,
 )
 from avalan.model import TextGenerationResponse
 from avalan.server.entities import (
@@ -144,7 +146,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
     async def test_streaming_includes_reasoning_tokens(self) -> None:
         async def output_gen():
             yield "a"
-            yield "r"
+            yield ReasoningToken(token="r")
             yield "b"
 
         logger = AsyncMock(spec=Logger)
@@ -160,6 +162,29 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         chunks = [chunk async for chunk in resp.body_iterator]
         self.assertIn('"content":"a"', chunks[0])
         self.assertIn('"content":"r"', chunks[1])
+        self.assertIn('"content":"b"', chunks[2])
+        self.assertEqual(len(chunks), 4)
+        orch.assert_awaited_once()
+
+    async def test_streaming_includes_tool_call_tokens(self) -> None:
+        async def output_gen():
+            yield "a"
+            yield ToolCallToken(token="t")
+            yield "b"
+
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = output_gen()
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+        self.assertIn('"content":"a"', chunks[0])
+        self.assertIn('"content":"t"', chunks[1])
         self.assertIn('"content":"b"', chunks[2])
         self.assertEqual(len(chunks), 4)
         orch.assert_awaited_once()
