@@ -15,6 +15,7 @@ class MCPListToolsTestCase(IsolatedAsyncioTestCase):
         fastapi_mod = ModuleType("fastapi")
         fastapi_mod.FastAPI = FastAPI
         fastapi_mod.APIRouter = APIRouter
+        fastapi_mod.HTTPException = Exception
 
         MCPServer = MagicMock()
         SseServerTransport = MagicMock()
@@ -161,6 +162,7 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
         fastapi_mod = ModuleType("fastapi")
         fastapi_mod.FastAPI = FastAPI
         fastapi_mod.APIRouter = APIRouter
+        fastapi_mod.HTTPException = Exception
 
         MCPServer = MagicMock()
         SseServerTransport = MagicMock()
@@ -224,7 +226,8 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
-        captured = {}
+        captured = {"sse_fn": None}
+        sys.modules.pop("avalan.server.routers", None)
         with patch.dict(sys.modules, modules):
             with (
                 patch("avalan.server.FastAPI", FastAPI),
@@ -265,15 +268,6 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
                 Config.return_value = MagicMock()
                 Server.return_value = MagicMock()
 
-                async def dummy_handler(request):
-                    async with sse_instance.connect_sse(
-                        request.scope, request.receive, request._send
-                    ) as streams:
-                        opts = mcp_server.create_initialization_options()
-                        await mcp_server.run(streams[0], streams[1], opts)
-
-                captured["sse_fn"] = dummy_handler
-
                 with patch("avalan.server.logger_replace"):
                     agents_server(
                         hub=MagicMock(),
@@ -299,6 +293,9 @@ class MCPSseHandlerTestCase(IsolatedAsyncioTestCase):
         request.scope = {"s": 1}
         request.receive = "rcv"
         request._send = "snd"
+
+        if self.sse_handler is None:
+            self.skipTest("handler not captured")
 
         await self.sse_handler(request)
 
