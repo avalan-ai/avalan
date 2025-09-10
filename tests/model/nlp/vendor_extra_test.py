@@ -1,15 +1,20 @@
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
 import importlib
 import sys
 import types
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
-from contextlib import AsyncExitStack
 
 from avalan.entities import (
     GenerationSettings,
     Message,
     MessageRole,
+    ReasoningToken,
+    Token,
+    ToolCall,
+    ToolCallResult,
     ToolCallToken,
     TransformerEngineSettings,
 )
@@ -118,6 +123,123 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             api_key="t", base_url="b", exit_stack=model._exit_stack
         )
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_stream_variants(self):
+        Delta = self.stub.types.RawContentBlockDeltaEvent
+
+        async def agen():
+            yield SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(
+                    type="tool_use", id="tid", name="tname"
+                ),
+                index=0,
+            )
+            yield Delta(SimpleNamespace(thinking="think"))
+            yield Delta(SimpleNamespace(partial_json='{"a":1}'))
+            yield Delta(SimpleNamespace(partial_json="frag"), index=1)
+            yield Delta(SimpleNamespace(text="txt"))
+            yield SimpleNamespace(
+                type="content_block_stop",
+                content_block=SimpleNamespace(
+                    type="tool_use",
+                    id="tid",
+                    name="tname",
+                    input={"x": 1},
+                ),
+                index=0,
+            )
+            yield SimpleNamespace(type="message_stop")
+
+        with patch.object(
+            self.mod.TextGenerationVendor,
+            "build_tool_call_token",
+            return_value="call",
+        ) as btt:
+            stream = self.mod.AnthropicStream(agen())
+            out = []
+            while True:
+                try:
+                    out.append(await stream.__anext__())
+                except StopAsyncIteration:
+                    break
+
+        self.assertEqual(len(out), 5)
+        self.assertIsInstance(out[0], ReasoningToken)
+        self.assertEqual(out[0].token, "think")
+        self.assertIsInstance(out[1], ToolCallToken)
+        self.assertEqual(out[1].token, '{"a":1}')
+        self.assertIsInstance(out[2], ToolCallToken)
+        self.assertEqual(out[2].token, "frag")
+        self.assertIsInstance(out[3], Token)
+        self.assertEqual(out[3].token, "txt")
+        self.assertEqual(out[4], "call")
+        btt.assert_called_once_with("tid", "tname", {"x": 1})
+
+    def test_template_messages_and_tool_schemas(self):
+        exit_stack = AsyncExitStack()
+        client = self.mod.AnthropicClient("k", exit_stack=exit_stack)
+
+        @dataclass
+        class Res:
+            x: int
+
+        call = ToolCall(id="id1", name="pkg.tool", arguments={"a": 1})
+        result = ToolCallResult(
+            id="id1", name="pkg.tool", call=call, result=Res(x=2)
+        )
+        messages = [
+            Message(role=MessageRole.USER, content="hi"),
+            Message(role=MessageRole.ASSISTANT, content="ok"),
+            Message(role=MessageRole.TOOL, tool_call_result=result),
+        ]
+        templated = client._template_messages(messages)
+        self.assertEqual(templated[1]["content"][1]["name"], "pkg__tool")
+        self.assertEqual(templated[2]["content"][0]["tool_use_id"], "id1")
+
+        dup = client._template_messages(
+            [
+                Message(role=MessageRole.USER, content="x"),
+                Message(role=MessageRole.USER, content="x"),
+            ]
+        )
+        self.assertEqual(len(dup), 1)
+
+        class DummyTool:
+            def __init__(self, schemas):
+                self._schemas = schemas
+
+            def json_schemas(self):
+                return self._schemas
+
+        schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "pkg.tool",
+                    "description": "d",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        schema_out = self.mod.AnthropicClient._tool_schemas(DummyTool(schemas))
+        self.assertEqual(
+            schema_out,
+            [
+                {
+                    "name": "pkg__tool",
+                    "description": "d",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+        )
+        self.assertIsNone(
+            self.mod.AnthropicClient._tool_schemas(DummyTool(None))
+        )
 
 
 class GoogleTestCase(IsolatedAsyncioTestCase):
