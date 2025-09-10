@@ -51,6 +51,8 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
 from ..agent.loader import OrchestratorLoader
+from ..tool.browser import BrowserToolSettings
+from ..tool.database import DatabaseToolSettings
 from ..utils import logger_replace
 import gettext
 from gettext import translation
@@ -81,8 +83,7 @@ from transformers.utils import (
 )
 from typing import get_args, Optional, get_origin, get_args as get_type_args
 from dataclasses import fields
-from ..tool.browser import BrowserToolSettings
-from ..tool.database import DatabaseToolSettings
+from tomllib import load as toml_load
 from uuid import uuid4
 from warnings import filterwarnings
 
@@ -1870,6 +1871,14 @@ class CLI:
             if engine:
                 engine_uri = ModelManager.parse_uri(engine)
                 return engine_uri.is_local
+            specs = getattr(args, "specifications_file", None)
+            if specs:
+                with open(specs, "rb") as file:
+                    config = toml_load(file)
+                engine_uri_str = config.get("engine", {}).get("uri")
+                if engine_uri_str:
+                    engine_uri = ModelManager.parse_uri(engine_uri_str)
+                    return engine_uri.is_local
         return True
 
     async def __call__(self) -> None:

@@ -19,6 +19,7 @@ from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
 from ...utils import _j, _lf
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from humanize import (
     clamp,
@@ -2250,7 +2251,19 @@ class FancyTheme(Theme):
                                         result="[spring_green3]"
                                         + (
                                             dumps(
-                                                event.payload["result"].result
+                                                asdict(
+                                                    event.payload[
+                                                        "result"
+                                                    ].result
+                                                )
+                                                if is_dataclass(
+                                                    event.payload[
+                                                        "result"
+                                                    ].result
+                                                )
+                                                else event.payload[
+                                                    "result"
+                                                ].result
                                             )
                                         )
                                         + "[/spring_green3]",
