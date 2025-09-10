@@ -4654,7 +4654,9 @@ class CliRecordOptionTestCase(IsolatedAsyncioTestCase):
                 with_stats=True,
             )
 
-        live_patch.assert_called_once_with(refresh_per_second=3, screen=True)
+        live_patch.assert_called_once_with(
+            refresh_per_second=3, screen=True, console=console
+        )
         ts_patch.assert_awaited_once()
 
 

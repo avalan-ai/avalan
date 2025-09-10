@@ -124,6 +124,7 @@ class CliConfirmToolCallTestCase(TestCase):
             "Execute tool call? ([y]es/[a]ll/[n]o)",
             choices=["y", "a", "n"],
             default="n",
+            console=console,
         )
         self.assertEqual(result, "y")
 
@@ -147,6 +148,7 @@ class CliConfirmToolCallTestCase(TestCase):
             "Execute tool call? ([y]es/[a]ll/[n]o)",
             choices=["y", "a", "n"],
             default="n",
+            console=console,
             stream=fake_tty,
         )
         self.assertEqual(result, "y")
@@ -171,6 +173,7 @@ class CliConfirmToolCallTestCase(TestCase):
             "Execute tool call? ([y]es/[a]ll/[n]o)",
             choices=["y", "a", "n"],
             default="n",
+            console=console,
             stream=fake_tty,
         )
         self.assertEqual(result, "y")
