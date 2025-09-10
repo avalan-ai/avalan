@@ -1681,10 +1681,58 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             "Execute tool call? ([y]es/[a]ll/[n]o)",
             choices=["y", "a", "n"],
             default="n",
+            console=self.console,
             stream=fake_tty,
         )
         self.orch.assert_awaited_once_with(
             "hi", use_async_generator=True, tool_confirm=unittest.mock.ANY
+        )
+        tg.assert_awaited_once()
+        self.assertEqual(self.callback_result, "y")
+
+    async def test_run_tools_confirm_with_display_tools(self):
+        self.args.tools_confirm = True
+        self.args.display_tools = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(*args, tool_confirm=None, **kwargs):
+            self.assertIsNotNone(tool_confirm)
+            self.callback_result = tool_confirm(call_obj)
+            return DummyOrchestratorResponse()
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(
+                agent_cmds, "confirm_tool_call", return_value="y"
+            ) as ctc,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        ctc.assert_called_once_with(
+            self.console, call_obj, tty_path="/tmp/tty"
         )
         tg.assert_awaited_once()
         self.assertEqual(self.callback_result, "y")

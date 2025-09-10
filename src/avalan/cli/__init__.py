@@ -32,7 +32,7 @@ def confirm_tool_call(
             "json",
         )
     )
-    kwargs = {"choices": ["y", "a", "n"], "default": "n"}
+    kwargs = {"choices": ["y", "a", "n"], "default": "n", "console": console}
     stdin_is_tty = stdin.isatty()
     with open(tty_path) if not stdin_is_tty else nullcontext() as tty:
         if not stdin_is_tty:

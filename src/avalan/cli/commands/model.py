@@ -380,7 +380,9 @@ async def token_generation(
         not args.display_events and not args.display_tools
     ):
         with Live(
-            refresh_per_second=refresh_per_second, screen=args.record
+            refresh_per_second=refresh_per_second,
+            screen=args.record,
+            console=console,
         ) as live:
             await _token_stream(
                 args,
@@ -412,7 +414,10 @@ async def token_generation(
         tokens_group_index = 2
 
         with Live(
-            group, refresh_per_second=refresh_per_second, screen=args.record
+            group,
+            refresh_per_second=refresh_per_second,
+            screen=args.record,
+            console=console,
         ) as live:
             await gather(
                 _event_stream(
