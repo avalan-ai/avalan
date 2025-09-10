@@ -124,18 +124,26 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertIn("books", tables["main"])
         await engine.dispose()
 
-    async def test_inspect_tool_returns_schema(self):
+    async def test_inspect_tool_returns_schemas(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseInspectTool(engine, self.settings)
-        table = await tool("books", context=ToolCallContext())
-        self.assertEqual(table.name, "books")
-        self.assertEqual(table.columns["id"], "INTEGER")
-        self.assertEqual(table.columns["title"], "TEXT")
-        self.assertEqual(len(table.foreign_keys), 1)
-        fk = table.foreign_keys[0]
+        tables = await tool(["books", "authors"], context=ToolCallContext())
+        self.assertEqual(len(tables), 2)
+
+        books, authors = tables
+        self.assertEqual(books.name, "books")
+        self.assertEqual(books.columns["id"], "INTEGER")
+        self.assertEqual(books.columns["title"], "TEXT")
+        self.assertEqual(len(books.foreign_keys), 1)
+        fk = books.foreign_keys[0]
         self.assertEqual(fk.field, "author_id")
         self.assertEqual(fk.ref_table, "main.authors")
         self.assertEqual(fk.ref_field, "id")
+
+        self.assertEqual(authors.name, "authors")
+        self.assertIn("name", authors.columns)
+        self.assertEqual(authors.columns["name"], "TEXT")
+        self.assertEqual(authors.foreign_keys, [])
         await engine.dispose()
 
     async def test_count_tool_returns_count(self):
@@ -168,8 +176,8 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
                 "SELECT id FROM authors", context=ToolCallContext()
             )
             self.assertEqual(rows, [{"id": 1}])
-            table = await inspect_tool("books", context=ToolCallContext())
-            self.assertEqual(table.name, "books")
+            table = await inspect_tool(["books"], context=ToolCallContext())
+            self.assertEqual(table[0].name, "books")
             tables = await tables_tool(context=ToolCallContext())
             self.assertIn("books", tables["main"])
         self.assertTrue(toolset._engine.disposed)
@@ -192,10 +200,10 @@ class DatabaseInspectCollectTestCase(TestCase):
                 return_value=("public", []),
             ),
         ):
-            table = DatabaseInspectTool._collect(
-                SimpleNamespace(), schema="other", table_name="t"
+            tables = DatabaseInspectTool._collect(
+                SimpleNamespace(), schema="other", table_names=["t"]
             )
-        self.assertEqual(table.name, "other.t")
+        self.assertEqual(tables[0].name, "other.t")
 
 
 class DatabaseSchemasTestCase(TestCase):

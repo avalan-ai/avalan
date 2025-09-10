@@ -13,7 +13,7 @@ from .....entities import (
 )
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
-from dataclasses import asdict, is_dataclass
+from .....utils import to_json
 from diffusers import DiffusionPipeline
 from json import dumps
 from openai import AsyncOpenAI
@@ -186,11 +186,7 @@ class OpenAIClient(TextGenerationVendor):
             result_message = {
                 "type": "function_call_output",
                 "call_id": result.call.id,
-                "output": dumps(
-                    asdict(result.result)
-                    if is_dataclass(result.result)
-                    else result.result
-                ),
+                "output": to_json(result.result),
             }
             messages.append(result_message)
         return messages

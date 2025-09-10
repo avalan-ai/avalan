@@ -18,8 +18,7 @@ from ...entities import (
 from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory
-from ...utils import _j, _lf
-from dataclasses import asdict, is_dataclass
+from ...utils import _j, _lf, to_json
 from datetime import datetime
 from humanize import (
     clamp,
@@ -29,7 +28,6 @@ from humanize import (
     naturalsize,
     precisedelta,
 )
-from json import dumps
 from locale import format_string
 from logging import Logger
 from math import ceil, inf
@@ -2249,23 +2247,7 @@ class FancyTheme(Theme):
                                             or []
                                         ),
                                         result="[spring_green3]"
-                                        + (
-                                            dumps(
-                                                asdict(
-                                                    event.payload[
-                                                        "result"
-                                                    ].result
-                                                )
-                                                if is_dataclass(
-                                                    event.payload[
-                                                        "result"
-                                                    ].result
-                                                )
-                                                else event.payload[
-                                                    "result"
-                                                ].result
-                                            )
-                                        )
+                                        + (to_json(event.payload["result"]))
                                         + "[/spring_green3]",
                                     )
                                     if event.type == EventType.TOOL_RESULT

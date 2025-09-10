@@ -1,4 +1,8 @@
+from dataclasses import asdict, is_dataclass
+from decimal import Decimal
+from json import dumps
 from logging import getLogger, Logger
+from typing import Any
 
 
 def _lf(items: list) -> list:
@@ -20,3 +24,16 @@ def logger_replace(logger: Logger, logger_names: list[str]) -> None:
             updated_logger.addHandler(handler)
         updated_logger.setLevel(logger.level)
         updated_logger.propagate = logger.propagate
+
+
+def to_json(item: Any) -> str:
+    def _default(o):
+        if is_dataclass(o):
+            return asdict(o)
+        elif isinstance(o, Decimal):
+            return str(o)
+        raise TypeError(
+            f"Object of type {type(o).__name__} is not JSON serializable"
+        )
+
+    return dumps(item, default=_default)

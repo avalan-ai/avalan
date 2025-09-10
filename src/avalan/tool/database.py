@@ -95,16 +95,16 @@ class DatabaseCountTool(DatabaseTool):
 
 class DatabaseInspectTool(DatabaseTool):
     """
-    Gets the schema for a given table using introspection.
+    Gets the schema for the given tables using introspection.
 
     It returns the table column names, types, and foreign keys.
 
     Args:
-        table_name: table to get schema from.
-        schema: optional schema the table belongs to, default schema if none.
+        table_names: tables to get schemas from.
+        schema: optional schema the tables belong to, default schema if none.
 
     Returns:
-        The table schema.
+        The list of table schemas.
     """
 
     def __init__(
@@ -115,56 +115,66 @@ class DatabaseInspectTool(DatabaseTool):
 
     async def __call__(
         self,
-        table_name: str,
+        table_names: list[str],
         schema: str | None = None,
         *,
         context: ToolCallContext,
-    ) -> Table:
+    ) -> list[Table]:
+        assert table_names, "table_names must not be empty"
         async with self._engine.connect() as conn:
             result = await conn.run_sync(
                 DatabaseInspectTool._collect,
                 schema=schema,
-                table_name=table_name,
+                table_names=table_names,
             )
             return result
 
     @staticmethod
     def _collect(
-        connection: Connection, *, schema: str | None, table_name: str
-    ) -> Table:
+        connection: Connection,
+        *,
+        schema: str | None,
+        table_names: list[str],
+    ) -> list[Table]:
         inspector = inspect(connection)
         default_schema, _ = DatabaseTool._schemas(connection, inspector)
         sch = schema or default_schema
 
-        columns = {
-            c["name"]: str(c["type"])
-            for c in inspector.get_columns(table_name, schema=sch)
-        }
+        tables: list[Table] = []
+        for table_name in table_names:
+            columns = {
+                c["name"]: str(c["type"])
+                for c in inspector.get_columns(table_name, schema=sch)
+            }
 
-        fkeys: list[ForeignKey] = []
-        for fk in inspector.get_foreign_keys(table_name, schema=sch):
-            ref_schema = fk.get("referred_schema")
-            ref_table = (
-                f"{ref_schema}.{fk['referred_table']}"
-                if ref_schema
-                else fk["referred_table"]
-            )
-            for source, target in zip(
-                fk.get("constrained_columns", []),
-                fk.get("referred_columns", []),
-            ):
-                fkeys.append(
-                    ForeignKey(
-                        field=source, ref_table=ref_table, ref_field=target
-                    )
+            fkeys: list[ForeignKey] = []
+            for fk in inspector.get_foreign_keys(table_name, schema=sch):
+                ref_schema = fk.get("referred_schema")
+                ref_table = (
+                    f"{ref_schema}.{fk['referred_table']}"
+                    if ref_schema
+                    else fk["referred_table"]
                 )
+                for source, target in zip(
+                    fk.get("constrained_columns", []),
+                    fk.get("referred_columns", []),
+                ):
+                    fkeys.append(
+                        ForeignKey(
+                            field=source, ref_table=ref_table, ref_field=target
+                        )
+                    )
 
-        name = (
-            table_name
-            if sch in (None, default_schema)
-            else f"{sch}.{table_name}"
-        )
-        return Table(name=name, columns=columns, foreign_keys=fkeys)
+            name = (
+                table_name
+                if sch in (None, default_schema)
+                else f"{sch}.{table_name}"
+            )
+            tables.append(
+                Table(name=name, columns=columns, foreign_keys=fkeys)
+            )
+
+        return tables
 
 
 class DatabaseRunTool(DatabaseTool):
