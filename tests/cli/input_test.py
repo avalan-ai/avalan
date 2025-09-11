@@ -121,9 +121,11 @@ class CliConfirmToolCallTestCase(TestCase):
         self.assertIn('"calc"', printed.code)
         self.assertIn('"x": 1', printed.code)
         ask.assert_called_once_with(
-            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            show_choices=True,
+            show_default=True,
             console=console,
         )
         self.assertEqual(result, "y")
@@ -145,9 +147,11 @@ class CliConfirmToolCallTestCase(TestCase):
 
         open_patch.assert_called_once_with("/dev/tty")
         ask.assert_called_once_with(
-            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            show_choices=True,
+            show_default=True,
             console=console,
             stream=fake_tty,
         )
@@ -169,9 +173,11 @@ class CliConfirmToolCallTestCase(TestCase):
             result = confirm_tool_call(console, tool_call, tty_path="/tmp/tty")
         open_patch.assert_called_once_with("/tmp/tty")
         ask.assert_called_once_with(
-            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            show_choices=True,
+            show_default=True,
             console=console,
             stream=fake_tty,
         )
@@ -198,9 +204,11 @@ class CliConfirmToolCallTestCase(TestCase):
             [call(), call()],
         )
         ask.assert_called_once_with(
-            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            show_choices=True,
+            show_default=True,
             console=console,
         )
         self.assertEqual(live.auto_refresh, True)

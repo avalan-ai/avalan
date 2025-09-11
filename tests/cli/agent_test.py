@@ -1678,9 +1678,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         open_patch.assert_called_once_with("/tmp/tty")
         ask.assert_called_once_with(
-            "Execute tool call? ([y]es/[a]ll/[n]o)",
+            "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            show_choices=True,
+            show_default=True,
             console=self.console,
             stream=fake_tty,
         )
