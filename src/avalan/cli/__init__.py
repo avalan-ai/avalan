@@ -3,7 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from io import UnsupportedOperation
 from json import dumps
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.padding import Padding
 from rich.prompt import Confirm, Prompt
@@ -51,14 +51,12 @@ def confirm_tool_call(
         "default": "n",
         "console": console,
         "show_choices": True,
-        "show_default": True
+        "show_default": True,
     }
 
     with _pause_live(live) if live else nullcontext():
         call_element = Syntax(
-            dumps(
-                {"name": call.name, "arguments": call.arguments}, indent=2
-            ),
+            dumps({"name": call.name, "arguments": call.arguments}, indent=2),
             "json",
         )
         console.print(call_element)
@@ -69,7 +67,7 @@ def confirm_tool_call(
             prompt_element.append(" ")
             prompt_element.append(f"[{choices}]", "prompt.choices")
 
-            if (options["show_default"]):
+            if options["show_default"]:
                 default = Text(f"({options['default']})", "prompt.default")
                 prompt_element.append(" ")
                 prompt_element.append(default)

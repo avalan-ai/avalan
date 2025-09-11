@@ -1,9 +1,12 @@
 import logging
-from avalan.utils import _lf, _j, logger_replace
-from avalan.compat import override
-from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
+from dataclasses import dataclass
+from decimal import Decimal
 from unittest import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
+from avalan.compat import override
+from avalan.utils import _j, _lf, logger_replace, to_json
 
 
 class UtilsListJoinTestCase(TestCase):
@@ -33,6 +36,23 @@ class UtilsLoggerReplaceTestCase(TestCase):
         self.assertIn(handler, target_logger.handlers)
         self.assertEqual(target_logger.level, logging.WARNING)
         self.assertFalse(target_logger.propagate)
+
+
+@dataclass
+class Dummy:
+    value: Decimal
+
+
+class UtilsToJsonTestCase(TestCase):
+    def test_to_json_dataclass_and_decimal(self) -> None:
+        self.assertEqual(
+            to_json(Dummy(Decimal("1.23"))),
+            '{"value": "1.23"}',
+        )
+
+    def test_to_json_unsupported_type(self) -> None:
+        with self.assertRaises(TypeError):
+            to_json(object())
 
 
 class CompatOverrideTestCase(TestCase):
