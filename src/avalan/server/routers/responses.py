@@ -186,6 +186,8 @@ def _switch_state(
             events.append(_output_item_done())
         elif state is ResponseState.TOOL_CALLING:
             events.append(_custom_tool_call_input_done())
+            if tool_call is not None:
+                events.append(_content_part_done())
             events.append(_output_item_done(tool_call))
         elif state is ResponseState.ANSWERING:
             events.append(_output_text_done())
@@ -197,6 +199,8 @@ def _switch_state(
             events.append(_content_part_added("reasoning_text"))
         elif new_state is ResponseState.TOOL_CALLING:
             events.append(_output_item_added(new_state, tool_call))
+            if tool_call is not None:
+                events.append(_content_part_added("input_text"))
         elif new_state is ResponseState.ANSWERING:
             events.append(_output_item_added(new_state))
             events.append(_content_part_added("output_text"))

@@ -109,12 +109,30 @@ class ResponsesUtilsTestCase(TestCase):
 
         state, events = _switch_state(None, token, call)
         self.assertEqual(state, ResponseState.TOOL_CALLING)
+        names = [e.split("\n")[0].split(": ")[1] for e in events]
+        self.assertEqual(
+            names,
+            ["response.output_item.added", "response.content_part.added"],
+        )
         start_data = json.loads(events[0].split("\n")[1][len("data: ") :])
         self.assertEqual(start_data["item"]["custom_tool_call"], {"id": "t1"})
+        part_data = json.loads(events[1].split("\n")[1][len("data: ") :])
+        self.assertEqual(part_data["part"], {"type": "input_text"})
 
         state, events = _switch_state(state, "next", call)
         self.assertEqual(state, ResponseState.ANSWERING)
-        done_data = json.loads(events[1].split("\n")[1][len("data: ") :])
+        names = [e.split("\n")[0].split(": ")[1] for e in events]
+        self.assertEqual(
+            names,
+            [
+                "response.custom_tool_call_input.done",
+                "response.content_part.done",
+                "response.output_item.done",
+                "response.output_item.added",
+                "response.content_part.added",
+            ],
+        )
+        done_data = json.loads(events[2].split("\n")[1][len("data: ") :])
         self.assertEqual(done_data["item"]["type"], "function_call")
         self.assertEqual(done_data["item"]["id"], "t1")
         self.assertEqual(done_data["item"]["name"], "pkg.func")

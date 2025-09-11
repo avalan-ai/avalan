@@ -8,7 +8,12 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
 from avalan.agent.orchestrator import Orchestrator
-from avalan.entities import MessageRole, ReasoningToken, ToolCallToken
+from avalan.entities import (
+    MessageRole,
+    ReasoningToken,
+    ToolCall,
+    ToolCallToken,
+)
 from avalan.event import Event, EventType
 from avalan.model import TextGenerationResponse
 from avalan.server.entities import ChatMessage, ResponsesRequest
@@ -120,6 +125,83 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertIn(
             '"part":{"type":"reasoning_text"}',
+            data_lines[content_indices[0]],
+        )
+        self.assertIn(
+            '"part":{"type":"output_text"}',
+            data_lines[content_indices[1]],
+        )
+        orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_wraps_tool_call_with_call(self) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        call = ToolCall(id="t1", name="pkg.func", arguments={"p": 1})
+        tokens = [ToolCallToken(token="t", call=call), "a"]
+
+        async def gen():
+            for token in tokens:
+                yield token
+
+        response = TextGenerationResponse(
+            gen, logger=logger, use_async_generator=True
+        )
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        text = "".join(chunks)
+        blocks = [b for b in text.strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+        data_lines = [block.split("\n")[1] for block in blocks]
+
+        expected = [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.custom_tool_call_input.delta",
+            "response.custom_tool_call_input.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+            "done",
+        ]
+
+        self.assertEqual(events, expected)
+        delta_index = events.index("response.custom_tool_call_input.delta")
+        self.assertIn('"delta":"t"', data_lines[delta_index])
+        content_indices = [
+            i
+            for i, e in enumerate(events)
+            if e == "response.content_part.added"
+        ]
+        self.assertIn(
+            '"part":{"type":"input_text"}',
             data_lines[content_indices[0]],
         )
         self.assertIn(
