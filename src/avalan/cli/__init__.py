@@ -1,13 +1,29 @@
 from ..entities import ToolCall
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from io import UnsupportedOperation
 from json import dumps
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.padding import Padding
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
+from rich.text import Text
 from select import select
 from sys import stdin
+
+
+@contextmanager
+def _pause_live(live: Live) -> Iterator[None]:
+    """Temporarily disable ``live`` auto refresh."""
+    auto_refresh = live.auto_refresh
+    live.auto_refresh = False
+    live.refresh()
+    try:
+        yield
+    finally:
+        live.auto_refresh = auto_refresh
+        live.refresh()
 
 
 class PromptWithoutPrefix(Prompt):
@@ -23,24 +39,48 @@ def confirm(console: Console, prompt: str) -> bool:
 
 
 def confirm_tool_call(
-    console: Console, call: ToolCall, *, tty_path: str = "/dev/tty"
+    console: Console,
+    call: ToolCall,
+    *,
+    tty_path: str = "/dev/tty",
+    live: Live | None = None,
 ) -> str:
-    """Return user's decision on executing ``call``."""
-    console.print(
-        Syntax(
-            dumps({"name": call.name, "arguments": call.arguments}, indent=2),
+    prompt = "Execute tool call?"
+    options = {
+        "choices": ["y", "a", "n"],
+        "default": "n",
+        "console": console,
+        "show_choices": True,
+        "show_default": True
+    }
+
+    with _pause_live(live) if live else nullcontext():
+        call_element = Syntax(
+            dumps(
+                {"name": call.name, "arguments": call.arguments}, indent=2
+            ),
             "json",
         )
-    )
-    kwargs = {"choices": ["y", "a", "n"], "default": "n", "console": console}
-    stdin_is_tty = stdin.isatty()
-    with open(tty_path) if not stdin_is_tty else nullcontext() as tty:
-        if not stdin_is_tty:
-            kwargs["stream"] = tty
-        return Prompt.ask(
-            "Execute tool call? ([y]es/[a]ll/[n]o)",
-            **kwargs,
-        )
+        console.print(call_element)
+        if live:
+            prompt_element = Text.from_markup(prompt, style="prompt")
+            prompt_element.end = ""
+            choices = "/".join(options["choices"])
+            prompt_element.append(" ")
+            prompt_element.append(f"[{choices}]", "prompt.choices")
+
+            if (options["show_default"]):
+                default = Text(f"({options['default']})", "prompt.default")
+                prompt_element.append(" ")
+                prompt_element.append(default)
+
+            console.print(prompt_element)
+
+        stdin_is_tty = stdin.isatty()
+        with open(tty_path) if not stdin_is_tty else nullcontext() as tty:
+            if not stdin_is_tty:
+                options["stream"] = tty
+            return Prompt.ask(prompt, **options)
 
 
 def has_input(console: Console) -> bool:

@@ -362,6 +362,7 @@ async def token_generation(
     refresh_per_second: int,
     tool_events_limit: int | None,
     with_stats: bool = True,
+    live_container: dict[str, Live | None] | None = None,
 ):
     # If no statistics needed, return as early as possible
     if not with_stats:
@@ -384,6 +385,8 @@ async def token_generation(
             screen=args.record,
             console=console,
         ) as live:
+            if live_container is not None:
+                live_container["live"] = live
             await _token_stream(
                 args,
                 console,
@@ -404,6 +407,8 @@ async def token_generation(
                 tool_events_limit=tool_events_limit,
                 with_stats=with_stats,
             )
+        if live_container is not None:
+            live_container["live"] = None
     else:
         events_height = 6
         tools_height = 10
@@ -419,6 +424,8 @@ async def token_generation(
             screen=args.record,
             console=console,
         ) as live:
+            if live_container is not None:
+                live_container["live"] = live
             await gather(
                 _event_stream(
                     args,
@@ -454,6 +461,8 @@ async def token_generation(
                     with_stats=with_stats,
                 ),
             )
+        if live_container is not None:
+            live_container["live"] = None
 
 
 async def _event_stream(

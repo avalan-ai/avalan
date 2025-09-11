@@ -26,6 +26,7 @@ from jinja2 import Environment, FileSystemLoader
 from logging import Logger
 from os.path import dirname, getmtime, join
 from rich.console import Console
+from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
@@ -378,9 +379,12 @@ async def agent_run(
 
     event_stats = EventStats()
     tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
+    live_container: dict[str, Live | None] = {"live": None}
 
     def _confirm_call(call: ToolCall) -> str:
-        return confirm_tool_call(console, call, tty_path=tty_path)
+        return confirm_tool_call(
+            console, call, tty_path=tty_path, live=live_container["live"]
+        )
 
     async def _event_listener(event):
         nonlocal event_stats
@@ -590,6 +594,7 @@ async def agent_run(
                 display_tokens=display_tokens,
                 tool_events_limit=args.display_tools_events,
                 with_stats=with_stats,
+                live_container=live_container,
             )
 
             if args.conversation:
