@@ -1626,7 +1626,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
         tg.assert_awaited_once()
         ctc.assert_called_once_with(
-            self.console, call_obj, tty_path="/tmp/tty"
+            self.console, call_obj, tty_path="/tmp/tty", live=None
         )
         self.assertEqual(self.callback_result, "y")
 
@@ -1732,7 +1732,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         ctc.assert_called_once_with(
-            self.console, call_obj, tty_path="/tmp/tty"
+            self.console, call_obj, tty_path="/tmp/tty", live=None
         )
         tg.assert_awaited_once()
         self.assertEqual(self.callback_result, "y")
