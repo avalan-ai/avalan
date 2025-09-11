@@ -1,4 +1,12 @@
-from avalan.entities import ReasoningToken, ToolCallToken, Token, TokenDetail
+import json
+
+from avalan.entities import (
+    ReasoningToken,
+    ToolCall,
+    ToolCallToken,
+    Token,
+    TokenDetail,
+)
 from avalan.server.routers.responses import (
     ResponseState,
     _sse,
@@ -94,3 +102,20 @@ class ResponsesUtilsTestCase(TestCase):
     def test_sse_formats_event_and_data(self) -> None:
         result = _sse("test.event", {"a": 1})
         self.assertEqual(result, 'event: test.event\ndata: {"a":1}\n\n')
+
+    def test_tool_call_events_include_item_details(self) -> None:
+        call = ToolCall(id="t1", name="pkg.func", arguments={"p": 1})
+        token = ToolCallToken(token="{", call=call)
+
+        state, events = _switch_state(None, token, call)
+        self.assertEqual(state, ResponseState.TOOL_CALLING)
+        start_data = json.loads(events[0].split("\n")[1][len("data: ") :])
+        self.assertEqual(start_data["item"]["custom_tool_call"], {"id": "t1"})
+
+        state, events = _switch_state(state, "next", call)
+        self.assertEqual(state, ResponseState.ANSWERING)
+        done_data = json.loads(events[1].split("\n")[1][len("data: ") :])
+        self.assertEqual(done_data["item"]["type"], "function_call")
+        self.assertEqual(done_data["item"]["id"], "t1")
+        self.assertEqual(done_data["item"]["name"], "pkg.func")
+        self.assertEqual(done_data["item"]["arguments"], {"p": 1})

@@ -1,7 +1,13 @@
 from . import orchestrate
 from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
-from ...entities import ReasoningToken, ToolCallToken, Token, TokenDetail
+from ...entities import (
+    ReasoningToken,
+    ToolCall,
+    ToolCallToken,
+    Token,
+    TokenDetail,
+)
 from ...event import Event
 from ...server.entities import ResponsesRequest
 from enum import Enum, auto
@@ -54,20 +60,27 @@ async def create_response(
             )
 
             state: ResponseState | None = None
+            tool_call: ToolCall | None = None
 
             async for token in response:
                 if isinstance(token, Event):
                     continue
 
-                state, events = _switch_state(state, token)
+                if isinstance(token, ToolCallToken) and token.call is not None:
+                    tool_call = token.call
+
+                state, events = _switch_state(state, token, tool_call)
                 for event in events:
                     yield event
 
                 yield _token_to_sse(token, seq)
 
+                if state is not ResponseState.TOOL_CALLING:
+                    tool_call = None
+
                 seq += 1
 
-            _, events = _switch_state(state, None)
+            _, events = _switch_state(state, None, tool_call)
             for event in events:
                 yield event
 
@@ -152,6 +165,7 @@ def _token_to_sse(
 def _switch_state(
     state: ResponseState | None,
     token: ReasoningToken | ToolCallToken | Token | TokenDetail | str | None,
+    tool_call: ToolCall | None = None,
 ) -> tuple[ResponseState | None, list[str]]:
     new_state: ResponseState | None
 
@@ -172,7 +186,7 @@ def _switch_state(
             events.append(_output_item_done())
         elif state is ResponseState.TOOL_CALLING:
             events.append(_custom_tool_call_input_done())
-            events.append(_output_item_done())
+            events.append(_output_item_done(tool_call))
         elif state is ResponseState.ANSWERING:
             events.append(_output_text_done())
             events.append(_content_part_done())
@@ -182,7 +196,7 @@ def _switch_state(
             events.append(_output_item_added(new_state))
             events.append(_content_part_added("reasoning_text"))
         elif new_state is ResponseState.TOOL_CALLING:
-            events.append(_output_item_added(new_state))
+            events.append(_output_item_added(new_state, tool_call))
         elif new_state is ResponseState.ANSWERING:
             events.append(_output_item_added(new_state))
             events.append(_content_part_added("output_text"))
@@ -190,27 +204,40 @@ def _switch_state(
     return new_state, events
 
 
-def _output_item_added(state: ResponseState) -> str:
+def _output_item_added(
+    state: ResponseState, tool_call: ToolCall | None = None
+) -> str:
     item_types = {
         ResponseState.REASONING: "reasoning_text",
         ResponseState.TOOL_CALLING: "custom_tool_call_input",
         ResponseState.ANSWERING: "output_text",
     }
+    item: dict[str, object] = {"type": item_types[state]}
+    if state is ResponseState.TOOL_CALLING and tool_call is not None:
+        item["custom_tool_call"] = {"id": str(tool_call.id)}
     return _sse(
         "response.output_item.added",
         {
             "type": "response.output_item.added",
             "output_index": 0,
-            "item": {"type": item_types[state]},
+            "item": item,
         },
     )
 
 
-def _output_item_done() -> str:
-    return _sse(
-        "response.output_item.done",
-        {"type": "response.output_item.done", "output_index": 0},
-    )
+def _output_item_done(tool_call: ToolCall | None = None) -> str:
+    data: dict[str, object] = {
+        "type": "response.output_item.done",
+        "output_index": 0,
+    }
+    if tool_call is not None:
+        data["item"] = {
+            "type": "function_call",
+            "id": str(tool_call.id),
+            "name": tool_call.name,
+            "arguments": tool_call.arguments,
+        }
+    return _sse("response.output_item.done", data)
 
 
 def _reasoning_text_done() -> str:
