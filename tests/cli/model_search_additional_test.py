@@ -81,18 +81,14 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
             await model_cmds.model_search(args, console, theme, hub, 10)
 
         hub.models.assert_called_once()
-        self.assertTrue(
-            any(
-                "model-a-True" in str(c.args[0])
-                for c in live.update.call_args_list
-            )
-        )
-        self.assertTrue(
-            any(
-                "model-b-False" in str(c.args[0])
-                for c in live.update.call_args_list
-            )
-        )
+
+        rendered = [
+            str(r)
+            for c in live.update.call_args_list
+            for r in c.args[0].renderables
+        ]
+        self.assertIn("model-a-True", rendered)
+        self.assertIn("model-b-False", rendered)
 
 
 class CliRenderFrameTestCase(TestCase):
@@ -132,7 +128,11 @@ class CliModelRunUnsupportedTestCase(IsolatedAsyncioTestCase):
         manager.__exit__.return_value = False
         manager.parse_uri.return_value = engine_uri
         manager.load.return_value = load_cm
-        manager.__call__ = AsyncMock(return_value="out")
+
+        async def fake_call(*_a, **_kw):
+            return "out"
+
+        manager.side_effect = fake_call
 
         operation = SimpleNamespace(
             modality=Modality.EMBEDDING,
