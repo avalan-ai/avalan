@@ -5,6 +5,7 @@ from avalan.server import (
     di_set,
 )
 from logging import Logger
+import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -22,7 +23,7 @@ class DiHelpersTestCase(TestCase):
         di_set(app, logger, orch)
         request = SimpleNamespace(app=app)
         self.assertIs(di_get_logger(request), logger)
-        self.assertIs(di_get_orchestrator(request), orch)
+        self.assertIs(asyncio.run(di_get_orchestrator(request)), orch)
 
 
 class AgentsServerValidationTestCase(TestCase):

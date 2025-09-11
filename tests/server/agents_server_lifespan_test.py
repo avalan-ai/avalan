@@ -1,4 +1,4 @@
-from avalan.server import agents_server
+from avalan.server import agents_server, di_get_orchestrator
 from logging import Logger
 import sys
 from types import ModuleType, SimpleNamespace
@@ -140,11 +140,11 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                     )
 
                 lifespan = FastAPI.call_args.kwargs["lifespan"]
-
                 self.assertFalse(hasattr(app.state, "orchestrator"))
 
                 async with lifespan(app):
-                    pass
+                    self.assertFalse(hasattr(app.state, "orchestrator"))
+                    await di_get_orchestrator(SimpleNamespace(app=app))
 
                 loader.from_file.assert_awaited_once()
                 loader.from_settings.assert_not_called()
@@ -232,11 +232,11 @@ class AgentsServerLifespanTestCase(IsolatedAsyncioTestCase):
                     )
 
                 lifespan = FastAPI.call_args.kwargs["lifespan"]
-
                 self.assertFalse(hasattr(app.state, "orchestrator"))
 
                 async with lifespan(app):
-                    pass
+                    self.assertFalse(hasattr(app.state, "orchestrator"))
+                    await di_get_orchestrator(SimpleNamespace(app=app))
 
                 loader.from_settings.assert_awaited_once()
                 loader.from_file.assert_not_called()

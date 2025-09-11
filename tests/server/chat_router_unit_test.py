@@ -81,7 +81,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 )()
             },
         )()
-        self.assertEqual(self.chat.di_get_orchestrator(req), 1)
+        self.assertEqual(await self.chat.di_get_orchestrator(req), 1)
 
     async def test_create_chat_completion_stream(self) -> None:
         async def output_gen():

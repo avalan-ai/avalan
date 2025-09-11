@@ -103,24 +103,8 @@ def agents_server(
             app.state.ctx = ctx
             app.state.stack = stack
             app.state.loader = loader
-            if ctx.specs_path:
-                orchestrator_cm = await loader.from_file(
-                    ctx.specs_path,
-                    agent_id=agent_id or uuid4(),
-                    tool_settings=ctx.tool_settings,
-                )
-            else:
-                orchestrator_cm = await loader.from_settings(
-                    ctx.settings,
-                    tool_settings=ctx.tool_settings,
-                )
-            orchestrator = await stack.enter_async_context(orchestrator_cm)
-            di_set(app, logger=logger, orchestrator=orchestrator)
-            app.state.agent_id = orchestrator.id
-            logger.info(
-                "Agent loaded from %s in app lifespan",
-                ctx.specs_path if ctx.specs_path else "inline settings",
-            )
+            app.state.logger = logger
+            app.state.agent_id = agent_id
             yield
 
     logger.debug("Creating %s server", name)
@@ -228,9 +212,33 @@ def di_get_logger(request: Request) -> Logger:
     return logger
 
 
-def di_get_orchestrator(request: Request) -> Orchestrator:
-    """Retrieve the orchestrator from the request."""
-    assert hasattr(request.app.state, "orchestrator")
-    orchestrator = request.app.state.orchestrator
+async def di_get_orchestrator(request: Request) -> Orchestrator:
+    """Retrieve the orchestrator from the request.
+
+    The orchestrator is loaded lazily on first use to allow the server to
+    start even when the configured engine cannot be initialized. Subsequent
+    calls return the already loaded orchestrator.
+    """
+    if not hasattr(request.app.state, "orchestrator"):
+        ctx: OrchestratorContext = request.app.state.ctx
+        loader: OrchestratorLoader = request.app.state.loader
+        stack: AsyncExitStack = request.app.state.stack
+        if ctx.specs_path:
+            orchestrator_cm = await loader.from_file(
+                ctx.specs_path,
+                agent_id=request.app.state.agent_id,
+                tool_settings=ctx.tool_settings,
+            )
+        else:
+            assert ctx.settings
+            orchestrator_cm = await loader.from_settings(
+                ctx.settings,
+                tool_settings=ctx.tool_settings,
+            )
+        orchestrator = await stack.enter_async_context(orchestrator_cm)
+        request.app.state.orchestrator = orchestrator
+        request.app.state.agent_id = orchestrator.id
+    else:
+        orchestrator = request.app.state.orchestrator
     assert orchestrator is not None
     return orchestrator
