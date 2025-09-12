@@ -1,11 +1,12 @@
 from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
+import asyncio
 from contextlib import AsyncExitStack
 from RestrictedPython import (
     compile_restricted,
-    safe_globals,
     RestrictingNodeTransformer,
+    safe_globals,
 )
 
 
@@ -63,6 +64,54 @@ class CodeTool(Tool):
         return str(result)
 
 
+class AstGrepTool(Tool):
+    """Search or rewrite code using the ast-grep CLI.
+
+    Args:
+        pattern: Code pattern to search for.
+        context: Tool call context.
+        lang: Programming language of the files.
+        rewrite: Template used to rewrite matches.
+        paths: Files or directories to search. Defaults to the current
+            directory.
+
+    Returns:
+        Output from ast-grep.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.__name__ = "search.ast.grep"
+
+    async def __call__(
+        self,
+        pattern: str,
+        *,
+        context: ToolCallContext,
+        lang: str,
+        rewrite: str | None = None,
+        paths: list[str] | None = None,
+    ) -> str:
+        assert pattern
+        assert lang
+
+        args = ["ast-grep", "--pattern", pattern, "--lang", lang]
+        if rewrite is not None:
+            args.extend(["--rewrite", rewrite])
+        if paths:
+            args.extend(paths)
+
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(stderr.decode() or stdout.decode())
+        return stdout.decode()
+
+
 class CodeToolSet(ToolSet):
     @override
     def __init__(
@@ -71,7 +120,7 @@ class CodeToolSet(ToolSet):
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
     ) -> None:
-        tools = [CodeTool()]
+        tools = [CodeTool(), AstGrepTool()]
         super().__init__(
             exit_stack=exit_stack, namespace=namespace, tools=tools
         )
