@@ -9,10 +9,10 @@ from ...entities import (
 )
 from ...event import Event, EventType
 from ...server.entities import ResponsesRequest
+from ...utils import to_json
 from enum import Enum, auto
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from json import dumps
 from logging import Logger
 
 
@@ -164,7 +164,7 @@ def _token_to_sse(
             "arguments": item.get("arguments"),
         }
         if token.type is EventType.TOOL_RESULT:
-            delta_obj["result"] = dumps(item.get("result"))
+            delta_obj["result"] = to_json(item.get("result"))
 
         events.append(
             _sse(
@@ -172,7 +172,7 @@ def _token_to_sse(
                 {
                     **delta_obj,
                     "type": "response.function_call_arguments.delta",
-                    "delta": dumps(delta_obj),
+                    "delta": to_json(delta_obj),
                     "id": item["id"],
                     "output_index": 0,
                     "content_index": 0,
@@ -192,7 +192,7 @@ def _token_to_sse(
                     "response.function_call_arguments.delta",
                     {
                         "type": "response.function_call_arguments.delta",
-                        "delta": dumps(delta_obj),
+                        "delta": to_json(delta_obj),
                         "id": str(token.call.id),
                         "output_index": 0,
                         "content_index": 0,
@@ -396,5 +396,5 @@ def _tool_call_event_item(event: Event) -> dict:
 
 def _sse(event: str, data: dict) -> str:
     return (
-        f"event: {event}\n" + f"data: {dumps(data, separators=(',', ':'))}\n\n"
+        f"event: {event}\n" + f"data: {to_json(data)}\n\n"
     )
