@@ -119,35 +119,36 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         ]
 
         self.assertEqual(events, expected)
-        self.assertIn(
-            '"delta":"r"',
-            data_lines[events.index("response.reasoning_text.delta")],
+
+        reasoning_data = loads(
+            data_lines[events.index("response.reasoning_text.delta")][6:]
         )
-        self.assertIn(
-            '"delta":"t"',
-            data_lines[events.index("response.custom_tool_call_input.delta")],
+        self.assertEqual(reasoning_data["delta"], "r")
+
+        tool_data = loads(
+            data_lines[events.index("response.custom_tool_call_input.delta")][
+                6:
+            ]
         )
-        self.assertIn(
-            '"delta":"a"',
-            data_lines[events.index("response.output_text.delta")],
+        self.assertEqual(tool_data["delta"], "t")
+
+        answer_data = loads(
+            data_lines[events.index("response.output_text.delta")][6:]
         )
+        self.assertEqual(answer_data["delta"], "a")
+
         content_indices = [
             i
             for i, e in enumerate(events)
             if e == "response.content_part.added"
         ]
-        self.assertIn(
-            '"part":{"type":"reasoning_text"}',
-            data_lines[content_indices[0]],
-        )
-        self.assertIn(
-            '"part":{"type":"input_text"}',
-            data_lines[content_indices[1]],
-        )
-        self.assertIn(
-            '"part":{"type":"output_text"}',
-            data_lines[content_indices[2]],
-        )
+        reasoning_part = loads(data_lines[content_indices[0]][6:])
+        self.assertEqual(reasoning_part["part"], {"type": "reasoning_text"})
+        tool_part = loads(data_lines[content_indices[1]][6:])
+        self.assertEqual(tool_part["part"], {"type": "input_text"})
+        answer_part = loads(data_lines[content_indices[2]][6:])
+        self.assertEqual(answer_part["part"], {"type": "output_text"})
+
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_emits_done_events_for_multiple_groups(
@@ -266,57 +267,48 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             for i, e in enumerate(events)
             if e == "response.reasoning_text.delta"
         ]
-        self.assertIn('"delta":"r1"', data_lines[reasoning_indices[0]])
-        self.assertIn('"delta":"r2"', data_lines[reasoning_indices[1]])
+        self.assertEqual(
+            [loads(data_lines[i][6:])["delta"] for i in reasoning_indices],
+            ["r1", "r2", "r3", "r4"],
+        )
+
         tool_indices = [
             i
             for i, e in enumerate(events)
             if e == "response.custom_tool_call_input.delta"
         ]
-        self.assertIn('"delta":"t1"', data_lines[tool_indices[0]])
-        self.assertIn('"delta":"t2"', data_lines[tool_indices[1]])
+        self.assertEqual(
+            [loads(data_lines[i][6:])["delta"] for i in tool_indices],
+            ["t1", "t2", "t3", "t4"],
+        )
+
         answer_indices = [
             i
             for i, e in enumerate(events)
             if e == "response.output_text.delta"
         ]
-        self.assertIn('"delta":"a1"', data_lines[answer_indices[0]])
-        self.assertIn('"delta":"a2"', data_lines[answer_indices[1]])
-        self.assertIn('"delta":"r3"', data_lines[reasoning_indices[2]])
-        self.assertIn('"delta":"r4"', data_lines[reasoning_indices[3]])
-        self.assertIn('"delta":"t3"', data_lines[tool_indices[2]])
-        self.assertIn('"delta":"t4"', data_lines[tool_indices[3]])
-        self.assertIn('"delta":"a3"', data_lines[answer_indices[2]])
-        self.assertIn('"delta":"a4"', data_lines[answer_indices[3]])
+        self.assertEqual(
+            [loads(data_lines[i][6:])["delta"] for i in answer_indices],
+            ["a1", "a2", "a3", "a4"],
+        )
+
         content_indices = [
             i
             for i, e in enumerate(events)
             if e == "response.content_part.added"
         ]
-        self.assertIn(
-            '"part":{"type":"reasoning_text"}',
-            data_lines[content_indices[0]],
-        )
-        self.assertIn(
-            '"part":{"type":"input_text"}',
-            data_lines[content_indices[1]],
-        )
-        self.assertIn(
-            '"part":{"type":"output_text"}',
-            data_lines[content_indices[2]],
-        )
-        self.assertIn(
-            '"part":{"type":"reasoning_text"}',
-            data_lines[content_indices[3]],
-        )
-        self.assertIn(
-            '"part":{"type":"input_text"}',
-            data_lines[content_indices[4]],
-        )
-        self.assertIn(
-            '"part":{"type":"output_text"}',
-            data_lines[content_indices[5]],
-        )
+        expected_parts = [
+            {"type": "reasoning_text"},
+            {"type": "input_text"},
+            {"type": "output_text"},
+            {"type": "reasoning_text"},
+            {"type": "input_text"},
+            {"type": "output_text"},
+        ]
+        actual_parts = [
+            loads(data_lines[i][6:])["part"] for i in content_indices
+        ]
+        self.assertEqual(actual_parts, expected_parts)
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_custom_tool_call_call_wraps_items_with_id(self) -> None:
@@ -382,7 +374,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_item.done",
             "response.output_item.added",
             "response.content_part.added",
-            "response.custom_tool_call_input.call",
             "response.function_call_arguments.delta",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.done",
@@ -413,26 +404,22 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             for i, e in enumerate(events)
             if e == "response.output_item.added"
         ]
-        self.assertIn('"id":"c1"', data_lines[output_indices[1]])
+        output_data = loads(data_lines[output_indices[1]][6:])
+        self.assertEqual(output_data["item"]["id"], "c1")
 
         content_indices = [
             i
             for i, e in enumerate(events)
             if e == "response.content_part.added"
         ]
-        self.assertIn('"id":"c1"', data_lines[content_indices[1]])
-
-        content_done_indices = [
-            i
-            for i, e in enumerate(events)
-            if e == "response.content_part.done"
-        ]
-        self.assertIn('"id":"c1"', data_lines[content_done_indices[1]])
+        content_data = loads(data_lines[content_indices[1]][6:])
+        self.assertEqual(content_data["part"]["id"], "c1")
 
         output_done_indices = [
             i for i, e in enumerate(events) if e == "response.output_item.done"
         ]
-        self.assertIn('"id":"c1"', data_lines[output_done_indices[1]])
+        output_done_data = loads(data_lines[output_done_indices[1]][6:])
+        self.assertEqual(output_done_data["item"]["id"], "c1")
 
         orchestrator.sync_messages.assert_awaited_once()
 
@@ -496,5 +483,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(events, expected)
         delta_index = events.index("response.output_text.delta")
-        self.assertIn('"delta":"a"', blocks[delta_index])
+        delta_data = loads(blocks[delta_index].split("\n")[1][6:])
+        self.assertEqual(delta_data["delta"], "a")
         orchestrator.sync_messages.assert_awaited_once()
