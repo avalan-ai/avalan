@@ -158,31 +158,19 @@ def _token_to_sse(
         EventType.TOOL_RESULT,
     ):
         item = _tool_call_event_item(token)
-        events.append(
-            _sse(
-                "response.custom_tool_call_input.call",
-                {
-                    "type": "response.custom_tool_call_input.call",
-                    "input": item,
-                    "delta": None,
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                },
-            )
-        )
+        delta_obj = {
+            "id": item["id"],
+            "name": item["name"],
+            "arguments": item.get("arguments"),
+        }
         if token.type is EventType.TOOL_RESULT:
-            delta_obj = item.get("result")
-        else:
-            delta_obj = {
-                "id": item["id"],
-                "name": item["name"],
-                "arguments": item.get("arguments"),
-            }
+            delta_obj["result"] = dumps(item.get("result"))
+
         events.append(
             _sse(
                 "response.function_call_arguments.delta",
                 {
+                    **delta_obj,
                     "type": "response.function_call_arguments.delta",
                     "delta": dumps(delta_obj),
                     "id": item["id"],
