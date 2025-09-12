@@ -1,7 +1,8 @@
 from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
-import asyncio
+from asyncio import create_subprocess_exec
+from asyncio.subprocess import PIPE
 from contextlib import AsyncExitStack
 from RestrictedPython import (
     compile_restricted,
@@ -101,10 +102,10 @@ class AstGrepTool(Tool):
         if paths:
             args.extend(paths)
 
-        process = await asyncio.create_subprocess_exec(
+        process = await create_subprocess_exec(
             *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=PIPE,
+            stderr=PIPE,
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
