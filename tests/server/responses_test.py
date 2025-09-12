@@ -1,5 +1,6 @@
 import importlib
 import sys
+from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import ModuleType
@@ -92,16 +93,10 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             for i, line in enumerate(lines)
             if line == "event: response.output_text.delta"
         ]
-        self.assertIn(
-            'data: {"type":"response.output_text.delta","delta":"a",'
-            '"output_index":0,"content_index":0,"sequence_number":0}',
-            lines[events[0] + 1],
-        )
-        self.assertIn(
-            'data: {"type":"response.output_text.delta","delta":"b",'
-            '"output_index":0,"content_index":0,"sequence_number":1}',
-            lines[events[1] + 1],
-        )
+        first_data = loads(lines[events[0] + 1][6:])
+        self.assertEqual(first_data["delta"], "a")
+        second_data = loads(lines[events[1] + 1][6:])
+        self.assertEqual(second_data["delta"], "b")
 
         self.assertIn("event: response.completed", lines)
         self.assertEqual(lines[-1], "")

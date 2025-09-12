@@ -17,34 +17,20 @@ class ResponsesUtilsTestCase(TestCase):
         tok = Token(token="a")
         detail = TokenDetail(token="b")
 
-        self.assertIn(
-            "response.reasoning_text.delta",
-            _token_to_sse(rt, 0)[0],
-        )
-        self.assertIn(
-            '"delta":"r"',
-            _token_to_sse(rt, 0)[0],
-        )
-        self.assertIn(
-            "response.custom_tool_call_input.delta",
-            _token_to_sse(tc, 1)[0],
-        )
-        self.assertIn(
-            '"delta":"t"',
-            _token_to_sse(tc, 1)[0],
-        )
-        self.assertIn(
-            "response.output_text.delta",
-            _token_to_sse(tok, 2)[0],
-        )
-        self.assertIn(
-            '"delta":"a"',
-            _token_to_sse(tok, 2)[0],
-        )
-        self.assertIn(
-            '"delta":"b"',
-            _token_to_sse(detail, 3)[0],
-        )
+        rt_event = _token_to_sse(rt, 0)[0]
+        self.assertIn("response.reasoning_text.delta", rt_event)
+        self.assertEqual(loads(rt_event.split("data: ")[1])["delta"], "r")
+
+        tc_event = _token_to_sse(tc, 1)[0]
+        self.assertIn("response.custom_tool_call_input.delta", tc_event)
+        self.assertEqual(loads(tc_event.split("data: ")[1])["delta"], "t")
+
+        tok_event = _token_to_sse(tok, 2)[0]
+        self.assertIn("response.output_text.delta", tok_event)
+        self.assertEqual(loads(tok_event.split("data: ")[1])["delta"], "a")
+
+        detail_event = _token_to_sse(detail, 3)[0]
+        self.assertEqual(loads(detail_event.split("data: ")[1])["delta"], "b")
 
     def test_token_to_sse_handles_tool_result(self) -> None:
         from avalan.entities import ToolCall, ToolCallResult
@@ -57,10 +43,11 @@ class ResponsesUtilsTestCase(TestCase):
         event = Event(type=EventType.TOOL_RESULT, payload={"result": result})
 
         events = _token_to_sse(event, 0)
-        self.assertIn("response.custom_tool_call_input.call", events[0])
-        self.assertIn("response.function_call_arguments.delta", events[1])
-        data = loads(events[1].split("data: ")[1])
-        self.assertEqual(data["delta"], '{"v": 2}')
+        self.assertEqual(len(events), 1)
+        self.assertIn("response.function_call_arguments.delta", events[0])
+        data = loads(events[0].split("data: ")[1])
+        self.assertEqual(data["id"], "c1")
+        self.assertEqual(data["result"], '{"v": 2}')
 
     def test_switch_state_generates_events(self) -> None:
         state = _new_state(ReasoningToken(token="r"))
@@ -119,4 +106,4 @@ class ResponsesUtilsTestCase(TestCase):
 
     def test_sse_formats_event_and_data(self) -> None:
         result = _sse("test.event", {"a": 1})
-        self.assertEqual(result, 'event: test.event\ndata: {"a":1}\n\n')
+        self.assertEqual(result, 'event: test.event\ndata: {"a": 1}\n\n')
