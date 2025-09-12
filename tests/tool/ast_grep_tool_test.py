@@ -12,7 +12,8 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
         process.communicate = AsyncMock(return_value=(b"out", b""))
         process.returncode = 0
         with patch(
-            "asyncio.create_subprocess_exec", AsyncMock(return_value=process)
+            "avalan.tool.code.create_subprocess_exec",
+            AsyncMock(return_value=process),
         ) as create:
             result = await tool("x", context=ToolCallContext(), lang="py")
         create.assert_awaited_once_with(
@@ -32,7 +33,8 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
         process.communicate = AsyncMock(return_value=(b"", b""))
         process.returncode = 0
         with patch(
-            "asyncio.create_subprocess_exec", AsyncMock(return_value=process)
+            "avalan.tool.code.create_subprocess_exec",
+            AsyncMock(return_value=process),
         ) as create:
             await tool(
                 "p",
@@ -61,7 +63,8 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
         process.communicate = AsyncMock(return_value=(b"", b"err"))
         process.returncode = 1
         with patch(
-            "asyncio.create_subprocess_exec", AsyncMock(return_value=process)
+            "avalan.tool.code.create_subprocess_exec",
+            AsyncMock(return_value=process),
         ):
             with self.assertRaises(RuntimeError):
                 await tool("p", context=ToolCallContext(), lang="py")
