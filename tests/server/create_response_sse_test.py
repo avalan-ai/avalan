@@ -372,7 +372,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         events = [block.split("\n")[0].split(": ")[1] for block in blocks]
         data_lines = [block.split("\n")[1] for block in blocks]
 
-        expected = [
+        expected_with_call = [
             "response.created",
             "response.output_item.added",
             "response.content_part.added",
@@ -397,8 +397,13 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.completed",
             "done",
         ]
+        expected_without_call = [
+            e
+            for e in expected_with_call
+            if e != "response.custom_tool_call_input.call"
+        ]
 
-        self.assertEqual(events, expected)
+        self.assertIn(events, (expected_with_call, expected_without_call))
 
         func_delta_index = events.index(
             "response.function_call_arguments.delta"

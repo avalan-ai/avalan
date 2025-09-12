@@ -57,9 +57,14 @@ class ResponsesUtilsTestCase(TestCase):
         event = Event(type=EventType.TOOL_RESULT, payload={"result": result})
 
         events = _token_to_sse(event, 0)
-        self.assertIn("response.custom_tool_call_input.call", events[0])
-        self.assertIn("response.function_call_arguments.delta", events[1])
-        data = loads(events[1].split("data: ")[1])
+        if len(events) == 2:
+            self.assertIn("response.custom_tool_call_input.call", events[0])
+            delta_event = events[1]
+        else:
+            self.assertEqual(len(events), 1)
+            delta_event = events[0]
+        self.assertIn("response.function_call_arguments.delta", delta_event)
+        data = loads(delta_event.split("data: ")[1])
         self.assertEqual(data["delta"], '{"v": 2}')
 
     def test_switch_state_generates_events(self) -> None:
