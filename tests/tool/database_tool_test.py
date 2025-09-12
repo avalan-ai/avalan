@@ -23,6 +23,12 @@ def dummy_create_async_engine(dsn: str, **kwargs):
         def __init__(self, conn):
             self.conn = conn
 
+        async def exec_driver_sql(self, sql: str, *args, **kwargs):
+            result = self.conn.exec_driver_sql(sql, *args, **kwargs)
+            if not result.returns_rows:
+                self.conn.commit()
+            return result
+
         async def execute(self, stmt):
             result = self.conn.execute(stmt)
             if not result.returns_rows:
