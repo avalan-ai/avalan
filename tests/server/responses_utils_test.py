@@ -2,6 +2,7 @@ from avalan.entities import ReasoningToken, ToolCallToken, Token, TokenDetail
 from avalan.server.routers.responses import (
     ResponseState,
     _sse,
+    _new_state,
     _switch_state,
     _token_to_sse,
 )
@@ -45,7 +46,8 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
     def test_switch_state_generates_events(self) -> None:
-        state, events = _switch_state(None, ReasoningToken(token="r"))
+        state = _new_state(ReasoningToken(token="r"))
+        events = _switch_state(None, state)
         self.assertEqual(state, ResponseState.REASONING)
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
@@ -53,8 +55,9 @@ class ResponsesUtilsTestCase(TestCase):
             ["response.output_item.added", "response.content_part.added"],
         )
 
-        state, events = _switch_state(state, ToolCallToken(token="t"))
-        self.assertEqual(state, ResponseState.TOOL_CALLING)
+        new_state = _new_state(ToolCallToken(token="t"))
+        events = _switch_state(state, new_state)
+        self.assertEqual(new_state, ResponseState.TOOL_CALLING)
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
             names,
@@ -66,8 +69,10 @@ class ResponsesUtilsTestCase(TestCase):
             ],
         )
 
-        state, events = _switch_state(state, "answer")
-        self.assertEqual(state, ResponseState.ANSWERING)
+        state = new_state
+        new_state = _new_state("answer")
+        events = _switch_state(state, new_state)
+        self.assertEqual(new_state, ResponseState.ANSWERING)
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
             names,
@@ -79,8 +84,10 @@ class ResponsesUtilsTestCase(TestCase):
             ],
         )
 
-        state, events = _switch_state(state, None)
-        self.assertIsNone(state)
+        state = new_state
+        new_state = _new_state(None)
+        events = _switch_state(state, new_state)
+        self.assertIsNone(new_state)
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
             names,

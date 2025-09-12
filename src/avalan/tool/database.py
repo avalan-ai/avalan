@@ -2,12 +2,15 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from abc import ABC
+from asyncio import sleep
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, func, select, MetaData
+from sqlalchemy import Table as SATable
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.exc import NoSuchTableError
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -27,6 +30,7 @@ class Table:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseToolSettings:
     dsn: str
+    delay_secs: int | None = None
 
 
 class DatabaseTool(Tool, ABC):
@@ -42,18 +46,62 @@ class DatabaseTool(Tool, ABC):
         connection: Connection, inspector: Inspector
     ) -> tuple[str | None, list[str | None]]:
         default_schema = inspector.default_schema_name
-        if connection.dialect.name == "postgresql":
+        dialect = connection.dialect.name
+
+        if dialect == "postgresql":
             sys = {"information_schema", "pg_catalog"}
             schemas = [
                 s
                 for s in inspector.get_schema_names()
-                if s not in sys and not s.startswith("pg_")
+                if s not in sys and not (s or "").startswith("pg_")
             ]
             if default_schema and default_schema not in schemas:
                 schemas.append(default_schema)
-        else:
-            schemas = [default_schema]
-        return default_schema, schemas
+            return default_schema, schemas
+
+        # Non-PostgreSQL: try to enumerate all schemas, filter known schemas
+        all_schemas = inspector.get_schema_names() or (
+            [default_schema] if default_schema is not None else [None]
+        )
+
+        sys_filters = {
+            "mysql": {
+                "information_schema",
+                "performance_schema",
+                "mysql",
+                "sys",
+            },
+            "mariadb": {
+                "information_schema",
+                "performance_schema",
+                "mysql",
+                "sys",
+            },
+            "mssql": {"INFORMATION_SCHEMA", "sys"},
+            "oracle": {"SYS", "SYSTEM"},
+            "sqlite": set(),  # typically "main"/"temp" only
+        }
+        sys = sys_filters.get(dialect, set())
+        schemas = [s for s in all_schemas if s not in sys]
+
+        if not schemas:
+            schemas = (
+                [default_schema] if default_schema is not None else [None]
+            )
+
+        # De-duplicate while preserving order
+        seen: set[str | None] = set()
+        uniq: list[str | None] = []
+        for s in schemas:
+            if s not in seen:
+                uniq.append(s)
+                seen.add(s)
+
+        # Ensure default schema is included
+        if default_schema not in seen:
+            uniq.append(default_schema)
+
+        return default_schema, uniq
 
     @override
     async def __aexit__(
@@ -70,7 +118,8 @@ class DatabaseCountTool(DatabaseTool):
     Count rows in the given table.
 
     Args:
-        table_name: Table to count rows from.
+        table_name: Table to count rows from (optionally schema-qualified,
+                    e.g. "public.users").
 
     Returns:
         Number of rows in the table.
@@ -82,15 +131,28 @@ class DatabaseCountTool(DatabaseTool):
         super().__init__(engine, settings)
         self.__name__ = "count"
 
+    @staticmethod
+    def _split_schema_and_table(qualified: str) -> tuple[str | None, str]:
+        # Basic split; handles "schema.table". If no dot, schema is None.
+        if "." in qualified:
+            sch, tbl = qualified.split(".", 1)
+            return (sch or None), tbl
+        return None, qualified
+
     async def __call__(
         self, table_name: str, *, context: ToolCallContext
     ) -> int:
         assert table_name, "table_name must not be empty"
         async with self._engine.connect() as conn:
-            result = await conn.execute(
-                text(f"SELECT COUNT(*) FROM {table_name}")
-            )
-            return result.scalar_one()
+            if self._settings.delay_secs:
+                await sleep(self._settings.delay_secs)
+
+            schema, tbl_name = self._split_schema_and_table(table_name)
+            tbl = SATable(tbl_name, MetaData(), schema=schema)
+            stmt = select(func.count()).select_from(tbl)
+
+            result = await conn.execute(stmt)
+            return int(result.scalar_one())
 
 
 class DatabaseInspectTool(DatabaseTool):
@@ -122,6 +184,8 @@ class DatabaseInspectTool(DatabaseTool):
     ) -> list[Table]:
         assert table_names, "table_names must not be empty"
         async with self._engine.connect() as conn:
+            if self._settings.delay_secs:
+                await sleep(self._settings.delay_secs)
             result = await conn.run_sync(
                 DatabaseInspectTool._collect,
                 schema=schema,
@@ -142,13 +206,21 @@ class DatabaseInspectTool(DatabaseTool):
 
         tables: list[Table] = []
         for table_name in table_names:
-            columns = {
-                c["name"]: str(c["type"])
-                for c in inspector.get_columns(table_name, schema=sch)
-            }
+            # If the table doesn't exist, skip it (instead of failing all).
+            try:
+                column_info = inspector.get_columns(table_name, schema=sch)
+            except NoSuchTableError:
+                continue
+
+            columns = {c["name"]: str(c["type"]) for c in column_info}
 
             fkeys: list[ForeignKey] = []
-            for fk in inspector.get_foreign_keys(table_name, schema=sch):
+            try:
+                fks = inspector.get_foreign_keys(table_name, schema=sch)
+            except NoSuchTableError:
+                fks = []
+
+            for fk in fks or []:
                 ref_schema = fk.get("referred_schema")
                 ref_table = (
                     f"{ref_schema}.{fk['referred_table']}"
@@ -198,7 +270,11 @@ class DatabaseRunTool(DatabaseTool):
         self, sql: str, *, context: ToolCallContext
     ) -> list[dict]:
         async with self._engine.begin() as conn:
-            result = await conn.execute(text(sql))
+            if self._settings.delay_secs:
+                await sleep(self._settings.delay_secs)
+
+            result = await conn.exec_driver_sql(sql)
+
             if result.returns_rows:
                 return [dict(row) for row in result.mappings().all()]
             return []
@@ -222,6 +298,8 @@ class DatabaseTablesTool(DatabaseTool):
         self, *, context: ToolCallContext
     ) -> dict[str | None, list[str]]:
         async with self._engine.connect() as conn:
+            if self._settings.delay_secs:
+                await sleep(self._settings.delay_secs)
             return await conn.run_sync(DatabaseTablesTool._collect)
 
     @staticmethod

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from argparse import Namespace
 from unittest import TestCase, IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from avalan.cli.commands import model as model_cmds
 from avalan.entities import Modality
