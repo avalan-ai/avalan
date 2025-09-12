@@ -3,7 +3,6 @@ from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
-    ToolCall,
     ToolCallToken,
     Token,
     TokenDetail,
@@ -60,26 +59,44 @@ async def create_response(
             )
 
             state: ResponseState | None = None
+            tool_call_id: str | None = None
 
             async for token in response:
                 is_event = isinstance(token, Event)
                 if is_event and token.type not in (
                     EventType.TOOL_PROCESS,
-                    EventType.TOOL_RESULT
+                    EventType.TOOL_RESULT,
                 ):
                     continue
 
+                call_id: str | None = None
+                if is_event and token.type in (
+                    EventType.TOOL_PROCESS,
+                    EventType.TOOL_RESULT,
+                ):
+                    call_id = _tool_call_event_item(token)["id"]
+                elif (
+                    isinstance(token, ToolCallToken) and token.call is not None
+                ):
+                    call_id = str(token.call.id)
+
                 new_state = _new_state(token)
-                events = _switch_state(state, new_state)
+                events = _switch_state(state, new_state, tool_call_id, call_id)
                 state = new_state
+                if state is ResponseState.TOOL_CALLING:
+                    if call_id is not None:
+                        tool_call_id = call_id
+                else:
+                    tool_call_id = None
                 for event in events:
                     yield event
 
-                yield _token_to_sse(token, seq)
+                for ev in _token_to_sse(token, seq):
+                    yield ev
 
                 seq += 1
 
-            events = _switch_state(state, None)
+            events = _switch_state(state, None, tool_call_id, None)
             for event in events:
                 yield event
 
@@ -119,78 +136,136 @@ async def create_response(
 
 def _token_to_sse(
     token: ReasoningToken | ToolCallToken | Token | TokenDetail | Event | str,
-    seq: int
-) -> str:
-    result: str | None = None
+    seq: int,
+) -> list[str]:
+    events: list[str] = []
 
     if isinstance(token, ReasoningToken):
-        result = _sse(
-            "response.reasoning_text.delta",
-            {
-                "type": "response.reasoning_text.delta",
-                "delta": token.token,
-                "output_index": 0,
-                "content_index": 0,
-                "sequence_number": seq,
-            },
+        events.append(
+            _sse(
+                "response.reasoning_text.delta",
+                {
+                    "type": "response.reasoning_text.delta",
+                    "delta": token.token,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                },
+            )
         )
     elif isinstance(token, Event) and token.type in (
         EventType.TOOL_PROCESS,
-        EventType.TOOL_RESULT
+        EventType.TOOL_RESULT,
     ):
-        result = _sse(
-            "response.custom_tool_call_input.call",
-            {
-                "type": "response.custom_tool_call_input.call",
-                "input": _tool_call_event_item(token),
-                "delta": None,
-                "output_index": 0,
-                "content_index": 0,
-                "sequence_number": seq,
-            },
+        item = _tool_call_event_item(token)
+        events.append(
+            _sse(
+                "response.custom_tool_call_input.call",
+                {
+                    "type": "response.custom_tool_call_input.call",
+                    "input": item,
+                    "delta": None,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                },
+            )
+        )
+        if token.type is EventType.TOOL_RESULT:
+            delta_obj = item.get("result")
+        else:
+            delta_obj = {
+                "id": item["id"],
+                "name": item["name"],
+                "arguments": item.get("arguments"),
+            }
+        events.append(
+            _sse(
+                "response.function_call_arguments.delta",
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "delta": dumps(delta_obj),
+                    "id": item["id"],
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                },
+            )
         )
     elif isinstance(token, ToolCallToken):
-        result = _sse(
-            "response.custom_tool_call_input.delta",
-            {
-                "type": "response.custom_tool_call_input.delta",
-                "delta": token.token,
-                "output_index": 0,
-                "content_index": 0,
-                "sequence_number": seq,
-            },
-        )
+        if token.call is not None:
+            delta_obj = {
+                "id": str(token.call.id),
+                "name": token.call.name,
+                "arguments": token.call.arguments,
+            }
+            events.append(
+                _sse(
+                    "response.function_call_arguments.delta",
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "delta": dumps(delta_obj),
+                        "id": str(token.call.id),
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    },
+                )
+            )
+        else:
+            events.append(
+                _sse(
+                    "response.custom_tool_call_input.delta",
+                    {
+                        "type": "response.custom_tool_call_input.delta",
+                        "delta": token.token,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    },
+                )
+            )
     else:
-        result = _sse(
-            "response.output_text.delta",
-            {
-                "type": "response.output_text.delta",
-                "delta": (
-                    token.token if isinstance(token, Token) else str(token)
-                ),
-                "output_index": 0,
-                "content_index": 0,
-                "sequence_number": seq,
-            },
+        events.append(
+            _sse(
+                "response.output_text.delta",
+                {
+                    "type": "response.output_text.delta",
+                    "delta": (
+                        token.token if isinstance(token, Token) else str(token)
+                    ),
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                },
+            )
         )
-    assert result
-    return result
+    return events
 
 
 def _switch_state(
-    state: ResponseState | None, new_state: ResponseState | None
+    state: ResponseState | None,
+    new_state: ResponseState | None,
+    current_tool_call_id: str | None,
+    new_tool_call_id: str | None,
 ) -> list[str]:
     new_state: ResponseState | None
 
     events: list[str] = []
-    if state is not new_state:
+    changed = state is not new_state or (
+        state is ResponseState.TOOL_CALLING
+        and new_state is ResponseState.TOOL_CALLING
+        and new_tool_call_id is not None
+    )
+    if changed:
         if state is ResponseState.REASONING:
             events.append(_reasoning_text_done())
             events.append(_content_part_done())
             events.append(_output_item_done())
         elif state is ResponseState.TOOL_CALLING:
-            events.append(_custom_tool_call_input_done())
-            events.append(_output_item_done())
+            events.append(_custom_tool_call_input_done(current_tool_call_id))
+            events.append(_content_part_done(current_tool_call_id))
+            events.append(_output_item_done(current_tool_call_id))
         elif state is ResponseState.ANSWERING:
             events.append(_output_text_done())
             events.append(_content_part_done())
@@ -200,7 +275,8 @@ def _switch_state(
             events.append(_output_item_added(new_state))
             events.append(_content_part_added("reasoning_text"))
         elif new_state is ResponseState.TOOL_CALLING:
-            events.append(_output_item_added(new_state))
+            events.append(_output_item_added(new_state, new_tool_call_id))
+            events.append(_content_part_added("input_text", new_tool_call_id))
         elif new_state is ResponseState.ANSWERING:
             events.append(_output_item_added(new_state))
             events.append(_content_part_added("output_text"))
@@ -213,7 +289,10 @@ def _new_state(
 ) -> ResponseState | None:
     if isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
-    elif isinstance(token, ToolCallToken):
+    elif isinstance(token, (ToolCallToken, Event)) and (
+        not isinstance(token, Event)
+        or token.type in (EventType.TOOL_PROCESS, EventType.TOOL_RESULT)
+    ):
         new_state = ResponseState.TOOL_CALLING
     elif token is not None:
         new_state = ResponseState.ANSWERING
@@ -222,27 +301,30 @@ def _new_state(
     return new_state
 
 
-def _output_item_added(state: ResponseState) -> str:
+def _output_item_added(state: ResponseState, id: str | None = None) -> str:
     item_types = {
         ResponseState.REASONING: "reasoning_text",
         ResponseState.TOOL_CALLING: "custom_tool_call_input",
         ResponseState.ANSWERING: "output_text",
     }
+    item = {"type": item_types[state]}
+    if id is not None:
+        item["id"] = id
     return _sse(
         "response.output_item.added",
         {
             "type": "response.output_item.added",
             "output_index": 0,
-            "item": {"type": item_types[state]},
+            "item": item,
         },
     )
 
 
-def _output_item_done() -> str:
-    return _sse(
-        "response.output_item.done",
-        {"type": "response.output_item.done", "output_index": 0},
-    )
+def _output_item_done(id: str | None = None) -> str:
+    data = {"type": "response.output_item.done", "output_index": 0}
+    if id is not None:
+        data["item"] = {"id": id}
+    return _sse("response.output_item.done", data)
 
 
 def _reasoning_text_done() -> str:
@@ -256,15 +338,15 @@ def _reasoning_text_done() -> str:
     )
 
 
-def _custom_tool_call_input_done() -> str:
-    return _sse(
-        "response.custom_tool_call_input.done",
-        {
-            "type": "response.custom_tool_call_input.done",
-            "output_index": 0,
-            "content_index": 0,
-        },
-    )
+def _custom_tool_call_input_done(id: str | None = None) -> str:
+    data = {
+        "type": "response.custom_tool_call_input.done",
+        "output_index": 0,
+        "content_index": 0,
+    }
+    if id is not None:
+        data["id"] = id
+    return _sse("response.custom_tool_call_input.done", data)
 
 
 def _output_text_done() -> str:
@@ -278,38 +360,40 @@ def _output_text_done() -> str:
     )
 
 
-def _content_part_added(part_type: str) -> str:
+def _content_part_added(part_type: str, id: str | None = None) -> str:
+    part = {"type": part_type}
+    if id is not None:
+        part["id"] = id
     return _sse(
         "response.content_part.added",
         {
             "type": "response.content_part.added",
             "output_index": 0,
             "content_index": 0,
-            "part": {"type": part_type},
+            "part": part,
         },
     )
 
 
-def _content_part_done() -> str:
-    return _sse(
-        "response.content_part.done",
-        {
-            "type": "response.content_part.done",
-            "output_index": 0,
-            "content_index": 0,
-        },
-    )
+def _content_part_done(id: str | None = None) -> str:
+    data = {
+        "type": "response.content_part.done",
+        "output_index": 0,
+        "content_index": 0,
+    }
+    if id is not None:
+        data["part"] = {"id": id}
+    return _sse("response.content_part.done", data)
 
 
 def _tool_call_event_item(event: Event) -> dict:
     tool_result = (
-        event.payload["result"] if event.type == EventType.TOOL_RESULT
+        event.payload["result"]
+        if event.type == EventType.TOOL_RESULT
         else None
     )
     tool_call = (
-        tool_result.call
-        if tool_result is not None
-        else event.payload[0]
+        tool_result.call if tool_result is not None else event.payload[0]
     )
     item = {
         "type": "function_call",
