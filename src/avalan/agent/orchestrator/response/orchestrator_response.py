@@ -316,7 +316,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         try:
             token = await self._response_iterator.__anext__()
             if isinstance(token, ToolCallToken) and token.call:
-                self._calls.put(token.call)
+                event = Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=[token.call],
+                    started=perf_counter(),
+                )
+                self._tool_process_events.put(event)
         except StopAsyncIteration:
             if self._tool_parser:
                 for item in await self._tool_parser.flush():

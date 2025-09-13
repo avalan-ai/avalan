@@ -80,7 +80,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, event)
         self.assertEqual(resp._tool_call_events.get_nowait(), event)
 
-    async def test_tool_call_token_enqueued(self):
+    async def test_tool_call_token_emits_event(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
@@ -94,16 +94,30 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             output_gen, logger=getLogger(), use_async_generator=True
         )
 
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
         resp = OrchestratorResponse(
             Message(role=MessageRole.USER, content="hi"),
             response,
             agent,
             operation,
             {},
+            event_manager=event_manager,
         )
-        resp.__aiter__()
-        await resp.__anext__()
-        self.assertIs(resp._calls.get_nowait(), call)
+        iterator = resp.__aiter__()
+        first = await iterator.__anext__()
+        self.assertIsInstance(first, ToolCallToken)
+
+        second = await iterator.__anext__()
+        self.assertEqual(second.type, EventType.TOOL_PROCESS)
+        self.assertEqual(second.payload, [call])
+
+        third = await iterator.__anext__()
+        self.assertEqual(third.type, EventType.TOOL_RESULT)
+
+        calls = [c.args[0] for c in event_manager.trigger.await_args_list]
+        self.assertTrue(any(c.type == EventType.TOOL_PROCESS for c in calls))
 
     async def test_tool_call_confirm_all(self):
         engine = _DummyEngine()

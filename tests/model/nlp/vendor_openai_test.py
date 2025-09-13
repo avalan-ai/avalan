@@ -191,12 +191,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 ),
             ),
             SimpleNamespace(
-                type="response.custom_tool_call_input.delta",
+                type="response.function_call_arguments.delta",
                 id="c1",
                 delta="{",
             ),
             SimpleNamespace(
-                type="response.custom_tool_call_input.delta",
+                type="response.function_call_arguments.delta",
                 id="c1",
                 delta="}",
             ),
