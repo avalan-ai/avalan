@@ -263,7 +263,7 @@ known_first_party = ["avalan"]
 src_paths = ["src"]
 
 [tool.poetry]
-version = "1.3.2"
+version = "1.3.3"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
