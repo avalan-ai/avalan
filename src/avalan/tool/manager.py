@@ -3,6 +3,7 @@ from .parser import ToolCallParser
 from ..entities import (
     ToolCall,
     ToolCallContext,
+    ToolCallError,
     ToolCallResult,
     ToolFilter,
     ToolFormat,
@@ -127,7 +128,7 @@ class ToolManager(ContextDecorator):
 
     async def __call__(
         self, call: ToolCall, context: ToolCallContext
-    ) -> ToolCallResult | None:
+    ) -> ToolCallResult | ToolCallError | None:
         """Execute a single tool call and return the result."""
         assert call
 
@@ -165,37 +166,47 @@ class ToolManager(ContextDecorator):
 
         is_native_tool = isinstance(tool, Tool)
 
-        result = (
-            await tool(*call.arguments.values(), context=context)
-            if is_native_tool and call.arguments
-            else (
-                await tool(context=context)
-                if is_native_tool
+        try:
+            result = (
+                await tool(*call.arguments.values(), context=context)
+                if is_native_tool and call.arguments
                 else (
-                    await tool(*call.arguments.values())
-                    if call.arguments
-                    else tool()
+                    await tool(context=context)
+                    if is_native_tool
+                    else (
+                        await tool(*call.arguments.values())
+                        if call.arguments
+                        else tool()
+                    )
                 )
             )
-        )
 
-        if self._settings.transformers:
-            for t in self._settings.transformers:
-                namespace = None
-                func = t
-                if isinstance(t, ToolTransformer):
-                    func = t.func
-                    namespace = t.namespace
-                if not self._matches_namespace(call.name, namespace):
-                    continue
-                transformed = func(call, context, result)
-                if transformed is not None:
-                    result = transformed
+            if self._settings.transformers:
+                for t in self._settings.transformers:
+                    namespace = None
+                    func = t
+                    if isinstance(t, ToolTransformer):
+                        func = t.func
+                        namespace = t.namespace
+                    if not self._matches_namespace(call.name, namespace):
+                        continue
+                    transformed = func(call, context, result)
+                    if transformed is not None:
+                        result = transformed
 
-        return ToolCallResult(
-            id=uuid4(),
-            call=call,
-            name=call.name,
-            arguments=call.arguments,
-            result=result,
-        )
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result=result,
+            )
+        except BaseException as exc:
+            return ToolCallError(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                error=exc,
+                message=str(exc),
+            )

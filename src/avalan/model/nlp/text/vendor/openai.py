@@ -9,6 +9,7 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallResult,
     ToolCallToken,
 )
 from .....model.stream import TextGenerationSingleStream
@@ -166,9 +167,10 @@ class OpenAIClient(TextGenerationVendor):
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
         tool_results = [
-            message.tool_call_result
+            message.tool_call_result or message.tool_call_error
             for message in messages
-            if message.role == MessageRole.TOOL and message.tool_call_result
+            if message.role == MessageRole.TOOL
+            and (message.tool_call_result or message.tool_call_error)
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
         messages = super()._template_messages(messages, do_exclude_roles)
@@ -186,7 +188,11 @@ class OpenAIClient(TextGenerationVendor):
             result_message = {
                 "type": "function_call_output",
                 "call_id": result.call.id,
-                "output": to_json(result.result),
+                "output": to_json(
+                    result.result
+                    if isinstance(result, ToolCallResult)
+                    else result.message
+                ),
             }
             messages.append(result_message)
         return messages

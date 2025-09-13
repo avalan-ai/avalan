@@ -486,6 +486,14 @@ class ToolCallResult(ToolCall):
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolCallError(ToolCall):
+    id: UUID | str
+    call: ToolCall
+    error: BaseException
+    message: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
     thinking: str | None = ""
@@ -494,6 +502,7 @@ class Message:
     arguments: dict | None = None
     tool_calls: list[MessageToolCall] | None = None
     tool_call_result: ToolCallResult | None = None
+    tool_call_error: ToolCallError | None = None
 
 
 Input = str | list[str] | Message | list[Message]

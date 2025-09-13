@@ -9,6 +9,7 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallResult,
     ToolCallToken,
 )
 from .....tool.manager import ToolManager
@@ -146,9 +147,10 @@ class AnthropicClient(TextGenerationVendor):
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
         tool_results = [
-            message.tool_call_result
+            message.tool_call_result or message.tool_call_error
             for message in messages
-            if message.role == MessageRole.TOOL and message.tool_call_result
+            if message.role == MessageRole.TOOL
+            and (message.tool_call_result or message.tool_call_error)
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
         messages = super()._template_messages(messages, do_exclude_roles)
@@ -193,7 +195,11 @@ class AnthropicClient(TextGenerationVendor):
                     {
                         "type": "tool_result",
                         "tool_use_id": result.call.id,
-                        "content": to_json(result.result),
+                        "content": to_json(
+                            result.result
+                            if isinstance(result, ToolCallResult)
+                            else result.message
+                        ),
                     }
                 ],
             )
