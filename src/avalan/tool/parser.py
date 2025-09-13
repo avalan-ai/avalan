@@ -81,6 +81,8 @@ class ToolCallParser:
                 [
                     "<|channel|>commentary",
                     "<|start|>assistant<|channel|>commentary",
+                    "<|channel|>analysis",
+                    "<|start|>assistant<|channel|>analysis",
                 ]
             )
             end.append("<|channel|>final<|message|>")
@@ -138,7 +140,8 @@ class ToolCallParser:
         tool_calls: list[ToolCall] = []
         pattern = (
             r"(?:<\|start\|>assistant)?"
-            r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)"
+            r"<\|channel\|>(?:commentary|analysis)"
+            r" to=(?:functions\.)?([\w\.]+)"
             r"[^<]*"
             r"(?:<\|constrain\|>json)?<\|message\|>(\{.*?\})<\|call\|>"
         )
