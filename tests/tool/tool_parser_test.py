@@ -170,6 +170,41 @@ class ToolCallParserHarmonyTestCase(TestCase):
             ]
             self.assertEqual(parser(text), expected)
 
+    def test_analysis_channel(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>analysis to=functions.database.inspect "
+            "<|constrain|>json<|message|>{}<|call|>"
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="database.inspect",
+                    arguments={},
+                )
+            ]
+            self.assertEqual(parser(text), expected)
+
+    def test_commentary_channel_after_to(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|start|>assistant<|channel|>commentary"
+            " to=functions.database.tables<|channel|>commentary"
+            " <|constrain|>json<|message|>{}<|call|>"
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="database.tables",
+                    arguments={},
+                )
+            ]
+            self.assertEqual(parser(text), expected)
+
     def test_invalid_json(self):
         parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         text = (

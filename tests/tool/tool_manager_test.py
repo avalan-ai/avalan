@@ -1,6 +1,7 @@
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
+    ToolCallError,
     ToolCallResult,
     ToolFilter,
     ToolFormat,
@@ -224,6 +225,21 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
                 result="2",
             )
             self.assertEqual(results, expected_result)
+
+    async def test_tool_exception(self):
+        async def failing_tool(a: int) -> None:
+            raise ValueError("boom")
+
+        manager = ToolManager.create_instance(
+            enable_tools=["failing_tool"],
+            available_toolsets=[ToolSet(tools=[failing_tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id=_uuid4(), name="failing_tool", arguments={"a": 1})
+        result = await manager(call, context=ToolCallContext())
+        self.assertIsInstance(result, ToolCallError)
+        self.assertIsInstance(result.error, ValueError)
+        self.assertEqual(result.message, "boom")
 
 
 class ToolManagerPotentialCallTestCase(TestCase):

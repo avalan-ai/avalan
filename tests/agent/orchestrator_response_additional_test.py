@@ -8,6 +8,7 @@ from avalan.entities import (
     Message,
     MessageRole,
     ToolCall,
+    ToolCallError,
     ToolCallResult,
     ToolCallToken,
     Token,
@@ -274,3 +275,51 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(returned, process_event)
         other = Event(type=EventType.END)
         self.assertIs(await resp._emit(other), other)
+
+    async def test_tool_call_error_message(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        agent.return_value = _dummy_response()
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+
+        async def tool_exec(call, context):
+            return ToolCallError(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                error=ValueError("boom"),
+                message="boom",
+            )
+
+        tool.side_effect = tool_exec
+
+        resp = OrchestratorResponse(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+        resp.__aiter__()
+        call = ToolCall(id=uuid4(), name="fail", arguments={})
+        resp._tool_call_events.put(
+            Event(type=EventType.TOOL_PROCESS, payload=[call])
+        )
+
+        event = await resp.__anext__()
+        self.assertEqual(event.type, EventType.TOOL_RESULT)
+
+        model_event = await resp.__anext__()
+        self.assertEqual(model_event.type, EventType.TOOL_MODEL_RESPONSE)
+
+        args, kwargs = agent.await_args_list[0]
+        messages = args[1]
+        self.assertEqual(messages[2].tool_call_error.message, "boom")

@@ -81,6 +81,8 @@ class ToolCallParser:
                 [
                     "<|channel|>commentary",
                     "<|start|>assistant<|channel|>commentary",
+                    "<|channel|>analysis",
+                    "<|start|>assistant<|channel|>analysis",
                 ]
             )
             end.append("<|channel|>final<|message|>")
@@ -138,15 +140,22 @@ class ToolCallParser:
         tool_calls: list[ToolCall] = []
         pattern = (
             r"(?:<\|start\|>assistant)?"
-            r"<\|channel\|>commentary to=(?:functions\.)?([\w\.]+)"
+            r"<\|channel\|>(?:commentary|analysis)"
+            r" to=(?:functions\.)?([\w\.]+)"
+            r"(?:<\|channel\|>(?:commentary|analysis))?"
             r"[^<]*"
-            r"(?:<\|constrain\|>json)?<\|message\|>(\{.*?\})<\|call\|>"
+            r"(?:<\|constrain\|>json)?"
+            r"<\|message\|>\s*(\{.*?\})?\s*<\|call\|>"
         )
         for match in finditer(pattern, text, DOTALL):
-            try:
-                args = loads(match.group(2))
-            except JSONDecodeError:
-                continue
+            args_text = match.group(2)
+            if args_text:
+                try:
+                    args = loads(args_text)
+                except JSONDecodeError:
+                    continue
+            else:
+                args = {}
             tool_calls.append(
                 ToolCall(id=uuid4(), name=match.group(1), arguments=args)
             )

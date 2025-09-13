@@ -9,6 +9,7 @@ from ....entities import (
     TokenDetail,
     ToolCall,
     ToolCallContext,
+    ToolCallError,
     ToolCallResult,
     ToolCallToken,
 )
@@ -231,7 +232,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             tool_messages = []
             for e in result_events:
                 tool_result = e.payload["result"]
-                tool_output = tool_result.result
+                tool_output = (
+                    tool_result.message
+                    if isinstance(tool_result, ToolCallError)
+                    else tool_result.result
+                )
                 tool_messages.append(
                     Message(
                         role=MessageRole.ASSISTANT,
@@ -262,7 +267,16 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         name=tool_result.name,
                         arguments=tool_result.arguments,
                         content=tool_result_output,
-                        tool_call_result=tool_result,
+                        tool_call_result=(
+                            tool_result
+                            if isinstance(tool_result, ToolCallResult)
+                            else None
+                        ),
+                        tool_call_error=(
+                            tool_result
+                            if isinstance(tool_result, ToolCallError)
+                            else None
+                        ),
                     )
                 )
 
@@ -377,7 +391,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if not calls:
                 break
 
-            results: list[ToolCallResult] = []
+            results: list[ToolCallResult | ToolCallError] = []
             for call in calls:
                 if self._event_manager:
                     start = perf_counter()
@@ -425,7 +439,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return delta
 
     async def _react_process(
-        self, output: str, results: list[ToolCallResult]
+        self, output: str, results: list[ToolCallResult | ToolCallError]
     ) -> TextGenerationResponse:
         tool_messages = [
             Message(
@@ -433,13 +447,23 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 name=result.name,
                 arguments=result.arguments,
                 content=(
-                    result.result
-                    if isinstance(result.result, str)
+                    result.message
+                    if isinstance(result, ToolCallError)
                     else (
-                        dumps(result.result)
-                        if result.result is not None
-                        else ""
+                        result.result
+                        if isinstance(result.result, str)
+                        else (
+                            dumps(result.result)
+                            if result.result is not None
+                            else ""
+                        )
                     )
+                ),
+                tool_call_result=(
+                    result if isinstance(result, ToolCallResult) else None
+                ),
+                tool_call_error=(
+                    result if isinstance(result, ToolCallError) else None
                 ),
             )
             for result in results

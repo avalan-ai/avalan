@@ -55,6 +55,34 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(tokens[2], ToolCallToken)
         self.assertEqual(tokens[-1], "end")
 
+    async def test_harmony_format_tokens_analysis(self):
+        manager = MagicMock()
+
+        def _get_calls(text: str):
+            return [MagicMock()] if "<|call|>" in text else None
+
+        manager.is_potential_tool_call.return_value = True
+        manager.get_calls.side_effect = _get_calls
+        manager.tool_format = ToolFormat.HARMONY
+        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+
+        parser = ToolCallResponseParser(manager, None)
+        tokens: list = []
+        parts = [
+            "<|channel|>",
+            "analysis to=functions.db.inspect code<|message|>{}",
+            "<|call|>",
+            "end",
+        ]
+        for part in parts:
+            tokens.extend(await parser.push(part))
+
+        self.assertIsInstance(tokens[0], ToolCallToken)
+        self.assertIsInstance(tokens[1], ToolCallToken)
+        self.assertIsInstance(tokens[2], ToolCallToken)
+        self.assertEqual(tokens[-1], "end")
+
     async def test_harmony_format_tokens_with_prefix(self):
         manager = MagicMock()
 
