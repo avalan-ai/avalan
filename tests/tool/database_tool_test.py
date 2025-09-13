@@ -1,9 +1,3 @@
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError
-from tempfile import TemporaryDirectory
-from types import SimpleNamespace
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import patch
 from avalan.entities import ToolCallContext
 from avalan.tool.database import (
     DatabaseCountTool,
@@ -14,6 +8,12 @@ from avalan.tool.database import (
     DatabaseToolSet,
     DatabaseToolSettings,
 )
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import NoSuchTableError, OperationalError
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, patch
 
 
 def dummy_create_async_engine(dsn: str, **kwargs):
@@ -173,6 +173,25 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             await tool("missing", context=ToolCallContext())
         await engine.dispose()
 
+    async def test_tools_respect_delay_setting(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, delay_secs=1)
+        engine = dummy_create_async_engine(self.dsn)
+        with patch("avalan.tool.database.sleep", AsyncMock()) as mocked_sleep:
+            count = DatabaseCountTool(engine, settings)
+            await count("authors", context=ToolCallContext())
+
+            inspect = DatabaseInspectTool(engine, settings)
+            await inspect(["authors"], context=ToolCallContext())
+
+            run = DatabaseRunTool(engine, settings)
+            await run("SELECT id FROM authors", context=ToolCallContext())
+
+            tables = DatabaseTablesTool(engine, settings)
+            await tables(context=ToolCallContext())
+
+            self.assertEqual(mocked_sleep.await_count, 4)
+        await engine.dispose()
+
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
             count_tool, inspect_tool, run_tool, tables_tool = toolset.tools
@@ -211,6 +230,37 @@ class DatabaseInspectCollectTestCase(TestCase):
             )
         self.assertEqual(tables[0].name, "other.t")
 
+    def test_collect_skips_missing_tables_and_missing_foreign_keys(self):
+        def get_columns(table_name, schema):
+            if table_name == "missing":
+                raise NoSuchTableError(table_name)
+            return [{"name": "id", "type": "INTEGER"}]
+
+        def get_foreign_keys(table_name, schema):
+            raise NoSuchTableError(table_name)
+
+        inspector = SimpleNamespace(
+            default_schema_name="public",
+            get_columns=get_columns,
+            get_foreign_keys=get_foreign_keys,
+        )
+
+        with (
+            patch("avalan.tool.database.inspect", return_value=inspector),
+            patch(
+                "avalan.tool.database.DatabaseTool._schemas",
+                return_value=("public", []),
+            ),
+        ):
+            tables = DatabaseInspectTool._collect(
+                SimpleNamespace(),
+                schema=None,
+                table_names=["missing", "present"],
+            )
+
+        self.assertEqual([t.name for t in tables], ["present"])
+        self.assertEqual(tables[0].foreign_keys, [])
+
 
 class DatabaseSchemasTestCase(TestCase):
     def test_postgresql_schemas(self):
@@ -228,3 +278,32 @@ class DatabaseSchemasTestCase(TestCase):
         default, schemas = DatabaseTool._schemas(connection, inspector)
         self.assertEqual(default, "public")
         self.assertEqual(schemas, ["other", "public"])
+
+    def test_non_postgresql_adds_default_schema(self):
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+        inspector = SimpleNamespace(
+            default_schema_name="main",
+            get_schema_names=lambda: ["temp"],
+        )
+        default, schemas = DatabaseTool._schemas(connection, inspector)
+        self.assertEqual(default, "main")
+        self.assertEqual(schemas, ["temp", "main"])
+
+    def test_non_postgresql_handles_only_sys_schemas(self):
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
+        inspector = SimpleNamespace(
+            default_schema_name="public",
+            get_schema_names=lambda: ["information_schema", "sys"],
+        )
+        default, schemas = DatabaseTool._schemas(connection, inspector)
+        self.assertEqual(default, "public")
+        self.assertEqual(schemas, ["public"])
+
+
+class DatabaseSplitSchemaTestCase(TestCase):
+    def test_split_schema_and_table(self):
+        schema, table = DatabaseCountTool._split_schema_and_table(
+            "main.authors"
+        )
+        self.assertEqual(schema, "main")
+        self.assertEqual(table, "authors")
