@@ -188,11 +188,12 @@ class OpenAIClient(TextGenerationVendor):
             result_message = {
                 "type": "function_call_output",
                 "call_id": result.call.id,
+                "output": to_json(
+                    result.result
+                    if isinstance(result, ToolCallResult)
+                    else {"error": result.message}
+                ),
             }
-            if isinstance(result, ToolCallResult):
-                result_message["output"] = to_json(result.result)
-            else:
-                result_message["output"] = to_json({"error": result.message})
             messages.append(result_message)
         return messages
 
