@@ -191,7 +191,7 @@ class OpenAIClient(TextGenerationVendor):
                 "output": to_json(
                     result.result
                     if isinstance(result, ToolCallResult)
-                    else result.message
+                    else {"error": result.message}
                 ),
             }
             messages.append(result_message)

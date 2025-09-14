@@ -16,6 +16,7 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     ToolCall,
+    ToolCallError,
     ToolCallResult,
     ToolCallToken,
     TransformerEngineSettings,
@@ -336,12 +337,10 @@ class VendorClientsTestCase(TestCase):
         self.openai_stub.AsyncOpenAI.assert_called_once_with(
             base_url="https://openrouter.ai/api/v1", api_key="k"
         )
-        client._client.headers.update.assert_called_once_with(
-            {
-                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
-                "X-Title": "avalan",
-            }
-        )
+        client._client.headers.update.assert_called_once_with({
+            "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            "X-Title": "avalan",
+        })
         with patch.object(mod, "OpenRouterClient") as ClientMock:
             settings = TransformerEngineSettings(
                 auto_load_model=False,
@@ -554,6 +553,35 @@ class TemplateAndToolSchemaTestCase(TestCase):
                     "type": "function_call_output",
                     "call_id": "c2",
                     "output": '{"x": 3}',
+                },
+            ],
+        )
+
+    def test_template_messages_tool_error(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        call = ToolCall(id="c1", name="pkg.func", arguments={"a": 1})
+        error = ToolCallError(
+            id="c1",
+            name="pkg.func",
+            call=call,
+            error=ValueError("boom"),
+            message="boom",
+        )
+        msg = Message(role=MessageRole.TOOL, tool_call_error=error)
+        templated = client._template_messages([msg])
+        self.assertEqual(
+            templated,
+            [
+                {
+                    "type": "function_call",
+                    "name": "pkg__func",
+                    "call_id": "c1",
+                    "arguments": '{"a": 1}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": '{"error": "boom"}',
                 },
             ],
         )
