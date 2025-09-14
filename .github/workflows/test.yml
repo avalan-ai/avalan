@@ -70,6 +70,7 @@ jobs:
         run: poetry run pytest --cov=src/ --cov-report=xml
 
       - name: Upload coverage to Coveralls
+        continue-on-error: true
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
