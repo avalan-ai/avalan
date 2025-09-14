@@ -337,10 +337,12 @@ class VendorClientsTestCase(TestCase):
         self.openai_stub.AsyncOpenAI.assert_called_once_with(
             base_url="https://openrouter.ai/api/v1", api_key="k"
         )
-        client._client.headers.update.assert_called_once_with({
-            "HTTP-Referer": "https://github.com/avalan-ai/avalan",
-            "X-Title": "avalan",
-        })
+        client._client.headers.update.assert_called_once_with(
+            {
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+                "X-Title": "avalan",
+            }
+        )
         with patch.object(mod, "OpenRouterClient") as ClientMock:
             settings = TransformerEngineSettings(
                 auto_load_model=False,

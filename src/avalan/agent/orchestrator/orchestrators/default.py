@@ -25,6 +25,7 @@ class DefaultOrchestrator(Orchestrator):
         instructions: str | None,
         rules: list[str] | None,
         system: str | None = None,
+        developer: str | None = None,
         user: str | None = None,
         user_template: str | None = None,
         template_id: str | None = None,
@@ -33,11 +34,12 @@ class DefaultOrchestrator(Orchestrator):
         template_vars: dict | None = None,
         id: UUID | None = None,
     ):
-        if system is not None:
+        if system is not None or developer is not None:
             specification = Specification(
                 role=None,
                 goal=None,
                 system_prompt=system,
+                developer_prompt=developer,
                 rules=rules,
                 template_id=template_id or "agent.md",
                 template_vars=template_vars,

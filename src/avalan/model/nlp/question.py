@@ -44,11 +44,12 @@ class QuestionAnsweringModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
-        context: str | None,
+        developer_prompt: str | None = None,
+        context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
     ) -> BatchEncoding:
-        assert not system_prompt, (
+        assert not system_prompt and not developer_prompt, (
             "Token classification model "
             + f"{self._model_id} does not support chat "
             + "templates"
@@ -66,6 +67,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         *,
         context: str,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         skip_special_tokens: bool = True,
     ) -> str:
         assert self._tokenizer, (
@@ -79,6 +81,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         inputs = self._tokenize_input(
             input,
             system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
             context=context,
         )
         with inference_mode():

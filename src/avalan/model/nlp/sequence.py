@@ -50,11 +50,12 @@ class SequenceClassificationModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
-        context: str | None,
+        developer_prompt: str | None = None,
+        context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
     ) -> BatchEncoding:
-        assert not system_prompt, (
+        assert not system_prompt and not developer_prompt, (
             "Sequence classification model "
             + f"{self._model_id} does not support chat "
             + "templates"
@@ -119,11 +120,12 @@ class SequenceToSequenceModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
-        context: str | None,
+        developer_prompt: str | None = None,
+        context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
     ) -> Tensor:
-        assert not system_prompt, (
+        assert not system_prompt and not developer_prompt, (
             "SequenceToSequence model "
             + f"{self._model_id} does not support chat "
             + "templates"

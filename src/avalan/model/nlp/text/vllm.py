@@ -71,12 +71,14 @@ class VllmModel(TextGenerationModel):
         self,
         input: Input,
         system_prompt: str | None,
-        tool: ToolManager | None,
-        chat_template_settings: dict[str, object] | None,
+        developer_prompt: str | None = None,
+        tool: ToolManager | None = None,
+        chat_template_settings: dict[str, object] | None = None,
     ) -> str:
         inputs = super()._tokenize_input(
             input,
             system_prompt,
+            developer_prompt,
             context=None,
             tensor_format="pt",
             tool=tool,
@@ -111,6 +113,7 @@ class VllmModel(TextGenerationModel):
         self,
         input: Input,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
         tool: ToolManager | None = None,
@@ -119,6 +122,7 @@ class VllmModel(TextGenerationModel):
         prompt = self._prompt(
             input,
             system_prompt,
+            developer_prompt,
             tool,
             asdict(settings.chat_settings),
         )

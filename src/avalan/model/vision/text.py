@@ -114,6 +114,7 @@ class ImageTextToTextModel(ImageToTextModel):
         image_source: str | Image.Image,
         prompt: str,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         width: int | None = None,
         *,
@@ -134,6 +135,13 @@ class ImageTextToTextModel(ImageToTextModel):
                 {
                     "role": str(MessageRole.SYSTEM),
                     "content": [{"type": "text", "text": system_prompt}],
+                }
+            )
+        if developer_prompt:
+            messages.append(
+                {
+                    "role": str(MessageRole.DEVELOPER),
+                    "content": [{"type": "text", "text": developer_prompt}],
                 }
             )
         messages.append(

@@ -85,6 +85,7 @@ class DistanceType(StrEnum):
 class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     SYSTEM = "system"
+    DEVELOPER = "developer"
     TOOL = "tool"
     USER = "user"
 
@@ -691,6 +692,7 @@ class OperationTextParameters:
     skip_special_tokens: bool | None = None
     stop_on_keywords: list[str] | None = None
     system_prompt: str | None = None
+    developer_prompt: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -708,6 +710,7 @@ class OperationVisionParameters:
     frames_per_second: int | None = 24
     skip_special_tokens: bool | None = None
     system_prompt: str | None = None
+    developer_prompt: str | None = None
     threshold: float | None = None
     width: int | None = None
     color_model: VisionColorModel | None = None

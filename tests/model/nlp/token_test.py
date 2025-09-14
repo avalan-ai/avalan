@@ -219,7 +219,7 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, {"a": "A", "b": "B", "c": "A"})
             tokenize_mock.assert_called_once_with(
-                "text", system_prompt=None, context=None
+                "text", system_prompt=None, developer_prompt=None, context=None
             )
             model_instance.assert_called_once()
             tokenizer_mock.convert_ids_to_tokens.assert_called_once()
@@ -278,7 +278,7 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, {"a": "A", "b": "B", "c": "A"})
             tokenize_mock.assert_called_once_with(
-                "text", system_prompt="sp", context=None
+                "text", system_prompt="sp", developer_prompt=None, context=None
             )
             model_instance.assert_called_once()
             tokenizer_mock.convert_ids_to_tokens.assert_called_once()
@@ -343,7 +343,7 @@ class TokenClassificationModelCallTestCase(IsolatedAsyncioTestCase):
 
             self.assertEqual(result, {"tok_2": "B-PER"})
             tokenize_mock.assert_called_once_with(
-                "text", system_prompt=None, context=None
+                "text", system_prompt=None, developer_prompt=None, context=None
             )
             model_instance.assert_called_once()
             tokenizer_mock.convert_ids_to_tokens.assert_called_once()

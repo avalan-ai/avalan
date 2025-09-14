@@ -1,6 +1,8 @@
 from typing import Literal, TypedDict
 
-TemplateMessageRole = Literal["assistant", "system", "tool", "user"]
+TemplateMessageRole = Literal[
+    "assistant", "developer", "system", "tool", "user"
+]
 
 
 class TemplateMessageContent(TypedDict, total=False):

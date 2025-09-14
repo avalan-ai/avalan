@@ -83,11 +83,11 @@ class EngineAgentPropertyTestCase(IsolatedAsyncioTestCase):
         self.event_manager.trigger.assert_not_called()
 
     async def test_input_token_count_with_prompt(self):
-        self.agent._last_prompt = ("hi", "sys")
+        self.agent._last_prompt = ("hi", "sys", None)
         result = await self.agent.input_token_count()
         self.assertEqual(result, 3)
         self.engine.input_token_count.assert_called_once_with(
-            "hi", system_prompt="sys"
+            "hi", system_prompt="sys", developer_prompt=None
         )
         called_types = [
             c.args[0].type for c in self.event_manager.trigger.await_args_list

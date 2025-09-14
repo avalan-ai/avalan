@@ -146,6 +146,7 @@ class TextGenerationModality:
                 stop_on_keywords=args.stop_on_keyword,
                 skip_special_tokens=args.quiet or args.skip_special_tokens,
                 system_prompt=args.system or None,
+                developer_prompt=getattr(args, "developer", None) or None,
             )
         )
         return Operation(
@@ -171,6 +172,7 @@ class TextGenerationModality:
             return await model(
                 operation.input,
                 system_prompt=operation.parameters["text"].system_prompt,
+                developer_prompt=operation.parameters["text"].developer_prompt,
                 settings=operation.generation_settings,
                 stopping_criterias=[criteria] if criteria else None,
                 manual_sampling=operation.parameters["text"].manual_sampling,
@@ -183,6 +185,7 @@ class TextGenerationModality:
         return await model(
             operation.input,
             system_prompt=operation.parameters["text"].system_prompt,
+            developer_prompt=operation.parameters["text"].developer_prompt,
             settings=operation.generation_settings,
             tool=tool,
         )
@@ -216,6 +219,7 @@ class TextQuestionAnsweringModality:
             text=OperationTextParameters(
                 context=args.text_context,
                 system_prompt=args.system or None,
+                developer_prompt=getattr(args, "developer", None) or None,
             )
         )
         return Operation(
@@ -243,6 +247,7 @@ class TextQuestionAnsweringModality:
             operation.input,
             context=operation.parameters["text"].context,
             system_prompt=operation.parameters["text"].system_prompt,
+            developer_prompt=operation.parameters["text"].developer_prompt,
         )
 
 
@@ -370,6 +375,7 @@ class TextTokenClassificationModality:
             text=OperationTextParameters(
                 labeled_only=getattr(args, "text_labeled_only", None),
                 system_prompt=args.system or None,
+                developer_prompt=getattr(args, "developer", None) or None,
             )
         )
         return Operation(
@@ -392,6 +398,7 @@ class TextTokenClassificationModality:
             operation.input,
             labeled_only=operation.parameters["text"].labeled_only or False,
             system_prompt=operation.parameters["text"].system_prompt,
+            developer_prompt=operation.parameters["text"].developer_prompt,
         )
 
 

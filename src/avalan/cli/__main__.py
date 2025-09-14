@@ -1348,6 +1348,11 @@ class CLI:
             help="Use this as system prompt",
         )
         model_run_parser.add_argument(
+            "--developer",
+            type=str,
+            help="Use this as developer prompt",
+        )
+        model_run_parser.add_argument(
             "--text-context",
             type=str,
             help="Context string for question answering",

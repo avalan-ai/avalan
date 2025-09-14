@@ -98,6 +98,7 @@ class JsonOrchestrator(Orchestrator):
         name: str | None = None,
         rules: list[str] | None = [],
         system: str | None = None,
+        developer: str | None = None,
         user: str | None = None,
         user_template: str | None = None,
         template_id: str | None = None,
@@ -105,12 +106,13 @@ class JsonOrchestrator(Orchestrator):
         call_options: dict | None = None,
         template_vars: dict | None = None,
     ):
-        if system is not None:
+        if system is not None or developer is not None:
             specification = JsonSpecification(
                 output=output,
                 goal=None,
                 rules=rules,
                 system_prompt=system,
+                developer_prompt=developer,
                 template_id=template_id or JsonOrchestrator.DEFAULT_FILE_NAME,
                 template_vars=template_vars,
             )

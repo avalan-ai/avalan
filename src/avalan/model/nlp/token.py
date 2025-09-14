@@ -58,11 +58,12 @@ class TokenClassificationModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
-        context: str | None,
+        developer_prompt: str | None = None,
+        context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
     ) -> BatchEncoding:
-        assert not system_prompt, (
+        assert not system_prompt and not developer_prompt, (
             "Token classification model "
             + f"{self._model_id} does not support chat "
             + "templates"
@@ -80,6 +81,7 @@ class TokenClassificationModel(BaseNLPModel):
         *,
         labeled_only: bool = False,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
     ) -> dict[str, str]:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
@@ -90,7 +92,10 @@ class TokenClassificationModel(BaseNLPModel):
             + "needs to be loaded first"
         )
         inputs = self._tokenize_input(
-            input, system_prompt=system_prompt, context=None
+            input,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
+            context=None,
         )
         with inference_mode():
             outputs = self._model(**inputs)

@@ -160,6 +160,7 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
             tokenize_mock.assert_called_once_with(
                 "q",
                 system_prompt=None,
+                developer_prompt=None,
                 context="ctx",
             )
             model_instance.assert_called_once()
@@ -230,6 +231,7 @@ class QuestionAnsweringModelCallTestCase(IsolatedAsyncioTestCase):
             tokenize_mock.assert_called_once_with(
                 "q",
                 system_prompt="sp",
+                developer_prompt=None,
                 context="ctx",
             )
             inference_mode_mock.assert_called_once_with()

@@ -105,10 +105,11 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
             "_tokenize_input",
             return_value={"input_ids": [[1, 2]]},
         ) as tok:
-            prompt = model._prompt("hello", "sys", None, None)
+            prompt = model._prompt("hello", "sys")
         tok.assert_called_once_with(
             "hello",
             "sys",
+            None,
             context=None,
             tensor_format="pt",
             tool=None,
