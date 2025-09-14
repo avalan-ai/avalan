@@ -15,6 +15,7 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     ToolCall,
+    ToolCallError,
     ToolCallResult,
     ToolCallToken,
     TransformerEngineSettings,
@@ -200,6 +201,31 @@ def test_template_messages_and_exclude_roles(anthropic_mod):
         ]
     )
     assert len(dup) == 1
+
+
+def test_template_messages_tool_error_details(anthropic_mod):
+    mod, _ = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("k", exit_stack=exit_stack)
+
+    call = ToolCall(id="call1", name="pkg.tool", arguments={"a": 1})
+    error = ToolCallError(
+        id="err1",
+        name="pkg.tool",
+        call=call,
+        error=Exception("boom"),
+        message="boom",
+    )
+    messages = [
+        Message(role=MessageRole.SYSTEM, content="s"),
+        Message(role=MessageRole.USER, content="hi"),
+        Message(role=MessageRole.ASSISTANT, content="ok"),
+        Message(role=MessageRole.TOOL, tool_call_error=error),
+    ]
+    templated = client._template_messages(messages, ["system"])
+    tool_result = templated[2]["content"][0]
+    assert tool_result["tool_use_id"] == "call1"
+    assert tool_result["is_error"] is True
 
 
 def test_tool_schemas_variants(anthropic_mod):

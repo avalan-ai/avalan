@@ -9,6 +9,7 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallError,
     ToolCallResult,
     ToolCallToken,
 )
@@ -189,20 +190,18 @@ class AnthropicClient(TextGenerationVendor):
             }
 
         for result in tool_results:
-            result_message = TemplateMessage(
-                role="user",
-                content=[
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": result.call.id,
-                        "content": to_json(
-                            result.result
-                            if isinstance(result, ToolCallResult)
-                            else result.message
-                        ),
-                    }
-                ],
-            )
+            content = {
+                "type": "tool_result",
+                "tool_use_id": result.call.id,
+                "content": to_json(
+                    result.result
+                    if isinstance(result, ToolCallResult)
+                    else result.message
+                ),
+            }
+            if isinstance(result, ToolCallError):
+                content["is_error"] = True
+            result_message = TemplateMessage(role="user", content=[content])
             if last_message_index:
                 messages.insert(last_message_index + 1, result_message)
             else:
