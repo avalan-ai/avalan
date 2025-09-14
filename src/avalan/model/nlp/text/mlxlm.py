@@ -98,6 +98,7 @@ class MlxLmModel(TextGenerationModel):
         self,
         input: Input,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
         skip_special_tokens: bool = False,
@@ -108,6 +109,7 @@ class MlxLmModel(TextGenerationModel):
         inputs = super()._tokenize_input(
             input,
             system_prompt,
+            developer_prompt,
             context=None,
             tensor_format=tensor_format,
             tool=tool,

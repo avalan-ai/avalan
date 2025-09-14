@@ -34,6 +34,7 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         tokenize_mock.assert_called_once_with(
             "hi",
             None,
+            None,
             context=None,
             tool=None,
             chat_template_settings=asdict(settings.chat_settings),

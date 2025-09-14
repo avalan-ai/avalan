@@ -7,6 +7,11 @@ system = """
 {{ orchestrator.agent_config['system'] | indent(4) }}
 """
 {% endif %}
+{% if orchestrator.agent_config.get('developer') %}
+developer = """
+{{ orchestrator.agent_config['developer'] | indent(4) }}
+"""
+{% endif %}
 {% if orchestrator.agent_config.get('role') %}
 role = """
 {{ orchestrator.agent_config['role'] | indent(4) }}

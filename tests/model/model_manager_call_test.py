@@ -128,6 +128,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                             pick_tokens=0,
                             skip_special_tokens=False,
                             system_prompt=None,
+                            developer_prompt=None,
                         )
                     ),
                 ),
@@ -135,6 +136,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     ("question",),
                     {
                         "system_prompt": None,
+                        "developer_prompt": None,
                         "settings": self.settings,
                         "stopping_criterias": None,
                         "manual_sampling": False,
@@ -154,10 +156,18 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         text=OperationTextParameters(
                             context="ctx",
                             system_prompt=None,
+                            developer_prompt=None,
                         )
                     ),
                 ),
-                (("q",), {"context": "ctx", "system_prompt": None}),
+                (
+                    ("q",),
+                    {
+                        "context": "ctx",
+                        "system_prompt": None,
+                        "developer_prompt": None,
+                    },
+                ),
             ),
             (
                 Modality.TEXT_SEQUENCE_CLASSIFICATION,
@@ -191,10 +201,20 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     input="tok",
                     modality=Modality.TEXT_TOKEN_CLASSIFICATION,
                     parameters=OperationParameters(
-                        text=OperationTextParameters(system_prompt=None)
+                        text=OperationTextParameters(
+                            system_prompt=None,
+                            developer_prompt=None,
+                        )
                     ),
                 ),
-                (("tok",), {"labeled_only": False, "system_prompt": None}),
+                (
+                    ("tok",),
+                    {
+                        "labeled_only": False,
+                        "system_prompt": None,
+                        "developer_prompt": None,
+                    },
+                ),
             ),
             (
                 Modality.TEXT_TRANSLATION,
@@ -274,6 +294,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         vision=OperationVisionParameters(
                             path="img.png",
                             system_prompt=None,
+                            developer_prompt=None,
                             width=256,
                         )
                     ),
@@ -282,6 +303,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     ("img.png", "txt"),
                     {
                         "system_prompt": None,
+                        "developer_prompt": None,
                         "settings": self.settings,
                         "width": 256,
                     },

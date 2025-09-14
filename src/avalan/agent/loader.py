@@ -443,20 +443,24 @@ class OrchestratorLoader:
                 role=(
                     None
                     if "system" in settings.agent_config
+                    or "developer" in settings.agent_config
                     else settings.agent_config.get("role")
                 ),
                 task=(
                     None
                     if "system" in settings.agent_config
+                    or "developer" in settings.agent_config
                     else settings.agent_config.get("task")
                 ),
                 instructions=(
                     None
                     if "system" in settings.agent_config
+                    or "developer" in settings.agent_config
                     else settings.agent_config.get("instructions")
                 ),
                 rules=settings.agent_config.get("rules"),
                 system=settings.agent_config.get("system"),
+                developer=settings.agent_config.get("developer"),
                 user=settings.agent_config.get("user"),
                 user_template=settings.agent_config.get("user_template"),
                 settings=engine_settings,
@@ -484,7 +488,7 @@ class OrchestratorLoader:
         template_vars: dict | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
-        if "system" not in agent_config:
+        if "system" not in agent_config and "developer" not in agent_config:
             assert (
                 "instructions" in agent_config
             ), "No instructions defined in agent section of configuration"
@@ -516,18 +520,23 @@ class OrchestratorLoader:
             id=agent_id,
             name=agent_config["name"] if "name" in agent_config else None,
             role=(
-                None if "system" in agent_config else agent_config.get("role")
+                None
+                if "system" in agent_config or "developer" in agent_config
+                else agent_config.get("role")
             ),
             task=(
-                None if "system" in agent_config else agent_config.get("task")
+                None
+                if "system" in agent_config or "developer" in agent_config
+                else agent_config.get("task")
             ),
             instructions=(
                 None
-                if "system" in agent_config
+                if "system" in agent_config or "developer" in agent_config
                 else agent_config.get("instructions")
             ),
             rules=agent_config.get("rules"),
             system=agent_config.get("system"),
+            developer=agent_config.get("developer"),
             user=agent_config.get("user"),
             user_template=agent_config.get("user_template"),
             settings=engine_settings,

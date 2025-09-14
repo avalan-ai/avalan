@@ -2520,7 +2520,7 @@ ge,vision_text_to_animation,vision_text_to_video,vision_image_text_to_text,visio
 antic_segmentation}]
                         [--min-p MIN_P]
                         [--repetition-penalty REPETITION_PENALTY]
-                        [--skip-special-tokens] [--system SYSTEM]
+                        [--skip-special-tokens] [--system SYSTEM] [--developer DEVELOPER]
                         [--text-context TEXT_CONTEXT] [--text-labeled-only]
                         [--text-max-length TEXT_MAX_LENGTH]
                         [--text-num-beams TEXT_NUM_BEAMS]
@@ -2745,6 +2745,7 @@ antic_segmentation}
   --skip-special-tokens
                         If specified, skip special tokens when decoding
   --system SYSTEM       Use this as system prompt
+  --developer DEVELOPER Use this as developer prompt
   --text-context TEXT_CONTEXT
                         Context string for question answering
   --text-labeled-only   If specified, only tokens with labels detected are

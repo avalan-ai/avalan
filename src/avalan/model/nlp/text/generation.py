@@ -118,6 +118,7 @@ class TextGenerationModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         stopping_criterias: list[StoppingCriteria] | None = None,
         *,
@@ -175,6 +176,7 @@ class TextGenerationModel(BaseNLPModel):
         inputs = self._tokenize_input(
             input,
             system_prompt,
+            developer_prompt,
             context=None,
             tool=tool,
             chat_template_settings=asdict(settings.chat_settings),
@@ -368,14 +370,15 @@ class TextGenerationModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
-        context: str | None,
+        developer_prompt: str | None = None,
+        context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template: str | None = None,
         chat_template_settings: dict[str, object] | None = None,
         tool: ToolManager | None = None,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
-        messages = self._messages(input, system_prompt, tool)
+        messages = self._messages(input, system_prompt, developer_prompt, tool)
 
         def _format_content(
             content: str | MessageContent | list[MessageContent],
@@ -476,6 +479,7 @@ class TextGenerationModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
+        developer_prompt: str | None = None,
         tool: ToolManager | None = None,
     ) -> list[Message]:
         if isinstance(input, str):
@@ -488,6 +492,10 @@ class TextGenerationModel(BaseNLPModel):
 
         messages = [input] if not isinstance(input, list) else input
 
+        if developer_prompt:
+            messages = [
+                Message(role=MessageRole.DEVELOPER, content=developer_prompt)
+            ] + messages
         if system_prompt:
             messages = [
                 Message(role=MessageRole.SYSTEM, content=system_prompt)

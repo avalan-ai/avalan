@@ -332,7 +332,7 @@ class TokenizeInputTestCase(TestCase):
         tokenizer.return_value = inputs
         inputs.to.return_value = inputs
         result = model._tokenize_input("in", "sys", context=None)
-        model._messages.assert_called_once_with("in", "sys", None)
+        model._messages.assert_called_once_with("in", "sys", None, None)
         tokenizer.assert_called_once()
         inputs.to.assert_called_once_with(model._model.device)
         self.assertIs(result, inputs)
@@ -343,7 +343,7 @@ class TokenizeInputTestCase(TestCase):
         tokenizer.apply_chat_template.return_value = inputs
         inputs.to.return_value = inputs
         result = model._tokenize_input("in", "sys", context=None)
-        model._messages.assert_called_once_with("in", "sys", None)
+        model._messages.assert_called_once_with("in", "sys", None, None)
         tokenizer.apply_chat_template.assert_called_once()
         inputs.to.assert_called_once_with(model._model.device)
         self.assertIs(result, inputs)
@@ -367,6 +367,41 @@ class MessagesTestCase(TestCase):
             ],
         )
 
+    def test_messages_from_string_and_developer(self):
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        result = model._messages("hi", None, "dev")
+        self.assertEqual(
+            result,
+            [
+                Message(role=MessageRole.DEVELOPER, content="dev"),
+                Message(role=MessageRole.USER, content="hi"),
+            ],
+        )
+
+    def test_messages_from_string_system_and_developer(self):
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        result = model._messages("hi", "sys", "dev")
+        self.assertEqual(
+            result,
+            [
+                Message(role=MessageRole.SYSTEM, content="sys"),
+                Message(role=MessageRole.DEVELOPER, content="dev"),
+                Message(role=MessageRole.USER, content="hi"),
+            ],
+        )
+
     def test_messages_from_list(self):
         model = TextGenerationModel(
             "m",
@@ -381,6 +416,27 @@ class MessagesTestCase(TestCase):
         ]
         result = model._messages(messages, None)
         self.assertEqual(result, messages)
+
+    def test_messages_from_list_with_developer(self):
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        messages = [
+            Message(role=MessageRole.USER, content="a"),
+            Message(role=MessageRole.ASSISTANT, content="b"),
+        ]
+        result = model._messages(messages, None, "dev")
+        self.assertEqual(
+            result,
+            [
+                Message(role=MessageRole.DEVELOPER, content="dev"),
+                *messages,
+            ],
+        )
 
 
 if __name__ == "__main__":

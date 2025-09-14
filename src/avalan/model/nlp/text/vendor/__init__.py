@@ -67,14 +67,19 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         raise NotImplementedError()
 
     def input_token_count(
-        self, input: Input, system_prompt: str | None = None
+        self,
+        input: Input,
+        system_prompt: str | None = None,
+        developer_prompt: str | None = None,
     ) -> int:
         try:
             encoding = encoding_for_model(self._model_id)
         except KeyError:
             encoding = get_encoding(self._TIKTOKEN_DEFAULT_MODEL)
 
-        messages = self._messages(input, system_prompt, tool=None)
+        messages = self._messages(
+            input, system_prompt, developer_prompt, tool=None
+        )
 
         total_tokens = 0
         for message in messages:
@@ -86,11 +91,12 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         self,
         input: Input,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
-        messages = self._messages(input, system_prompt, tool)
+        messages = self._messages(input, system_prompt, developer_prompt, tool)
         streamer = await self._model(
             self._model_id,
             messages,

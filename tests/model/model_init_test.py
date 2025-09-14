@@ -122,6 +122,7 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
         vendor = DummyVendor()
         messages = [
             Message(role=MessageRole.SYSTEM, content="sys"),
+            Message(role=MessageRole.DEVELOPER, content="dev"),
             Message(role=MessageRole.USER, content="hi"),
             Message(role=MessageRole.ASSISTANT, content="r"),
             Message(role=MessageRole.TOOL, content="t"),
@@ -136,6 +137,7 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
             tmpl,
             [
                 {"role": "system", "content": "sys"},
+                {"role": "developer", "content": "dev"},
                 {"role": "user", "content": "hi"},
                 {"role": "tool", "content": "t"},
             ],

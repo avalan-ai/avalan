@@ -91,14 +91,22 @@ class TransformerModel(Engine, ABC):
         ]
 
     def input_token_count(
-        self, input: Input, system_prompt: str | None = None
+        self,
+        input: Input,
+        system_prompt: str | None = None,
+        developer_prompt: str | None = None,
     ) -> int:
         _l = self._log
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
             + "without a tokenizer loaded first"
         )
-        inputs = self._tokenize_input(input, system_prompt, context=None)
+        inputs = self._tokenize_input(
+            input,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
+            context=None,
+        )
         return (
             len(inputs["input_ids"][0])
             if inputs and "input_ids" in inputs

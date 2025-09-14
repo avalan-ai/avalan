@@ -224,6 +224,7 @@ class VisionImageTextToTextModality:
             vision=OperationVisionParameters(
                 path=args.path,
                 system_prompt=args.system or None,
+                developer_prompt=getattr(args, "developer", None) or None,
                 width=getattr(
                     args,
                     "vision_width",
@@ -255,6 +256,7 @@ class VisionImageTextToTextModality:
             operation.parameters["vision"].path,
             operation.input,
             system_prompt=operation.parameters["vision"].system_prompt,
+            developer_prompt=operation.parameters["vision"].developer_prompt,
             settings=operation.generation_settings,
             width=operation.parameters["vision"].width,
         )

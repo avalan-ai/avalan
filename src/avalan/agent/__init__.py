@@ -38,6 +38,7 @@ class Specification:
     role: Role | None = None
     goal: Goal | None = None
     system_prompt: str | None = None
+    developer_prompt: str | None = None
     rules: list[str] | None = field(default_factory=list)
     input_type: InputType = InputType.TEXT
     output_type: OutputType = OutputType.TEXT

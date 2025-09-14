@@ -94,6 +94,10 @@ class TemplateEngineAgent(EngineAgent):
         if specification.system_prompt is not None:
             kwargs.setdefault("settings", specification.settings)
             kwargs.setdefault("system_prompt", specification.system_prompt)
+            if specification.developer_prompt is not None:
+                kwargs.setdefault(
+                    "developer_prompt", specification.developer_prompt
+                )
             return kwargs
 
         template_id = specification.template_id or "agent.md"
@@ -164,4 +168,8 @@ class TemplateEngineAgent(EngineAgent):
 
         kwargs.setdefault("settings", specification.settings)
         kwargs.setdefault("system_prompt", system_prompt)
+        if specification.developer_prompt is not None:
+            kwargs.setdefault(
+                "developer_prompt", specification.developer_prompt
+            )
         return kwargs

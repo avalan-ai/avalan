@@ -1917,6 +1917,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             use_cache=True,
             stop_on_keyword=None,
             system="sys",
+            developer="dev",
             text_context="ctx",
             skip_special_tokens=False,
             display_tokens=0,
@@ -1985,6 +1986,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             "hi",
             context="ctx",
             system_prompt="sys",
+            developer_prompt="dev",
         )
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "answer")
@@ -2086,6 +2088,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             "hi",
             labeled_only=False,
             system_prompt="sys",
+            developer_prompt=None,
         )
         tg_patch.assert_not_called()
         theme.display_token_labels.assert_called_once_with([lm.return_value])
@@ -2189,6 +2192,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             "hi",
             labeled_only=True,
             system_prompt="sys",
+            developer_prompt=None,
         )
         tg_patch.assert_not_called()
         theme.display_token_labels.assert_called_once_with([lm.return_value])
@@ -3119,6 +3123,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             "img.png",
             "hi",
             system_prompt="sys",
+            developer_prompt=None,
             settings=ANY,
             width=42,
         )

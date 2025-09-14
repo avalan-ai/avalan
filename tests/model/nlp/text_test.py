@@ -177,7 +177,9 @@ class TextGenerationModelMethodsTestCase(TestCase):
         ) as tok:
             count = self.model.input_token_count("hi")
 
-        tok.assert_called_once_with("hi", None, context=None)
+        tok.assert_called_once_with(
+            "hi", system_prompt=None, developer_prompt=None, context=None
+        )
         self.assertEqual(count, 3)
 
     def test_save_tokenizer(self):

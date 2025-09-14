@@ -38,7 +38,7 @@ class EngineAgent(ABC):
     _model_manager: ModelManager
     _engine_uri: EngineUri
     _last_output: TextGenerationResponse | None = None
-    _last_prompt: tuple[Input, str | None] | None = None
+    _last_prompt: tuple[Input, str | None, str | None] | None = None
 
     @abstractmethod
     def _prepare_call(
@@ -79,7 +79,9 @@ class EngineAgent(ABC):
             )
         )
         count = self._model.input_token_count(
-            self._last_prompt[0], system_prompt=self._last_prompt[1]
+            self._last_prompt[0],
+            system_prompt=self._last_prompt[1],
+            developer_prompt=self._last_prompt[2],
         )
         await self._event_manager.trigger(
             Event(
@@ -148,6 +150,7 @@ class EngineAgent(ABC):
         *args,
         settings: GenerationSettings | None = None,
         system_prompt: str | None = None,
+        developer_prompt: str | None = None,
         skip_special_tokens=True,
         **kwargs,
     ) -> TextGenerationResponse:
@@ -186,7 +189,7 @@ class EngineAgent(ABC):
         )
 
         # Should always be stored, with or without memory
-        self._last_prompt = (input, system_prompt)
+        self._last_prompt = (input, system_prompt, developer_prompt)
 
         if isinstance(input, Message):
             input = [input]
@@ -228,6 +231,7 @@ class EngineAgent(ABC):
             parameters=OperationParameters(
                 text=OperationTextParameters(
                     system_prompt=system_prompt,
+                    developer_prompt=developer_prompt,
                     skip_special_tokens=skip_special_tokens,
                 )
             ),
@@ -242,6 +246,7 @@ class EngineAgent(ABC):
                     "model_id": self._model.model_id,
                     "input": input,
                     "system_prompt": system_prompt,
+                    "developer_prompt": developer_prompt,
                     "settings": settings,
                 },
             )
@@ -260,6 +265,7 @@ class EngineAgent(ABC):
                     "model_id": self._model.model_id,
                     "input": input,
                     "system_prompt": system_prompt,
+                    "developer_prompt": developer_prompt,
                     "settings": settings,
                 },
             )

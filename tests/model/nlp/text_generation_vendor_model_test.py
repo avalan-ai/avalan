@@ -144,7 +144,7 @@ class CallTestCase(IsolatedAsyncioTestCase):
             settings=gen_settings,
             tool=None,
         )
-        model._messages.assert_called_once_with("input", "sys", None)
+        model._messages.assert_called_once_with("input", "sys", None, None)
         model._model.assert_awaited_once_with(
             "m",
             messages,

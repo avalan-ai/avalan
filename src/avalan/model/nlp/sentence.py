@@ -63,7 +63,8 @@ class SentenceTransformerModel(BaseNLPModel):
         self,
         input: Input,
         system_prompt: str | None,
-        context: str | None,
+        developer_prompt: str | None = None,
+        context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
     ) -> BatchEncoding:
