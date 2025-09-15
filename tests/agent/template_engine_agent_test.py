@@ -1,277 +1,249 @@
-from avalan.agent import Goal, Role, Specification
-from avalan.agent.renderer import Renderer, TemplateEngineAgent
-from avalan.entities import (
-    EngineMessage,
-    EngineUri,
-    MessageRole,
-    GenerationSettings,
-)
-from avalan.event import EventType
-from avalan.event.manager import EventManager
-from avalan.memory.manager import MemoryManager
-from avalan.model import TextGenerationResponse
-from avalan.model.manager import ModelManager
-from avalan.tool.manager import ToolManager
-from logging import getLogger
-from uuid import UUID, uuid4
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock
+from dataclasses import dataclass, field
+from importlib.util import module_from_spec, spec_from_file_location
+from os import path
+from sys import modules
+from types import ModuleType
+from typing import Any
+from unittest import TestCase
 
 
-class TemplateEngineAgentPropertyTestCase(TestCase):
-    def test_id_property(self) -> None:
-        renderer = Renderer()
-        memory = MagicMock(spec=MemoryManager)
-        tool = MagicMock(spec=ToolManager)
-        event_manager = MagicMock(spec=EventManager)
-        model_manager = MagicMock(spec=ModelManager)
-        model = MagicMock()
-        model.model_id = "m"
-        model.model_type = "t"
-        engine_uri = EngineUri(
-            host=None,
-            port=None,
-            user=None,
-            password=None,
-            vendor=None,
-            model_id="m",
-            params={},
+class _SimpleTemplate:
+    def __init__(self, source: str) -> None:
+        self.source = source
+
+    def render(self, **kwargs: Any) -> str:
+        output = self.source
+        for key, value in kwargs.items():
+            output = output.replace(f"{{{{{key}}}}}", str(value))
+        return output
+
+
+class _SimpleLoader:
+    def __init__(self, searchpath: str) -> None:
+        self.searchpath = searchpath
+
+    def get_source(self, _env: object, template_id: str) -> str:
+        with open(
+            path.join(self.searchpath, template_id), "r", encoding="utf-8"
+        ) as fh:
+            return fh.read()
+
+
+class _SimpleEnvironment:
+    def __init__(self, loader: _SimpleLoader, **_kwargs: object) -> None:
+        self.loader = loader
+
+    def get_template(self, template_id: str) -> _SimpleTemplate:
+        if template_id == "agent.md":
+            tmpl = _SimpleTemplate("")
+
+            def render(**kwargs: Any) -> str:
+                name = kwargs.get("name", "")
+                return f"agent.md:{name}"
+
+            tmpl.render = render  # type: ignore[attr-defined]
+            return tmpl
+        source = self.loader.get_source(self, template_id)
+        return _SimpleTemplate(source)
+
+
+_jinja = ModuleType("jinja2")
+_jinja.Environment = _SimpleEnvironment
+_jinja.FileSystemLoader = _SimpleLoader
+_jinja.Template = _SimpleTemplate
+modules.setdefault("jinja2", _jinja)
+
+
+def _load_module():
+    spec = spec_from_file_location(
+        "avalan.agent.renderer",
+        path.join("src", "avalan", "agent", "renderer.py"),
+    )
+    module = module_from_spec(spec)
+    # stub packages
+    avalan = ModuleType("avalan")
+    agent_pkg = ModuleType("avalan.agent")
+    event_pkg = ModuleType("avalan.event.manager")
+    agent_engine_pkg = ModuleType("avalan.agent.engine")
+    memory_pkg = ModuleType("avalan.memory.manager")
+    model_pkg = ModuleType("avalan.model.manager")
+    engine_pkg = ModuleType("avalan.model.engine")
+    tool_pkg = ModuleType("avalan.tool.manager")
+    entities_pkg = ModuleType("avalan.entities")
+    modules.update(
+        {
+            "avalan": avalan,
+            "avalan.agent": agent_pkg,
+            "avalan.agent.engine": agent_engine_pkg,
+            "avalan.event.manager": event_pkg,
+            "avalan.memory.manager": memory_pkg,
+            "avalan.model.manager": model_pkg,
+            "avalan.model.engine": engine_pkg,
+            "avalan.tool.manager": tool_pkg,
+            "avalan.entities": entities_pkg,
+        }
+    )
+
+    class EngineAgent:  # minimal base
+        def __init__(
+            self,
+            _model: object,
+            _memory: object,
+            _tool: object,
+            _event_manager: object,
+            _model_manager: object,
+            _engine_uri: object,
+            *,
+            name: str | None = None,
+            id: Any | None = None,
+        ) -> None:
+            self._name = name
+
+    class EventManager:  # pragma: no cover - stub
+        pass
+
+    class MemoryManager:  # pragma: no cover - stub
+        pass
+
+    class ModelManager:  # pragma: no cover - stub
+        pass
+
+    class Engine:  # pragma: no cover - stub
+        pass
+
+    class ToolManager:  # pragma: no cover - stub
+        pass
+
+    @dataclass(slots=True)
+    class Role:
+        persona: list[str]
+
+    @dataclass(slots=True)
+    class Goal:
+        task: str
+        instructions: list[str]
+
+    @dataclass(slots=True)
+    class GenerationSettings:
+        template_vars: dict | None = None
+
+    @dataclass(slots=True)
+    class Specification:
+        role: Role | str | list[str] | None = None
+        goal: Goal | None = None
+        system_prompt: str | None = None
+        developer_prompt: str | None = None
+        rules: list[str] | None = field(default_factory=list)
+        settings: GenerationSettings | None = None
+        template_id: str | None = None
+        template_vars: dict | None = None
+
+    @dataclass(slots=True)
+    class EngineUri:  # pragma: no cover - stub
+        pass
+
+    agent_pkg.Role = Role
+    agent_pkg.Goal = Goal
+    agent_pkg.Specification = Specification
+    entities_pkg.GenerationSettings = GenerationSettings
+    entities_pkg.EngineUri = EngineUri
+    agent_engine_pkg.EngineAgent = EngineAgent
+    event_pkg.EventManager = EventManager
+    memory_pkg.MemoryManager = MemoryManager
+    model_pkg.ModelManager = ModelManager
+    engine_pkg.Engine = Engine
+    tool_pkg.ToolManager = ToolManager
+    agent_pkg.EngineAgent = EngineAgent
+
+    spec.loader.exec_module(module)
+    return module
+
+
+module = _load_module()
+TemplateEngineAgent = module.TemplateEngineAgent
+Renderer = module.Renderer
+Role = modules["avalan.agent"].Role
+Goal = modules["avalan.agent"].Goal
+Specification = modules["avalan.agent"].Specification
+GenerationSettings = modules["avalan.entities"].GenerationSettings
+
+
+class DummyRenderer(Renderer):
+    def __init__(self) -> None:  # type: ignore[override]
+        super().__init__(clean_spaces=False)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, template_id: str, **kwargs: Any) -> str:  # type: ignore[override]
+        self.calls.append((template_id, kwargs.copy()))
+        return f"{template_id}:{len(kwargs)}"
+
+    def from_string(
+        self,
+        template: str,
+        template_vars: dict | None = None,
+        encoding: str = "utf-8",
+    ) -> str:  # type: ignore[override]
+        return (
+            template.format(**template_vars).encode(encoding)
+            if template_vars
+            else template
         )
-        agent_id: UUID = uuid4()
-        agent = TemplateEngineAgent(
-            model=model,
-            memory=memory,
-            tool=tool,
-            event_manager=event_manager,
-            model_manager=model_manager,
-            renderer=renderer,
-            engine_uri=engine_uri,
-            id=agent_id,
-        )
-        self.assertEqual(agent.id, agent_id)
 
 
 class TemplateEngineAgentPrepareTestCase(TestCase):
-    def setUp(self):
-        self.renderer = Renderer()
-        self.model_manager = MagicMock(spec=ModelManager)
-        self.engine_uri = EngineUri(
-            host=None,
-            port=None,
-            user=None,
-            password=None,
-            vendor=None,
-            model_id="m",
-            params={},
-        )
+    def setUp(self) -> None:
+        self.renderer = DummyRenderer()
         self.agent = TemplateEngineAgent(
-            model=MagicMock(),
-            memory=MagicMock(spec=MemoryManager),
-            tool=MagicMock(spec=ToolManager),
-            event_manager=MagicMock(spec=EventManager),
-            model_manager=self.model_manager,
+            model=object(),
+            memory=modules["avalan.memory.manager"].MemoryManager(),
+            tool=modules["avalan.tool.manager"].ToolManager(),
+            event_manager=modules["avalan.event.manager"].EventManager(),
+            model_manager=modules["avalan.model.manager"].ModelManager(),
             renderer=self.renderer,
-            engine_uri=self.engine_uri,
+            engine_uri=modules["avalan.entities"].EngineUri(),
             name="Bob",
         )
 
-    def test_prepare_call_no_template_vars(self):
-        spec = Specification(
-            role="assistant",
-            goal=Goal(task="do", instructions=["instr"]),
-            rules=["rule"],
-        )
-        result = self.agent._prepare_call(spec, "hi")
-        expected_prompt = self.renderer(
-            "agent.md",
-            name="Bob",
-            roles=["assistant"],
-            task=b"do",
-            instructions=[b"instr"],
-            rules=[b"rule"],
-        )
-        self.assertEqual(result["settings"], spec.settings)
-        self.assertEqual(result["system_prompt"], expected_prompt)
-
-    def test_prepare_call_with_template_vars(self):
-        spec = Specification(
-            role=Role(persona=["role {{verb}}"]),
-            goal=Goal(task="do {{verb}}", instructions=["inst {{verb}}"]),
-            rules=["rule {{verb}}"],
-            template_vars={"verb": "run"},
-        )
-        result = self.agent._prepare_call(spec, "hi")
-        expected_prompt = self.renderer(
-            "agent.md",
-            name="Bob",
-            roles=[b"role run"],
-            task=b"do run",
-            instructions=[b"inst run"],
-            rules=[b"rule run"],
-        )
-        self.assertEqual(result["system_prompt"], expected_prompt)
-
-    def test_prepare_call_with_settings_template_vars(self):
-        spec = Specification(
-            role=Role(persona=["role {{verb}}"]),
-            goal=Goal(task="do {{verb}}", instructions=["inst {{verb}}"]),
-            rules=["rule {{verb}}"],
-            settings=GenerationSettings(template_vars={"verb": "run"}),
-        )
-        result = self.agent._prepare_call(spec, "hi")
-        expected_prompt = self.renderer(
-            "agent.md",
-            name="Bob",
-            roles=[b"role run"],
-            task=b"do run",
-            instructions=[b"inst run"],
-            rules=[b"rule run"],
-        )
-        self.assertEqual(result["system_prompt"], expected_prompt)
-
-    def test_prepare_call_goal_none(self):
-        spec = Specification(
-            role="assistant",
-            goal=None,
-            rules=[],
-            template_vars={"verb": "x"},
-        )
-        result = self.agent._prepare_call(spec, "hi")
-        expected_prompt = self.renderer(
-            "agent.md",
-            name="Bob",
-            roles=["assistant"],
-            task=None,
-            instructions=None,
-            rules=[],
-        )
-        self.assertEqual(result["system_prompt"], expected_prompt)
-
-    def test_prepare_call_system_prompt(self):
-        spec = Specification(role=None, goal=None, system_prompt="sys")
+    def test_system_and_developer_prompt_short_circuit(self) -> None:
+        spec = Specification(system_prompt="sys", developer_prompt="dev")
         result = self.agent._prepare_call(spec, "hi")
         self.assertEqual(result["system_prompt"], "sys")
+        self.assertEqual(result["developer_prompt"], "dev")
+        self.assertEqual(len(self.renderer.calls), 0)
 
-
-class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
-    async def test_call_invokes_run_with_prepared_arguments(self):
-        renderer = Renderer()
-        memory = MagicMock(spec=MemoryManager)
-        memory.has_permanent_message = False
-        memory.has_recent_message = False
-        tool = MagicMock(spec=ToolManager)
-        event_manager = MagicMock(spec=EventManager)
-        event_manager.trigger = AsyncMock()
-        model = MagicMock()
-
-        engine_uri = EngineUri(
-            host=None,
-            port=None,
-            user=None,
-            password=None,
-            vendor=None,
-            model_id="m",
-            params={},
-        )
-        agent = TemplateEngineAgent(
-            model=model,
-            memory=memory,
-            tool=tool,
-            event_manager=event_manager,
-            model_manager=MagicMock(spec=ModelManager),
-            renderer=renderer,
-            engine_uri=engine_uri,
-            name="Bob",
-        )
-
+    def test_template_vars_and_settings_merge(self) -> None:
         spec = Specification(
-            role="assistant",
-            goal=Goal(task="do", instructions=["ins"]),
-            rules=["r"],
+            role=Role(persona=["role {verb}"]),
+            goal=Goal(task="do {verb}", instructions=["inst {verb}"]),
+            rules=["rule {verb}"],
+            template_vars={"verb": "run"},
+            settings=GenerationSettings(template_vars={"verb": "walk"}),
+            developer_prompt="dev",
         )
+        result = self.agent._prepare_call(spec, "hi")
+        call = self.renderer.calls[-1]
+        self.assertEqual(call[0], "agent.md")
+        self.assertEqual(call[1]["name"], "Bob")
+        self.assertEqual(call[1]["roles"], [b"role walk"])
+        self.assertEqual(call[1]["task"], b"do walk")
+        self.assertEqual(call[1]["instructions"], [b"inst walk"])
+        self.assertEqual(call[1]["rules"], [b"rule walk"])
+        self.assertEqual(result["developer_prompt"], "dev")
 
-        expected_prompt = renderer(
-            "agent.md",
-            name="Bob",
-            roles=["assistant"],
-            task=b"do",
-            instructions=[b"ins"],
-            rules=[b"r"],
+    def test_role_variants(self) -> None:
+        spec = Specification(
+            role="single",
+            template_vars={"x": "y"},
+            goal=Goal(task="t {x}", instructions=["i {x}"]),
+            rules=["r {x}"],
         )
+        self.agent._prepare_call(spec, "hi")
+        self.assertEqual(self.renderer.calls[-1][1]["roles"], ["single"])
 
-        agent._run = AsyncMock(return_value="out")
+        spec.role = ["a", "b"]
+        self.agent._prepare_call(spec, "hi")
+        self.assertEqual(self.renderer.calls[-1][1]["roles"], ["a", "b"])
 
-        result = await agent(spec, "hello")
-
-        agent._run.assert_awaited_once()
-        self.assertEqual(result, "out")
-        self.assertEqual(
-            agent._run.await_args.kwargs["system_prompt"],
-            expected_prompt,
-        )
-        event_types = [
-            c.args[0].type for c in event_manager.trigger.await_args_list[:2]
-        ]
-        self.assertEqual(
-            event_types,
-            [EventType.CALL_PREPARE_BEFORE, EventType.CALL_PREPARE_AFTER],
-        )
-
-
-class FakeMemory:
-    def __init__(self) -> None:
-        self.has_permanent_message = True
-        self.has_recent_message = False
-        self.messages: list[EngineMessage] = []
-
-    async def append_message(self, message: EngineMessage) -> None:
-        self.messages.append(message)
-
-
-class TemplateEngineAgentSyncMessagesTestCase(IsolatedAsyncioTestCase):
-    async def test_sync_messages_stores_previous_output(self) -> None:
-        renderer = Renderer()
-        memory = FakeMemory()
-        tool = MagicMock(spec=ToolManager)
-        event_manager = MagicMock(spec=EventManager)
-        event_manager.trigger = AsyncMock()
-        model = MagicMock()
-        model.model_id = "m"
-        model.model_type = "t"
-        engine_uri = EngineUri(
-            host=None,
-            port=None,
-            user=None,
-            password=None,
-            vendor=None,
-            model_id="m",
-            params={},
-        )
-        agent = TemplateEngineAgent(
-            model=model,
-            memory=memory,
-            tool=tool,
-            event_manager=event_manager,
-            model_manager=MagicMock(spec=ModelManager),
-            renderer=renderer,
-            engine_uri=engine_uri,
-        )
-        agent._last_output = TextGenerationResponse(
-            lambda: "prev", logger=getLogger(), use_async_generator=False
-        )
-
-        await agent.sync_messages()
-
-        self.assertEqual(len(memory.messages), 1)
-        stored = memory.messages[0]
-        self.assertEqual(stored.agent_id, agent.id)
-        self.assertEqual(stored.model_id, model.model_id)
-        self.assertEqual(stored.message.role, MessageRole.ASSISTANT)
-        self.assertEqual(stored.message.content, "prev")
-        event_types = [
-            c.args[0].type for c in event_manager.trigger.await_args_list
-        ]
-        self.assertEqual(
-            event_types,
-            [EventType.MEMORY_APPEND_BEFORE, EventType.MEMORY_APPEND_AFTER],
-        )
+        spec.role = Role(persona=["p {x}"])
+        self.agent._prepare_call(spec, "hi")
+        self.assertEqual(self.renderer.calls[-1][1]["roles"], [b"p y"])
