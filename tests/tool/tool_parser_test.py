@@ -205,6 +205,19 @@ class ToolCallParserHarmonyTestCase(TestCase):
             ]
             self.assertEqual(parser(text), expected)
 
+    def test_empty_message(self):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        text = (
+            "<|channel|>commentary to=functions.database.ping "
+            "<|message|><|call|>"
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(id=call_id, name="database.ping", arguments={})
+            ]
+            self.assertEqual(parser(text), expected)
+
     def test_invalid_json(self):
         parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         text = (
