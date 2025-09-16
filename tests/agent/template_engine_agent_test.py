@@ -152,6 +152,31 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         result = self.agent._prepare_call(spec, "hi")
         self.assertEqual(result["system_prompt"], "sys")
 
+    def test_prepare_call_system_prompt_with_developer_prompt(self) -> None:
+        spec = Specification(
+            role=None,
+            goal=None,
+            system_prompt="sys",
+            developer_prompt="dev",
+        )
+
+        result = self.agent._prepare_call(spec, "hi")
+
+        self.assertEqual(result["system_prompt"], "sys")
+        self.assertEqual(result["developer_prompt"], "dev")
+
+    def test_prepare_call_template_developer_prompt(self) -> None:
+        spec = Specification(
+            role="assistant",
+            goal=Goal(task="task", instructions=["inst"]),
+            developer_prompt="dev",
+            rules=[],
+        )
+
+        result = self.agent._prepare_call(spec, "hi")
+
+        self.assertEqual(result["developer_prompt"], "dev")
+
 
 class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
     async def test_call_invokes_run_with_prepared_arguments(self):
