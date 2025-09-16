@@ -4,6 +4,7 @@ from avalan.server import (
     di_get_orchestrator,
     di_set,
 )
+from contextlib import asynccontextmanager
 from logging import Logger
 import asyncio
 import sys
@@ -171,3 +172,179 @@ class CallToolTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             await dummy_server.call_func("missing", {})
+
+
+class SseHandlerCoverageTestCase(IsolatedAsyncioTestCase):
+    async def test_sse_handler_streams(self) -> None:
+        for name in list(sys.modules):
+            if name == "avalan.server" or name.startswith("avalan.server."):
+                sys.modules.pop(name)
+
+        import importlib
+
+        server_mod = importlib.import_module("avalan.server")
+
+        created: dict[str, object] = {}
+
+        class StubApp:
+            def __init__(self, *_, **__):
+                self.state = SimpleNamespace()
+                self.include_calls: list[tuple[object, str]] = []
+                self.mount_calls: list[tuple[str, object]] = []
+                self.middleware_calls: list[tuple[tuple[object, ...], dict]] = []
+
+            def include_router(self, router: object, prefix: str = "") -> None:
+                self.include_calls.append((router, prefix))
+
+            def mount(self, path: str, app: object) -> None:
+                self.mount_calls.append((path, app))
+
+            def add_middleware(self, *args: object, **kwargs: object) -> None:
+                self.middleware_calls.append((args, kwargs))
+
+        class StubRouter:
+            def __init__(self) -> None:
+                self.routes: dict[str, object] = {}
+
+            def get(self, path: str):
+                def decorator(func):
+                    self.routes[path] = func
+                    return func
+
+                return decorator
+
+        class DummyMCPServer:
+            def __init__(self, *_: object, **__: object) -> None:
+                self.run_calls: list[tuple[object, object, object]] = []
+                self.list_handler = None
+                self.call_handler = None
+                created["mcp"] = self
+
+            def list_tools(self):
+                def decorator(func):
+                    self.list_handler = func
+                    return func
+
+                return decorator
+
+            def call_tool(self):
+                def decorator(func):
+                    self.call_handler = func
+                    return func
+
+                return decorator
+
+            def create_initialization_options(self) -> dict[str, str]:
+                return {"value": "init"}
+
+            async def run(
+                self, stream_in: object, stream_out: object, options: object
+            ) -> None:
+                self.run_calls.append((stream_in, stream_out, options))
+
+        class DummySSETransport:
+            def __init__(self, path: str) -> None:
+                self.path = path
+                self.handle_post_message = object()
+                self.calls: list[tuple[object, object, object]] = []
+                created["sse"] = self
+
+            @asynccontextmanager
+            async def connect_sse(
+                self, scope: object, receive: object, send: object
+            ):
+                self.calls.append((scope, receive, send))
+                yield ("incoming", "outgoing")
+
+        class DummyConfig:
+            def __init__(self, app: object, host: str, port: int, reload: bool) -> None:
+                self.app = app
+                self.host = host
+                self.port = port
+                self.reload = reload
+
+        class DummyServer:
+            def __init__(self, config: DummyConfig) -> None:
+                self.config = config
+
+        class DummyTool:
+            def __init__(self, **kwargs: object) -> None:
+                self.__dict__.update(kwargs)
+
+        class DummyTextContent:
+            def __init__(self, **kwargs: object) -> None:
+                self.__dict__.update(kwargs)
+
+        class DummyEmbeddedResource:
+            pass
+
+        class DummyImageContent:
+            pass
+
+        modules = {
+            "mcp.server.lowlevel.server": ModuleType("mcp.server.lowlevel.server"),
+            "mcp.server.sse": ModuleType("mcp.server.sse"),
+            "mcp.types": ModuleType("mcp.types"),
+            "uvicorn": ModuleType("uvicorn"),
+            "starlette.requests": ModuleType("starlette.requests"),
+        }
+        modules["mcp.server.lowlevel.server"].Server = DummyMCPServer
+        modules["mcp.server.sse"].SseServerTransport = DummySSETransport
+        modules["mcp.types"].Tool = DummyTool
+        modules["mcp.types"].TextContent = DummyTextContent
+        modules["mcp.types"].EmbeddedResource = DummyEmbeddedResource
+        modules["mcp.types"].ImageContent = DummyImageContent
+        modules["uvicorn"].Config = DummyConfig
+        modules["uvicorn"].Server = DummyServer
+        modules["starlette.requests"].Request = object
+
+        logger_calls: list[tuple[object, list[str]]] = []
+
+        with patch.dict(sys.modules, modules):
+            with (
+                patch.object(server_mod, "FastAPI", StubApp),
+                patch.object(server_mod, "APIRouter", StubRouter),
+                patch.object(
+                    server_mod,
+                    "logger_replace",
+                    lambda logger, names: logger_calls.append((logger, names)),
+                ),
+            ):
+                logger = MagicMock(spec=Logger)
+                logger.handlers = []
+                logger.level = 0
+                logger.propagate = False
+
+                server = server_mod.agents_server(
+                    hub=MagicMock(),
+                    name="srv",
+                    version="v",
+                    host="h",
+                    port=1,
+                    reload=False,
+                    specs_path=None,
+                    settings=SimpleNamespace(),
+                    tool_settings=None,
+                    prefix_mcp="/m",
+                    prefix_openai="/o",
+                    logger=logger,
+                )
+
+        app: StubApp = server.config.app  # type: ignore[assignment]
+        mcp_router = next(
+            router for router, prefix in app.include_calls if prefix == "/m"
+        )
+        handler = mcp_router.routes["/sse/"]
+        request = SimpleNamespace(scope={"type": "http"}, receive="rcv", _send="snd")
+
+        await handler(request)
+
+        sse: DummySSETransport = created["sse"]  # type: ignore[assignment]
+        self.assertEqual(sse.calls, [(request.scope, request.receive, request._send)])
+
+        mcp: DummyMCPServer = created["mcp"]  # type: ignore[assignment]
+        self.assertEqual(
+            mcp.run_calls,
+            [("incoming", "outgoing", {"value": "init"})],
+        )
+        self.assertTrue(logger_calls)
