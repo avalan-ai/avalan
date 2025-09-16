@@ -13,6 +13,7 @@ from avalan.entities import (
     MessageRole,
     ReasoningToken,
     ToolCall,
+    ToolCallError,
     ToolCallToken,
 )
 from avalan.event import Event, EventType
@@ -309,6 +310,96 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             loads(data_lines[i][6:])["part"] for i in content_indices
         ]
         self.assertEqual(actual_parts, expected_parts)
+        orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_includes_tool_call_token_with_call(self) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        call = ToolCall(id="call-1", name="adder", arguments={"x": 1})
+        error = ToolCallError(
+            id="call-1",
+            name="adder",
+            arguments={"x": 1},
+            call=call,
+            error=RuntimeError("fail"),
+            message="fail",
+        )
+
+        tokens = [
+            Event(type=EventType.TOOL_PROCESS, payload=[call]),
+            ToolCallToken(token="payload", call=call),
+            Event(type=EventType.TOOL_RESULT, payload={"result": error}),
+            "final",
+        ]
+
+        class DummyResponse:
+            def __init__(self, items) -> None:  # type: ignore[no-untyped-def]
+                self._items = items
+                self.input_token_count = 0
+                self.output_token_count = 0
+
+            def __aiter__(self):  # type: ignore[override]
+                async def gen():
+                    for item in self._items:
+                        yield item
+
+                return gen()
+
+        response = DummyResponse(tokens)
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        text = "".join(chunks)
+        blocks = [b for b in text.strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+        data_lines = [block.split("\n")[1] for block in blocks]
+
+        function_indices = [
+            i
+            for i, event in enumerate(events)
+            if event == "response.function_call_arguments.delta"
+        ]
+        self.assertEqual(len(function_indices), 3)
+
+        first_data = loads(data_lines[function_indices[0]][6:])
+        self.assertEqual(first_data["id"], "call-1")
+        first_delta = loads(first_data["delta"])
+        self.assertEqual(first_delta["name"], "adder")
+
+        second_data = loads(data_lines[function_indices[1]][6:])
+        self.assertEqual(second_data["id"], "call-1")
+        second_delta = loads(second_data["delta"])
+        self.assertEqual(second_delta["arguments"], {"x": 1})
+
+        third_data = loads(data_lines[function_indices[2]][6:])
+        self.assertEqual(loads(third_data["error"]), "fail")
+        third_delta = loads(third_data["delta"])
+        self.assertEqual(loads(third_delta["error"]), "fail")
+
+        output_index = events.index("response.output_text.delta")
+        output_data = loads(data_lines[output_index][6:])
+        self.assertEqual(output_data["delta"], "final")
+
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_custom_tool_call_call_wraps_items_with_id(self) -> None:
