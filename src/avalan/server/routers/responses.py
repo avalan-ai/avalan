@@ -3,6 +3,8 @@ from .. import di_get_logger, di_get_orchestrator
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
+    ToolCallError,
+    ToolCallResult,
     ToolCallToken,
     Token,
     TokenDetail,
@@ -164,7 +166,11 @@ def _token_to_sse(
             "arguments": item.get("arguments"),
         }
         if token.type is EventType.TOOL_RESULT:
-            delta_obj["result"] = to_json(item.get("result"))
+            if "error" in item:
+                delta_obj["error"] = to_json(item.get("error"))
+            else:
+                result = item.get("result", None)
+                delta_obj["result"] = to_json(result) if result else None
 
         events.append(
             _sse(
@@ -377,7 +383,7 @@ def _content_part_done(id: str | None = None) -> str:
 def _tool_call_event_item(event: Event) -> dict:
     tool_result = (
         event.payload["result"]
-        if event.type == EventType.TOOL_RESULT
+        if event.type == EventType.TOOL_RESULT and "result" in event.payload
         else None
     )
     tool_call = (
@@ -390,11 +396,14 @@ def _tool_call_event_item(event: Event) -> dict:
         "arguments": tool_call.arguments,
     }
     if tool_result is not None:
-        item["result"] = tool_result.result
+        if isinstance(tool_result, ToolCallError):
+            item["error"] = tool_result.message
+        elif isinstance(tool_result, ToolCallResult):
+            item["result"] = tool_result.result
+        else:
+            item["result"] = tool_result
     return item
 
 
 def _sse(event: str, data: dict) -> str:
-    return (
-        f"event: {event}\n" + f"data: {to_json(data)}\n\n"
-    )
+    return f"event: {event}\n" + f"data: {to_json(data)}\n\n"
