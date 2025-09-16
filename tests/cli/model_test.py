@@ -487,6 +487,110 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         theme.tokens.assert_called_once()
         live.update.assert_called_once_with("frame")
 
+    async def test_token_generation_live_container_without_orchestrator(self):
+        live = MagicMock(name="live")
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=False,
+            record=False,
+        )
+
+        live_container: dict[str, MagicMock | None] = {}
+        observed: list[MagicMock | None] = []
+
+        async def fake_token_stream(*_args, **_kwargs):
+            observed.append(live_container.get("live"))
+
+        with (
+            patch.object(model_cmds, "Live", return_value=live_cm),
+            patch.object(
+                model_cmds,
+                "_token_stream",
+                AsyncMock(side_effect=fake_token_stream),
+            ),
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(),
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=MagicMock(),
+                input_string="prompt",
+                response=MagicMock(),
+                display_tokens=0,
+                dtokens_pick=0,
+                refresh_per_second=1,
+                tool_events_limit=0,
+                live_container=live_container,
+            )
+
+        self.assertEqual(observed, [live])
+        self.assertEqual(live_container.get("live"), None)
+
+    async def test_token_generation_live_container_with_orchestrator(self):
+        live = MagicMock(name="live")
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=False,
+            record=False,
+        )
+
+        live_container: dict[str, MagicMock | None] = {}
+        observed_event: list[MagicMock | None] = []
+        observed_token: list[MagicMock | None] = []
+
+        async def fake_event_stream(*_args, **_kwargs):
+            observed_event.append(live_container.get("live"))
+
+        async def fake_token_stream(*_args, **_kwargs):
+            observed_token.append(live_container.get("live"))
+
+        with (
+            patch.object(model_cmds, "Live", return_value=live_cm),
+            patch.object(
+                model_cmds,
+                "_event_stream",
+                AsyncMock(side_effect=fake_event_stream),
+            ),
+            patch.object(
+                model_cmds,
+                "_token_stream",
+                AsyncMock(side_effect=fake_token_stream),
+            ),
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(),
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=MagicMock(),
+                event_stats=None,
+                lm=MagicMock(),
+                input_string="prompt",
+                response=MagicMock(),
+                display_tokens=0,
+                dtokens_pick=0,
+                refresh_per_second=1,
+                tool_events_limit=0,
+                live_container=live_container,
+            )
+
+        self.assertEqual(observed_event, [live])
+        self.assertEqual(observed_token, [live])
+        self.assertEqual(live_container.get("live"), None)
+
     async def test_token_generation_with_stats(self):
         token = model_cmds.Token(id=0, token="a", probability=0.4)
 
