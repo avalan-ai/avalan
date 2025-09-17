@@ -7,7 +7,6 @@ from ..nlp.sequence import (
     TranslationModel,
 )
 from ..nlp.text.generation import TextGenerationModel
-from ..nlp.text.mlxlm import MlxLmModel
 from ..nlp.token import TokenClassificationModel
 from ...entities import (
     Backend,
@@ -24,6 +23,8 @@ from ...tool.manager import ToolManager
 
 from argparse import Namespace
 from contextlib import AsyncExitStack
+from functools import lru_cache
+from importlib.util import find_spec
 from logging import Logger
 from typing import Any
 
@@ -41,6 +42,17 @@ def _stopping_criteria(
     return None
 
 
+@lru_cache(maxsize=1)
+def _get_mlx_model() -> type[TextGenerationModel] | None:
+    if not find_spec("mlx_lm"):
+        return None
+    try:
+        from ..nlp.text.mlxlm import MlxLmModel as loader
+    except ModuleNotFoundError:
+        return None
+    return loader
+
+
 @ModalityRegistry.register(Modality.TEXT_GENERATION)
 class TextGenerationModality:
     def load_engine(
@@ -49,7 +61,7 @@ class TextGenerationModality:
         engine_settings: TransformerEngineSettings,
         logger: Logger,
         exit_stack: AsyncExitStack,
-    ) -> TextGenerationModel | MlxLmModel:
+    ) -> TextGenerationModel:
         model_load_args = dict(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -160,14 +172,15 @@ class TextGenerationModality:
     async def __call__(
         self,
         engine_uri: EngineUri,
-        model: TextGenerationModel | MlxLmModel,
+        model: TextGenerationModel,
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
         assert operation.input and operation.parameters["text"]
 
         criteria = _stopping_criteria(operation, model)
-        is_mlx = isinstance(model, MlxLmModel)
+        mlx_model = _get_mlx_model()
+        is_mlx = mlx_model is not None and isinstance(model, mlx_model)
         if engine_uri.is_local and not is_mlx:
             return await model(
                 operation.input,
