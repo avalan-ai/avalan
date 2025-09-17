@@ -2,11 +2,11 @@
 <h3 align="center">The multi-backend, multi-modal framework for AI agent development, orchestration, and deployment</h3>
 
 <p align="center">
-  <img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" />
+  <a href="https://github.com/avalan-ai/avalan/actions/workflows/test.yml"><img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
   <a href="https://coveralls.io/github/avalan-ai/avalan"><img src="https://coveralls.io/repos/github/avalan-ai/avalan/badge.svg" alt="Code test coverage" /></a>
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
-  <img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" />
-  <img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" />
+  <a href="https://pypi.org/project/avalan/"><img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" /></a>
+  <a href="https://github.com/avalan-ai/avalan/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" /></a>
   <a href="https://discord.gg/8Eh9TNvk"><img src="https://img.shields.io/badge/discord-community-blue" alt="Discord Community" /></a>
   <a href="https://deepwiki.com/avalan-ai/avalan"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
