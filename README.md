@@ -2,7 +2,7 @@
 <h3 align="center">The multi-backend, multi-modal framework for AI agent development, orchestration, and deployment</h3>
 
 <p align="center">
-  <a href="https://github.com/avalan-ai/avalan/actions/workflows/test.yml"><img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>a>
+  <a href="https://github.com/avalan-ai/avalan/actions/workflows/test.yml"><img src="https://github.com/avalan-ai/avalan/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
   <a href="https://coveralls.io/github/avalan-ai/avalan"><img src="https://coveralls.io/repos/github/avalan-ai/avalan/badge.svg" alt="Code test coverage" /></a>
   <img src="https://img.shields.io/github/last-commit/avalan-ai/avalan.svg" alt="Last commit" />
   <a href="https://pypi.org/project/avalan/"><img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" /></a>
