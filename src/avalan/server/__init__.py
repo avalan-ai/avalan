@@ -7,6 +7,7 @@ from ..utils import logger_replace
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 from contextlib import AsyncExitStack, asynccontextmanager
+from importlib import import_module
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from logging import Logger
@@ -39,14 +40,10 @@ def agents_server(
     allow_credentials: bool = False,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
+    assert (specs_path is None) ^ (settings is None), (
+        "Provide either specs_path or settings, but not both"
+    )
 
-    assert (specs_path is None) ^ (
-        settings is None
-    ), "Provide either specs_path or settings, but not both"
-
-    from ..server.routers import chat
-    from ..server.routers import engine
-    from ..server.routers import responses
     from os import environ
     from uvicorn import Config, Server
 
@@ -82,15 +79,13 @@ def agents_server(
     logger.debug("Creating %s server", name)
     app = FastAPI(title=name, version=version, lifespan=lifespan)
 
-    if any(
-        [
-            allow_origins,
-            allow_origin_regex,
-            allow_methods,
-            allow_headers,
-            allow_credentials,
-        ]
-    ):
+    if any([
+        allow_origins,
+        allow_origin_regex,
+        allow_methods,
+        allow_headers,
+        allow_credentials,
+    ]):
         app.add_middleware(
             CORSMiddleware,
             allow_origins=allow_origins or [],
@@ -101,9 +96,12 @@ def agents_server(
         )
 
     logger.debug("Adding routes to %s server", name)
-    app.include_router(chat.router, prefix=prefix_openai)
-    app.include_router(responses.router, prefix=prefix_openai)
-    app.include_router(engine.router)
+    chat_router_module = import_module("avalan.server.routers.chat")
+    responses_router_module = import_module("avalan.server.routers.responses")
+    engine_router_module = import_module("avalan.server.routers.engine")
+    app.include_router(chat_router_module.router, prefix=prefix_openai)
+    app.include_router(responses_router_module.router, prefix=prefix_openai)
+    app.include_router(engine_router_module.router)
 
     logger.debug("Creating MCP HTTP stream router")
     mcp_http_router = mcp_router.create_router()
@@ -127,7 +125,6 @@ def agents_server(
 
 def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
     """Store dependencies on the application state."""
-
     assert logger is not None
     assert orchestrator is not None
     app.state.logger = logger
@@ -136,7 +133,6 @@ def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
 
 def di_get_logger(request: Request) -> Logger:
     """Retrieve the application logger from the request."""
-
     assert hasattr(request.app.state, "logger")
     logger = request.app.state.logger
     assert isinstance(logger, Logger)
@@ -145,7 +141,6 @@ def di_get_logger(request: Request) -> Logger:
 
 async def di_get_orchestrator(request: Request) -> Orchestrator:
     """Retrieve the orchestrator from the request."""
-
     if not hasattr(request.app.state, "orchestrator"):
         ctx: OrchestratorContext = request.app.state.ctx
         loader: OrchestratorLoader = request.app.state.loader
@@ -166,5 +161,5 @@ async def di_get_orchestrator(request: Request) -> Orchestrator:
         request.app.state.orchestrator = orchestrator
         request.app.state.agent_id = orchestrator.id
     orchestrator = request.app.state.orchestrator
-    assert isinstance(orchestrator, Orchestrator)
+    assert orchestrator is not None
     return orchestrator
