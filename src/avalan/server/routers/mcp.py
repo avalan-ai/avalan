@@ -325,7 +325,7 @@ async def _stream_mcp_response(
             "id": request_id,
             "error": {
                 "code": -32603,
-                "message": str(exc),
+                "message": "An internal server error occurred.",
             },
         }
         for payload in emit(error_message):
