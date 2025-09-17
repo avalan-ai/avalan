@@ -5,8 +5,9 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
 from .entities import OrchestratorContext
+from .routers import mcp as mcp_router
 from contextlib import AsyncExitStack, asynccontextmanager
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from logging import Logger
 from typing import TYPE_CHECKING
@@ -37,35 +38,8 @@ def agents_server(
     allow_headers: list[str] | None = None,
     allow_credentials: bool = False,
 ) -> "Server":
-    """Build a configured Uvicorn server for Avalan agents.
+    """Build a configured Uvicorn server for Avalan agents."""
 
-    Exactly one of ``specs_path`` or ``settings`` must be provided to
-    construct the orchestrator.
-
-    Args:
-        hub: Model hub used to load model data.
-        name: Human readable server name.
-        version: Server version string.
-        host: Host address to bind.
-        port: Port to listen on.
-        reload: Whether Uvicorn should reload on changes.
-        specs_path: Optional path to an agent specification file.
-        settings: Optional in-memory orchestrator settings.
-        tool_settings: Optional tool configuration context.
-        prefix_mcp: URL prefix for MCP endpoints.
-        prefix_openai: URL prefix for OpenAI-compatible endpoints.
-        logger: Application logger.
-        agent_id: Optional agent identifier.
-        participant_id: Optional participant identifier.
-        allow_origins: Optional list of allowed CORS origins.
-        allow_origin_regex: Optional regex for allowed CORS origins.
-        allow_methods: Optional list of allowed CORS methods.
-        allow_headers: Optional list of allowed CORS headers.
-        allow_credentials: Whether to allow CORS credentials.
-
-    Returns:
-        Configured Uvicorn server instance.
-    """
     assert (specs_path is None) ^ (
         settings is None
     ), "Provide either specs_path or settings, but not both"
@@ -73,11 +47,7 @@ def agents_server(
     from ..server.routers import chat
     from ..server.routers import engine
     from ..server.routers import responses
-    from mcp.server.lowlevel.server import Server as MCPServer
-    from mcp.server.sse import SseServerTransport
-    from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
     from os import environ
-    from starlette.requests import Request
     from uvicorn import Config, Server
 
     @asynccontextmanager
@@ -105,6 +75,8 @@ def agents_server(
             app.state.loader = loader
             app.state.logger = logger
             app.state.agent_id = agent_id
+            app.state.mcp_resource_store = mcp_router.MCPResourceStore()
+            app.state.mcp_resource_base_path = prefix_mcp
             yield
 
     logger.debug("Creating %s server", name)
@@ -133,52 +105,9 @@ def agents_server(
     app.include_router(responses.router, prefix=prefix_openai)
     app.include_router(engine.router)
 
-    logger.debug("Creating MCP server with SSE")
-    mcp_server = MCPServer(name=name)
-    sse = SseServerTransport(f"{prefix_mcp}/messages/")
-    mcp_router = APIRouter()
-
-    @mcp_router.get("/sse/")
-    async def mcp_sse_handler(request: Request) -> None:
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await mcp_server.run(
-                streams[0],
-                streams[1],
-                mcp_server.create_initialization_options(),
-            )
-
-    @mcp_server.list_tools()
-    async def mcp_list_tools_handler() -> list[Tool]:
-        return [
-            Tool(
-                name="calculate_sum",
-                description="Add two numbers together",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "a": {"type": "number"},
-                        "b": {"type": "number"},
-                    },
-                    "required": ["a", "b"],
-                },
-            )
-        ]
-
-    @mcp_server.call_tool()
-    async def call_tool(
-        name: str, arguments: dict
-    ) -> list[TextContent | ImageContent | EmbeddedResource]:
-        if name == "calculate_sum":
-            a = arguments["a"]
-            b = arguments["b"]
-            result = a + b
-            return [TextContent(type="text", text=str(result))]
-        raise ValueError(f"Tool not found: {name}")
-
-    app.mount(f"{prefix_mcp}/messages/", app=sse.handle_post_message)
-    app.include_router(mcp_router, prefix=prefix_mcp)
+    logger.debug("Creating MCP HTTP stream router")
+    mcp_http_router = mcp_router.create_router()
+    app.include_router(mcp_http_router, prefix=prefix_mcp)
 
     logger.debug("Starting %s server at %s:%d", name, host, port)
     config = Config(app, host=host, port=port, reload=reload)
@@ -198,6 +127,7 @@ def agents_server(
 
 def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
     """Store dependencies on the application state."""
+
     assert logger is not None
     assert orchestrator is not None
     app.state.logger = logger
@@ -206,6 +136,7 @@ def di_set(app: FastAPI, logger: Logger, orchestrator: Orchestrator) -> None:
 
 def di_get_logger(request: Request) -> Logger:
     """Retrieve the application logger from the request."""
+
     assert hasattr(request.app.state, "logger")
     logger = request.app.state.logger
     assert isinstance(logger, Logger)
@@ -213,12 +144,8 @@ def di_get_logger(request: Request) -> Logger:
 
 
 async def di_get_orchestrator(request: Request) -> Orchestrator:
-    """Retrieve the orchestrator from the request.
+    """Retrieve the orchestrator from the request."""
 
-    The orchestrator is loaded lazily on first use to allow the server to
-    start even when the configured engine cannot be initialized. Subsequent
-    calls return the already loaded orchestrator.
-    """
     if not hasattr(request.app.state, "orchestrator"):
         ctx: OrchestratorContext = request.app.state.ctx
         loader: OrchestratorLoader = request.app.state.loader
@@ -238,7 +165,6 @@ async def di_get_orchestrator(request: Request) -> Orchestrator:
         orchestrator = await stack.enter_async_context(orchestrator_cm)
         request.app.state.orchestrator = orchestrator
         request.app.state.agent_id = orchestrator.id
-    else:
-        orchestrator = request.app.state.orchestrator
-    assert orchestrator is not None
+    orchestrator = request.app.state.orchestrator
+    assert isinstance(orchestrator, Orchestrator)
     return orchestrator
