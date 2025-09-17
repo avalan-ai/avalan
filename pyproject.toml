@@ -163,7 +163,8 @@ apple = [
 ]
 nvidia = [
   "vllm==0.10.0",
-  "bitsandbytes==0.46.1",
+  # requires NVIDIA GPUs with CUDA 12.6 runtime to match the bitsandbytes wheel
+  "bitsandbytes-cuda126==0.46.1",
 ]
 all = [
   "accelerate==1.9.0",
