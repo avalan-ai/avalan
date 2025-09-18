@@ -16,7 +16,7 @@ from asyncio import Lock
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Iterator
@@ -108,6 +108,61 @@ def create_router() -> APIRouter:
 
     router = APIRouter(tags=["mcp"])
 
+    @router.post("/initialize")
+    async def mcp_initialize(
+        request: Request,
+        logger: Logger = Depends(di_get_logger),
+        orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    ) -> JSONResponse:
+        assert logger and isinstance(logger, Logger)
+        assert orchestrator and isinstance(orchestrator, Orchestrator)
+
+        message, _ = await _expect_jsonrpc_message(request, {"initialize"})
+
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        protocol_version = str(params.get("protocolVersion") or "1.0.0")
+
+        response_id = message.get("id", str(uuid4()))
+        payload = {
+            "jsonrpc": "2.0",
+            "id": response_id,
+            "result": {
+                "protocolVersion": protocol_version,
+                "capabilities": _server_capabilities(orchestrator),
+                "serverInfo": _server_info(request),
+            },
+        }
+        logger.debug("Handled MCP initialize request", extra={"response_id": response_id})
+        return JSONResponse(payload)
+
+    @router.post("/tools/list")
+    async def mcp_list_tools(
+        request: Request,
+        logger: Logger = Depends(di_get_logger),
+        orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    ) -> JSONResponse:
+        assert logger and isinstance(logger, Logger)
+        assert orchestrator and isinstance(orchestrator, Orchestrator)
+
+        message, _ = await _expect_jsonrpc_message(request, {"tools/list"})
+
+        params = message.get("params")
+        if params is not None and not isinstance(params, dict):
+            raise HTTPException(status_code=400, detail="Missing MCP params")
+
+        tools = _collect_tool_descriptions(orchestrator)
+        response_id = message.get("id", str(uuid4()))
+        payload = {
+            "jsonrpc": "2.0",
+            "id": response_id,
+            "result": {"tools": tools, "nextCursor": None},
+        }
+        logger.debug(
+            "Handled MCP tools list request",
+            extra={"response_id": response_id, "tool_count": len(tools)},
+        )
+        return JSONResponse(payload)
+
     @router.post("/tools/run")
     async def mcp_run_tool(
         request: Request,
@@ -172,15 +227,11 @@ def create_router() -> APIRouter:
 
 
 async def _consume_call_request(request: Request) -> tuple[str | int, ResponsesRequest, str]:
-    messages = _iter_jsonrpc_messages(request)
-    try:
-        call_message = await anext(messages)
-    except StopAsyncIteration as exc:  # pragma: no cover
-        raise HTTPException(status_code=400, detail="Empty MCP request") from exc
+    call_message, messages = await _expect_jsonrpc_message(
+        request, {"tools/call", "tools/run"}
+    )
 
     method = call_message.get("method")
-    if method not in {"tools/call", "tools/run"}:
-        raise HTTPException(status_code=400, detail="Unsupported MCP method")
 
     params = call_message.get("params")
     if not isinstance(params, dict):
@@ -211,6 +262,114 @@ async def _consume_call_request(request: Request) -> tuple[str | int, ResponsesR
 
     request.state._mcp_message_iter = messages
     return call_message.get("id", str(uuid4())), request_model, progress_token
+
+
+async def _expect_jsonrpc_message(
+    request: Request, allowed_methods: set[str]
+) -> tuple[dict[str, Any], AsyncIterator[dict[str, Any]]]:
+    messages = _iter_jsonrpc_messages(request)
+    try:
+        message = await anext(messages)
+    except StopAsyncIteration as exc:  # pragma: no cover - defensive validation
+        raise HTTPException(status_code=400, detail="Empty MCP request") from exc
+
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=400, detail="Invalid MCP payload")
+
+    method = message.get("method")
+    if method not in allowed_methods:
+        raise HTTPException(status_code=400, detail="Unsupported MCP method")
+
+    return message, messages
+
+
+def _server_info(request: Request) -> dict[str, str]:
+    app = request.app
+    name = getattr(app, "title", None) or "avalan"
+
+    version = getattr(app, "version", None)
+    if version is None:
+        version = getattr(app.state, "version", None)
+    if version is None:
+        version = "0.0.0"
+
+    return {"name": str(name), "version": str(version)}
+
+
+def _server_capabilities(orchestrator: Orchestrator) -> dict[str, Any]:
+    tool_manager = getattr(orchestrator, "tool", None)
+    has_tools = bool(tool_manager) and not getattr(tool_manager, "is_empty", True)
+
+    return {
+        "tools": {
+            "list": {"enabled": True},
+            "call": {"enabled": has_tools},
+            "listChanged": {"enabled": False},
+        },
+        "resources": {
+            "subscribe": {"enabled": True},
+            "listChanged": {"enabled": False},
+        },
+    }
+
+
+def _collect_tool_descriptions(orchestrator: Orchestrator) -> list[dict[str, Any]]:
+    tool_manager = getattr(orchestrator, "tool", None)
+    if tool_manager is None:
+        return []
+
+    schemas = tool_manager.json_schemas()
+    if not schemas:
+        return []
+
+    tools: list[dict[str, Any]] = []
+    for schema in schemas:
+        description = _tool_description_from_schema(schema)
+        if description is not None:
+            tools.append(description)
+
+    tools.sort(key=lambda item: item["name"])
+    return tools
+
+
+def _tool_description_from_schema(schema: Any) -> dict[str, Any] | None:
+    if not isinstance(schema, dict):
+        return None
+
+    if schema.get("type") == "function":
+        function_schema = schema.get("function")
+        if not isinstance(function_schema, dict):
+            return None
+        name = function_schema.get("name")
+        if not isinstance(name, str) or not name:
+            return None
+        description = function_schema.get("description")
+        parameters = function_schema.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {"type": "object", "properties": {}}
+        return {
+            "name": name,
+            "description": description,
+            "inputSchema": parameters,
+        }
+
+    name = schema.get("name")
+    if not isinstance(name, str) or not name:
+        title = schema.get("title")
+        if not isinstance(title, str) or not title:
+            return None
+        name = title
+
+    description = schema.get("description")
+    input_schema = schema.get("schema") if isinstance(schema.get("schema"), dict) else schema
+    if not isinstance(input_schema, dict):
+        input_schema = {"type": "object", "properties": {}}
+
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": input_schema,
+    }
 
 
 async def _watch_for_cancellation(
