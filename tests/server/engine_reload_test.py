@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 
@@ -269,6 +269,108 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
             request.app.state.ctx.tool_settings.database.dsn, "postgres://db"
         )
         self.assertEqual(request.app.state.ctx.settings.uri, "old")
+
+    async def test_reload_restores_previous_state_when_loader_fails(self) -> None:
+        import avalan.server.routers.engine as eng
+
+        @dataclass
+        class DummySettings:
+            uri: str
+
+        settings = DummySettings(uri="old")
+        pid = uuid4()
+        orchestrator = MagicMock()
+        orchestrator.id = uuid4()
+        orchestrator_cm = MagicMock()
+        loader = SimpleNamespace(
+            from_settings=AsyncMock(
+                side_effect=[Exception("boom"), orchestrator_cm]
+            )
+        )
+        stack = SimpleNamespace(
+            aclose=AsyncMock(),
+            enter_async_context=AsyncMock(return_value=orchestrator),
+        )
+        agent_id = uuid4()
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    ctx=OrchestratorContext(
+                        participant_id=pid,
+                        settings=settings,
+                    ),
+                    stack=stack,
+                    loader=loader,
+                    agent_id=agent_id,
+                )
+            )
+        )
+        logger = MagicMock()
+        with patch.object(eng, "di_set") as di_set:
+            with self.assertRaises(Exception):
+                await eng.set_engine(request, EngineRequest(uri="new"), logger)
+        stack.aclose.assert_called_once()
+        self.assertEqual(loader.from_settings.await_count, 2)
+        stack.enter_async_context.assert_called_once_with(orchestrator_cm)
+        di_set.assert_called_once_with(
+            request.app, logger=logger, orchestrator=orchestrator
+        )
+        self.assertIs(request.app.state.ctx.settings, settings)
+        self.assertEqual(request.app.state.agent_id, orchestrator.id)
+
+    async def test_reload_restores_previous_state_when_entering_fails(
+        self,
+    ) -> None:
+        import avalan.server.routers.engine as eng
+
+        @dataclass
+        class DummySettings:
+            uri: str
+
+        settings = DummySettings(uri="old")
+        pid = uuid4()
+        orchestrator = MagicMock()
+        orchestrator.id = uuid4()
+        new_cm = MagicMock()
+        restore_cm = MagicMock()
+        loader = SimpleNamespace(
+            from_settings=AsyncMock(side_effect=[new_cm, restore_cm])
+        )
+        stack = SimpleNamespace(
+            aclose=AsyncMock(),
+            enter_async_context=AsyncMock(
+                side_effect=[Exception("boom"), orchestrator]
+            ),
+        )
+        agent_id = uuid4()
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    ctx=OrchestratorContext(
+                        participant_id=pid,
+                        settings=settings,
+                    ),
+                    stack=stack,
+                    loader=loader,
+                    agent_id=agent_id,
+                )
+            )
+        )
+        logger = MagicMock()
+        with patch.object(eng, "di_set") as di_set:
+            with self.assertRaises(Exception):
+                await eng.set_engine(request, EngineRequest(uri="new"), logger)
+        stack.aclose.assert_called_once()
+        self.assertEqual(loader.from_settings.await_count, 2)
+        self.assertEqual(
+            stack.enter_async_context.await_args_list,
+            [call(new_cm), call(restore_cm)],
+        )
+        di_set.assert_called_once_with(
+            request.app, logger=logger, orchestrator=orchestrator
+        )
+        self.assertIs(request.app.state.ctx.settings, settings)
+        self.assertEqual(request.app.state.agent_id, orchestrator.id)
 
     def test_engine_request_requires_uri_or_database(self) -> None:
         with self.assertRaises(ValidationError):
