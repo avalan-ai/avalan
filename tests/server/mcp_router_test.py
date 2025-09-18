@@ -4,6 +4,7 @@ from avalan.server.entities import ResponsesRequest
 from avalan.server.routers import mcp as mcp_router
 from asyncio import Event as AsyncEvent
 from asyncio import run
+from logging import getLogger
 from json import dumps, loads
 from types import SimpleNamespace
 from typing import Any
@@ -67,7 +68,23 @@ class DummyResponse:
         self._closed = True
 
 
+class DummyOrchestrator(mcp_router.Orchestrator):
+    def __init__(self, tool: Any) -> None:
+        self._tool = tool
+
+    @property
+    def tool(self) -> Any:
+        return self._tool
+
+
 class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
+    def _get_route(self, path: str):
+        router = mcp_router.create_router()
+        for route in router.routes:
+            if getattr(route, "path", None) == path:
+                return route.endpoint
+        raise AssertionError(f"Route {path} not found")
+
     async def test_consume_call_request(self) -> None:
         message = {
             "jsonrpc": "2.0",
@@ -195,3 +212,78 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         errors = [msg["error"] for msg in dict_messages if "error" in msg]
         self.assertTrue(errors)
         self.assertEqual(errors[-1]["code"], -32000)
+
+    async def test_initialize_returns_server_info(self) -> None:
+        endpoint = self._get_route("/initialize")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "init-1",
+            "method": "initialize",
+            "params": {
+                "clientInfo": {"name": "tester", "version": "0.0.1"},
+                "protocolVersion": "0.1.0",
+            },
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        request.app.title = "Avalan MCP"
+        request.app.version = "9.9.9"
+
+        tool_manager = SimpleNamespace(is_empty=True, json_schemas=lambda: None)
+        orchestrator = DummyOrchestrator(tool_manager)
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.initialize"),
+            orchestrator=orchestrator,
+        )
+
+        payload = loads(response.body.decode("utf-8"))
+        result = payload["result"]
+        self.assertEqual(result["serverInfo"], {"name": "Avalan MCP", "version": "9.9.9"})
+        self.assertIn("tools", result["capabilities"])
+        self.assertFalse(result["capabilities"]["tools"]["call"]["enabled"])
+
+    async def test_list_tools_returns_schemas(self) -> None:
+        endpoint = self._get_route("/tools/list")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "list-1",
+            "method": "tools/list",
+            "params": {"limit": 10},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        request.app.title = "Avalan MCP"
+        request.app.version = "1.0.0"
+
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "demo.tool",
+                "description": "Demo tool",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        tool_manager = SimpleNamespace(
+            is_empty=False,
+            json_schemas=MagicMock(return_value=[schema]),
+        )
+        orchestrator = DummyOrchestrator(tool_manager)
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.list"),
+            orchestrator=orchestrator,
+        )
+
+        payload = loads(response.body.decode("utf-8"))
+        result = payload["result"]
+        self.assertIsNone(result["nextCursor"])
+        self.assertEqual(result["tools"], [
+            {
+                "name": "demo.tool",
+                "description": "Demo tool",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ])
