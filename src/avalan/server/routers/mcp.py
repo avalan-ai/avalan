@@ -27,6 +27,12 @@ from typing import Any, AsyncGenerator, AsyncIterator, Iterator
 from uuid import UUID, uuid4
 
 RS = "\x1e"
+ALLOWED_TOOL_NAMES: set[str] = {
+    "run",
+    "orchestrator.run",
+    "/tools/run",
+    "tools/run",
+}
 
 
 @dataclass(slots=True)
@@ -109,6 +115,9 @@ def create_router() -> APIRouter:
     JSON-RPC requests for all supported MCP methods. The latter improves
     compatibility with generic MCP HTTP clients that expect a single endpoint
     URL.
+
+    Note: For MCP compatibility, both "tools/run" and the legacy
+    "tools/call" JSON‑RPC method are accepted when invoking the orchestrator.
     """
     from .. import di_get_logger, di_get_orchestrator
 
@@ -240,13 +249,7 @@ async def _consume_call_request(
     if not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="Missing MCP params")
 
-    if method == "tools/call":
-        name = params.get("name")
-        if name not in {"run", "orchestrator.run"}:
-            raise HTTPException(status_code=400, detail="Unsupported tool")
-        arguments = params.get("arguments")
-    else:
-        arguments = params
+    arguments = _extract_call_arguments(method, params)
 
     if not isinstance(arguments, dict):
         raise HTTPException(status_code=400, detail="Invalid tool arguments")
@@ -290,13 +293,7 @@ def _consume_call_request_from_message(
     if not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="Missing MCP params")
 
-    if method == "tools/call":
-        name = params.get("name")
-        if name not in {"run", "orchestrator.run"}:
-            raise HTTPException(status_code=400, detail="Unsupported tool")
-        arguments = params.get("arguments")
-    else:
-        arguments = params
+    arguments = _extract_call_arguments(method, params)
 
     if not isinstance(arguments, dict):
         raise HTTPException(status_code=400, detail="Invalid tool arguments")
@@ -495,11 +492,50 @@ def _handle_list_tools_message(
 def _collect_tool_descriptions() -> list[dict[str, Any]]:
     return [
         {
-            "name": "/tools/run",
+            "name": "run",
             "description": "Execute the Avalan orchestrator run endpoint.",
             "inputSchema": ResponsesRequest.model_json_schema(),
         }
     ]
+
+
+def _extract_call_arguments(
+    method: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Extract and validate the argument payload for MCP tool calls.
+
+    Accept-compatible shapes:
+    - tools/call: {"name": <tool>, "arguments": {...}}
+    - tools/run: {...}  (direct ResponsesRequest fields)
+    - tools/run: {"name": <tool>, "arguments": {...}} (legacy shape)
+    """
+    if method == "tools/call":
+        name = params.get("name")
+        if name is not None and name not in ALLOWED_TOOL_NAMES:
+            raise HTTPException(status_code=400, detail="Unsupported tool")
+        arguments = params.get("arguments")
+        if not isinstance(arguments, dict):
+            raise HTTPException(
+                status_code=400, detail="Invalid tool arguments"
+            )
+        return arguments
+
+    if method == "tools/run":
+        # Prefer explicit arguments shape when present
+        if "arguments" in params or "name" in params:
+            name = params.get("name")
+            if name is not None and name not in ALLOWED_TOOL_NAMES:
+                raise HTTPException(status_code=400, detail="Unsupported tool")
+            arguments = params.get("arguments")
+            if not isinstance(arguments, dict):
+                raise HTTPException(
+                    status_code=400, detail="Invalid tool arguments"
+                )
+            return arguments
+        # Otherwise, assume direct ResponsesRequest fields
+        return params
+
+    raise HTTPException(status_code=400, detail="Unsupported MCP method")
 
 
 async def _watch_for_cancellation(

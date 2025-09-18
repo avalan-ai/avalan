@@ -1402,4 +1402,3 @@ poetry install avalan --extras all
 > If you need transformer loading classes that are not yet released, install
 > the development version of transformers:
 > `poetry install git+https://github.com/huggingface/transformers --no-cache`
-

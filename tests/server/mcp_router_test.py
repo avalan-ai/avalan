@@ -289,7 +289,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn("nextCursor", result)
         self.assertEqual(len(result["tools"]), 1)
         run_tool = result["tools"][0]
-        self.assertEqual(run_tool["name"], "/tools/run")
+        self.assertEqual(run_tool["name"], "run")
         self.assertEqual(
             run_tool["description"],
             "Execute the Avalan orchestrator run endpoint.",
