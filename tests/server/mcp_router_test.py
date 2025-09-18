@@ -95,6 +95,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 "arguments": {
                     "model": "gpt",
                     "input": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
                 },
             },
         }
@@ -331,6 +332,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 "arguments": {
                     "model": "gpt",
                     "input": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
                 },
             },
         }
