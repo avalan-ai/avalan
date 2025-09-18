@@ -273,18 +273,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         request.app.title = "Avalan MCP"
         request.app.version = "1.0.0"
 
-        schema = {
-            "type": "function",
-            "function": {
-                "name": "demo.tool",
-                "description": "Demo tool",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-        tool_manager = SimpleNamespace(
-            is_empty=False,
-            json_schemas=MagicMock(return_value=[schema]),
-        )
+        tool_manager = MagicMock()
+        tool_manager.is_empty = False
+        tool_manager.json_schemas.return_value = []
         orchestrator = DummyOrchestrator(tool_manager)
 
         response = await endpoint(
@@ -296,16 +287,18 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         payload = loads(response.body.decode("utf-8"))
         result = payload["result"]
         self.assertNotIn("nextCursor", result)
+        self.assertEqual(len(result["tools"]), 1)
+        run_tool = result["tools"][0]
+        self.assertEqual(run_tool["name"], "/tools/run")
         self.assertEqual(
-            result["tools"],
-            [
-                {
-                    "name": "demo.tool",
-                    "description": "Demo tool",
-                    "inputSchema": {"type": "object", "properties": {}},
-                }
-            ],
+            run_tool["description"],
+            "Execute the Avalan orchestrator run endpoint.",
         )
+        self.assertEqual(
+            run_tool["inputSchema"],
+            ResponsesRequest.model_json_schema(),
+        )
+        tool_manager.json_schemas.assert_not_called()
 
     async def test_base_rpc_initialize_dispatch(self) -> None:
         endpoint = self._get_route("/")

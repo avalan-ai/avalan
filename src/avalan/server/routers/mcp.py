@@ -476,7 +476,7 @@ def _handle_list_tools_message(
     if params is not None and not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="Missing MCP params")
 
-    tools = _collect_tool_descriptions(orchestrator)
+    tools = _collect_tool_descriptions()
     response_id = message.get("id", str(uuid4()))
     result: dict[str, Any] = {"tools": tools}
     # Only include nextCursor if there is an actual cursor value
@@ -492,69 +492,14 @@ def _handle_list_tools_message(
     return JSONResponse(payload)
 
 
-def _collect_tool_descriptions(
-    orchestrator: Orchestrator,
-) -> list[dict[str, Any]]:
-    tool_manager = getattr(orchestrator, "tool", None)
-    if tool_manager is None:
-        return []
-
-    schemas = tool_manager.json_schemas()
-    if not schemas:
-        return []
-
-    tools: list[dict[str, Any]] = []
-    for schema in schemas:
-        description = _tool_description_from_schema(schema)
-        if description is not None:
-            tools.append(description)
-
-    tools.sort(key=lambda item: item["name"])
-    return tools
-
-
-def _tool_description_from_schema(schema: Any) -> dict[str, Any] | None:
-    if not isinstance(schema, dict):
-        return None
-
-    if schema.get("type") == "function":
-        function_schema = schema.get("function")
-        if not isinstance(function_schema, dict):
-            return None
-        name = function_schema.get("name")
-        if not isinstance(name, str) or not name:
-            return None
-        description = function_schema.get("description")
-        parameters = function_schema.get("parameters")
-        if not isinstance(parameters, dict):
-            parameters = {"type": "object", "properties": {}}
-        return {
-            "name": name,
-            "description": description,
-            "inputSchema": parameters,
+def _collect_tool_descriptions() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "/tools/run",
+            "description": "Execute the Avalan orchestrator run endpoint.",
+            "inputSchema": ResponsesRequest.model_json_schema(),
         }
-
-    name = schema.get("name")
-    if not isinstance(name, str) or not name:
-        title = schema.get("title")
-        if not isinstance(title, str) or not title:
-            return None
-        name = title
-
-    description = schema.get("description")
-    input_schema = (
-        schema.get("schema")
-        if isinstance(schema.get("schema"), dict)
-        else schema
-    )
-    if not isinstance(input_schema, dict):
-        input_schema = {"type": "object", "properties": {}}
-
-    return {
-        "name": name,
-        "description": description,
-        "inputSchema": input_schema,
-    }
+    ]
 
 
 async def _watch_for_cancellation(
