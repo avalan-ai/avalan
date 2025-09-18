@@ -267,8 +267,7 @@ async def _consume_call_request(
     if not progress_token:
         progress_token = str(uuid4())
 
-    if not request_model.stream:
-        request_model = request_model.model_copy(update={"stream": True})
+    # Honor client's stream preference; default is False.
 
     request.state._mcp_message_iter = messages
     return call_message.get("id", str(uuid4())), request_model, progress_token
@@ -311,8 +310,7 @@ def _consume_call_request_from_message(
     if not progress_token:
         progress_token = str(uuid4())
 
-    if not request_model.stream:
-        request_model = request_model.model_copy(update={"stream": True})
+    # Honor client's stream preference; default is False.
 
     request.state._mcp_message_iter = messages
     return call_message.get("id", str(uuid4())), request_model, progress_token
@@ -401,6 +399,42 @@ async def _start_tool_streaming_response(
     resource_store = _get_resource_store(request)
     base_path = getattr(request.app.state, "mcp_resource_base_path", "")
 
+    # If client did not request streaming, return a single JSON-RPC result.
+    if not responses_request.stream:
+        try:
+            text = await response.to_str()  # type: ignore[attr-defined]
+        finally:
+            watcher.cancel()
+            with suppress(Exception):
+                await watcher
+
+        summary: dict[str, Any] = {
+            "id": str(response_uuid),
+            "created": timestamp,
+            "model": responses_request.model,
+            "usage": {
+                "input_text_tokens": getattr(response, "input_token_count", 0),
+                "output_text_tokens": getattr(
+                    response, "output_token_count", 0
+                ),
+                "total_tokens": (
+                    getattr(response, "input_token_count", 0)
+                    + getattr(response, "output_token_count", 0)
+                ),
+            },
+        }
+        result_message = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "content": (
+                    [{"type": "text", "text": text}] if text else []
+                ),
+                "structuredContent": summary,
+            },
+        }
+        return JSONResponse(result_message)
+
     async def stream() -> AsyncGenerator[bytes, None]:
         try:
             async for chunk in _stream_mcp_response(
@@ -416,7 +450,9 @@ async def _start_tool_streaming_response(
                 base_path=base_path,
                 cancel_event=cancel_event,
             ):
-                yield chunk
+                # Wrap as Server-Sent Events for compatibility with proxies.
+                payload = chunk.rstrip(b"\n")
+                yield b"data: " + payload + b"\n\n"
         finally:
             watcher.cancel()
             with suppress(Exception):
@@ -427,7 +463,7 @@ async def _start_tool_streaming_response(
         "Connection": "keep-alive",
     }
     return StreamingResponse(
-        stream(), media_type="application/json", headers=headers
+        stream(), media_type="text/event-stream", headers=headers
     )
 
 
@@ -576,7 +612,9 @@ async def _stream_mcp_response(
     finished_normally = False
 
     def emit(message: dict[str, Any]) -> Iterator[bytes]:
-        encoded = dumps(message, separators=(",", ":")) + RS
+        # Emit newline-delimited JSON (NDJSON) for maximum proxy compatibility.
+        # Avoid RS (0x1E) to ensure each line is a valid JSON object by itself.
+        encoded = dumps(message, separators=(",", ":")) + "\n"
         yield encoded.encode("utf-8")
 
     try:

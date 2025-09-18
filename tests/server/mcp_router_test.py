@@ -168,11 +168,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
         orchestrator.sync_messages.assert_awaited()
 
-        messages = [
-            loads(part)
-            for part in "".join(chunks).split(mcp_router.RS)
-            if part
-        ]
+        messages = [loads(part) for part in "".join(chunks).splitlines() if part]
         dict_messages = [msg for msg in messages if isinstance(msg, dict)]
         methods = [
             msg.get("method") for msg in dict_messages if "method" in msg
@@ -215,11 +211,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         ):
             chunks.append(chunk.decode("utf-8"))
 
-        messages = [
-            loads(part)
-            for part in "".join(chunks).split(mcp_router.RS)
-            if part
-        ]
+        messages = [loads(part) for part in "".join(chunks).splitlines() if part]
         dict_messages = [msg for msg in messages if isinstance(msg, dict)]
         errors = [msg["error"] for msg in dict_messages if "error" in msg]
         self.assertTrue(errors)
