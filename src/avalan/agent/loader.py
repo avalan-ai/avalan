@@ -8,6 +8,7 @@ from ..entities import (
     ToolFormat,
     ToolManagerSettings,
 )
+from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..memory.partitioner.text import TextPartitioner
@@ -325,9 +326,20 @@ class OrchestratorLoader:
 
         event_manager = EventManager()
         if settings.log_events:
-            event_manager.add_listener(
-                lambda e: _l("%s", e.payload, inner_type=f"Event {e.type}")
-            )
+
+            def _log_event(event: Event) -> None:
+                is_info_event = event.type in (
+                    EventType.TOOL_PROCESS,
+                    EventType.TOOL_RESULT,
+                )
+                _l(
+                    "%s",
+                    event.payload,
+                    inner_type=f"Event {event.type}",
+                    is_debug=not is_info_event,
+                )
+
+            event_manager.add_listener(_log_event)
 
         _l("Loading memory manager for agent %s", settings.agent_id)
 
