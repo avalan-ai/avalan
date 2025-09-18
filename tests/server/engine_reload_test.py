@@ -270,6 +270,63 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(request.app.state.ctx.settings.uri, "old")
 
+    async def test_reload_removes_existing_orchestrator(self) -> None:
+        import avalan.server.routers.engine as eng
+
+        @dataclass
+        class DummySettings:
+            uri: str
+
+        class TrackingNamespace(SimpleNamespace):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                object.__setattr__(self, "deleted_orchestrator", False)
+
+            def __delattr__(self, name: str) -> None:
+                if name == "orchestrator":
+                    object.__setattr__(self, "deleted_orchestrator", True)
+                super().__delattr__(name)
+
+        settings = DummySettings(uri="old")
+        pid = uuid4()
+        orchestrator = MagicMock()
+        orchestrator.id = uuid4()
+        orchestrator_cm = MagicMock()
+        loader = SimpleNamespace(
+            from_settings=AsyncMock(return_value=orchestrator_cm)
+        )
+        stack = SimpleNamespace(
+            aclose=AsyncMock(),
+            enter_async_context=AsyncMock(return_value=orchestrator),
+        )
+        state = TrackingNamespace(
+            ctx=OrchestratorContext(
+                participant_id=pid,
+                settings=settings,
+            ),
+            stack=stack,
+            loader=loader,
+            agent_id=None,
+            orchestrator=MagicMock(),
+        )
+        request = SimpleNamespace(app=SimpleNamespace(state=state))
+        with patch.object(eng, "di_set") as di_set:
+            logger = MagicMock()
+            await eng.set_engine(
+                request,
+                EngineRequest(uri="new"),
+                logger,
+            )
+        stack.aclose.assert_called_once()
+        loader.from_settings.assert_called_once()
+        stack.enter_async_context.assert_called_once_with(orchestrator_cm)
+        di_set.assert_called_once_with(
+            request.app, logger=logger, orchestrator=orchestrator
+        )
+        self.assertTrue(state.deleted_orchestrator)
+        self.assertFalse(hasattr(state, "orchestrator"))
+        self.assertEqual(request.app.state.ctx.settings.uri, "new")
+
     async def test_reload_restores_previous_state_when_loader_fails(self) -> None:
         import avalan.server.routers.engine as eng
 
@@ -317,6 +374,48 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIs(request.app.state.ctx.settings, settings)
         self.assertEqual(request.app.state.agent_id, orchestrator.id)
+
+    async def test_reload_raises_restore_error_when_recovery_fails(self) -> None:
+        import avalan.server.routers.engine as eng
+
+        @dataclass
+        class DummySettings:
+            uri: str
+
+        settings = DummySettings(uri="old")
+        pid = uuid4()
+        stack = SimpleNamespace(
+            aclose=AsyncMock(),
+            enter_async_context=AsyncMock(),
+        )
+        state = SimpleNamespace(
+            ctx=OrchestratorContext(
+                participant_id=pid,
+                settings=settings,
+            ),
+            stack=stack,
+            loader=SimpleNamespace(),
+            agent_id=uuid4(),
+        )
+        request = SimpleNamespace(app=SimpleNamespace(state=state))
+        logger = MagicMock()
+        primary_error = RuntimeError("primary failure")
+        restore_error = RuntimeError("restore failure")
+        load_mock = AsyncMock(side_effect=[primary_error, restore_error])
+        with (
+            patch.object(eng, "_load_orchestrator", load_mock),
+            patch.object(eng, "di_set") as di_set,
+        ):
+            with self.assertRaises(RuntimeError) as exc_info:
+                await eng.set_engine(request, EngineRequest(uri="new"), logger)
+        stack.aclose.assert_called_once()
+        stack.enter_async_context.assert_not_called()
+        di_set.assert_not_called()
+        self.assertIs(exc_info.exception, restore_error)
+        self.assertIs(exc_info.exception.__cause__, primary_error)
+        self.assertEqual(load_mock.await_count, 2)
+        self.assertIs(state.ctx.settings, settings)
+        self.assertEqual(state.agent_id, request.app.state.agent_id)
 
     async def test_reload_restores_previous_state_when_entering_fails(
         self,
