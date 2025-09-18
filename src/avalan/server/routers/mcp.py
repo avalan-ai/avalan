@@ -18,17 +18,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
+    Response,
     StreamingResponse,
 )
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
-from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Iterator
+from typing import Any, AsyncGenerator, AsyncIterator, Iterator
 from uuid import UUID, uuid4
 
 RS = "\x1e"
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(slots=True)
@@ -104,10 +102,63 @@ class MCPResourceStore:
 
 
 def create_router() -> APIRouter:
-    """Construct the MCP HTTP streaming router."""
+    """Construct the MCP HTTP streaming router.
+
+    The router exposes both method-specific endpoints ("/initialize",
+    "/tools/list", "/tools/run") and a base endpoint at "/" that accepts
+    JSON-RPC requests for all supported MCP methods. The latter improves
+    compatibility with generic MCP HTTP clients that expect a single endpoint
+    URL.
+    """
     from .. import di_get_logger, di_get_orchestrator
 
     router = APIRouter(tags=["mcp"])
+
+    @router.post("", response_model=None)
+    @router.post("/", response_model=None)
+    async def mcp_rpc(
+        request: Request,
+        logger: Logger = Depends(di_get_logger),
+        orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    ) -> Response:
+        """Handle MCP JSON-RPC messages on a single endpoint.
+
+        This dispatches supported methods to the corresponding handlers so
+        tools like mcp-inspector can work with a single base URL.
+        """
+        assert logger and isinstance(logger, Logger)
+        assert orchestrator and isinstance(orchestrator, Orchestrator)
+
+        # Accept any of the supported methods in the first frame
+        message, messages = await _expect_jsonrpc_message(
+            request, {"initialize", "tools/list", "tools/call", "tools/run"}
+        )
+
+        method = message.get("method")
+        if method == "initialize":
+            return _handle_initialize_message(
+                request, logger, orchestrator, message
+            )
+        if method == "tools/list":
+            return _handle_list_tools_message(
+                request, logger, orchestrator, message
+            )
+        if method in {"tools/call", "tools/run"}:
+            (
+                request_id,
+                responses_request,
+                progress_token,
+            ) = _consume_call_request_from_message(request, message, messages)
+            return await _start_tool_streaming_response(
+                request,
+                logger,
+                orchestrator,
+                request_id,
+                responses_request,
+                progress_token,
+            )
+
+        raise HTTPException(status_code=400, detail="Unsupported MCP method")
 
     @router.post("/initialize")
     async def mcp_initialize(
@@ -119,29 +170,9 @@ def create_router() -> APIRouter:
         assert orchestrator and isinstance(orchestrator, Orchestrator)
 
         message, _ = await _expect_jsonrpc_message(request, {"initialize"})
-
-        params = (
-            message.get("params")
-            if isinstance(message.get("params"), dict)
-            else {}
+        return _handle_initialize_message(
+            request, logger, orchestrator, message
         )
-        protocol_version = str(params.get("protocolVersion") or "1.0.0")
-
-        response_id = message.get("id", str(uuid4()))
-        payload = {
-            "jsonrpc": "2.0",
-            "id": response_id,
-            "result": {
-                "protocolVersion": protocol_version,
-                "capabilities": _server_capabilities(orchestrator),
-                "serverInfo": _server_info(request),
-            },
-        }
-        logger.debug(
-            "Handled MCP initialize request",
-            extra={"response_id": response_id},
-        )
-        return JSONResponse(payload)
 
     @router.post("/tools/list")
     async def mcp_list_tools(
@@ -153,23 +184,9 @@ def create_router() -> APIRouter:
         assert orchestrator and isinstance(orchestrator, Orchestrator)
 
         message, _ = await _expect_jsonrpc_message(request, {"tools/list"})
-
-        params = message.get("params")
-        if params is not None and not isinstance(params, dict):
-            raise HTTPException(status_code=400, detail="Missing MCP params")
-
-        tools = _collect_tool_descriptions(orchestrator)
-        response_id = message.get("id", str(uuid4()))
-        payload = {
-            "jsonrpc": "2.0",
-            "id": response_id,
-            "result": {"tools": tools, "nextCursor": None},
-        }
-        logger.debug(
-            "Handled MCP tools list request",
-            extra={"response_id": response_id, "tool_count": len(tools)},
+        return _handle_list_tools_message(
+            request, logger, orchestrator, message
         )
-        return JSONResponse(payload)
 
     @router.post("/tools/run")
     async def mcp_run_tool(
@@ -185,47 +202,13 @@ def create_router() -> APIRouter:
             responses_request,
             progress_token,
         ) = await _consume_call_request(request)
-
-        response, response_uuid, timestamp = await orchestrate(
-            responses_request, logger, orchestrator
-        )
-
-        cancel_event = AsyncEvent()
-        message_iter = _iter_jsonrpc_messages(request)
-        watcher = create_task(
-            _watch_for_cancellation(message_iter, cancel_event, logger)
-        )
-
-        resource_store = _get_resource_store(request)
-        base_path = getattr(request.app.state, "mcp_resource_base_path", "")
-
-        async def stream() -> AsyncGenerator[bytes, None]:
-            try:
-                async for chunk in _stream_mcp_response(
-                    request_id=request_id,
-                    request_model=responses_request,
-                    response=response,
-                    response_id=response_uuid,
-                    timestamp=timestamp,
-                    progress_token=progress_token,
-                    orchestrator=orchestrator,
-                    logger=logger,
-                    resource_store=resource_store,
-                    base_path=base_path,
-                    cancel_event=cancel_event,
-                ):
-                    yield chunk
-            finally:
-                watcher.cancel()
-                with suppress(Exception):
-                    await watcher
-
-        headers = {
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        }
-        return StreamingResponse(
-            stream(), media_type="application/json", headers=headers
+        return await _start_tool_streaming_response(
+            request,
+            logger,
+            orchestrator,
+            request_id,
+            responses_request,
+            progress_token,
         )
 
     @router.get("/resources/{resource_id}")
@@ -252,6 +235,56 @@ async def _consume_call_request(
     )
 
     method = call_message.get("method")
+
+    params = call_message.get("params")
+    if not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+
+    if method == "tools/call":
+        name = params.get("name")
+        if name not in {"run", "orchestrator.run"}:
+            raise HTTPException(status_code=400, detail="Unsupported tool")
+        arguments = params.get("arguments")
+    else:
+        arguments = params
+
+    if not isinstance(arguments, dict):
+        raise HTTPException(status_code=400, detail="Invalid tool arguments")
+
+    try:
+        request_model = ResponsesRequest.model_validate(arguments)
+    except Exception as exc:  # pragma: no cover - validation error path
+        raise HTTPException(
+            status_code=400, detail="Invalid MCP arguments"
+        ) from exc
+
+    progress_token = (
+        params.get("progressToken") if isinstance(params, dict) else None
+    )
+    if not progress_token:
+        progress_token = str(uuid4())
+
+    if not request_model.stream:
+        request_model = request_model.model_copy(update={"stream": True})
+
+    request.state._mcp_message_iter = messages
+    return call_message.get("id", str(uuid4())), request_model, progress_token
+
+
+def _consume_call_request_from_message(
+    request: Request,
+    call_message: dict[str, Any],
+    messages: AsyncIterator[dict[str, Any]],
+) -> tuple[str | int, ResponsesRequest, str]:
+    """Validate a call request given a pre-read JSON-RPC message.
+
+    This mirrors ``_consume_call_request`` but assumes the first message in
+    the stream was already consumed by the caller and provides the remaining
+    iterator explicitly.
+    """
+    method = call_message.get("method")
+    if method not in {"tools/call", "tools/run"}:
+        raise HTTPException(status_code=400, detail="Unsupported MCP method")
 
     params = call_message.get("params")
     if not isinstance(params, dict):
@@ -330,17 +363,133 @@ def _server_capabilities(orchestrator: Orchestrator) -> dict[str, Any]:
         tool_manager, "is_empty", True
     )
 
+    # Use boolean flags for capabilities to match common MCP client schemas
+    # such as mcp-inspector.
     return {
         "tools": {
-            "list": {"enabled": True},
-            "call": {"enabled": has_tools},
-            "listChanged": {"enabled": False},
+            "list": True,
+            "call": bool(has_tools),
+            "listChanged": False,
         },
         "resources": {
-            "subscribe": {"enabled": True},
-            "listChanged": {"enabled": False},
+            "subscribe": True,
+            "listChanged": False,
         },
     }
+
+
+async def _start_tool_streaming_response(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    request_id: str | int,
+    responses_request: ResponsesRequest,
+    progress_token: str,
+) -> StreamingResponse:
+    """Start a streaming MCP tool run response.
+
+    This centralizes the logic to run orchestration and stream JSON-RPC
+    frames, used by both method-specific and base RPC endpoints.
+    """
+    response, response_uuid, timestamp = await orchestrate(
+        responses_request, logger, orchestrator
+    )
+
+    cancel_event = AsyncEvent()
+    message_iter = _iter_jsonrpc_messages(request)
+    watcher = create_task(
+        _watch_for_cancellation(message_iter, cancel_event, logger)
+    )
+
+    resource_store = _get_resource_store(request)
+    base_path = getattr(request.app.state, "mcp_resource_base_path", "")
+
+    async def stream() -> AsyncGenerator[bytes, None]:
+        try:
+            async for chunk in _stream_mcp_response(
+                request_id=request_id,
+                request_model=responses_request,
+                response=response,
+                response_id=response_uuid,
+                timestamp=timestamp,
+                progress_token=progress_token,
+                orchestrator=orchestrator,
+                logger=logger,
+                resource_store=resource_store,
+                base_path=base_path,
+                cancel_event=cancel_event,
+            ):
+                yield chunk
+        finally:
+            watcher.cancel()
+            with suppress(Exception):
+                await watcher
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(
+        stream(), media_type="application/json", headers=headers
+    )
+
+
+def _handle_initialize_message(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    message: dict[str, Any],
+) -> JSONResponse:
+    """Build the initialize response payload given a JSON-RPC message."""
+    params = (
+        message.get("params")
+        if isinstance(message.get("params"), dict)
+        else {}
+    )
+    protocol_version = str(params.get("protocolVersion") or "1.0.0")
+
+    response_id = message.get("id", str(uuid4()))
+    payload = {
+        "jsonrpc": "2.0",
+        "id": response_id,
+        "result": {
+            "protocolVersion": protocol_version,
+            "capabilities": _server_capabilities(orchestrator),
+            "serverInfo": _server_info(request),
+        },
+    }
+    logger.debug(
+        "Handled MCP initialize request",
+        extra={"response_id": response_id},
+    )
+    return JSONResponse(payload)
+
+
+def _handle_list_tools_message(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    message: dict[str, Any],
+) -> JSONResponse:
+    """Build the tools/list response payload given a JSON-RPC message."""
+    params = message.get("params")
+    if params is not None and not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+
+    tools = _collect_tool_descriptions(orchestrator)
+    response_id = message.get("id", str(uuid4()))
+    result: dict[str, Any] = {"tools": tools}
+    # Only include nextCursor if there is an actual cursor value
+    # (some clients reject null here)
+    next_cursor = None
+    if next_cursor:
+        result["nextCursor"] = next_cursor
+    payload = {"jsonrpc": "2.0", "id": response_id, "result": result}
+    logger.debug(
+        "Handled MCP tools list request",
+        extra={"response_id": response_id, "tool_count": len(tools)},
+    )
+    return JSONResponse(payload)
 
 
 def _collect_tool_descriptions(

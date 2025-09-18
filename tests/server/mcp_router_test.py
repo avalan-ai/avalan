@@ -258,7 +258,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             result["serverInfo"], {"name": "Avalan MCP", "version": "9.9.9"}
         )
         self.assertIn("tools", result["capabilities"])
-        self.assertFalse(result["capabilities"]["tools"]["call"]["enabled"])
+        self.assertFalse(result["capabilities"]["tools"]["call"])
 
     async def test_list_tools_returns_schemas(self) -> None:
         endpoint = self._get_route("/tools/list")
@@ -295,7 +295,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
         payload = loads(response.body.decode("utf-8"))
         result = payload["result"]
-        self.assertIsNone(result["nextCursor"])
+        self.assertNotIn("nextCursor", result)
         self.assertEqual(
             result["tools"],
             [
@@ -306,3 +306,60 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 }
             ],
         )
+
+    async def test_base_rpc_initialize_dispatch(self) -> None:
+        endpoint = self._get_route("/")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "init-2",
+            "method": "initialize",
+            "params": {"protocolVersion": "0.1.0"},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        request.app.title = "Avalan MCP"
+        request.app.version = "2.0.0"
+
+        tool_manager = SimpleNamespace(
+            is_empty=True, json_schemas=lambda: None
+        )
+        orchestrator = DummyOrchestrator(tool_manager)
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.rpc.init"),
+            orchestrator=orchestrator,
+        )
+        payload = loads(response.body.decode("utf-8"))
+        result = payload["result"]
+        self.assertEqual(
+            result["serverInfo"], {"name": "Avalan MCP", "version": "2.0.0"}
+        )
+
+    async def test_consume_call_request_from_message(self) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": "call-2",
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "model": "gpt",
+                    "input": [{"role": "user", "content": "Hello"}],
+                },
+            },
+        }
+        req = DummyRequest(b"")
+        req.app.state.mcp_resource_base_path = "/m"
+
+        # empty iterator of remaining messages
+        async def _empty():
+            if False:
+                yield {}
+
+        rid, req_model, token = mcp_router._consume_call_request_from_message(
+            req, message, _empty()
+        )
+        self.assertEqual(rid, "call-2")
+        self.assertTrue(req_model.stream)
+        self.assertTrue(token)
