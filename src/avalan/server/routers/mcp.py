@@ -11,22 +11,24 @@ from ...entities import (
 from ...event import Event, EventType
 from ...server.entities import ResponsesRequest
 from ...utils import to_json
-from asyncio import Event as AsyncEvent
-from asyncio import Lock
+from asyncio import Event as AsyncEvent, create_task, Lock
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Iterator
 from uuid import UUID, uuid4
 
-
 RS = "\x1e"
 
 if TYPE_CHECKING:
-    from .. import di_get_logger, di_get_orchestrator
+    pass
 
 
 @dataclass(slots=True)
@@ -103,7 +105,6 @@ class MCPResourceStore:
 
 def create_router() -> APIRouter:
     """Construct the MCP HTTP streaming router."""
-
     from .. import di_get_logger, di_get_orchestrator
 
     router = APIRouter(tags=["mcp"])
@@ -119,7 +120,11 @@ def create_router() -> APIRouter:
 
         message, _ = await _expect_jsonrpc_message(request, {"initialize"})
 
-        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        params = (
+            message.get("params")
+            if isinstance(message.get("params"), dict)
+            else {}
+        )
         protocol_version = str(params.get("protocolVersion") or "1.0.0")
 
         response_id = message.get("id", str(uuid4()))
@@ -132,7 +137,10 @@ def create_router() -> APIRouter:
                 "serverInfo": _server_info(request),
             },
         }
-        logger.debug("Handled MCP initialize request", extra={"response_id": response_id})
+        logger.debug(
+            "Handled MCP initialize request",
+            extra={"response_id": response_id},
+        )
         return JSONResponse(payload)
 
     @router.post("/tools/list")
@@ -172,9 +180,11 @@ def create_router() -> APIRouter:
         assert logger and isinstance(logger, Logger)
         assert orchestrator and isinstance(orchestrator, Orchestrator)
 
-        request_id, responses_request, progress_token = await _consume_call_request(
-            request
-        )
+        (
+            request_id,
+            responses_request,
+            progress_token,
+        ) = await _consume_call_request(request)
 
         response, response_uuid, timestamp = await orchestrate(
             responses_request, logger, orchestrator
@@ -182,7 +192,9 @@ def create_router() -> APIRouter:
 
         cancel_event = AsyncEvent()
         message_iter = _iter_jsonrpc_messages(request)
-        watcher = create_task(_watch_for_cancellation(message_iter, cancel_event, logger))
+        watcher = create_task(
+            _watch_for_cancellation(message_iter, cancel_event, logger)
+        )
 
         resource_store = _get_resource_store(request)
         base_path = getattr(request.app.state, "mcp_resource_base_path", "")
@@ -212,21 +224,29 @@ def create_router() -> APIRouter:
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
         }
-        return StreamingResponse(stream(), media_type="application/json", headers=headers)
+        return StreamingResponse(
+            stream(), media_type="application/json", headers=headers
+        )
 
     @router.get("/resources/{resource_id}")
-    async def mcp_get_resource(request: Request, resource_id: str) -> PlainTextResponse:
+    async def mcp_get_resource(
+        request: Request, resource_id: str
+    ) -> PlainTextResponse:
         store = _get_resource_store(request)
         try:
             resource = await store.get(resource_id)
         except KeyError as exc:  # pragma: no cover - FastAPI handles
-            raise HTTPException(status_code=404, detail="Resource not found") from exc
+            raise HTTPException(
+                status_code=404, detail="Resource not found"
+            ) from exc
         return PlainTextResponse(resource.text, media_type=resource.mime_type)
 
     return router
 
 
-async def _consume_call_request(request: Request) -> tuple[str | int, ResponsesRequest, str]:
+async def _consume_call_request(
+    request: Request,
+) -> tuple[str | int, ResponsesRequest, str]:
     call_message, messages = await _expect_jsonrpc_message(
         request, {"tools/call", "tools/run"}
     )
@@ -251,9 +271,13 @@ async def _consume_call_request(request: Request) -> tuple[str | int, ResponsesR
     try:
         request_model = ResponsesRequest.model_validate(arguments)
     except Exception as exc:  # pragma: no cover - validation error path
-        raise HTTPException(status_code=400, detail="Invalid MCP arguments") from exc
+        raise HTTPException(
+            status_code=400, detail="Invalid MCP arguments"
+        ) from exc
 
-    progress_token = params.get("progressToken") if isinstance(params, dict) else None
+    progress_token = (
+        params.get("progressToken") if isinstance(params, dict) else None
+    )
     if not progress_token:
         progress_token = str(uuid4())
 
@@ -270,8 +294,12 @@ async def _expect_jsonrpc_message(
     messages = _iter_jsonrpc_messages(request)
     try:
         message = await anext(messages)
-    except StopAsyncIteration as exc:  # pragma: no cover - defensive validation
-        raise HTTPException(status_code=400, detail="Empty MCP request") from exc
+    except (
+        StopAsyncIteration
+    ) as exc:  # pragma: no cover - defensive validation
+        raise HTTPException(
+            status_code=400, detail="Empty MCP request"
+        ) from exc
 
     if not isinstance(message, dict):
         raise HTTPException(status_code=400, detail="Invalid MCP payload")
@@ -298,7 +326,9 @@ def _server_info(request: Request) -> dict[str, str]:
 
 def _server_capabilities(orchestrator: Orchestrator) -> dict[str, Any]:
     tool_manager = getattr(orchestrator, "tool", None)
-    has_tools = bool(tool_manager) and not getattr(tool_manager, "is_empty", True)
+    has_tools = bool(tool_manager) and not getattr(
+        tool_manager, "is_empty", True
+    )
 
     return {
         "tools": {
@@ -313,7 +343,9 @@ def _server_capabilities(orchestrator: Orchestrator) -> dict[str, Any]:
     }
 
 
-def _collect_tool_descriptions(orchestrator: Orchestrator) -> list[dict[str, Any]]:
+def _collect_tool_descriptions(
+    orchestrator: Orchestrator,
+) -> list[dict[str, Any]]:
     tool_manager = getattr(orchestrator, "tool", None)
     if tool_manager is None:
         return []
@@ -361,7 +393,11 @@ def _tool_description_from_schema(schema: Any) -> dict[str, Any] | None:
         name = title
 
     description = schema.get("description")
-    input_schema = schema.get("schema") if isinstance(schema.get("schema"), dict) else schema
+    input_schema = (
+        schema.get("schema")
+        if isinstance(schema.get("schema"), dict)
+        else schema
+    )
     if not isinstance(input_schema, dict):
         input_schema = {"type": "object", "properties": {}}
 
@@ -546,7 +582,9 @@ async def _stream_mcp_response(
             "id": request_id,
             "result": {
                 "content": (
-                    [{"type": "text", "text": answer_text}] if answer_text else []
+                    [{"type": "text", "text": answer_text}]
+                    if answer_text
+                    else []
                 ),
                 "structuredContent": summary,
             },
@@ -576,7 +614,9 @@ async def _close_response_iterator(response: Any) -> None:
             pass
 
 
-def _tool_call_token_notification(token: ToolCallToken) -> dict[str, Any] | None:
+def _tool_call_token_notification(
+    token: ToolCallToken,
+) -> dict[str, Any] | None:
     if token.call is None:
         if not token.token:
             return None
@@ -649,7 +689,11 @@ async def _tool_event_notifications(
 
     tool_summary = tool_summaries.setdefault(
         tool_call_id,
-        {"id": tool_call_id, "name": item.get("name"), "arguments": item.get("arguments")},
+        {
+            "id": tool_call_id,
+            "name": item.get("name"),
+            "arguments": item.get("arguments"),
+        },
     )
 
     payload = {
@@ -693,7 +737,10 @@ async def _tool_event_notifications(
             resources[resource_key] = resource
             yield _resource_notification(resource)
             tool_summary.setdefault("resources", []).append(
-                {"uri": resource.uri, "name": name}
+                {
+                    "uri": resource.uri,
+                    "name": name,
+                }
             )
 
     yield payload
@@ -714,7 +761,11 @@ def _resource_notification(resource: MCPResource) -> dict[str, Any]:
         params["resources"][0]["closed"] = True
     else:
         params["resources"][0]["delta"] = {"set": {"text": resource.text}}
-    return {"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": params}
+    return {
+        "jsonrpc": "2.0",
+        "method": "notifications/resources/updated",
+        "params": params,
+    }
 
 
 def _extract_append_streams(
@@ -734,7 +785,11 @@ def _tool_call_event_item(event: Event) -> dict[str, Any] | None:
     if not event.payload:
         return None
     if event.type is EventType.TOOL_RESULT:
-        tool_result = event.payload.get("result") if isinstance(event.payload, dict) else None
+        tool_result = (
+            event.payload.get("result")
+            if isinstance(event.payload, dict)
+            else None
+        )
         if isinstance(tool_result, ToolCallError):
             return {
                 "id": str(tool_result.call.id),
@@ -745,7 +800,9 @@ def _tool_call_event_item(event: Event) -> dict[str, Any] | None:
         if isinstance(tool_result, ToolCallResult):
             result = (
                 tool_result.result
-                if isinstance(tool_result.result, (dict, list, str, int, float, bool))
+                if isinstance(
+                    tool_result.result, (dict, list, str, int, float, bool)
+                )
                 else to_json(tool_result.result)
             )
             return {
@@ -757,7 +814,11 @@ def _tool_call_event_item(event: Event) -> dict[str, Any] | None:
     if isinstance(event.payload, list) and event.payload:
         call = event.payload[0]
     else:
-        call = event.payload.get("call") if isinstance(event.payload, dict) else None
+        call = (
+            event.payload.get("call")
+            if isinstance(event.payload, dict)
+            else None
+        )
     if call is None:
         return None
     return {
@@ -776,7 +837,9 @@ def _get_resource_store(request: Request) -> MCPResourceStore:
     return store
 
 
-async def _iter_jsonrpc_messages(request: Request) -> AsyncGenerator[dict[str, Any], None]:
+async def _iter_jsonrpc_messages(
+    request: Request,
+) -> AsyncGenerator[dict[str, Any], None]:
     if hasattr(request.state, "_mcp_message_iter"):
         iterator = request.state._mcp_message_iter
         delattr(request.state, "_mcp_message_iter")
@@ -797,9 +860,13 @@ async def _iter_jsonrpc_messages(request: Request) -> AsyncGenerator[dict[str, A
             try:
                 yield loads(segment)
             except JSONDecodeError as exc:
-                raise HTTPException(status_code=400, detail="Invalid MCP payload") from exc
+                raise HTTPException(
+                    status_code=400, detail="Invalid MCP payload"
+                ) from exc
     if buffer.strip():
         try:
             yield loads(buffer)
         except JSONDecodeError as exc:
-            raise HTTPException(status_code=400, detail="Invalid MCP payload") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid MCP payload"
+            ) from exc

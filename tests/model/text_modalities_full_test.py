@@ -120,13 +120,17 @@ def test_stopping_criteria_with_keywords() -> None:
 
 def test_get_mlx_model_no_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     _get_mlx_model.cache_clear()
-    monkeypatch.setattr("avalan.model.modalities.text.find_spec", lambda name: None)
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.find_spec", lambda name: None
+    )
     assert _get_mlx_model() is None
 
 
 def test_get_mlx_model_module_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     _get_mlx_model.cache_clear()
-    monkeypatch.setattr("avalan.model.modalities.text.find_spec", lambda name: object())
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.find_spec", lambda name: object()
+    )
 
     original_import = __import__
 
@@ -144,7 +148,9 @@ def test_get_mlx_model_module_missing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_mlx_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
     _get_mlx_model.cache_clear()
-    monkeypatch.setattr("avalan.model.modalities.text.find_spec", lambda name: object())
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.find_spec", lambda name: object()
+    )
     module_name = "avalan.model.nlp.text.mlxlm"
     stub = ModuleType(module_name)
     stub.MlxLmModel = RecordingLoader
@@ -213,6 +219,7 @@ def test_text_generation_load_engine_default(
     assert isinstance(loader, RecordingLoader)
     assert loader.kwargs["logger"] is logger
 
+
 def test_text_generation_get_operation_from_arguments() -> None:
     args = Namespace(
         display_tokens=5,
@@ -240,7 +247,9 @@ def test_text_generation_get_operation_from_arguments() -> None:
 def test_text_generation_call_local_uses_manual_sampling(
     local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("avalan.model.modalities.text._get_mlx_model", lambda: None)
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model", lambda: None
+    )
     modality = TextGenerationModality()
     model = DummyModel()
     text_params = OperationTextParameters(
@@ -306,7 +315,12 @@ def test_text_generation_call_mlx_branch(
     assert result == "result"
     assert len(model.calls) == 1
     _, kwargs = model.calls[0]
-    assert set(kwargs) == {"system_prompt", "developer_prompt", "settings", "tool"}
+    assert set(kwargs) == {
+        "system_prompt",
+        "developer_prompt",
+        "settings",
+        "tool",
+    }
     assert kwargs["tool"] is tool
 
 
@@ -407,10 +421,12 @@ def test_text_sequence_classification_load_engine_local(
 
 
 def test_text_sequence_classification_get_operation_from_arguments() -> None:
-    operation = TextSequenceClassificationModality().get_operation_from_arguments(
-        Namespace(),
-        "text",
-        GenerationSettings(),
+    operation = (
+        TextSequenceClassificationModality().get_operation_from_arguments(
+            Namespace(),
+            "text",
+            GenerationSettings(),
+        )
     )
     assert operation.parameters is None
     assert operation.input == "text"
@@ -485,7 +501,9 @@ def test_text_sequence_to_sequence_call(
         )
     )
     assert result == "result"
-    assert isinstance(model.calls[0][1]["stopping_criterias"][0], KeywordStoppingCriteria)
+    assert isinstance(
+        model.calls[0][1]["stopping_criterias"][0], KeywordStoppingCriteria
+    )
 
 
 def test_text_token_classification_load_engine_local(
@@ -618,4 +636,3 @@ def test_text_translation_call(
     assert kwargs["destination_language"] == "fr"
     assert kwargs["skip_special_tokens"] is True
     assert isinstance(kwargs["stopping_criterias"][0], KeywordStoppingCriteria)
-

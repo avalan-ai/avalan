@@ -40,9 +40,9 @@ def agents_server(
     allow_credentials: bool = False,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
-    assert (specs_path is None) ^ (settings is None), (
-        "Provide either specs_path or settings, but not both"
-    )
+    assert (specs_path is None) ^ (
+        settings is None
+    ), "Provide either specs_path or settings, but not both"
 
     from os import environ
     from uvicorn import Config, Server
@@ -79,13 +79,15 @@ def agents_server(
     logger.debug("Creating %s server", name)
     app = FastAPI(title=name, version=version, lifespan=lifespan)
 
-    if any([
-        allow_origins,
-        allow_origin_regex,
-        allow_methods,
-        allow_headers,
-        allow_credentials,
-    ]):
+    if any(
+        [
+            allow_origins,
+            allow_origin_regex,
+            allow_methods,
+            allow_headers,
+            allow_credentials,
+        ]
+    ):
         app.add_middleware(
             CORSMiddleware,
             allow_origins=allow_origins or [],

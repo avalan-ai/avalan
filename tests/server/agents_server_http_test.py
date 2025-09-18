@@ -67,7 +67,10 @@ class AgentsServerHttpTestCase(TestCase):
         with patch.dict(sys.modules, modules):
             with (
                 patch("avalan.server.FastAPI", self.FastAPI),
-                patch("avalan.server.mcp_router.create_router", return_value=mcp_router) as create_router,
+                patch(
+                    "avalan.server.mcp_router.create_router",
+                    return_value=mcp_router,
+                ) as create_router,
                 patch("avalan.server.logger_replace"),
             ):
                 result = agents_server(
@@ -92,7 +95,9 @@ class AgentsServerHttpTestCase(TestCase):
         app.include_router.assert_any_call(self.responses_router, prefix="/o")
         app.include_router.assert_any_call(self.engine_router)
         app.include_router.assert_any_call(mcp_router, prefix="/m")
-        self.Config.assert_called_once_with(app, host="h", port=8080, reload=False)
+        self.Config.assert_called_once_with(
+            app, host="h", port=8080, reload=False
+        )
         self.Server.assert_called_once_with(config_instance)
 
     def test_agents_server_cors_options(self) -> None:
@@ -111,7 +116,10 @@ class AgentsServerHttpTestCase(TestCase):
         with patch.dict(sys.modules, modules):
             with (
                 patch("avalan.server.FastAPI", self.FastAPI),
-                patch("avalan.server.mcp_router.create_router", return_value=MagicMock()),
+                patch(
+                    "avalan.server.mcp_router.create_router",
+                    return_value=MagicMock(),
+                ),
                 patch("avalan.server.logger_replace"),
             ):
                 agents_server(

@@ -101,9 +101,7 @@ async def _load_orchestrator(
     else:
         assert ctx.settings
         settings = (
-            replace(ctx.settings, uri=uri)
-            if uri is not None
-            else ctx.settings
+            replace(ctx.settings, uri=uri) if uri is not None else ctx.settings
         )
         orchestrator_cm = await loader.from_settings(
             settings, tool_settings=tool_settings

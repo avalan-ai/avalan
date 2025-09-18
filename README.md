@@ -1317,6 +1317,23 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
+#### MCP endpoints
+
+Avalan also embeds an HTTP MCP server alongside the OpenAI‑compatible
+endpoints whenever you run `avalan agent serve`. By default it is mounted at
+`/mcp`, configurable via the CLI option `--prefix-mcp` (the OpenAI endpoints
+use `--prefix-openai`, defaulting to `/v1`). Both surfaces fully support
+streaming, including incremental tool calling and intermediate outputs.
+
+> [!TIP]
+> Debug the MCP stream for a tool execution from your shell:
+>
+> ```bash
+>  curl -N -H 'Content-Type: application/json' \
+>   --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run","arguments":{"model":"gpt-oss-20b","input":[{"role":"user","content":"How many products do I have?"}],"stream":true}}}' \
+>   http://127.0.0.1:9001/mcp/tools/run
+> ```
+
 #### Proxy agents
 
 The command `agent proxy` serves as a quick way to serve an agent that:
@@ -1385,5 +1402,4 @@ poetry install avalan --extras all
 > If you need transformer loading classes that are not yet released, install
 > the development version of transformers:
 > `poetry install git+https://github.com/huggingface/transformers --no-cache`
-
 

@@ -102,7 +102,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         request = DummyRequest(body)
         request.app.state.mcp_resource_base_path = "/m"
 
-        request_id, req_model, token = await mcp_router._consume_call_request(request)
+        request_id, req_model, token = await mcp_router._consume_call_request(
+            request
+        )
         self.assertEqual(request_id, "call-1")
         self.assertTrue(req_model.stream)
         self.assertTrue(token)
@@ -122,7 +124,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         items: list[Any] = [
             ReasoningToken(token="thinking"),
-            Event(type=EventType.TOOL_PROCESS, payload=[tool_call], started=1.0),
+            Event(
+                type=EventType.TOOL_PROCESS, payload=[tool_call], started=1.0
+            ),
             Token(token="Hello"),
             Event(
                 type=EventType.TOOL_RESULT,
@@ -135,7 +139,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         ]
         response = DummyResponse(items)
         request_model = ResponsesRequest.model_validate(
-            {"model": "gpt", "input": [{"role": "user", "content": "hi"}]}
+            {
+                "model": "gpt",
+                "input": [{"role": "user", "content": "hi"}],
+            }
         )
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
@@ -167,7 +174,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             if part
         ]
         dict_messages = [msg for msg in messages if isinstance(msg, dict)]
-        methods = [msg.get("method") for msg in dict_messages if "method" in msg]
+        methods = [
+            msg.get("method") for msg in dict_messages if "method" in msg
+        ]
         self.assertIn("notifications/message", methods)
         self.assertIn("notifications/progress", methods)
         self.assertIn("notifications/resources/updated", methods)
@@ -179,7 +188,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_stream_response_handles_cancellation(self) -> None:
         response = DummyResponse([Token(token="Hi")])
         request_model = ResponsesRequest.model_validate(
-            {"model": "gpt", "input": [{"role": "user", "content": "hi"}]}
+            {
+                "model": "gpt",
+                "input": [{"role": "user", "content": "hi"}],
+            }
         )
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
@@ -229,7 +241,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         request.app.title = "Avalan MCP"
         request.app.version = "9.9.9"
 
-        tool_manager = SimpleNamespace(is_empty=True, json_schemas=lambda: None)
+        tool_manager = SimpleNamespace(
+            is_empty=True, json_schemas=lambda: None
+        )
         orchestrator = DummyOrchestrator(tool_manager)
 
         response = await endpoint(
@@ -240,7 +254,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
         payload = loads(response.body.decode("utf-8"))
         result = payload["result"]
-        self.assertEqual(result["serverInfo"], {"name": "Avalan MCP", "version": "9.9.9"})
+        self.assertEqual(
+            result["serverInfo"], {"name": "Avalan MCP", "version": "9.9.9"}
+        )
         self.assertIn("tools", result["capabilities"])
         self.assertFalse(result["capabilities"]["tools"]["call"]["enabled"])
 
@@ -280,10 +296,13 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         payload = loads(response.body.decode("utf-8"))
         result = payload["result"]
         self.assertIsNone(result["nextCursor"])
-        self.assertEqual(result["tools"], [
-            {
-                "name": "demo.tool",
-                "description": "Demo tool",
-                "inputSchema": {"type": "object", "properties": {}},
-            }
-        ])
+        self.assertEqual(
+            result["tools"],
+            [
+                {
+                    "name": "demo.tool",
+                    "description": "Demo tool",
+                    "inputSchema": {"type": "object", "properties": {}},
+                }
+            ],
+        )
