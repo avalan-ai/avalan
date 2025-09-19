@@ -82,6 +82,15 @@ class OrchestratorDiTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, orchestrator)
         loader.from_settings.assert_called_once()
 
+    async def test_di_get_orchestrator_returns_existing(self) -> None:
+        orchestrator = DummyOrchestrator()
+        state = SimpleNamespace(orchestrator=orchestrator)
+        request = SimpleNamespace(app=SimpleNamespace(state=state))
+
+        result = await di_get_orchestrator(request)
+
+        self.assertIs(result, orchestrator)
+
     async def test_di_get_logger(self) -> None:
         logger = MagicMock(spec=Logger)
         app_state = SimpleNamespace(logger=logger)

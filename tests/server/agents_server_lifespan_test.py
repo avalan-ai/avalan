@@ -1,0 +1,115 @@
+import pytest
+from avalan.server import agents_server
+from contextlib import AsyncExitStack
+from logging import Logger
+from types import ModuleType, SimpleNamespace
+from uuid import UUID
+from unittest.mock import MagicMock, patch
+import sys
+import os
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_agents_server_lifespan_initializes_state() -> None:
+    logger = MagicMock(spec=Logger)
+    loader_instance = MagicMock(name="loader_instance")
+    context_instance = MagicMock(name="context_instance")
+    resource_store_instance = MagicMock(name="resource_store")
+    config_instance = MagicMock(name="config_instance")
+    server_instance = MagicMock(name="server_instance")
+    generated_participant_id = UUID(int=1)
+    agent_identifier = UUID(int=2)
+    loader_kwargs: dict[str, object] = {}
+    captured_lifespan: dict[str, object] = {}
+    hub = MagicMock(name="hub")
+
+    def build_fastapi(*args, **kwargs):
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            include_router=MagicMock(),
+            add_middleware=MagicMock(),
+        )
+        captured_lifespan["app"] = app
+        captured_lifespan["lifespan"] = kwargs["lifespan"]
+        return app
+
+    def build_loader(*args, **kwargs):
+        loader_kwargs.update(kwargs)
+        return loader_instance
+
+    uvicorn_module = ModuleType("uvicorn")
+    config_mock = MagicMock(return_value=config_instance)
+    server_mock = MagicMock(return_value=server_instance)
+    uvicorn_module.Config = config_mock
+    uvicorn_module.Server = server_mock
+
+    with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
+        with (
+            patch("avalan.server.FastAPI", side_effect=build_fastapi) as fastapi_mock,
+            patch("avalan.server.OrchestratorLoader", side_effect=build_loader) as loader_cls,
+            patch(
+                "avalan.server.OrchestratorContext", return_value=context_instance
+            ) as context_cls,
+            patch(
+                "avalan.server.mcp_router.MCPResourceStore",
+                return_value=resource_store_instance,
+            ) as resource_store_cls,
+            patch("avalan.server.logger_replace") as logger_replace,
+            patch.dict(os.environ, {}, clear=True),
+            patch("avalan.server.uuid4", return_value=generated_participant_id) as uuid4_mock,
+        ):
+            server = agents_server(
+                hub=hub,
+                name="srv",
+                version="v1",
+                host="0.0.0.0",
+                port=1234,
+                reload=False,
+                specs_path="agent.yaml",
+                settings=None,
+                tool_settings="tools",
+                prefix_mcp="/mcp",
+                prefix_openai="/openai",
+                logger=logger,
+                agent_id=agent_identifier,
+                participant_id=None,
+            )
+
+            assert server is server_instance
+            fastapi_mock.assert_called_once()
+            config_mock.assert_called_once()
+            server_mock.assert_called_once_with(config_instance)
+            logger_replace.assert_called_once()
+
+            lifespan = captured_lifespan["lifespan"]
+            app = captured_lifespan["app"]
+
+            async with lifespan(app):
+                assert os.environ["TOKENIZERS_PARALLELISM"] == "false"
+                assert app.state.ctx is context_instance
+                assert app.state.stack is loader_kwargs["stack"]
+                assert app.state.loader is loader_instance
+                assert app.state.logger is logger
+                assert app.state.agent_id == agent_identifier
+                assert app.state.mcp_resource_store is resource_store_instance
+                assert app.state.mcp_resource_base_path == "/mcp"
+
+            loader_cls.assert_called_once()
+            context_cls.assert_called_once_with(
+                participant_id=generated_participant_id,
+                specs_path="agent.yaml",
+                settings=None,
+                tool_settings="tools",
+            )
+            resource_store_cls.assert_called_once_with()
+            uuid4_mock.assert_called_once_with()
+
+    assert isinstance(loader_kwargs["stack"], AsyncExitStack)
+    assert loader_kwargs["hub"] is hub
+    assert loader_kwargs["logger"] is logger
+    assert loader_kwargs["participant_id"] == generated_participant_id
