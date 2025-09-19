@@ -8,7 +8,11 @@ from avalan.entities import (
     TokenDetail,
 )
 from avalan.event import Event, EventType
-from avalan.server.entities import ResponsesRequest
+from avalan.server.entities import (
+    ChatCompletionRequest,
+    ChatMessage,
+    MCPToolRequest,
+)
 from avalan.server.routers import mcp as mcp_router
 from contextlib import suppress
 from asyncio import (
@@ -191,7 +195,7 @@ class MCPUtilityTestCase(TestCase):
         self.assertEqual(descriptions[0]["description"], "Desc")
         self.assertEqual(
             descriptions[0]["inputSchema"],
-            ResponsesRequest.model_json_schema(),
+            MCPToolRequest.model_json_schema(),
         )
 
     def test_token_text_variants(self) -> None:
@@ -455,9 +459,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "model": "gpt",
-                    "input": [{"role": "user", "content": "Hello"}],
-                    "stream": True,
+                    "input_string": "Hello",
                 },
             },
         }
@@ -469,7 +471,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             request
         )
         self.assertEqual(request_id, "call-1")
-        self.assertTrue(req_model.stream)
+        self.assertEqual(req_model.input_string, "Hello")
         self.assertTrue(token)
         remaining = []
         async for message in mcp_router._iter_jsonrpc_messages(request):
@@ -502,11 +504,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             "text",
         ]
         response = DummyResponse(items)
-        request_model = ResponsesRequest.model_validate(
-            {
-                "model": "gpt",
-                "input": [{"role": "user", "content": "hi"}],
-            }
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
         )
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
@@ -549,11 +550,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
     async def test_stream_response_handles_cancellation(self) -> None:
         response = DummyResponse([Token(token="Hi")])
-        request_model = ResponsesRequest.model_validate(
-            {
-                "model": "gpt",
-                "input": [{"role": "user", "content": "hi"}],
-            }
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
         )
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
@@ -590,11 +590,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             raise RuntimeError("boom")
 
         response = DummyResponse([boom])
-        request_model = ResponsesRequest.model_validate(
-            {
-                "model": "gpt",
-                "input": [{"role": "user", "content": "hi"}],
-            }
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
         )
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
@@ -699,7 +698,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             run_tool["inputSchema"],
-            ResponsesRequest.model_json_schema(),
+            MCPToolRequest.model_json_schema(),
         )
         tool_manager.json_schemas.assert_not_called()
 
@@ -853,9 +852,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "model": "gpt",
-                    "input": [{"role": "user", "content": "Hello"}],
-                    "stream": True,
+                    "input_string": "Hello",
                 },
             },
         }
@@ -871,7 +868,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             req, message, _empty()
         )
         self.assertEqual(rid, "call-2")
-        self.assertTrue(req_model.stream)
+        self.assertEqual(req_model.input_string, "Hello")
         self.assertTrue(token)
 
     async def test_tool_event_notifications_without_item(self) -> None:
@@ -997,13 +994,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
 
 class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
-    def _responses_request(self, stream: bool = False) -> ResponsesRequest:
-        return ResponsesRequest.model_validate(
-            {
-                "model": "test",
-                "input": [{"role": "user", "content": "hi"}],
-                "stream": stream,
-            }
+    def _chat_request(self, stream: bool = False) -> ChatCompletionRequest:
+        return ChatCompletionRequest(
+            model="test",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=stream,
         )
 
     async def test_expect_jsonrpc_message_invalid_payload(self) -> None:
@@ -1069,8 +1064,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "model": "m",
-                    "input": [{"role": "user", "content": "hi"}],
+                    "input_string": "hi",
                 },
                 "progressToken": "tok-1",
             },
@@ -1078,12 +1072,12 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         body = (dumps(message) + mcp_router.RS).encode("utf-8")
         request = DummyRequest(body)
         request.app.state.mcp_resource_base_path = "/m"
-        request_id, model, progress = await mcp_router._consume_call_request(
+        request_id, tool_request, progress = await mcp_router._consume_call_request(
             request
         )
         self.assertEqual(request_id, "call-progress")
         self.assertEqual(progress, "tok-1")
-        self.assertFalse(model.stream)
+        self.assertEqual(tool_request.input_string, "hi")
 
     async def test_consume_call_request_validation_error(self) -> None:
         message = {
@@ -1092,15 +1086,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "model": "m",
-                    "input": [{"role": "user", "content": "hi"}],
+                    "input_string": "hi",
                 },
             },
         }
         body = (dumps(message) + mcp_router.RS).encode("utf-8")
         request = DummyRequest(body)
         with patch.object(
-            mcp_router.ResponsesRequest,
+            mcp_router.MCPToolRequest,
             "model_validate",
             side_effect=ValueError("bad"),
         ):
@@ -1115,9 +1108,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "model": "m",
-                    "input": [{"role": "user", "content": "hi"}],
-                    "stream": False,
+                    "input_string": "hi",
                 },
             },
         }
@@ -1130,12 +1121,12 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         with patch.object(mcp_router, "uuid4", return_value=UUID(int=1234)):
             (
                 request_id,
-                model,
+                tool_request,
                 progress,
             ) = await mcp_router._consume_call_request(request)
         self.assertEqual(request_id, str(UUID(int=1234)))
         self.assertEqual(progress, str(UUID(int=1234)))
-        self.assertFalse(model.stream)
+        self.assertEqual(tool_request.input_string, "hi")
         remaining = []
         async for item in mcp_router._iter_jsonrpc_messages(request):
             remaining.append(item)
@@ -1232,7 +1223,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 yield {}
 
         with patch.object(
-            mcp_router.ResponsesRequest,
+            mcp_router.MCPToolRequest,
             "model_validate",
             side_effect=ValueError("bad"),
         ):
@@ -1245,10 +1236,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                         "params": {
                             "name": "run",
                             "arguments": {
-                                "model": "m",
-                                "input": [
-                                    {"role": "user", "content": "hi"}
-                                ],
+                                "input_string": "hi",
                             },
                         },
                     },
@@ -1265,7 +1253,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             if False:
                 yield {}
 
-        rid, model, token = mcp_router._parse_call_request(
+        rid, tool_request, token = mcp_router._parse_call_request(
             request,
             {
                 "jsonrpc": "2.0",
@@ -1274,10 +1262,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 "params": {
                     "name": "run",
                     "arguments": {
-                        "model": "m",
-                        "input": [
-                            {"role": "user", "content": "hi"}
-                        ],
+                        "input_string": "hi",
                     },
                     "progressToken": "tok-2",
                 },
@@ -1286,7 +1271,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(rid, "call-3")
         self.assertEqual(token, "tok-2")
-        self.assertFalse(model.stream)
+        self.assertEqual(tool_request.input_string, "hi")
 
     async def test_parse_call_request_stores_iterator(
         self,
@@ -1302,8 +1287,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "model": "m",
-                    "input": [{"role": "user", "content": "hi"}],
+                    "input_string": "hi",
                 },
             },
         }
@@ -1405,7 +1389,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
 
     async def test_start_tool_streaming_response_non_stream(self) -> None:
         request = DummyRequest(b"")
-        responses_request = self._responses_request(stream=False)
+        tool_request = MCPToolRequest(input_string="hi")
         response_object = DummyResponse([])
         response_object.text = "answer"
         response_object.input_token_count = 1
@@ -1426,6 +1410,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 AsyncMock(return_value=(response_object, UUID(int=1), 42)),
             ),
             patch.object(
+                mcp_router,
+                "_build_chat_request",
+                return_value=self._chat_request(stream=False),
+            ),
+            patch.object(
                 mcp_router, "create_task", side_effect=fake_create_task
             ),
         ):
@@ -1434,7 +1423,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 logger,
                 orchestrator,
                 "req-1",
-                responses_request,
+                tool_request,
                 "progress",
             )
         self.assertIsInstance(result, mcp_router.JSONResponse)
@@ -1449,7 +1438,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
 
     async def test_start_tool_streaming_response_empty_text(self) -> None:
         request = DummyRequest(b"")
-        responses_request = self._responses_request(stream=False)
+        tool_request = MCPToolRequest(input_string="hi")
         response_object = DummyResponse([])
         response_object.text = ""
         response_object.input_token_count = 0
@@ -1470,6 +1459,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 AsyncMock(return_value=(response_object, UUID(int=3), 7)),
             ),
             patch.object(
+                mcp_router,
+                "_build_chat_request",
+                return_value=self._chat_request(stream=False),
+            ),
+            patch.object(
                 mcp_router, "create_task", side_effect=fake_create_task
             ),
         ):
@@ -1478,7 +1472,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 logger,
                 orchestrator,
                 "req-empty",
-                responses_request,
+                tool_request,
                 "progress",
             )
         payload = loads(result.body.decode("utf-8"))
@@ -1493,7 +1487,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             yield b'{"chunk":1}\n'
 
         request = DummyRequest(b"")
-        responses_request = self._responses_request(stream=True)
+        tool_request = MCPToolRequest(input_string="hi")
         response_object = DummyResponse([])
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
@@ -1511,6 +1505,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 AsyncMock(return_value=(response_object, UUID(int=2), 99)),
             ),
             patch.object(
+                mcp_router,
+                "_build_chat_request",
+                return_value=self._chat_request(stream=True),
+            ),
+            patch.object(
                 mcp_router, "_stream_mcp_response", side_effect=stream
             ),
             patch.object(
@@ -1522,7 +1521,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 logger,
                 orchestrator,
                 "req-2",
-                responses_request,
+                tool_request,
                 "progress",
             )
         self.assertIsInstance(result, mcp_router.StreamingResponse)
@@ -1564,7 +1563,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         orchestrator.sync_messages = AsyncMock()
         cancel_event = AsyncEvent()
         store = mcp_router.MCPResourceStore()
-        request_model = self._responses_request(stream=True)
+        request_model = self._chat_request(stream=True)
         payloads = []
         async for chunk in mcp_router._stream_mcp_response(
             request_id="id",
@@ -1620,7 +1619,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         response.output_token_count = 1
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
-        request_model = self._responses_request(stream=True)
+        request_model = self._chat_request(stream=True)
         payloads = []
         async for chunk in mcp_router._stream_mcp_response(
             request_id="id",
@@ -1674,10 +1673,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                         "params": {
                             "name": "run",
                             "arguments": {
-                                "model": "m",
-                                "input": [
-                                    {"role": "user", "content": "hello"}
-                                ],
+                                "input_string": "hello",
                             },
                         },
                     }
