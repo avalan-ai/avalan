@@ -405,7 +405,7 @@ class MCPUtilityTestCase(TestCase):
         payload = loads(response.body.decode("utf-8"))
         self.assertEqual(payload["result"]["protocolVersion"], "1.0.0")
 
-    def test_handle_ping_message_echos_params(self) -> None:
+    def test_handle_ping_message_returns_empty_result(self) -> None:
         message = {
             "jsonrpc": "2.0",
             "id": "ping-1",
@@ -415,10 +415,19 @@ class MCPUtilityTestCase(TestCase):
 
         response = mcp_router._handle_ping_message(MagicMock(), message)
         payload = loads(response.body.decode("utf-8"))
-        timestamp = payload["result"]["timestamp"]
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         self.assertEqual(payload["id"], "ping-1")
-        self.assertEqual(payload["result"]["received"], message["params"])
+        self.assertEqual(payload["result"], {})
+
+    def test_handle_ping_message_generates_id_when_missing(self) -> None:
+        message = {"jsonrpc": "2.0", "method": "ping", "params": None}
+        generated_id = UUID("00000000-0000-0000-0000-000000000042")
+
+        with patch.object(mcp_router, "uuid4", return_value=generated_id):
+            response = mcp_router._handle_ping_message(MagicMock(), message)
+
+        payload = loads(response.body.decode("utf-8"))
+        self.assertEqual(payload["id"], str(generated_id))
+        self.assertEqual(payload["result"], {})
 
     def test_handle_ping_message_invalid_params(self) -> None:
         message = {
@@ -694,7 +703,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         tool_manager.json_schemas.assert_not_called()
 
-    async def test_ping_endpoint_returns_timestamp(self) -> None:
+    async def test_ping_endpoint_returns_empty_result(self) -> None:
         endpoint = self._get_route("/ping")
         message = {
             "jsonrpc": "2.0",
@@ -711,10 +720,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
 
         payload = loads(response.body.decode("utf-8"))
-        timestamp = payload["result"]["timestamp"]
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         self.assertEqual(payload["id"], "ping-ep")
-        self.assertEqual(payload["result"]["received"], message["params"])
+        self.assertEqual(payload["result"], {})
 
     async def test_base_rpc_initialize_dispatch(self) -> None:
         endpoint = self._get_route("/")
@@ -787,10 +794,27 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
 
         payload = loads(response.body.decode("utf-8"))
-        timestamp = payload["result"]["timestamp"]
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         self.assertEqual(payload["id"], "ping-rpc")
-        self.assertEqual(payload["result"]["received"], message["params"])
+        self.assertEqual(payload["result"], {})
+
+    async def test_base_rpc_ping_dispatch_generates_id(self) -> None:
+        endpoint = self._get_route("/")
+        message = {"jsonrpc": "2.0", "method": "ping"}
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=True))
+        generated_id = UUID("00000000-0000-0000-0000-000000000099")
+
+        with patch.object(mcp_router, "uuid4", return_value=generated_id):
+            response = await endpoint(
+                request,
+                logger=getLogger("test.rpc.ping"),
+                orchestrator=orchestrator,
+            )
+
+        payload = loads(response.body.decode("utf-8"))
+        self.assertEqual(payload["id"], str(generated_id))
+        self.assertEqual(payload["result"], {})
 
     async def test_base_rpc_allowed_method_without_handler(self) -> None:
         endpoint = self._get_route("/")
