@@ -489,13 +489,8 @@ def _handle_ping_message(
         raise HTTPException(status_code=400, detail="Missing MCP params")
 
     response_id = message.get("id", str(uuid4()))
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-    result: dict[str, Any] = {"timestamp": timestamp}
-    if isinstance(params, dict):
-        result["received"] = params
-
-    payload = {"jsonrpc": "2.0", "id": response_id, "result": result}
+    # Per MCP spec, ping returns an empty result object.
+    payload = {"jsonrpc": "2.0", "id": response_id, "result": {}}
     logger.debug(
         "Handled MCP ping request", extra={"response_id": response_id}
     )
