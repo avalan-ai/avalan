@@ -11,6 +11,7 @@ from avalan.event import Event, EventType
 from avalan.server.entities import ResponsesRequest
 from avalan.server.routers import mcp as mcp_router
 from contextlib import suppress
+from datetime import datetime
 from asyncio import (
     CancelledError,
     Event as AsyncEvent,
@@ -404,6 +405,31 @@ class MCPUtilityTestCase(TestCase):
         payload = loads(response.body.decode("utf-8"))
         self.assertEqual(payload["result"]["protocolVersion"], "1.0.0")
 
+    def test_handle_ping_message_echos_params(self) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": "ping-1",
+            "method": "ping",
+            "params": {"message": "hello"},
+        }
+
+        response = mcp_router._handle_ping_message(MagicMock(), message)
+        payload = loads(response.body.decode("utf-8"))
+        timestamp = payload["result"]["timestamp"]
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        self.assertEqual(payload["id"], "ping-1")
+        self.assertEqual(payload["result"]["received"], message["params"])
+
+    def test_handle_ping_message_invalid_params(self) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": "invalid",
+        }
+
+        with self.assertRaises(mcp_router.HTTPException):
+            mcp_router._handle_ping_message(MagicMock(), message)
+
 
 class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
     def _get_route(self, path: str):
@@ -668,6 +694,28 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         tool_manager.json_schemas.assert_not_called()
 
+    async def test_ping_endpoint_returns_timestamp(self) -> None:
+        endpoint = self._get_route("/ping")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "ping-ep",
+            "method": "ping",
+            "params": {"message": "keepalive"},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.ping"),
+        )
+
+        payload = loads(response.body.decode("utf-8"))
+        timestamp = payload["result"]["timestamp"]
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        self.assertEqual(payload["id"], "ping-ep")
+        self.assertEqual(payload["result"]["received"], message["params"])
+
     async def test_base_rpc_initialize_dispatch(self) -> None:
         endpoint = self._get_route("/")
         message = {
@@ -719,6 +767,30 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         payload = loads(response.body.decode("utf-8"))
         self.assertIn("tools", payload["result"])
+
+    async def test_base_rpc_ping_dispatch(self) -> None:
+        endpoint = self._get_route("/")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "ping-rpc",
+            "method": "ping",
+            "params": {"message": "still-here"},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=True))
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.rpc.ping"),
+            orchestrator=orchestrator,
+        )
+
+        payload = loads(response.body.decode("utf-8"))
+        timestamp = payload["result"]["timestamp"]
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        self.assertEqual(payload["id"], "ping-rpc")
+        self.assertEqual(payload["result"]["received"], message["params"])
 
     async def test_base_rpc_allowed_method_without_handler(self) -> None:
         endpoint = self._get_route("/")
