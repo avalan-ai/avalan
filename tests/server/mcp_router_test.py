@@ -198,6 +198,42 @@ class MCPUtilityTestCase(TestCase):
             MCPToolRequest.model_json_schema(),
         )
 
+    def test_default_model_id_selects_first_sorted_candidate(self) -> None:
+        orchestrator = SimpleNamespace(model_ids={"beta", "alpha"})
+        model_id = mcp_router._default_model_id(orchestrator)
+        self.assertEqual(model_id, "alpha")
+
+    def test_default_model_id_fallback_without_candidates(self) -> None:
+        orchestrator = SimpleNamespace(model_ids=[])
+        self.assertEqual(
+            mcp_router._default_model_id(orchestrator),
+            mcp_router.MODEL_FALLBACK,
+        )
+
+        missing = SimpleNamespace()
+        self.assertEqual(
+            mcp_router._default_model_id(missing),
+            mcp_router.MODEL_FALLBACK,
+        )
+
+    def test_build_chat_request_uses_default_model(self) -> None:
+        orchestrator = SimpleNamespace(model_ids={"zeta", "alpha"})
+        tool_request = MCPToolRequest(input_string="ping")
+
+        chat_request = mcp_router._build_chat_request(
+            tool_request, orchestrator
+        )
+
+        self.assertIsInstance(chat_request, ChatCompletionRequest)
+        self.assertTrue(chat_request.stream)
+        self.assertEqual(chat_request.model, "alpha")
+        self.assertEqual(len(chat_request.messages), 1)
+
+        message = chat_request.messages[0]
+        self.assertIsInstance(message, ChatMessage)
+        self.assertEqual(message.role, "user")
+        self.assertEqual(message.content, "ping")
+
     def test_token_text_variants(self) -> None:
         token = Token(token="a")
         detail = TokenDetail(token="b")
