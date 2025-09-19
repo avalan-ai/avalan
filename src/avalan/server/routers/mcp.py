@@ -427,9 +427,7 @@ async def _start_tool_streaming_response(
             "jsonrpc": "2.0",
             "id": request_id,
             "result": {
-                "content": (
-                    [{"type": "text", "text": text}] if text else []
-                ),
+                "content": [{"type": "text", "text": text}] if text else [],
                 "structuredContent": summary,
             },
         }

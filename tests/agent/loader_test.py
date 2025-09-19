@@ -1605,7 +1605,9 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 self.listeners: list[Callable[[Event], Any]] = []
 
             def add_listener(
-                self, listener: Callable[[Event], Any], event_types: Any | None = None
+                self,
+                listener: Callable[[Event], Any],
+                event_types: Any | None = None,
             ) -> None:
                 self.listeners.append(listener)
 
@@ -1678,7 +1680,9 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         logger.log.assert_called_once()
         level, message, payload = logger.log.call_args.args
         self.assertEqual(level, INFO)
-        self.assertEqual(message, "<Event tool_process @ OrchestratorLoader> %s")
+        self.assertEqual(
+            message, "<Event tool_process @ OrchestratorLoader> %s"
+        )
         self.assertEqual(payload, tool_event.payload)
 
         logger.log.reset_mock()
