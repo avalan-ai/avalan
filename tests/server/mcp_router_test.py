@@ -722,6 +722,64 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(payload["id"], "ping-ep")
         self.assertEqual(payload["result"], {})
 
+    async def test_initialized_notification_endpoint_returns_no_content(
+        self,
+    ) -> None:
+        endpoint = self._get_route("/notifications/initialized")
+        message = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {"capabilities": {}},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.initialized.endpoint"),
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.body, b"")
+
+    async def test_initialized_notification_endpoint_rejects_id(self) -> None:
+        endpoint = self._get_route("/notifications/initialized")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "not-allowed",
+            "method": "notifications/initialized",
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await endpoint(
+                request,
+                logger=getLogger("test.initialized.id"),
+            )
+
+        self.assertIn("cannot include an id", str(exc.exception.detail))
+
+    async def test_initialized_notification_endpoint_rejects_invalid_params(
+        self,
+    ) -> None:
+        endpoint = self._get_route("/notifications/initialized")
+        message = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": "oops",
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await endpoint(
+                request,
+                logger=getLogger("test.initialized.params"),
+            )
+
+        self.assertIn("Missing MCP params", str(exc.exception.detail))
+
     async def test_base_rpc_initialize_dispatch(self) -> None:
         endpoint = self._get_route("/")
         message = {
@@ -795,6 +853,26 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         payload = loads(response.body.decode("utf-8"))
         self.assertEqual(payload["id"], "ping-rpc")
         self.assertEqual(payload["result"], {})
+
+    async def test_base_rpc_handles_initialized_notification(self) -> None:
+        endpoint = self._get_route("/")
+        message = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=True))
+
+        response = await endpoint(
+            request,
+            logger=getLogger("test.rpc.initialized"),
+            orchestrator=orchestrator,
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.body, b"")
 
     async def test_base_rpc_ping_dispatch_generates_id(self) -> None:
         endpoint = self._get_route("/")

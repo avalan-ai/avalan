@@ -43,8 +43,11 @@ JSONObject = dict[str, JSONValue]
 
 Method = Literal["initialize", "ping", "tools/list", "tools/call"]
 NotificationMethod = Literal[
-    "notifications/cancelled", "notifications/message"
+    "notifications/cancelled",
+    "notifications/initialized",
+    "notifications/message",
 ]
+AllowedMethod = Method | NotificationMethod
 
 ResponseItem = (
     ReasoningToken | ToolCallToken | Token | TokenDetail | Event | str
@@ -154,7 +157,14 @@ def create_router() -> APIRouter:
         assert isinstance(orchestrator, Orchestrator)
 
         message, messages = await _expect_jsonrpc_message(
-            request, {"initialize", "ping", "tools/list", "tools/call"}
+            request,
+            {
+                "initialize",
+                "ping",
+                "tools/list",
+                "tools/call",
+                "notifications/initialized",
+            },
         )
         method = cast(str, message.get("method"))
         if method == "initialize":
@@ -179,6 +189,8 @@ def create_router() -> APIRouter:
                 responses_request,
                 progress_token,
             )
+        if method == "notifications/initialized":
+            return _handle_initialized_notification(logger, message)
 
         raise HTTPException(
             status_code=400, detail=f'Unsupported MCP method "{method}"'
@@ -233,6 +245,17 @@ def create_router() -> APIRouter:
                 status_code=404, detail="Resource not found"
             ) from exc
         return PlainTextResponse(resource.text, media_type=resource.mime_type)
+
+    @router.post("/notifications/initialized")
+    async def mcp_initialized_notification(
+        request: Request,
+        logger: Logger = Depends(di_get_logger),
+    ) -> Response:
+        assert isinstance(logger, Logger)
+        message, _ = await _expect_jsonrpc_message(
+            request, {"notifications/initialized"}
+        )
+        return _handle_initialized_notification(logger, message)
 
     return router
 
@@ -290,7 +313,7 @@ def _parse_call_request(
 
 
 async def _expect_jsonrpc_message(
-    request: Request, allowed_methods: set[Method]
+    request: Request, allowed_methods: set[AllowedMethod]
 ) -> tuple[JSONObject, AsyncIterator[JSONObject]]:
     messages = _iter_jsonrpc_messages(request)
     try:
@@ -508,6 +531,23 @@ def _handle_initialize_message(
         extra={"response_id": response_id},
     )
     return JSONResponse(payload)
+
+
+def _handle_initialized_notification(
+    logger: Logger,
+    message: JSONObject,
+) -> Response:
+    if "id" in message:
+        raise HTTPException(
+            status_code=400, detail="MCP notifications cannot include an id"
+        )
+
+    params = message.get("params")
+    if params is not None and not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+
+    logger.debug("Handled MCP initialized notification")
+    return Response(status_code=204)
 
 
 def _handle_list_tools_message(
