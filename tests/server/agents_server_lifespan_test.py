@@ -50,10 +50,15 @@ async def test_agents_server_lifespan_initializes_state() -> None:
 
     with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
         with (
-            patch("avalan.server.FastAPI", side_effect=build_fastapi) as fastapi_mock,
-            patch("avalan.server.OrchestratorLoader", side_effect=build_loader) as loader_cls,
             patch(
-                "avalan.server.OrchestratorContext", return_value=context_instance
+                "avalan.server.FastAPI", side_effect=build_fastapi
+            ) as fastapi_mock,
+            patch(
+                "avalan.server.OrchestratorLoader", side_effect=build_loader
+            ) as loader_cls,
+            patch(
+                "avalan.server.OrchestratorContext",
+                return_value=context_instance,
             ) as context_cls,
             patch(
                 "avalan.server.mcp_router.MCPResourceStore",
@@ -61,7 +66,9 @@ async def test_agents_server_lifespan_initializes_state() -> None:
             ) as resource_store_cls,
             patch("avalan.server.logger_replace") as logger_replace,
             patch.dict(os.environ, {}, clear=True),
-            patch("avalan.server.uuid4", return_value=generated_participant_id) as uuid4_mock,
+            patch(
+                "avalan.server.uuid4", return_value=generated_participant_id
+            ) as uuid4_mock,
         ):
             server = agents_server(
                 hub=hub,
