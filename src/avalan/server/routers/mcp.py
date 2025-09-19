@@ -11,9 +11,10 @@ from ...entities import (
 from ...event import Event, EventType
 from ...server.entities import ResponsesRequest
 from ...utils import to_json
-from asyncio import Event as AsyncEvent, create_task, Lock
+from asyncio import Event as AsyncEvent, Lock, create_task
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import (
     JSONResponse,
@@ -140,7 +141,8 @@ def create_router() -> APIRouter:
 
         # Accept any of the supported methods in the first frame
         message, messages = await _expect_jsonrpc_message(
-            request, {"initialize", "tools/list", "tools/call", "tools/run"}
+            request,
+            {"initialize", "ping", "tools/list", "tools/call", "tools/run"},
         )
 
         method = message.get("method")
@@ -148,6 +150,8 @@ def create_router() -> APIRouter:
             return _handle_initialize_message(
                 request, logger, orchestrator, message
             )
+        if method == "ping":
+            return _handle_ping_message(logger, message)
         if method == "tools/list":
             return _handle_list_tools_message(
                 request, logger, orchestrator, message
@@ -182,6 +186,16 @@ def create_router() -> APIRouter:
         return _handle_initialize_message(
             request, logger, orchestrator, message
         )
+
+    @router.post("/ping")
+    async def mcp_ping(
+        request: Request,
+        logger: Logger = Depends(di_get_logger),
+    ) -> JSONResponse:
+        assert logger and isinstance(logger, Logger)
+
+        message, _ = await _expect_jsonrpc_message(request, {"ping"})
+        return _handle_ping_message(logger, message)
 
     @router.post("/tools/list")
     async def mcp_list_tools(
@@ -463,6 +477,29 @@ async def _start_tool_streaming_response(
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers=headers
     )
+
+
+def _handle_ping_message(
+    logger: Logger,
+    message: dict[str, Any],
+) -> JSONResponse:
+    """Build the ping response payload given a JSON-RPC message."""
+    params = message.get("params")
+    if params is not None and not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+
+    response_id = message.get("id", str(uuid4()))
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    result: dict[str, Any] = {"timestamp": timestamp}
+    if isinstance(params, dict):
+        result["received"] = params
+
+    payload = {"jsonrpc": "2.0", "id": response_id, "result": result}
+    logger.debug(
+        "Handled MCP ping request", extra={"response_id": response_id}
+    )
+    return JSONResponse(payload)
 
 
 def _handle_initialize_message(
