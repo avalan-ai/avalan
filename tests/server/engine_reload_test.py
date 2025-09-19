@@ -327,7 +327,9 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(state, "orchestrator"))
         self.assertEqual(request.app.state.ctx.settings.uri, "new")
 
-    async def test_reload_restores_previous_state_when_loader_fails(self) -> None:
+    async def test_reload_restores_previous_state_when_loader_fails(
+        self,
+    ) -> None:
         import avalan.server.routers.engine as eng
 
         @dataclass
@@ -375,7 +377,9 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         self.assertIs(request.app.state.ctx.settings, settings)
         self.assertEqual(request.app.state.agent_id, orchestrator.id)
 
-    async def test_reload_raises_restore_error_when_recovery_fails(self) -> None:
+    async def test_reload_raises_restore_error_when_recovery_fails(
+        self,
+    ) -> None:
         import avalan.server.routers.engine as eng
 
         @dataclass
