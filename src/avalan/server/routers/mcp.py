@@ -142,7 +142,14 @@ def create_router() -> APIRouter:
         # Accept any of the supported methods in the first frame
         message, messages = await _expect_jsonrpc_message(
             request,
-            {"initialize", "ping", "tools/list", "tools/call", "tools/run"},
+            {
+                "initialize",
+                "ping",
+                "tools/list",
+                "tools/call",
+                "tools/run",
+                "sampling/create",
+            },
         )
 
         method = message.get("method")
@@ -163,6 +170,22 @@ def create_router() -> APIRouter:
                 progress_token,
             ) = _consume_call_request_from_message(request, message, messages)
             return await _start_tool_streaming_response(
+                request,
+                logger,
+                orchestrator,
+                request_id,
+                responses_request,
+                progress_token,
+            )
+        if method == "sampling/create":
+            (
+                request_id,
+                responses_request,
+                progress_token,
+            ) = await _consume_sampling_request_from_message(
+                request, message, messages
+            )
+            return await _start_sampling_streaming_response(
                 request,
                 logger,
                 orchestrator,
@@ -226,6 +249,30 @@ def create_router() -> APIRouter:
             progress_token,
         ) = await _consume_call_request(request)
         return await _start_tool_streaming_response(
+            request,
+            logger,
+            orchestrator,
+            request_id,
+            responses_request,
+            progress_token,
+        )
+
+    @router.post("/sampling")
+    @router.post("/sampling/create")
+    async def mcp_sampling_create(
+        request: Request,
+        logger: Logger = Depends(di_get_logger),
+        orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    ) -> StreamingResponse:
+        assert logger and isinstance(logger, Logger)
+        assert orchestrator and isinstance(orchestrator, Orchestrator)
+
+        (
+            request_id,
+            responses_request,
+            progress_token,
+        ) = await _consume_sampling_request(request)
+        return await _start_sampling_streaming_response(
             request,
             logger,
             orchestrator,
@@ -328,6 +375,51 @@ def _consume_call_request_from_message(
 
     request.state._mcp_message_iter = messages
     return call_message.get("id", str(uuid4())), request_model, progress_token
+
+
+async def _consume_sampling_request(
+    request: Request,
+) -> tuple[str | int, ResponsesRequest, str]:
+    sampling_message, messages = await _expect_jsonrpc_message(
+        request, {"sampling/create"}
+    )
+
+    return await _consume_sampling_request_from_message(
+        request, sampling_message, messages
+    )
+
+
+async def _consume_sampling_request_from_message(
+    request: Request,
+    message: dict[str, Any],
+    messages: AsyncIterator[dict[str, Any]],
+) -> tuple[str | int, ResponsesRequest, str]:
+    params = message.get("params")
+    if not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+
+    store = _get_resource_store(request)
+    payload = await _normalize_sampling_params(params, store)
+
+    try:
+        request_model = ResponsesRequest.model_validate(payload)
+    except Exception as exc:  # pragma: no cover - validation error path
+        raise HTTPException(
+            status_code=400, detail="Invalid MCP sampling arguments"
+        ) from exc
+
+    progress_token = params.get("progressToken")
+    if not progress_token:
+        stream_params = params.get("stream")
+        if isinstance(stream_params, dict):
+            progress_token = stream_params.get(
+                "progressToken"
+            ) or stream_params.get("progress_token")
+    if not progress_token:
+        progress_token = str(uuid4())
+
+    request.state._mcp_message_iter = messages
+    return message.get("id", str(uuid4())), request_model, str(progress_token)
 
 
 async def _expect_jsonrpc_message(
@@ -476,6 +568,24 @@ async def _start_tool_streaming_response(
     }
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers=headers
+    )
+
+
+async def _start_sampling_streaming_response(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    request_id: str | int,
+    responses_request: ResponsesRequest,
+    progress_token: str,
+) -> StreamingResponse:
+    return await _start_tool_streaming_response(
+        request,
+        logger,
+        orchestrator,
+        request_id,
+        responses_request,
+        progress_token,
     )
 
 
@@ -1038,6 +1148,265 @@ def _get_resource_store(request: Request) -> MCPResourceStore:
         request.app.state.mcp_resource_store = store
     assert isinstance(store, MCPResourceStore)
     return store
+
+
+async def _normalize_sampling_params(
+    params: dict[str, Any], resource_store: MCPResourceStore
+) -> dict[str, Any]:
+    sampling = params.get("sampling") if isinstance(params, dict) else None
+    if sampling is None:
+        sampling = params
+
+    if not isinstance(sampling, dict):
+        raise HTTPException(
+            status_code=400, detail="Invalid MCP sampling payload"
+        )
+
+    model = sampling.get("model")
+    if not isinstance(model, str) or not model:
+        raise HTTPException(status_code=400, detail="Missing sampling model")
+
+    # Optional instructions are translated into a system message prepended to
+    # the conversation to align with the orchestrator interface.
+    instructions = sampling.get("instructions")
+    messages_payload = sampling.get("messages") or sampling.get("input")
+    if not isinstance(messages_payload, list):
+        raise HTTPException(
+            status_code=400, detail="Missing sampling messages"
+        )
+
+    normalized_messages: list[dict[str, Any]] = []
+    attachments_map = _build_sampling_attachments(sampling)
+
+    if isinstance(instructions, str) and instructions.strip():
+        normalized_messages.append({"role": "system", "content": instructions})
+
+    for item in messages_payload:
+        normalized_messages.append(
+            await _normalize_sampling_message(
+                item, resource_store, attachments_map
+            )
+        )
+
+    payload: dict[str, Any] = {"model": model, "input": normalized_messages}
+
+    stream_setting = sampling.get("stream")
+    if isinstance(stream_setting, dict):
+        enabled = stream_setting.get("enabled")
+        if isinstance(enabled, bool):
+            payload["stream"] = enabled
+    elif isinstance(stream_setting, bool):
+        payload["stream"] = stream_setting
+
+    optional_mappings: dict[str, tuple[str, tuple[type, ...]]] = {
+        "temperature": ("temperature", (int, float)),
+        "top_p": ("top_p", (int, float)),
+        "topP": ("top_p", (int, float)),
+        "max_tokens": ("max_tokens", (int,)),
+        "maxTokens": ("max_tokens", (int,)),
+        "max_output_tokens": ("max_tokens", (int,)),
+        "maxOutputTokens": ("max_tokens", (int,)),
+        "stop": ("stop", (str, list)),
+        "stop_sequences": ("stop", (list,)),
+        "stopSequences": ("stop", (list,)),
+        "n": ("n", (int,)),
+    }
+
+    for key, (target, expected) in optional_mappings.items():
+        value = sampling.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, expected):
+            continue
+        payload[target] = value
+
+    response_format = sampling.get("response_format") or sampling.get(
+        "responseFormat"
+    )
+    if isinstance(response_format, dict):
+        payload["response_format"] = response_format
+
+    return payload
+
+
+async def _normalize_sampling_message(
+    message: Any,
+    resource_store: MCPResourceStore,
+    attachments: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=400, detail="Invalid sampling message")
+
+    role = message.get("role")
+    if not isinstance(role, str):
+        raise HTTPException(status_code=400, detail="Invalid sampling role")
+
+    content = message.get("content")
+    if content is None:
+        raise HTTPException(status_code=400, detail="Missing sampling content")
+
+    normalized_content = await _normalize_sampling_content(
+        content, resource_store, attachments
+    )
+    return {"role": role, "content": normalized_content}
+
+
+async def _normalize_sampling_content(
+    content: Any,
+    resource_store: MCPResourceStore,
+    attachments: dict[str, dict[str, Any]],
+) -> str | list[dict[str, Any]]:
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        normalized_parts: list[dict[str, Any]] = []
+        for item in content:
+            normalized_parts.extend(
+                await _normalize_sampling_content_parts(
+                    item, resource_store, attachments
+                )
+            )
+        if (
+            len(normalized_parts) == 1
+            and normalized_parts[0].get("type") == "text"
+        ):
+            return normalized_parts[0]["text"]
+        return normalized_parts
+
+    if isinstance(content, dict):
+        parts = await _normalize_sampling_content_parts(
+            content, resource_store, attachments
+        )
+        if len(parts) == 1 and parts[0].get("type") == "text":
+            return parts[0]["text"]
+        return parts
+
+    raise HTTPException(status_code=400, detail="Unsupported sampling content")
+
+
+async def _normalize_sampling_content_parts(
+    item: Any,
+    resource_store: MCPResourceStore,
+    attachments: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if isinstance(item, str):
+        return [{"type": "text", "text": item}]
+
+    if not isinstance(item, dict):
+        raise HTTPException(
+            status_code=400, detail="Invalid sampling content part"
+        )
+
+    item_type = str(item.get("type")) if item.get("type") is not None else ""
+    item_type = item_type or "text"
+
+    if item_type in {"text", "input_text", "output_text"}:
+        text_value = item.get("text") or item.get("value")
+        if not isinstance(text_value, str):
+            raise HTTPException(
+                status_code=400, detail="Invalid sampling text content"
+            )
+        return [{"type": "text", "text": text_value}]
+
+    if item_type in {"image", "input_image", "image_url"}:
+        image = item.get("image") or item.get("image_url") or {}
+        if isinstance(image, dict):
+            url = image.get("url") or image.get("uri")
+        else:
+            url = item.get("url") or item.get("uri")
+        if not isinstance(url, str):
+            raise HTTPException(
+                status_code=400, detail="Invalid sampling image reference"
+            )
+        return [{"type": "image_url", "image_url": {"url": url}}]
+
+    if item_type in {"resource", "resource_reference", "resource_pointer"}:
+        resource = (
+            item.get("resource")
+            if isinstance(item.get("resource"), dict)
+            else item
+        )
+        uri = resource.get("uri") if isinstance(resource, dict) else None
+        if not isinstance(uri, str):
+            raise HTTPException(
+                status_code=400, detail="Invalid sampling resource reference"
+            )
+        text = await _load_resource_text(uri, resource_store)
+        return [{"type": "text", "text": text}]
+
+    if item_type in {"attachment", "input_attachment"}:
+        attachment_id = item.get("attachmentId") or item.get("id")
+        if not isinstance(attachment_id, str):
+            raise HTTPException(
+                status_code=400, detail="Invalid sampling attachment reference"
+            )
+        attachment = attachments.get(attachment_id)
+        if attachment is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        if isinstance(attachment.get("text"), str):
+            text_value = str(attachment["text"])
+            return [{"type": "text", "text": text_value}]
+        resource_info = attachment.get("resource")
+        if isinstance(resource_info, dict) and isinstance(
+            resource_info.get("uri"), str
+        ):
+            text = await _load_resource_text(
+                resource_info["uri"], resource_store
+            )
+            return [{"type": "text", "text": text}]
+        raise HTTPException(
+            status_code=400, detail="Unsupported sampling attachment content"
+        )
+
+    if item_type == "input_audio":
+        # Audio inputs are not yet supported, so surface a clear error.
+        raise HTTPException(
+            status_code=400, detail="Audio sampling not supported"
+        )
+
+    text_fallback = item.get("text") or item.get("value")
+    if isinstance(text_fallback, str):
+        return [{"type": "text", "text": text_fallback}]
+
+    raise HTTPException(
+        status_code=400, detail="Unsupported sampling content type"
+    )
+
+
+async def _load_resource_text(
+    uri: str, resource_store: MCPResourceStore
+) -> str:
+    if uri.startswith("mcp://resources/"):
+        resource_id = uri.rsplit("/", 1)[-1]
+        try:
+            resource = await resource_store.get(resource_id)
+        except KeyError as exc:  # pragma: no cover - defensive path
+            raise HTTPException(
+                status_code=404, detail="Resource not found"
+            ) from exc
+        return resource.text
+
+    raise HTTPException(status_code=400, detail="Unsupported resource URI")
+
+
+def _build_sampling_attachments(
+    payload: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    attachments: dict[str, dict[str, Any]] = {}
+    items = payload.get("attachments")
+    if not isinstance(items, list):
+        return attachments
+
+    for attachment in items:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = attachment.get("id")
+        if not isinstance(attachment_id, str):
+            continue
+        attachments[attachment_id] = attachment
+
+    return attachments
 
 
 async def _iter_jsonrpc_messages(
