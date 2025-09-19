@@ -9,7 +9,7 @@ from ...entities import (
     TokenDetail,
 )
 from ...event import Event, EventType
-from ...server.entities import ResponsesRequest
+from ...server.entities import ChatCompletionRequest, ChatMessage, MCPToolRequest
 from ...utils import to_json
 from asyncio import Event as AsyncEvent, Lock, create_task
 from contextlib import suppress
@@ -239,7 +239,7 @@ def create_router() -> APIRouter:
 
 async def _consume_call_request(
     request: Request,
-) -> tuple[str | int, ResponsesRequest, str]:
+) -> tuple[str | int, MCPToolRequest, str]:
     call_message, messages = await _expect_jsonrpc_message(
         request, {"tools/call"}
     )
@@ -250,7 +250,7 @@ def _parse_call_request(
     request: Request,
     call_message: JSONObject,
     messages: AsyncIterator[JSONObject],
-) -> tuple[str | int, ResponsesRequest, str]:
+) -> tuple[str | int, MCPToolRequest, str]:
     method = call_message.get("method")
     if method != "tools/call":
         raise HTTPException(
@@ -271,7 +271,7 @@ def _parse_call_request(
         raise HTTPException(status_code=400, detail="Invalid tool arguments")
 
     try:
-        request_model = ResponsesRequest.model_validate(arguments)
+        request_model = MCPToolRequest.model_validate(arguments)
     except Exception as exc:  # pragma: no cover - validation error path
         raise HTTPException(
             status_code=400, detail="Invalid MCP arguments"
@@ -348,16 +348,42 @@ class StreamResponse(Protocol):
     def __aiter__(self) -> AsyncIterator[ResponseItem]: ...
 
 
+MODEL_FALLBACK: Final[str] = "default"
+
+
+def _default_model_id(orchestrator: Orchestrator) -> str:
+    model_ids = getattr(orchestrator, "model_ids", None)
+    if model_ids:
+        candidates = sorted(str(model_id) for model_id in model_ids)
+        if candidates:
+            return candidates[0]
+    return MODEL_FALLBACK
+
+
+def _build_chat_request(
+    tool_request: MCPToolRequest, orchestrator: Orchestrator
+) -> ChatCompletionRequest:
+    model_id = _default_model_id(orchestrator)
+    return ChatCompletionRequest(
+        model=model_id,
+        messages=[
+            ChatMessage(role="user", content=tool_request.input_string)
+        ],
+        stream=True,
+    )
+
+
 async def _start_tool_streaming_response(
     request: Request,
     logger: Logger,
     orchestrator: Orchestrator,
     request_id: str | int,
-    responses_request: ResponsesRequest,
+    tool_request: MCPToolRequest,
     progress_token: str,
 ) -> StreamingResponse:
+    chat_request = _build_chat_request(tool_request, orchestrator)
     response, response_uuid, timestamp = await orchestrate(
-        responses_request, logger, orchestrator
+        chat_request, logger, orchestrator
     )
     response_typed = cast(StreamResponse, response)
 
@@ -372,7 +398,7 @@ async def _start_tool_streaming_response(
         str, getattr(request.app.state, "mcp_resource_base_path", "")
     )
 
-    if not responses_request.stream:
+    if not chat_request.stream:
         try:
             text = await response_typed.to_str()
         finally:
@@ -383,7 +409,7 @@ async def _start_tool_streaming_response(
         summary: dict[str, JSONValue] = {
             "id": str(response_uuid),
             "created": timestamp,
-            "model": responses_request.model,
+            "model": chat_request.model,
             "usage": {
                 "input_text_tokens": getattr(
                     response_typed, "input_token_count", 0
@@ -411,7 +437,7 @@ async def _start_tool_streaming_response(
         try:
             async for chunk in _stream_mcp_response(
                 request_id=request_id,
-                request_model=responses_request,
+                request_model=chat_request,
                 response=response_typed,
                 response_id=response_uuid,
                 timestamp=timestamp,
@@ -526,7 +552,7 @@ def _collect_tool_descriptions(request: Request) -> list[dict[str, JSONValue]]:
         {
             "name": name,
             "description": description,
-            "inputSchema": ResponsesRequest.model_json_schema(),
+            "inputSchema": MCPToolRequest.model_json_schema(),
         }
     ]
 
@@ -570,7 +596,7 @@ async def _watch_for_cancellation(
 async def _stream_mcp_response(
     *,
     request_id: str | int,
-    request_model: ResponsesRequest,
+    request_model: ChatCompletionRequest,
     response: StreamResponse,
     response_id: UUID,
     timestamp: int,

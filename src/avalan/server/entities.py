@@ -174,6 +174,12 @@ class ResponsesRequest(BaseModel):
         return self.input
 
 
+class MCPToolRequest(BaseModel):
+    input_string: str = Field(
+        ..., description="Input to pass to the orchestrator via MCP"
+    )
+
+
 class ChatCompletionChunkChoiceDelta(BaseModel):
     content: str
 
