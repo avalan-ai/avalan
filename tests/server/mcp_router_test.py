@@ -96,6 +96,22 @@ def fake_create_task(coro: Any) -> StubTask:
     return StubTask(coro)
 
 
+class OneTimeMatchStr(str):
+    def __new__(cls, value: str) -> "OneTimeMatchStr":
+        instance = super().__new__(cls, value)
+        instance._first_compare = True  # type: ignore[attr-defined]
+        return instance
+
+    def __eq__(self, other: object) -> bool:  # type: ignore[override]
+        if getattr(self, "_first_compare", False) and super().__eq__(other):
+            self._first_compare = False  # type: ignore[attr-defined]
+            return True
+        return False
+
+    def __hash__(self) -> int:  # type: ignore[override]
+        return hash(str(self))
+
+
 class MCPResourceStoreTestCase(TestCase):
     def test_create_append_close(self) -> None:
         store = mcp_router.MCPResourceStore()
@@ -187,6 +203,13 @@ class MCPUtilityTestCase(TestCase):
         with self.assertRaises(mcp_router.HTTPException):
             mcp_router._extract_call_arguments("other", {})
 
+    def test_extract_call_arguments_tools_run_unsupported(self) -> None:
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            mcp_router._extract_call_arguments(
+                "tools/run", {"name": "invalid", "arguments": {}}
+            )
+        self.assertIn("Unsupported tool", str(exc.exception.detail))
+
     def test_collect_tool_descriptions(self) -> None:
         descriptions = mcp_router._collect_tool_descriptions()
         self.assertEqual(len(descriptions), 1)
@@ -203,6 +226,11 @@ class MCPUtilityTestCase(TestCase):
         self.assertEqual(mcp_router._token_text(detail), "b")
         self.assertEqual(mcp_router._token_text("text"), "text")
         self.assertEqual(mcp_router._token_text(123), "")
+
+    def test_token_text_prefers_token_detail(self) -> None:
+        detail = TokenDetail(token="detail")
+        with patch.object(mcp_router, "Token", type("DifferentToken", (), {})):
+            self.assertEqual(mcp_router._token_text(detail), "detail")
 
     def test_tool_call_token_notification_variants(self) -> None:
         empty = ToolCallToken(token="")
@@ -294,6 +322,11 @@ class MCPUtilityTestCase(TestCase):
         none_event = Event(type=EventType.TOOL_PROCESS, payload=None)
         self.assertIsNone(mcp_router._tool_call_event_item(none_event))
 
+        null_call_event = Event(
+            type=EventType.TOOL_PROCESS, payload={"call": None}
+        )
+        self.assertIsNone(mcp_router._tool_call_event_item(null_call_event))
+
     def test_get_resource_store_reuses_instance(self) -> None:
         request = self._request()
         first = mcp_router._get_resource_store(request)
@@ -340,6 +373,25 @@ class MCPUtilityTestCase(TestCase):
             mcp_router._handle_list_tools_message(
                 request, MagicMock(), SimpleNamespace(tool=None), message
             )
+
+    def test_handle_list_tools_message_includes_cursor(self) -> None:
+        request = self._request()
+        request.app.state.mcp_next_cursor = "cursor-token"
+        message = {
+            "jsonrpc": "2.0",
+            "id": "cursor",
+            "method": "tools/list",
+            "params": {},
+        }
+
+        response = mcp_router._handle_list_tools_message(
+            request,
+            MagicMock(),
+            SimpleNamespace(tool=None),
+            message,
+        )
+        payload = loads(response.body.decode("utf-8"))
+        self.assertEqual(payload["result"]["nextCursor"], "cursor-token")
 
     def test_handle_initialize_message_defaults(self) -> None:
         request = self._request()
@@ -668,6 +720,35 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         payload = loads(response.body.decode("utf-8"))
         self.assertIn("tools", payload["result"])
 
+    async def test_base_rpc_allowed_method_without_handler(self) -> None:
+        endpoint = self._get_route("/")
+        request = DummyRequest(b"")
+        request.app.title = "Avalan MCP"
+        request.app.version = "4.0.0"
+
+        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=True))
+
+        method = OneTimeMatchStr("initialize")
+        method._first_compare = False  # type: ignore[attr-defined]
+        message = {"jsonrpc": "2.0", "id": "weird", "method": method}
+
+        async def empty_iter():
+            if False:
+                yield {}
+
+        with patch.object(
+            mcp_router,
+            "_expect_jsonrpc_message",
+            AsyncMock(return_value=(message, empty_iter())),
+        ):
+            with self.assertRaises(mcp_router.HTTPException) as exc:
+                await endpoint(
+                    request,
+                    logger=getLogger("test.rpc.unhandled"),
+                    orchestrator=orchestrator,
+                )
+        self.assertIn("Unsupported MCP method", str(exc.exception.detail))
+
     async def test_consume_call_request_from_message(self) -> None:
         message = {
             "jsonrpc": "2.0",
@@ -799,7 +880,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         store = mcp_router.MCPResourceStore()
         tool_summaries: dict[str, dict[str, Any]] = {}
         resources: dict[str, mcp_router.MCPResource] = {}
-        with patch.object(mcp_router, "to_json", return_value='{"payload":"value"}'):
+        with patch.object(
+            mcp_router, "to_json", return_value='{"payload":"value"}'
+        ):
             notifications = []
             async for item in mcp_router._tool_event_notifications(
                 event=event,
@@ -864,6 +947,22 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         request = DummyRequest(body)
         with self.assertRaises(mcp_router.HTTPException) as exc:
             await mcp_router._consume_call_request(request)
+        self.assertIn("Invalid tool arguments", str(exc.exception.detail))
+
+    async def test_consume_call_request_none_arguments(self) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "method": "tools/run",
+            "params": {"name": "run", "arguments": None},
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        with patch.object(
+            mcp_router, "_extract_call_arguments", return_value=None
+        ) as extractor:
+            with self.assertRaises(mcp_router.HTTPException) as exc:
+                await mcp_router._consume_call_request(request)
+        extractor.assert_called_once()
         self.assertIn("Invalid tool arguments", str(exc.exception.detail))
 
     async def test_consume_call_request_with_progress_token(self) -> None:
@@ -993,6 +1092,31 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid tool arguments", str(exc.exception.detail))
 
+    async def test_consume_call_request_from_message_none_arguments(
+        self,
+    ) -> None:
+        request = DummyRequest(b"")
+
+        async def _empty():
+            if False:
+                yield {}
+
+        with patch.object(
+            mcp_router, "_extract_call_arguments", return_value=None
+        ) as extractor:
+            with self.assertRaises(mcp_router.HTTPException) as exc:
+                mcp_router._consume_call_request_from_message(
+                    request,
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/run",
+                        "params": {"name": "run", "arguments": None},
+                    },
+                    _empty(),
+                )
+        extractor.assert_called_once()
+        self.assertIn("Invalid tool arguments", str(exc.exception.detail))
+
     async def test_consume_call_request_from_message_validation_error(
         self,
     ) -> None:
@@ -1078,6 +1202,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
 
     async def test_iter_jsonrpc_messages_invalid_json(self) -> None:
         request = DummyRequest(b"{invalid}")
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            async for _ in mcp_router._iter_jsonrpc_messages(request):
+                pass
+        self.assertIn("Invalid MCP payload", str(exc.exception.detail))
+
+    async def test_iter_jsonrpc_messages_invalid_segment(self) -> None:
+        payload = b"{invalid}" + mcp_router.RS.encode("utf-8")
+        request = DummyRequest(payload)
         with self.assertRaises(mcp_router.HTTPException) as exc:
             async for _ in mcp_router._iter_jsonrpc_messages(request):
                 pass

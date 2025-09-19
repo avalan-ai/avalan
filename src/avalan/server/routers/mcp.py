@@ -512,7 +512,7 @@ def _handle_list_tools_message(
     result: dict[str, Any] = {"tools": tools}
     # Only include nextCursor if there is an actual cursor value
     # (some clients reject null here)
-    next_cursor = None
+    next_cursor = getattr(request.app.state, "mcp_next_cursor", None)
     if next_cursor:
         result["nextCursor"] = next_cursor
     payload = {"jsonrpc": "2.0", "id": response_id, "result": result}
