@@ -28,8 +28,10 @@ def agents_server(
     specs_path: str | None,
     settings: OrchestratorSettings | None,
     tool_settings: ToolSettingsContext | None,
-    prefix_mcp: str,
-    prefix_openai: str,
+    mcp_prefix: str,
+    openai_prefix: str,
+    mcp_name: str,
+    mcp_description: str | None,
     logger: Logger,
     agent_id: UUID | None = None,
     participant_id: UUID | None = None,
@@ -73,7 +75,10 @@ def agents_server(
             app.state.logger = logger
             app.state.agent_id = agent_id
             app.state.mcp_resource_store = mcp_router.MCPResourceStore()
-            app.state.mcp_resource_base_path = prefix_mcp
+            app.state.mcp_resource_base_path = mcp_prefix
+            app.state.mcp_tool_name = mcp_name or "run"
+            if mcp_description:
+                app.state.mcp_tool_description = mcp_description
             yield
 
     logger.debug("Creating %s server", name)
@@ -101,13 +106,13 @@ def agents_server(
     chat_router_module = import_module("avalan.server.routers.chat")
     responses_router_module = import_module("avalan.server.routers.responses")
     engine_router_module = import_module("avalan.server.routers.engine")
-    app.include_router(chat_router_module.router, prefix=prefix_openai)
-    app.include_router(responses_router_module.router, prefix=prefix_openai)
+    app.include_router(chat_router_module.router, prefix=openai_prefix)
+    app.include_router(responses_router_module.router, prefix=openai_prefix)
     app.include_router(engine_router_module.router)
 
     logger.debug("Creating MCP HTTP stream router")
     mcp_http_router = mcp_router.create_router()
-    app.include_router(mcp_http_router, prefix=prefix_mcp)
+    app.include_router(mcp_http_router, prefix=mcp_prefix)
 
     logger.debug("Starting %s server at %s:%d", name, host, port)
     config = Config(app, host=host, port=port, reload=reload)

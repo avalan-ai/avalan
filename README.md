@@ -19,7 +19,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - 🔌 **Multi-backend** support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
 - 🔗 **Native adapters** for Anyscale, Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace, Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others.
 - 🤖 Sophisticated **memory management** with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, AWS S3 Vectors, and reasoning graph storage.
-- 🧠 Multiple **reasoning strategies** including ReACT, Chain‑of‑Thought, Tree‑of‑Thought, Plan‑and‑Reflect, Self‑Consistency, Scratchpad‑Toolformer, Cascaded Prompting, Critic‑Guided Direction‑Following Experts, and Product‑of‑Experts.
+- 🧠 Multiple **reasoning strategies** including ReACT, Chain-of-Thought, Tree-of-Thought, Plan-and-Reflect, Self-Consistency, Scratchpad-Toolformer, Cascaded Prompting, Critic-Guided Direction-Following Experts, and Product-of-Experts.
 - 🔀 Intuitive pipelines with branching, filtering, and recursive **AI workflows**.
 - 📊 Comprehensive **observability** through metrics, event tracing, and dashboards.
 - 🚀 **Deploy** your AI workflows to the cloud, your premises, or locally.
@@ -30,15 +30,15 @@ These features make avalan ideal for everything from quick experiments to enterp
 # Why Avalan
 
 * 🌐 **Open ecosystem**: tap not only the big LLM APIs but the millions of freely available models: text, vision, audio, agents, and more.
-* 🏠 **Run anywhere**: on‑prem, in your cloud, at the edge, or on a laptop. No deployment restrictions.
+* 🏠 **Run anywhere**: on-prem, in your cloud, at the edge, or on a laptop. No deployment restrictions.
 * 🎛️ **Total control**: switch models, tweak parameters, chain workflows, and track detailed metrics from CLI, code, or simple config files.
-* 🔗 **Protocol‑agnostic**: native support for MCP, A2A, the OpenAI API, and easy adapters for your own interfaces.
-* 🛡️ **No vendor lock‑in**: Avalan orchestrates your services and code, fitting your existing stack instead of replacing it.
+* 🔗 **Protocol-agnostic**: native support for MCP, A2A, the OpenAI API, and easy adapters for your own interfaces.
+* 🛡️ **No vendor lock-in**: Avalan orchestrates your services and code, fitting your existing stack instead of replacing it.
 * 🧩 **Composable reasoning**: multiple strategy templates and nested workflows that can call other flows, invoke applications, and execute code on demand.
 
 # Quick Look
 
-Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), and see every CLI option in the [CLI docs](docs/CLI.md).
+Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), including serving over open protocols: [OpenAI completion and responses API](#openai-completion-and-responses-api) and the [MCP server](#mcp-server). For full CLI reference see the [CLI docs](docs/CLI.md).
 
 ## Models
 
@@ -1139,37 +1139,37 @@ and you'll get the model's interpretation of what Avalan does based on its READM
 
 ![ReACT browsing tool usage for real-time information](https://avalan.ai/images/github/text_generation_tools_browser.webp)
 
-### Chain‑of‑Thought
+### Chain-of-Thought
 
-Chain‑of‑Thought builds sequential reasoning traces to reach an answer for tasks that require intermediate logic.
+Chain-of-Thought builds sequential reasoning traces to reach an answer for tasks that require intermediate logic.
 
-### Tree‑of‑Thought
+### Tree-of-Thought
 
-Tree‑of‑Thought explores multiple branches of reasoning in parallel to select the best path for difficult decisions.
+Tree-of-Thought explores multiple branches of reasoning in parallel to select the best path for difficult decisions.
 
-### Plan‑and‑Reflect
+### Plan-and-Reflect
 
-Plan‑and‑Reflect has the agent outline a plan, act, and then review the results, promoting methodical problem solving.
+Plan-and-Reflect has the agent outline a plan, act, and then review the results, promoting methodical problem solving.
 
-### Self‑Consistency
+### Self-Consistency
 
-Self‑Consistency samples several reasoning paths and aggregates them to produce more reliable answers.
+Self-Consistency samples several reasoning paths and aggregates them to produce more reliable answers.
 
-### Scratchpad‑Toolformer
+### Scratchpad-Toolformer
 
-Scratchpad‑Toolformer combines an internal scratchpad with learned tool usage to manipulate intermediate results.
+Scratchpad-Toolformer combines an internal scratchpad with learned tool usage to manipulate intermediate results.
 
 ### Cascaded Prompting
 
 Cascaded Prompting chains prompts so each step refines the next, ideal for multi-stage instructions.
 
-### Critic‑Guided Direction‑Following Experts
+### Critic-Guided Direction-Following Experts
 
-Critic‑Guided Direction‑Following Experts use a critic model to guide expert models when strict quality is required.
+Critic-Guided Direction-Following Experts use a critic model to guide expert models when strict quality is required.
 
-### Product‑of‑Experts
+### Product-of-Experts
 
-Product‑of‑Experts merges the outputs of several experts to generate answers that benefit from multiple viewpoints.
+Product-of-Experts merges the outputs of several experts to generate answers that benefit from multiple viewpoints.
 
 ## Memories
 
@@ -1282,6 +1282,12 @@ folder.
 
 ### Serving agents
 
+Avalan agents can be exposed over two open interfaces: OpenAI-compatible REST endpoints and the Model Context Protocol (MCP) as first-class tools. Both surfaces are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
+
+Both interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
+
+#### OpenAI completion and responses API
+
 Serve your agents on an OpenAI API–compatible endpoint:
 
 ```bash
@@ -1317,22 +1323,25 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
-#### MCP endpoints
+#### MCP server
 
-Avalan also embeds an HTTP MCP server alongside the OpenAI‑compatible
-endpoints whenever you run `avalan agent serve`. By default it is mounted at
-`/mcp`, configurable via the CLI option `--prefix-mcp` (the OpenAI endpoints
-use `--prefix-openai`, defaulting to `/v1`). Both surfaces fully support
+Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
+endpoints whenever you run `avalan agent serve`. It is mounted at `/mcp` by
+default and can be changed with `--mcp-prefix`. Both surfaces fully support
 streaming, including incremental tool calling and intermediate outputs.
 
 > [!TIP]
-> Debug the MCP stream for a tool execution from your shell:
+> Debug the MCP stream with the MCP Inspector:
 >
-> ```bash
->  curl -N -H 'Content-Type: application/json' \
->   --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run","arguments":{"model":"gpt-oss-20b","input":[{"role":"user","content":"How many products do I have?"}],"stream":true}}}' \
->   http://127.0.0.1:9001/mcp/tools/run
-> ```
+> Use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) and
+> enter your MCP endpoint URL — the value you configured with `--mcp-prefix`
+> when running `avalan agent serve` (default: `http://localhost:9001/mcp`).
+> Click `Connect`, then `List Tools`, run the tool that appears (it will match
+> your `--mcp-name` and `--mcp-description`), and observe the streaming
+> notifications and the final response, which includes reasoning and any tool
+> calls with their arguments and results.
+
+You can customize the MCP tool identity with `--mcp-name` (defaults to `run`) and `--mcp-description` when running `avalan agent serve`.
 
 #### Proxy agents
 

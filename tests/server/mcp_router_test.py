@@ -11,7 +11,6 @@ from avalan.event import Event, EventType
 from avalan.server.entities import ResponsesRequest
 from avalan.server.routers import mcp as mcp_router
 from contextlib import suppress
-from datetime import datetime
 from asyncio import (
     CancelledError,
     Event as AsyncEvent,
@@ -161,60 +160,35 @@ class MCPUtilityTestCase(TestCase):
     def test_extract_call_arguments_invalid_tool(self) -> None:
         with self.assertRaises(mcp_router.HTTPException) as exc:
             mcp_router._extract_call_arguments(
-                "tools/call", {"name": "invalid", "arguments": {}}
+                "tools/call",
+                {"name": "invalid", "arguments": {}},
+                allowed_tool_name="run",
             )
         self.assertIn("Unsupported tool", str(exc.exception.detail))
 
     def test_extract_call_arguments_missing_arguments(self) -> None:
         with self.assertRaises(mcp_router.HTTPException) as exc:
             mcp_router._extract_call_arguments(
-                "tools/call", {"name": "run", "arguments": "value"}
-            )
-        self.assertIn("Invalid tool arguments", str(exc.exception.detail))
-
-    def test_extract_call_arguments_tools_run_direct(self) -> None:
-        params = {
-            "model": "m",
-            "input": [{"role": "user", "content": "hello"}],
-            "stream": False,
-        }
-        result = mcp_router._extract_call_arguments("tools/run", params)
-        self.assertIs(result, params)
-
-    def test_extract_call_arguments_tools_run_with_name(self) -> None:
-        params = {
-            "name": "orchestrator.run",
-            "arguments": {
-                "model": "m",
-                "input": [{"role": "user", "content": "hi"}],
-            },
-        }
-        result = mcp_router._extract_call_arguments("tools/run", params)
-        self.assertEqual(result, params["arguments"])
-
-    def test_extract_call_arguments_tools_run_invalid(self) -> None:
-        with self.assertRaises(mcp_router.HTTPException) as exc:
-            mcp_router._extract_call_arguments(
-                "tools/run",
-                {"name": "run", "arguments": "bad"},
+                "tools/call",
+                {"name": "run", "arguments": "value"},
+                allowed_tool_name="run",
             )
         self.assertIn("Invalid tool arguments", str(exc.exception.detail))
 
     def test_extract_call_arguments_unsupported_method(self) -> None:
         with self.assertRaises(mcp_router.HTTPException):
-            mcp_router._extract_call_arguments("other", {})
-
-    def test_extract_call_arguments_tools_run_unsupported(self) -> None:
-        with self.assertRaises(mcp_router.HTTPException) as exc:
             mcp_router._extract_call_arguments(
-                "tools/run", {"name": "invalid", "arguments": {}}
+                "other", {}, allowed_tool_name="run"
             )
-        self.assertIn("Unsupported tool", str(exc.exception.detail))
 
     def test_collect_tool_descriptions(self) -> None:
-        descriptions = mcp_router._collect_tool_descriptions()
+        req = self._request()
+        req.app.state.mcp_tool_name = "run"
+        req.app.state.mcp_tool_description = "Desc"
+        descriptions = mcp_router._collect_tool_descriptions(req)
         self.assertEqual(len(descriptions), 1)
         self.assertEqual(descriptions[0]["name"], "run")
+        self.assertEqual(descriptions[0]["description"], "Desc")
         self.assertEqual(
             descriptions[0]["inputSchema"],
             ResponsesRequest.model_json_schema(),
@@ -360,7 +334,8 @@ class MCPUtilityTestCase(TestCase):
     def test_server_capabilities_without_tools(self) -> None:
         orchestrator = SimpleNamespace(tool=None)
         caps = mcp_router._server_capabilities(orchestrator)
-        self.assertFalse(caps["tools"]["call"])
+        self.assertTrue(caps["tools"]["call"])
+        self.assertTrue(caps["resources"]["subscribe"])
 
     def test_handle_list_tools_invalid_params(self) -> None:
         request = self._request()
@@ -661,7 +636,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             result["serverInfo"], {"name": "Avalan MCP", "version": "9.9.9"}
         )
         self.assertIn("tools", result["capabilities"])
-        self.assertFalse(result["capabilities"]["tools"]["call"])
+        self.assertTrue(result["capabilities"]["tools"]["call"])
+        self.assertTrue(result["capabilities"]["resources"]["subscribe"])
 
     async def test_list_tools_returns_schemas(self) -> None:
         endpoint = self._get_route("/tools/list")
@@ -845,7 +821,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 )
         self.assertIn("Unsupported MCP method", str(exc.exception.detail))
 
-    async def test_consume_call_request_from_message(self) -> None:
+    async def test_parse_call_request(self) -> None:
         message = {
             "jsonrpc": "2.0",
             "id": "call-2",
@@ -867,7 +843,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             if False:
                 yield {}
 
-        rid, req_model, token = mcp_router._consume_call_request_from_message(
+        rid, req_model, token = mcp_router._parse_call_request(
             req, message, _empty()
         )
         self.assertEqual(rid, "call-2")
@@ -1024,7 +1000,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_consume_call_request_missing_params(self) -> None:
         message = {
             "jsonrpc": "2.0",
-            "method": "tools/run",
+            "method": "tools/call",
             "params": "bad",
         }
         body = (dumps(message) + mcp_router.RS).encode("utf-8")
@@ -1048,7 +1024,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_consume_call_request_none_arguments(self) -> None:
         message = {
             "jsonrpc": "2.0",
-            "method": "tools/run",
+            "method": "tools/call",
             "params": {"name": "run", "arguments": None},
         }
         body = (dumps(message) + mcp_router.RS).encode("utf-8")
@@ -1065,10 +1041,13 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         message = {
             "jsonrpc": "2.0",
             "id": "call-progress",
-            "method": "tools/run",
+            "method": "tools/call",
             "params": {
-                "model": "m",
-                "input": [{"role": "user", "content": "hi"}],
+                "name": "run",
+                "arguments": {
+                    "model": "m",
+                    "input": [{"role": "user", "content": "hi"}],
+                },
                 "progressToken": "tok-1",
             },
         }
@@ -1085,10 +1064,13 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_consume_call_request_validation_error(self) -> None:
         message = {
             "jsonrpc": "2.0",
-            "method": "tools/run",
+            "method": "tools/call",
             "params": {
-                "model": "m",
-                "input": [{"role": "user", "content": "hi"}],
+                "name": "run",
+                "arguments": {
+                    "model": "m",
+                    "input": [{"role": "user", "content": "hi"}],
+                },
             },
         }
         body = (dumps(message) + mcp_router.RS).encode("utf-8")
@@ -1105,11 +1087,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_consume_call_request_generates_defaults(self) -> None:
         message = {
             "jsonrpc": "2.0",
-            "method": "tools/run",
+            "method": "tools/call",
             "params": {
-                "model": "m",
-                "input": [{"role": "user", "content": "hi"}],
-                "stream": False,
+                "name": "run",
+                "arguments": {
+                    "model": "m",
+                    "input": [{"role": "user", "content": "hi"}],
+                    "stream": False,
+                },
             },
         }
         follow_up = {"jsonrpc": "2.0", "method": "ping"}
@@ -1133,7 +1118,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0]["method"], "ping")
 
-    async def test_consume_call_request_from_message_invalid_method(
+    async def test_parse_call_request_invalid_method(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1143,14 +1128,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 yield {}
 
         with self.assertRaises(mcp_router.HTTPException) as exc:
-            mcp_router._consume_call_request_from_message(
+            mcp_router._parse_call_request(
                 request,
                 {"jsonrpc": "2.0", "method": "bad"},
                 _empty(),
             )
         self.assertIn("Unsupported MCP method", str(exc.exception.detail))
 
-    async def test_consume_call_request_from_message_missing_params(
+    async def test_parse_call_request_missing_params(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1160,14 +1145,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 yield {}
 
         with self.assertRaises(mcp_router.HTTPException) as exc:
-            mcp_router._consume_call_request_from_message(
+            mcp_router._parse_call_request(
                 request,
-                {"jsonrpc": "2.0", "method": "tools/run", "params": "bad"},
+                {"jsonrpc": "2.0", "method": "tools/call", "params": "bad"},
                 _empty(),
             )
         self.assertIn("Missing MCP params", str(exc.exception.detail))
 
-    async def test_consume_call_request_from_message_invalid_arguments(
+    async def test_parse_call_request_invalid_arguments(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1177,7 +1162,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 yield {}
 
         with self.assertRaises(mcp_router.HTTPException) as exc:
-            mcp_router._consume_call_request_from_message(
+            mcp_router._parse_call_request(
                 request,
                 {
                     "jsonrpc": "2.0",
@@ -1188,7 +1173,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid tool arguments", str(exc.exception.detail))
 
-    async def test_consume_call_request_from_message_none_arguments(
+    async def test_parse_call_request_none_arguments(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1201,11 +1186,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             mcp_router, "_extract_call_arguments", return_value=None
         ) as extractor:
             with self.assertRaises(mcp_router.HTTPException) as exc:
-                mcp_router._consume_call_request_from_message(
+                mcp_router._parse_call_request(
                     request,
                     {
                         "jsonrpc": "2.0",
-                        "method": "tools/run",
+                        "method": "tools/call",
                         "params": {"name": "run", "arguments": None},
                     },
                     _empty(),
@@ -1213,7 +1198,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         extractor.assert_called_once()
         self.assertIn("Invalid tool arguments", str(exc.exception.detail))
 
-    async def test_consume_call_request_from_message_validation_error(
+    async def test_parse_call_request_validation_error(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1228,21 +1213,26 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             side_effect=ValueError("bad"),
         ):
             with self.assertRaises(mcp_router.HTTPException) as exc:
-                mcp_router._consume_call_request_from_message(
+                mcp_router._parse_call_request(
                     request,
                     {
                         "jsonrpc": "2.0",
-                        "method": "tools/run",
+                        "method": "tools/call",
                         "params": {
-                            "model": "m",
-                            "input": [{"role": "user", "content": "hi"}],
+                            "name": "run",
+                            "arguments": {
+                                "model": "m",
+                                "input": [
+                                    {"role": "user", "content": "hi"}
+                                ],
+                            },
                         },
                     },
                     _empty(),
                 )
         self.assertIn("Invalid MCP arguments", str(exc.exception.detail))
 
-    async def test_consume_call_request_from_message_progress_token(
+    async def test_parse_call_request_progress_token(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1251,15 +1241,20 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             if False:
                 yield {}
 
-        rid, model, token = mcp_router._consume_call_request_from_message(
+        rid, model, token = mcp_router._parse_call_request(
             request,
             {
                 "jsonrpc": "2.0",
                 "id": "call-3",
-                "method": "tools/run",
+                "method": "tools/call",
                 "params": {
-                    "model": "m",
-                    "input": [{"role": "user", "content": "hi"}],
+                    "name": "run",
+                    "arguments": {
+                        "model": "m",
+                        "input": [
+                            {"role": "user", "content": "hi"}
+                        ],
+                    },
                     "progressToken": "tok-2",
                 },
             },
@@ -1269,7 +1264,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(token, "tok-2")
         self.assertFalse(model.stream)
 
-    async def test_consume_call_request_from_message_stores_iterator(
+    async def test_parse_call_request_stores_iterator(
         self,
     ) -> None:
         request = DummyRequest(b"")
@@ -1279,13 +1274,16 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
 
         message = {
             "jsonrpc": "2.0",
-            "method": "tools/run",
+            "method": "tools/call",
             "params": {
-                "model": "m",
-                "input": [{"role": "user", "content": "hi"}],
+                "name": "run",
+                "arguments": {
+                    "model": "m",
+                    "input": [{"role": "user", "content": "hi"}],
+                },
             },
         }
-        mcp_router._consume_call_request_from_message(
+        mcp_router._parse_call_request(
             request,
             message,
             remaining(),
@@ -1633,50 +1631,6 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(errors[-1]["error"]["code"], -32000)
 
-    async def test_create_router_mcp_rpc_tools_run(self) -> None:
-        router = mcp_router.create_router()
-        endpoint = None
-        for route in router.routes:
-            if getattr(route, "path", None) == "/":
-                endpoint = route.endpoint
-                break
-        self.assertIsNotNone(endpoint)
-
-        request = DummyRequest(
-            (
-                dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "call",
-                        "method": "tools/run",
-                        "params": {
-                            "model": "m",
-                            "input": [{"role": "user", "content": "hello"}],
-                        },
-                    }
-                )
-                + mcp_router.RS
-            ).encode("utf-8")
-        )
-        request.app.state.mcp_resource_base_path = "/base"
-
-        async def fake_start(*args, **kwargs):
-            return mcp_router.PlainTextResponse("ok")
-
-        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=True))
-        with patch.object(
-            mcp_router,
-            "_start_tool_streaming_response",
-            side_effect=fake_start,
-        ) as starter:
-            response = await endpoint(
-                request,
-                logger=getLogger("test.mcp.rpc"),
-                orchestrator=orchestrator,
-            )
-        self.assertIsInstance(response, mcp_router.PlainTextResponse)
-        self.assertTrue(starter.called)
-
     async def test_create_router_mcp_rpc_tools_call(self) -> None:
         router = mcp_router.create_router()
         endpoint = None
@@ -1694,7 +1648,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                         "id": "call",
                         "method": "tools/call",
                         "params": {
-                            "name": "orchestrator.run",
+                            "name": "run",
                             "arguments": {
                                 "model": "m",
                                 "input": [
@@ -1755,49 +1709,6 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 logger=getLogger("test.mcp.rpc"),
                 orchestrator=orchestrator,
             )
-
-    async def test_mcp_run_tool_endpoint(self) -> None:
-        router = mcp_router.create_router()
-        endpoint = None
-        for route in router.routes:
-            if getattr(route, "path", None) == "/tools/run":
-                endpoint = route.endpoint
-                break
-        self.assertIsNotNone(endpoint)
-
-        body = (
-            dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": "call",
-                    "method": "tools/run",
-                    "params": {
-                        "model": "m",
-                        "input": [{"role": "user", "content": "hi"}],
-                    },
-                }
-            )
-            + mcp_router.RS
-        ).encode("utf-8")
-        request = DummyRequest(body)
-        request.app.state.mcp_resource_base_path = "/base"
-
-        async def fake_start(*args, **kwargs):
-            return mcp_router.PlainTextResponse("stream")
-
-        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=False))
-        with patch.object(
-            mcp_router,
-            "_start_tool_streaming_response",
-            side_effect=fake_start,
-        ) as starter:
-            response = await endpoint(
-                request,
-                logger=getLogger("test.mcp.run"),
-                orchestrator=orchestrator,
-            )
-        self.assertIsInstance(response, mcp_router.PlainTextResponse)
-        self.assertTrue(starter.called)
 
     async def test_mcp_get_resource_endpoint(self) -> None:
         request = DummyRequest(b"")

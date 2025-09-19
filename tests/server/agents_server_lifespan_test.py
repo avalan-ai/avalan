@@ -80,8 +80,10 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 specs_path="agent.yaml",
                 settings=None,
                 tool_settings="tools",
-                prefix_mcp="/mcp",
-                prefix_openai="/openai",
+                mcp_prefix="/mcp",
+                openai_prefix="/openai",
+                mcp_name="run",
+                mcp_description=None,
                 logger=logger,
                 agent_id=agent_identifier,
                 participant_id=None,
@@ -105,6 +107,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 assert app.state.agent_id == agent_identifier
                 assert app.state.mcp_resource_store is resource_store_instance
                 assert app.state.mcp_resource_base_path == "/mcp"
+                assert app.state.mcp_tool_name == "run"
 
             loader_cls.assert_called_once()
             context_cls.assert_called_once_with(

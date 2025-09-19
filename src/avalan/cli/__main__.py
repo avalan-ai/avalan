@@ -1662,16 +1662,27 @@ class CLI:
             help="Port (defaults to 9001, HAL 9000+1)",
         )
         parser.add_argument(
-            "--prefix-mcp",
+            "--mcp-prefix",
             default="/mcp",
             type=str,
             help="URL prefix for MCP endpoints (defaults to /mcp)",
         )
         parser.add_argument(
-            "--prefix-openai",
+            "--mcp-name",
+            default="run",
+            type=str,
+            help="MCP tool name for tools/call (defaults to run)",
+        )
+        parser.add_argument(
+            "--mcp-description",
+            type=str,
+            help="MCP tool description for tools/list",
+        )
+        parser.add_argument(
+            "--openai-prefix",
             default="/v1",
             type=str,
-            help="URL prefix fir OpenAI endpoints (defaults to /v1)",
+            help="URL prefix for OpenAI endpoints (defaults to /v1)",
         )
         parser.add_argument(
             "--reload",
