@@ -415,6 +415,30 @@ class MCPUtilityTestCase(TestCase):
             mcp_router._handle_ping_message(MagicMock(), message)
 
 
+class MCPJSONRPCMessageTestCase(IsolatedAsyncioTestCase):
+    async def test_expect_jsonrpc_message_rejects_non_dict_from_state_iterator(
+        self,
+    ) -> None:
+        async def iterator() -> AsyncIterator[object]:
+            yield "invalid"  # type: ignore[misc]
+
+        request = DummyRequest(b"")
+        request.state._mcp_message_iter = iterator()
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await mcp_router._expect_jsonrpc_message(request, {"initialize"})
+
+        self.assertIn("Invalid MCP payload", str(exc.exception.detail))
+
+    async def test_iter_jsonrpc_messages_rejects_non_dict_segment(self) -> None:
+        request = DummyRequest([b"[1]\x1e"])
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await anext(mcp_router._iter_jsonrpc_messages(request))
+
+        self.assertIn("Invalid MCP payload", str(exc.exception.detail))
+
+
 class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
     def _get_route(self, path: str):
         router = mcp_router.create_router()
