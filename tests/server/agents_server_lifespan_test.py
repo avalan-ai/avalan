@@ -1,12 +1,14 @@
-import pytest
-from avalan.server import agents_server
+import os
+import sys
 from contextlib import AsyncExitStack
 from logging import Logger
 from types import ModuleType, SimpleNamespace
-from uuid import UUID
 from unittest.mock import MagicMock, patch
-import sys
-import os
+from uuid import UUID
+
+import pytest
+
+from avalan.server import agents_server
 
 
 @pytest.fixture
@@ -123,3 +125,71 @@ async def test_agents_server_lifespan_initializes_state() -> None:
     assert loader_kwargs["hub"] is hub
     assert loader_kwargs["logger"] is logger
     assert loader_kwargs["participant_id"] == generated_participant_id
+
+
+@pytest.mark.anyio
+async def test_agents_server_lifespan_sets_mcp_description() -> None:
+    logger = MagicMock(spec=Logger)
+    loader_instance = MagicMock(name="loader_instance")
+    resource_store_instance = MagicMock(name="resource_store")
+    config_instance = MagicMock(name="config_instance")
+    server_instance = MagicMock(name="server_instance")
+    captured_lifespan: dict[str, object] = {}
+    hub = MagicMock(name="hub")
+
+    def build_fastapi(*args, **kwargs):
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            include_router=MagicMock(),
+            add_middleware=MagicMock(),
+        )
+        captured_lifespan["app"] = app
+        captured_lifespan["lifespan"] = kwargs["lifespan"]
+        return app
+
+    uvicorn_module = ModuleType("uvicorn")
+    uvicorn_module.Config = MagicMock(return_value=config_instance)
+    uvicorn_module.Server = MagicMock(return_value=server_instance)
+
+    with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
+        with (
+            patch(
+                "avalan.server.FastAPI", side_effect=build_fastapi
+            ),
+            patch(
+                "avalan.server.OrchestratorLoader", return_value=loader_instance
+            ),
+            patch(
+                "avalan.server.mcp_router.MCPResourceStore",
+                return_value=resource_store_instance,
+            ),
+            patch("avalan.server.logger_replace"),
+            patch.dict(os.environ, {}, clear=True),
+            patch("avalan.server.uuid4", return_value=UUID(int=3)),
+        ):
+            server = agents_server(
+                hub=hub,
+                name="srv",
+                version="v1",
+                host="0.0.0.0",
+                port=4321,
+                reload=False,
+                specs_path="agent.yaml",
+                settings=None,
+                tool_settings=None,
+                mcp_prefix="/mcp",
+                openai_prefix="/openai",
+                mcp_name="run",
+                mcp_description="Describe run tool",
+                logger=logger,
+                agent_id=None,
+                participant_id=None,
+            )
+
+            assert server is server_instance
+
+            lifespan = captured_lifespan["lifespan"]
+            app = captured_lifespan["app"]
+
+            async with lifespan(app):
+                assert app.state.mcp_tool_description == "Describe run tool"
