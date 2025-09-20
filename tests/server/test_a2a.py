@@ -1,6 +1,12 @@
 import asyncio
 
-from avalan.entities import ReasoningToken, Token, ToolCall, ToolCallResult, ToolCallToken
+from avalan.entities import (
+    ReasoningToken,
+    Token,
+    ToolCall,
+    ToolCallResult,
+    ToolCallToken,
+)
 from avalan.event import Event, EventType
 from avalan.server.a2a.store import TaskStore
 from avalan.server.a2a.router import A2AResponseTranslator
@@ -35,7 +41,9 @@ async def _run_translator_flow() -> None:
     async def stream():
         yield ReasoningToken("thinking")
         yield ToolCallToken(token="", call=base_call)
-        yield Event(type=EventType.TOOL_RESULT, payload={"result": tool_result})
+        yield Event(
+            type=EventType.TOOL_RESULT, payload={"result": tool_result}
+        )
         yield Token(token="hello")
 
     await translator.consume(stream())
