@@ -10,10 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-try:  # pragma: no cover - the package is optional in test environments
-    import a2a.types as a2a_types
-except ModuleNotFoundError:  # pragma: no cover - exercised when pkg missing
-    a2a_types = None
+from a2a import types as a2a_types
 
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
@@ -28,7 +25,7 @@ from ...entities import (
 )
 from ...event import Event, EventType
 from ...utils import to_json
-from ..entities import ChatCompletionRequest, ChatMessage, ResponseFormat
+from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from .store import TaskStore
 
@@ -64,7 +61,9 @@ class A2ATaskCreateRequest(ChatCompletionRequest):
     instructions: str | None = None
 
     def conversation(self) -> list[ChatMessage]:
-        messages = [ChatMessage.model_validate(message) for message in self.messages]
+        messages = [
+            ChatMessage.model_validate(message) for message in self.messages
+        ]
         if self.instructions:
             messages.insert(
                 0,
@@ -119,7 +118,9 @@ class A2AResponseTranslator:
         self,
         response: AsyncIterable[Token | TokenDetail | Event | str],
     ) -> AsyncGenerator[dict[str, Any], None]:
-        for event in await self._store.set_status(self._task_id, "in_progress"):
+        for event in await self._store.set_status(
+            self._task_id, "in_progress"
+        ):
             yield event
         async for item in response:
             for event in await self._process_item(item):
@@ -203,7 +204,9 @@ class A2AResponseTranslator:
 
         if self._state is StreamState.REASONING and self._message_id:
             events.extend(
-                await self._store.complete_message(self._task_id, self._message_id)
+                await self._store.complete_message(
+                    self._task_id, self._message_id
+                )
             )
             self._message_id = None
         elif self._state is StreamState.TOOL and self._artifact_id:
@@ -215,7 +218,9 @@ class A2AResponseTranslator:
             self._artifact_id = None
         elif self._state is StreamState.ANSWER and self._message_id:
             events.extend(
-                await self._store.complete_message(self._task_id, self._message_id)
+                await self._store.complete_message(
+                    self._task_id, self._message_id
+                )
             )
             self._message_id = None
 
@@ -332,7 +337,9 @@ class A2AResponseTranslator:
             )
         )
         events.extend(
-            await self._store.complete_artifact(self._task_id, self._artifact_id)
+            await self._store.complete_artifact(
+                self._task_id, self._artifact_id
+            )
         )
         return events
 
@@ -389,7 +396,9 @@ async def create_task(
     store: TaskStore = Depends(di_get_task_store),
 ):
     if not payload.messages:
-        raise HTTPException(status_code=400, detail="Provide at least one message")
+        raise HTTPException(
+            status_code=400, detail="Provide at least one message"
+        )
 
     conversation = payload.conversation()
     chat_request = ChatCompletionRequest(
@@ -428,7 +437,9 @@ async def create_task(
         except CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - defensive path
-            logger.exception("A2A streaming task %s failed", task_id, exc_info=exc)
+            logger.exception(
+                "A2A streaming task %s failed", task_id, exc_info=exc
+            )
             for event in await store.fail_task(task_id, str(exc)):
                 yield _sse(event)
         finally:
@@ -453,7 +464,9 @@ async def create_task(
         logger.exception("A2A task %s failed", task_id, exc_info=exc)
         await store.fail_task(task_id, str(exc))
         await orchestrator.sync_messages()
-        raise HTTPException(status_code=500, detail="Task execution failed") from exc
+        raise HTTPException(
+            status_code=500, detail="Task execution failed"
+        ) from exc
 
     await orchestrator.sync_messages()
     task = await store.get_task(task_id)
@@ -505,7 +518,9 @@ async def well_known_agent_card(
     return _coerce("AgentCard", card)
 
 
-def _state_for_item(item: Token | TokenDetail | Event | str) -> StreamState | None:
+def _state_for_item(
+    item: Token | TokenDetail | Event | str,
+) -> StreamState | None:
     if isinstance(item, ReasoningToken):
         return StreamState.REASONING
     if isinstance(item, (ToolCallToken, Event)):
@@ -562,7 +577,9 @@ def _build_agent_card(orchestrator: Orchestrator) -> dict[str, Any]:
             tool_descriptions.append(
                 {
                     "name": name,
-                    "description": description.strip() if description else None,
+                    "description": (
+                        description.strip() if description else None
+                    ),
                 }
             )
 
@@ -589,14 +606,14 @@ def _build_agent_card(orchestrator: Orchestrator) -> dict[str, Any]:
         "description": orchestrator.name or "Avalan orchestrated agent",
         "capabilities": capabilities,
         "tools": tool_descriptions,
-        "models": sorted(orchestrator.model_ids) if orchestrator.model_ids else [],
+        "models": (
+            sorted(orchestrator.model_ids) if orchestrator.model_ids else []
+        ),
         "instructions": instructions,
     }
 
 
 def _coerce(type_name: str, payload: dict[str, Any]) -> Any:
-    if a2a_types is None:
-        return payload
     cls = getattr(a2a_types, type_name, None)
     if cls is None:
         return payload
@@ -610,8 +627,6 @@ def _coerce(type_name: str, payload: dict[str, Any]) -> Any:
 
 
 def _coerce_list(type_name: str, payload: list[dict[str, Any]]) -> Any:
-    if a2a_types is None:
-        return payload
     cls = getattr(a2a_types, type_name, None)
     if cls is None:
         return payload
@@ -637,4 +652,4 @@ def _filter_payload(cls: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 def _sse(event: dict[str, Any]) -> str:
     name = event.get("event", "message")
-    return f"event: {name}\n" f"data: {to_json(event)}\n\n"
+    return f"event: {name}\ndata: {to_json(event)}\n\n"

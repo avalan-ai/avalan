@@ -141,7 +141,8 @@ class TaskRecord:
             "metadata": dict(self.metadata),
             "input": list(self.input_messages),
             "messages": [
-                self.messages[msg_id].to_payload() for msg_id in self.message_order
+                self.messages[msg_id].to_payload()
+                for msg_id in self.message_order
             ],
             "artifacts": [
                 self.artifacts[artifact_id].to_payload()
@@ -198,7 +199,9 @@ class TaskStore:
             ]
         return [event.to_payload(task_id) for event in events]
 
-    async def set_status(self, task_id: str, status: str) -> list[dict[str, Any]]:
+    async def set_status(
+        self, task_id: str, status: str
+    ) -> list[dict[str, Any]]:
         async with self._lock:
             record = self._tasks[task_id]
             if record.status == status:
@@ -210,7 +213,9 @@ class TaskStore:
             )
         return [event.to_payload(task_id)]
 
-    async def fail_task(self, task_id: str, message: str) -> list[dict[str, Any]]:
+    async def fail_task(
+        self, task_id: str, message: str
+    ) -> list[dict[str, Any]]:
         events = await self.set_status(task_id, "failed")
         async with self._lock:
             record = self._tasks[task_id]
@@ -401,7 +406,9 @@ class TaskStore:
             ]
         return events
 
-    async def get_artifact(self, task_id: str, artifact_id: str) -> dict[str, Any]:
+    async def get_artifact(
+        self, task_id: str, artifact_id: str
+    ) -> dict[str, Any]:
         async with self._lock:
             record = self._tasks[task_id]
             artifact = record.artifacts[artifact_id]
