@@ -84,6 +84,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 tool_settings="tools",
                 mcp_prefix="/mcp",
                 openai_prefix="/openai",
+                a2a_prefix="/a2a",
                 mcp_name="run",
                 mcp_description=None,
                 logger=logger,
@@ -110,6 +111,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 assert app.state.mcp_resource_store is resource_store_instance
                 assert app.state.mcp_resource_base_path == "/mcp"
                 assert app.state.mcp_tool_name == "run"
+                assert app.state.a2a_prefix == "/a2a"
 
             loader_cls.assert_called_once()
             context_cls.assert_called_once_with(
@@ -179,6 +181,7 @@ async def test_agents_server_lifespan_sets_mcp_description() -> None:
                 tool_settings=None,
                 mcp_prefix="/mcp",
                 openai_prefix="/openai",
+                a2a_prefix="/a2a",
                 mcp_name="run",
                 mcp_description="Describe run tool",
                 logger=logger,

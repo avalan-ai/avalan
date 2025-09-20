@@ -26,6 +26,8 @@ class AgentsServerHttpTestCase(TestCase):
         engine_mod.router = MagicMock(name="engine_router")
         responses_mod = ModuleType("avalan.server.routers.responses")
         responses_mod.router = MagicMock(name="responses_router")
+        a2a_mod = ModuleType("avalan.server.routers.a2a")
+        a2a_mod.router = MagicMock(name="a2a_router")
 
         modules = {
             "fastapi": fastapi_mod,
@@ -33,6 +35,7 @@ class AgentsServerHttpTestCase(TestCase):
             "avalan.server.routers.chat": chat_mod,
             "avalan.server.routers.engine": engine_mod,
             "avalan.server.routers.responses": responses_mod,
+            "avalan.server.routers.a2a": a2a_mod,
         }
 
         self.FastAPI = FastAPI
@@ -41,6 +44,7 @@ class AgentsServerHttpTestCase(TestCase):
         self.chat_router = chat_mod.router
         self.engine_router = engine_mod.router
         self.responses_router = responses_mod.router
+        self.a2a_router = a2a_mod.router
 
         return modules
 
@@ -85,6 +89,7 @@ class AgentsServerHttpTestCase(TestCase):
                     tool_settings=None,
                     mcp_prefix="/m",
                     openai_prefix="/o",
+                    a2a_prefix="/a2a",
                     mcp_name="run",
                     mcp_description=None,
                     logger=logger,
@@ -96,6 +101,7 @@ class AgentsServerHttpTestCase(TestCase):
         app.include_router.assert_any_call(self.chat_router, prefix="/o")
         app.include_router.assert_any_call(self.responses_router, prefix="/o")
         app.include_router.assert_any_call(self.engine_router)
+        app.include_router.assert_any_call(self.a2a_router, prefix="/a2a")
         app.include_router.assert_any_call(mcp_router, prefix="/m")
         self.Config.assert_called_once_with(
             app, host="h", port=8080, reload=False
@@ -136,6 +142,7 @@ class AgentsServerHttpTestCase(TestCase):
                     tool_settings=None,
                     mcp_prefix="/m",
                     openai_prefix="/o",
+                    a2a_prefix="/a2a",
                     mcp_name="run",
                     mcp_description=None,
                     logger=logger,

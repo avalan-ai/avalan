@@ -4,6 +4,7 @@ from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
+from .a2a.store import A2ATaskStore
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -11,11 +12,7 @@ from importlib import import_module
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from logging import Logger
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
-
-if TYPE_CHECKING:
-    from uvicorn import Server
 
 
 def agents_server(
@@ -30,6 +27,7 @@ def agents_server(
     tool_settings: ToolSettingsContext | None,
     mcp_prefix: str,
     openai_prefix: str,
+    a2a_prefix: str,
     mcp_name: str,
     mcp_description: str | None,
     logger: Logger,
@@ -79,6 +77,8 @@ def agents_server(
             app.state.mcp_tool_name = mcp_name or "run"
             if mcp_description:
                 app.state.mcp_tool_description = mcp_description
+            app.state.a2a_task_store = A2ATaskStore()
+            app.state.a2a_prefix = a2a_prefix
             yield
 
     logger.debug("Creating %s server", name)
@@ -106,9 +106,11 @@ def agents_server(
     chat_router_module = import_module("avalan.server.routers.chat")
     responses_router_module = import_module("avalan.server.routers.responses")
     engine_router_module = import_module("avalan.server.routers.engine")
+    a2a_router_module = import_module("avalan.server.routers.a2a")
     app.include_router(chat_router_module.router, prefix=openai_prefix)
     app.include_router(responses_router_module.router, prefix=openai_prefix)
     app.include_router(engine_router_module.router)
+    app.include_router(a2a_router_module.router, prefix=a2a_prefix)
 
     logger.debug("Creating MCP HTTP stream router")
     mcp_http_router = mcp_router.create_router()

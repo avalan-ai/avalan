@@ -655,6 +655,7 @@ async def agent_serve(
         version=version,
         mcp_prefix=getattr(args, "mcp_prefix", "/mcp") or "/mcp",
         openai_prefix=args.openai_prefix,
+        a2a_prefix=getattr(args, "a2a_prefix", "/a2a") or "/a2a",
         mcp_name=getattr(args, "mcp_name", "run") or "run",
         mcp_description=getattr(args, "mcp_description", None),
         specs_path=specs_path,
