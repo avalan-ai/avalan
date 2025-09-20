@@ -1327,8 +1327,10 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 
 Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
 endpoints whenever you run `avalan agent serve`. It is mounted at `/mcp` by
-default and can be changed with `--mcp-prefix`. Both surfaces fully support
-streaming, including incremental tool calling and intermediate outputs.
+default and can be changed with `--mcp-prefix`. The A2A-compatible endpoints
+are mounted at `/a2a` by default and can be configured with `--a2a-prefix`.
+Both surfaces fully support streaming, including incremental tool calling and
+intermediate outputs.
 
 > [!TIP]
 > Debug the MCP stream with the MCP Inspector:
