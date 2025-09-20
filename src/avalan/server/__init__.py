@@ -4,6 +4,7 @@ from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
+from .a2a.store import TaskStore
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -74,6 +75,7 @@ def agents_server(
             app.state.loader = loader
             app.state.logger = logger
             app.state.agent_id = agent_id
+            app.state.a2a_store = TaskStore()
             app.state.mcp_resource_store = mcp_router.MCPResourceStore()
             app.state.mcp_resource_base_path = mcp_prefix
             app.state.mcp_tool_name = mcp_name or "run"
@@ -106,9 +108,12 @@ def agents_server(
     chat_router_module = import_module("avalan.server.routers.chat")
     responses_router_module = import_module("avalan.server.routers.responses")
     engine_router_module = import_module("avalan.server.routers.engine")
+    a2a_module = import_module("avalan.server.a2a")
     app.include_router(chat_router_module.router, prefix=openai_prefix)
     app.include_router(responses_router_module.router, prefix=openai_prefix)
     app.include_router(engine_router_module.router)
+    app.include_router(a2a_module.router)
+    app.include_router(a2a_module.well_known_router)
 
     logger.debug("Creating MCP HTTP stream router")
     mcp_http_router = mcp_router.create_router()
