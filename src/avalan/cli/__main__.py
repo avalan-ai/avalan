@@ -1685,6 +1685,12 @@ class CLI:
             help="URL prefix for OpenAI endpoints (defaults to /v1)",
         )
         parser.add_argument(
+            "--a2a-prefix",
+            default="/a2a",
+            type=str,
+            help="URL prefix for A2A endpoints (defaults to /a2a)",
+        )
+        parser.add_argument(
             "--reload",
             action="store_true",
             default=False,

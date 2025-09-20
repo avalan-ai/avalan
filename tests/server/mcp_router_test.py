@@ -470,7 +470,9 @@ class MCPJSONRPCMessageTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("Invalid MCP payload", str(exc.exception.detail))
 
-    async def test_iter_jsonrpc_messages_rejects_non_dict_segment(self) -> None:
+    async def test_iter_jsonrpc_messages_rejects_non_dict_segment(
+        self,
+    ) -> None:
         request = DummyRequest([b"[1]\x1e"])
 
         with self.assertRaises(mcp_router.HTTPException) as exc:
@@ -1186,9 +1188,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         body = (dumps(message) + mcp_router.RS).encode("utf-8")
         request = DummyRequest(body)
         request.app.state.mcp_resource_base_path = "/m"
-        request_id, tool_request, progress = await mcp_router._consume_call_request(
-            request
-        )
+        (
+            request_id,
+            tool_request,
+            progress,
+        ) = await mcp_router._consume_call_request(request)
         self.assertEqual(request_id, "call-progress")
         self.assertEqual(progress, "tok-1")
         self.assertEqual(tool_request.input_string, "hi")

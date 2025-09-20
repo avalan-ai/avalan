@@ -153,11 +153,10 @@ async def test_agents_server_lifespan_sets_mcp_description() -> None:
 
     with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
         with (
+            patch("avalan.server.FastAPI", side_effect=build_fastapi),
             patch(
-                "avalan.server.FastAPI", side_effect=build_fastapi
-            ),
-            patch(
-                "avalan.server.OrchestratorLoader", return_value=loader_instance
+                "avalan.server.OrchestratorLoader",
+                return_value=loader_instance,
             ),
             patch(
                 "avalan.server.mcp_router.MCPResourceStore",

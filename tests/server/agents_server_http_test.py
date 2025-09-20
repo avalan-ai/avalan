@@ -1,4 +1,5 @@
 from avalan.server import agents_server
+from avalan.server.a2a import router as a2a_router
 from logging import Logger
 import sys
 from types import ModuleType
@@ -96,11 +97,56 @@ class AgentsServerHttpTestCase(TestCase):
         app.include_router.assert_any_call(self.chat_router, prefix="/o")
         app.include_router.assert_any_call(self.responses_router, prefix="/o")
         app.include_router.assert_any_call(self.engine_router)
+        app.include_router.assert_any_call(a2a_router, prefix="/a2a")
         app.include_router.assert_any_call(mcp_router, prefix="/m")
         self.Config.assert_called_once_with(
             app, host="h", port=8080, reload=False
         )
         self.Server.assert_called_once_with(config_instance)
+
+    def test_agents_server_custom_a2a_prefix(self) -> None:
+        modules = self._install_modules()
+
+        logger = MagicMock(spec=Logger)
+        logger.handlers = []
+        logger.level = 0
+        logger.propagate = False
+
+        app = MagicMock()
+        app.include_router = MagicMock()
+        app.add_middleware = MagicMock()
+        self.FastAPI.return_value = app
+
+        mcp_router = MagicMock(name="mcp_router")
+
+        with patch.dict(sys.modules, modules):
+            with (
+                patch("avalan.server.FastAPI", self.FastAPI),
+                patch(
+                    "avalan.server.mcp_router.create_router",
+                    return_value=mcp_router,
+                ),
+                patch("avalan.server.logger_replace"),
+            ):
+                agents_server(
+                    hub=MagicMock(),
+                    name="srv",
+                    version="v",
+                    host="h",
+                    port=8080,
+                    reload=False,
+                    specs_path=None,
+                    settings=MagicMock(),
+                    tool_settings=None,
+                    mcp_prefix="/m",
+                    openai_prefix="/o",
+                    a2a_prefix="/custom",
+                    mcp_name="run",
+                    mcp_description=None,
+                    logger=logger,
+                )
+
+        app.include_router.assert_any_call(a2a_router, prefix="/custom")
 
     def test_agents_server_cors_options(self) -> None:
         modules = self._install_modules()
