@@ -5,10 +5,10 @@ from time import time
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from a2a_sdk.models.event import Event
-from a2a_sdk.models.task import TaskStatus
-
 from .schema import TASK_STATUSES, ensure_task_status
+
+from a2a.types.event import Event
+from a2a.types.task import TaskStatus
 
 
 @dataclass(slots=True)

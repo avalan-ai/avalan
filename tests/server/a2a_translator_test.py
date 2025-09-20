@@ -15,11 +15,11 @@ ORIGINAL_SYS_PATH = list(sys.path)
 sys.path.insert(0, str(base_path))
 
 PREVIOUS_MODULES = {
-    "a2a_sdk": sys.modules.get("a2a_sdk"),
-    "a2a_sdk.models": sys.modules.get("a2a_sdk.models"),
-    "a2a_sdk.models.agent": sys.modules.get("a2a_sdk.models.agent"),
-    "a2a_sdk.models.event": sys.modules.get("a2a_sdk.models.event"),
-    "a2a_sdk.models.task": sys.modules.get("a2a_sdk.models.task"),
+    "a2a": sys.modules.get("a2a"),
+    "a2a.types": sys.modules.get("a2a.types"),
+    "a2a.types.agent": sys.modules.get("a2a.types.agent"),
+    "a2a.types.event": sys.modules.get("a2a.types.event"),
+    "a2a.types.task": sys.modules.get("a2a.types.task"),
     "avalan": sys.modules.get("avalan"),
     "avalan.server": sys.modules.get("avalan.server"),
     "avalan.agent": sys.modules.get("avalan.agent"),
@@ -141,27 +141,34 @@ class _TaskStatus(StrEnum):
     FAILED = "failed"
 
 
-a2a_sdk_module = types.ModuleType("a2a_sdk")
-a2a_sdk_models = types.ModuleType("a2a_sdk.models")
-a2a_sdk_agent = types.ModuleType("a2a_sdk.models.agent")
-a2a_sdk_event = types.ModuleType("a2a_sdk.models.event")
-a2a_sdk_task = types.ModuleType("a2a_sdk.models.task")
+a2a_module = types.ModuleType("a2a")
+a2a_types_module = types.ModuleType("a2a.types")
+a2a_types_agent = types.ModuleType("a2a.types.agent")
+a2a_types_event = types.ModuleType("a2a.types.event")
+a2a_types_task = types.ModuleType("a2a.types.task")
 
-a2a_sdk_agent.AgentCard = _AgentCard
-a2a_sdk_event.Event = _Event
-a2a_sdk_task.Task = _Task
-a2a_sdk_task.TaskStatus = _TaskStatus
+a2a_module.__path__ = []  # type: ignore[attr-defined]
+a2a_types_module.__path__ = []  # type: ignore[attr-defined]
 
-a2a_sdk_module.models = a2a_sdk_models
-a2a_sdk_models.agent = a2a_sdk_agent
-a2a_sdk_models.event = a2a_sdk_event
-a2a_sdk_models.task = a2a_sdk_task
+a2a_types_agent.AgentCard = _AgentCard
+a2a_types_event.Event = _Event
+a2a_types_task.Task = _Task
+a2a_types_task.TaskStatus = _TaskStatus
 
-sys.modules["a2a_sdk"] = a2a_sdk_module
-sys.modules["a2a_sdk.models"] = a2a_sdk_models
-sys.modules["a2a_sdk.models.agent"] = a2a_sdk_agent
-sys.modules["a2a_sdk.models.event"] = a2a_sdk_event
-sys.modules["a2a_sdk.models.task"] = a2a_sdk_task
+a2a_module.types = a2a_types_module
+a2a_types_module.AgentCard = _AgentCard
+a2a_types_module.Event = _Event
+a2a_types_module.Task = _Task
+a2a_types_module.TaskStatus = _TaskStatus
+a2a_types_module.agent = a2a_types_agent
+a2a_types_module.event = a2a_types_event
+a2a_types_module.task = a2a_types_task
+
+sys.modules["a2a"] = a2a_module
+sys.modules["a2a.types"] = a2a_types_module
+sys.modules["a2a.types.agent"] = a2a_types_agent
+sys.modules["a2a.types.event"] = a2a_types_event
+sys.modules["a2a.types.task"] = a2a_types_task
 
 from avalan.entities import ReasoningToken, Token
 from avalan.server.a2a.agent import build_agent_card
