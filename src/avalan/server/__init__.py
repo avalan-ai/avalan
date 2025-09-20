@@ -32,8 +32,9 @@ def agents_server(
     mcp_prefix: str,
     openai_prefix: str,
     mcp_name: str,
-    mcp_description: str | None,
     logger: Logger,
+    mcp_description: str | None = None,
+    a2a_prefix: str = "/a2a",
     agent_id: UUID | None = None,
     participant_id: UUID | None = None,
     allow_origins: list[str] | None = None,
@@ -112,7 +113,7 @@ def agents_server(
     app.include_router(chat_router_module.router, prefix=openai_prefix)
     app.include_router(responses_router_module.router, prefix=openai_prefix)
     app.include_router(engine_router_module.router)
-    app.include_router(a2a_module.router)
+    app.include_router(a2a_module.router, prefix=a2a_prefix)
     app.include_router(a2a_module.well_known_router)
 
     logger.debug("Creating MCP HTTP stream router")
