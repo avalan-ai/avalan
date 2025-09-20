@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from a2a_sdk.models.agent import AgentCard
-from a2a_sdk.models.event import Event
-from a2a_sdk.models.task import Task, TaskStatus
+from a2a.types.agent import AgentCard
+from a2a.types.event import Event
+from a2a.types.task import Task, TaskStatus
 
 
 @dataclass(frozen=True, slots=True)
