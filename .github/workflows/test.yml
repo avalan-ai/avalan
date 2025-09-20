@@ -63,6 +63,9 @@ jobs:
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry install --no-interaction --extras "test"
 
+      - name: Install a2a-sdk
+        run: poetry run pip install "a2a-sdk==0.3.6"
+
       - name: Run tests with coverage analysis
         run: poetry run pytest --cov=src/ --cov-report=xml
 
