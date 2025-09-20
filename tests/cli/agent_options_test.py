@@ -71,6 +71,7 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
             port=9001,
             openai_prefix="/v1",
             mcp_prefix="/mcp",
+            a2a_prefix="/a2a",
             mcp_name="run",
             mcp_description=None,
             reload=False,
@@ -94,4 +95,5 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
         srv_patch.assert_called_once()
         self.assertEqual(srv_patch.call_args.kwargs["agent_id"], "aid")
         self.assertEqual(srv_patch.call_args.kwargs["participant_id"], "pid")
+        self.assertEqual(srv_patch.call_args.kwargs["a2a_prefix"], "/a2a")
         server.serve.assert_awaited_once()

@@ -42,7 +42,7 @@ async def _di_get_orchestrator(request: Request) -> Orchestrator:
     return await _impl(request)
 
 
-router = APIRouter(prefix="/a2a", tags=["a2a"])
+router = APIRouter(tags=["a2a"])
 well_known_router = APIRouter()
 
 
