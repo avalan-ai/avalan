@@ -9,7 +9,11 @@ from ...entities import (
     TokenDetail,
 )
 from ...event import Event, EventType
-from ...server.entities import ChatCompletionRequest, ChatMessage, MCPToolRequest
+from ...server.entities import (
+    ChatCompletionRequest,
+    ChatMessage,
+    MCPToolRequest,
+)
 from ...utils import to_json
 from asyncio import Event as AsyncEvent, Lock, create_task
 from contextlib import suppress
@@ -389,9 +393,7 @@ def _build_chat_request(
     model_id = _default_model_id(orchestrator)
     return ChatCompletionRequest(
         model=model_id,
-        messages=[
-            ChatMessage(role="user", content=tool_request.input_string)
-        ],
+        messages=[ChatMessage(role="user", content=tool_request.input_string)],
         stream=True,
     )
 
