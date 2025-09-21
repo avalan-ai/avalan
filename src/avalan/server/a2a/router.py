@@ -27,6 +27,7 @@ from ...event import Event, EventType
 from ...utils import to_json
 from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
+from ..sse import sse_message
 from .store import TaskStore
 
 
@@ -431,9 +432,13 @@ async def create_task(
     async def stream() -> AsyncGenerator[str, None]:
         try:
             for event in initial_events:
-                yield _sse(event)
+                yield sse_message(
+                    to_json(event), event=event.get("event") or "message"
+                )
             async for event in translator.run_stream(response):
-                yield _sse(event)
+                yield sse_message(
+                    to_json(event), event=event.get("event") or "message"
+                )
         except CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - defensive path
@@ -441,10 +446,15 @@ async def create_task(
                 "A2A streaming task %s failed", task_id, exc_info=exc
             )
             for event in await store.fail_task(task_id, str(exc)):
-                yield _sse(event)
+                yield sse_message(
+                    to_json(event), event=event.get("event") or "message"
+                )
         finally:
-            yield _sse({"event": "task.stream.completed", "task_id": task_id})
-            yield "event: done\ndata: {}\n\n"
+            yield sse_message(
+                to_json({"event": "task.stream.completed", "task_id": task_id}),
+                event="task.stream.completed",
+            )
+            yield sse_message("{}", event="done")
             await orchestrator.sync_messages()
 
     if payload.stream:
@@ -649,7 +659,3 @@ def _filter_payload(cls: Any, payload: dict[str, Any]) -> dict[str, Any]:
     allowed = set(fields.keys())
     return {key: value for key, value in payload.items() if key in allowed}
 
-
-def _sse(event: dict[str, Any]) -> str:
-    name = event.get("event", "message")
-    return f"event: {name}\ndata: {to_json(event)}\n\n"

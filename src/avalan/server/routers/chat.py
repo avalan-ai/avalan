@@ -1,5 +1,6 @@
 from . import orchestrate
 from .. import di_get_logger, di_get_orchestrator
+from ..sse import sse_headers, sse_message
 from ...agent.orchestrator import Orchestrator
 from ...entities import MessageRole, ReasoningToken, ToolCallToken
 from ...event import Event
@@ -69,8 +70,8 @@ async def create_chat_completion(
                     model=request.model,
                     choices=[choice],
                 )
-                yield f"data: {chunk.model_dump_json()}\n\n"  # SSE data event
-            yield "data: [DONE]\n\n"  # end of stream
+                yield sse_message(chunk.model_dump_json())
+            yield sse_message("[DONE]")
 
             await orchestrator.sync_messages()
 
@@ -81,11 +82,7 @@ async def create_chat_completion(
         return StreamingResponse(
             generate_chunks(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+            headers=sse_headers(),
         )
 
     # Non streaming

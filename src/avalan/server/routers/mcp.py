@@ -1,4 +1,5 @@
 from . import orchestrate
+from ..sse import sse_bytes, sse_headers
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
@@ -473,18 +474,14 @@ async def _start_tool_streaming_response(
                 base_path=base_path,
                 cancel_event=cancel_event,
             ):
-                yield b"data: " + chunk.rstrip(b"\n") + b"\n\n"
+                yield sse_bytes(chunk)
         finally:
             watcher.cancel()
             with suppress(Exception):
                 await watcher
 
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-    }
     return StreamingResponse(
-        stream(), media_type="text/event-stream", headers=headers
+        stream(), media_type="text/event-stream", headers=sse_headers()
     )
 
 
