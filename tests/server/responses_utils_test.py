@@ -15,11 +15,12 @@ from avalan.event import Event, EventType
 from avalan.server.routers.responses import (
     ResponseState,
     _new_state,
-    _sse,
     _switch_state,
     _token_to_sse,
     _tool_call_event_item,
 )
+from avalan.server.sse import sse_message
+from avalan.utils import to_json
 
 
 class ResponsesUtilsTestCase(TestCase):
@@ -207,5 +208,5 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(result_payload["payload"], {"status": "ok"})
 
     def test_sse_formats_event_and_data(self) -> None:
-        result = _sse("test.event", {"a": 1})
+        result = sse_message(to_json({"a": 1}), event="test.event")
         self.assertEqual(result, 'event: test.event\ndata: {"a": 1}\n\n')
