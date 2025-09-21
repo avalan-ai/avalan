@@ -17,7 +17,7 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 
 - 🎞️ **Multi-modal** integration (NLP/text, vision, audio.)
 - 🔌 **Multi-backend** support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
-- 🔗 **Native adapters** for Anyscale, Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace, Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others.
+- 🔗 **Native adapters** for Amazon Bedrock, Anyscale, Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace, Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others.
 - 🤖 Sophisticated **memory management** with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, AWS S3 Vectors, and reasoning graph storage.
 - 🧠 Multiple **reasoning strategies** including ReACT, Chain-of-Thought, Tree-of-Thought, Plan-and-Reflect, Self-Consistency, Scratchpad-Toolformer, Cascaded Prompting, Critic-Guided Direction-Following Experts, and Product-of-Experts.
 - 🔀 Intuitive pipelines with branching, filtering, and recursive **AI workflows**.
@@ -491,6 +491,18 @@ with TextGenerationModel(f"ai://{api_key}@openai/gpt-4o") as model:
         print(token, end="", flush=True)
 ```
 For a runnable script, see [docs/examples/text_generation.py](docs/examples/text_generation.py).
+
+Amazon Bedrock models use the same workflow. With your AWS credentials
+configured (for example with `AWS_PROFILE` or environment variables),
+you can target any Bedrock region via `--base-url`:
+
+```bash
+echo "Summarize the latest AWS re:Invent keynote in three bullet points." \
+    | avalan model run "ai://bedrock/anthropic.claude-3-5-sonnet-20241022-v1:0" \
+        --base-url "us-east-1" \
+        --max-new-tokens 256 \
+        --temperature .7
+```
 
 #### Token classification
 
