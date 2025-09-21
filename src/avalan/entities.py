@@ -43,6 +43,7 @@ ToolValue = bool | float | int | str | None
 Vendor = Literal[
     "anthropic",
     "anyscale",
+    "bedrock",
     "deepinfra",
     "deepseek",
     "google",

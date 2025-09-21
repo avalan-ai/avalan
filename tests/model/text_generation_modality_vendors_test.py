@@ -15,6 +15,7 @@ from avalan.model.modalities.text import TextGenerationModality
     [
         ("anthropic", "AnthropicModel"),
         ("openai", "OpenAIModel"),
+        ("bedrock", "BedrockModel"),
         ("openrouter", "OpenRouterModel"),
         ("anyscale", "AnyScaleModel"),
         ("together", "TogetherModel"),

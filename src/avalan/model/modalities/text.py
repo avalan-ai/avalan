@@ -91,6 +91,10 @@ class TextGenerationModality:
                 from ..nlp.text.vendor.openai import OpenAIModel as Loader
 
                 return Loader(**model_load_args, exit_stack=exit_stack)
+            case "bedrock":
+                from ..nlp.text.vendor.bedrock import BedrockModel as Loader
+
+                return Loader(**model_load_args, exit_stack=exit_stack)
             case "openrouter":
                 from ..nlp.text.vendor.openrouter import (
                     OpenRouterModel as Loader,
