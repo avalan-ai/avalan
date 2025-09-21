@@ -1,5 +1,6 @@
 from . import orchestrate
 from .. import di_get_logger, di_get_orchestrator
+from ..sse import sse_headers, sse_message
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
@@ -104,17 +105,13 @@ async def create_response(
 
             yield _sse("response.completed", {"type": "response.completed"})
 
-            yield "event: done\ndata: {}\n\n"
+            yield sse_message("{}", event="done")
             await orchestrator.sync_messages()
 
         return StreamingResponse(
             generate(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+            headers=sse_headers(),
         )
 
     text = await response.to_str()
@@ -406,4 +403,4 @@ def _tool_call_event_item(event: Event) -> dict:
 
 
 def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\n" + f"data: {to_json(data)}\n\n"
+    return sse_message(to_json(data), event=event)
