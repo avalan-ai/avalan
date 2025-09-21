@@ -1,5 +1,6 @@
 from . import orchestrate
 from .. import di_get_logger, di_get_orchestrator
+from ..sse import sse_headers, sse_message
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
@@ -46,18 +47,20 @@ async def create_response(
         async def generate():
             seq = 0
 
-            yield _sse(
-                "response.created",
-                {
-                    "type": "response.created",
-                    "response": {
-                        "id": str(response_id),
-                        "created_at": timestamp,
-                        "model": request.model,
-                        "type": "response",
-                        "status": "in_progress",
-                    },
-                },
+            yield sse_message(
+                to_json(
+                    {
+                        "type": "response.created",
+                        "response": {
+                            "id": str(response_id),
+                            "created_at": timestamp,
+                            "model": request.model,
+                            "type": "response",
+                            "status": "in_progress",
+                        },
+                    }
+                ),
+                event="response.created",
             )
 
             state: ResponseState | None = None
@@ -102,19 +105,18 @@ async def create_response(
             for event in events:
                 yield event
 
-            yield _sse("response.completed", {"type": "response.completed"})
+            yield sse_message(
+                to_json({"type": "response.completed"}),
+                event="response.completed",
+            )
 
-            yield "event: done\ndata: {}\n\n"
+            yield sse_message("{}", event="done")
             await orchestrator.sync_messages()
 
         return StreamingResponse(
             generate(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+            headers=sse_headers(),
         )
 
     text = await response.to_str()
@@ -144,15 +146,17 @@ def _token_to_sse(
 
     if isinstance(token, ReasoningToken):
         events.append(
-            _sse(
-                "response.reasoning_text.delta",
-                {
-                    "type": "response.reasoning_text.delta",
-                    "delta": token.token,
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                },
+            sse_message(
+                to_json(
+                    {
+                        "type": "response.reasoning_text.delta",
+                        "delta": token.token,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
+                event="response.reasoning_text.delta",
             )
         )
     elif isinstance(token, Event) and token.type in (
@@ -173,17 +177,19 @@ def _token_to_sse(
                 delta_obj["result"] = to_json(result) if result else None
 
         events.append(
-            _sse(
-                "response.function_call_arguments.delta",
-                {
-                    **delta_obj,
-                    "type": "response.function_call_arguments.delta",
-                    "delta": to_json(delta_obj),
-                    "id": item["id"],
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                },
+            sse_message(
+                to_json(
+                    {
+                        **delta_obj,
+                        "type": "response.function_call_arguments.delta",
+                        "delta": to_json(delta_obj),
+                        "id": item["id"],
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
+                event="response.function_call_arguments.delta",
             )
         )
     elif isinstance(token, ToolCallToken):
@@ -194,44 +200,52 @@ def _token_to_sse(
                 "arguments": token.call.arguments,
             }
             events.append(
-                _sse(
-                    "response.function_call_arguments.delta",
-                    {
-                        "type": "response.function_call_arguments.delta",
-                        "delta": to_json(delta_obj),
-                        "id": str(token.call.id),
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    },
+                sse_message(
+                    to_json(
+                        {
+                            "type": "response.function_call_arguments.delta",
+                            "delta": to_json(delta_obj),
+                            "id": str(token.call.id),
+                            "output_index": 0,
+                            "content_index": 0,
+                            "sequence_number": seq,
+                        }
+                    ),
+                    event="response.function_call_arguments.delta",
                 )
             )
         else:
             events.append(
-                _sse(
-                    "response.custom_tool_call_input.delta",
-                    {
-                        "type": "response.custom_tool_call_input.delta",
-                        "delta": token.token,
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    },
+                sse_message(
+                    to_json(
+                        {
+                            "type": "response.custom_tool_call_input.delta",
+                            "delta": token.token,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "sequence_number": seq,
+                        }
+                    ),
+                    event="response.custom_tool_call_input.delta",
                 )
             )
     else:
         events.append(
-            _sse(
-                "response.output_text.delta",
-                {
-                    "type": "response.output_text.delta",
-                    "delta": (
-                        token.token if isinstance(token, Token) else str(token)
-                    ),
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                },
+            sse_message(
+                to_json(
+                    {
+                        "type": "response.output_text.delta",
+                        "delta": (
+                            token.token
+                            if isinstance(token, Token)
+                            else str(token)
+                        ),
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
+                event="response.output_text.delta",
             )
         )
     return events
@@ -304,13 +318,15 @@ def _output_item_added(state: ResponseState, id: str | None = None) -> str:
     item = {"type": item_types[state]}
     if id is not None:
         item["id"] = id
-    return _sse(
-        "response.output_item.added",
-        {
-            "type": "response.output_item.added",
-            "output_index": 0,
-            "item": item,
-        },
+    return sse_message(
+        to_json(
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": item,
+            }
+        ),
+        event="response.output_item.added",
     )
 
 
@@ -318,17 +334,19 @@ def _output_item_done(id: str | None = None) -> str:
     data = {"type": "response.output_item.done", "output_index": 0}
     if id is not None:
         data["item"] = {"id": id}
-    return _sse("response.output_item.done", data)
+    return sse_message(to_json(data), event="response.output_item.done")
 
 
 def _reasoning_text_done() -> str:
-    return _sse(
-        "response.reasoning_text.done",
-        {
-            "type": "response.reasoning_text.done",
-            "output_index": 0,
-            "content_index": 0,
-        },
+    return sse_message(
+        to_json(
+            {
+                "type": "response.reasoning_text.done",
+                "output_index": 0,
+                "content_index": 0,
+            }
+        ),
+        event="response.reasoning_text.done",
     )
 
 
@@ -340,17 +358,22 @@ def _custom_tool_call_input_done(id: str | None = None) -> str:
     }
     if id is not None:
         data["id"] = id
-    return _sse("response.custom_tool_call_input.done", data)
+    return sse_message(
+        to_json(data),
+        event="response.custom_tool_call_input.done",
+    )
 
 
 def _output_text_done() -> str:
-    return _sse(
-        "response.output_text.done",
-        {
-            "type": "response.output_text.done",
-            "output_index": 0,
-            "content_index": 0,
-        },
+    return sse_message(
+        to_json(
+            {
+                "type": "response.output_text.done",
+                "output_index": 0,
+                "content_index": 0,
+            }
+        ),
+        event="response.output_text.done",
     )
 
 
@@ -358,14 +381,16 @@ def _content_part_added(part_type: str, id: str | None = None) -> str:
     part = {"type": part_type}
     if id is not None:
         part["id"] = id
-    return _sse(
-        "response.content_part.added",
-        {
-            "type": "response.content_part.added",
-            "output_index": 0,
-            "content_index": 0,
-            "part": part,
-        },
+    return sse_message(
+        to_json(
+            {
+                "type": "response.content_part.added",
+                "output_index": 0,
+                "content_index": 0,
+                "part": part,
+            }
+        ),
+        event="response.content_part.added",
     )
 
 
@@ -377,7 +402,7 @@ def _content_part_done(id: str | None = None) -> str:
     }
     if id is not None:
         data["part"] = {"id": id}
-    return _sse("response.content_part.done", data)
+    return sse_message(to_json(data), event="response.content_part.done")
 
 
 def _tool_call_event_item(event: Event) -> dict:
@@ -403,7 +428,3 @@ def _tool_call_event_item(event: Event) -> dict:
         else:
             item["result"] = tool_result
     return item
-
-
-def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\n" + f"data: {to_json(data)}\n\n"

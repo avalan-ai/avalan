@@ -1,4 +1,5 @@
 from . import orchestrate
+from ..sse import sse_bytes, sse_headers
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
@@ -9,7 +10,11 @@ from ...entities import (
     TokenDetail,
 )
 from ...event import Event, EventType
-from ...server.entities import ChatCompletionRequest, ChatMessage, MCPToolRequest
+from ...server.entities import (
+    ChatCompletionRequest,
+    ChatMessage,
+    MCPToolRequest,
+)
 from ...utils import to_json
 from asyncio import Event as AsyncEvent, Lock, create_task
 from contextlib import suppress
@@ -389,9 +394,7 @@ def _build_chat_request(
     model_id = _default_model_id(orchestrator)
     return ChatCompletionRequest(
         model=model_id,
-        messages=[
-            ChatMessage(role="user", content=tool_request.input_string)
-        ],
+        messages=[ChatMessage(role="user", content=tool_request.input_string)],
         stream=True,
     )
 
@@ -471,18 +474,14 @@ async def _start_tool_streaming_response(
                 base_path=base_path,
                 cancel_event=cancel_event,
             ):
-                yield b"data: " + chunk.rstrip(b"\n") + b"\n\n"
+                yield sse_bytes(chunk)
         finally:
             watcher.cancel()
             with suppress(Exception):
                 await watcher
 
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-    }
     return StreamingResponse(
-        stream(), media_type="text/event-stream", headers=headers
+        stream(), media_type="text/event-stream", headers=sse_headers()
     )
 
 
