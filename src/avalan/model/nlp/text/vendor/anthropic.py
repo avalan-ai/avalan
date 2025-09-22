@@ -137,7 +137,7 @@ class AnthropicClient(TextGenerationVendor):
             "messages": template_messages,
             "max_tokens": settings.max_new_tokens,
             "temperature": settings.temperature,
-            "tools": AnthropicClient._tool_schemas(tool) if tool else None,
+            "tools": AnthropicClient._tool_schemas(tool) if tool else [],
             "tool_choice": {"type": "auto"},
         }
 
