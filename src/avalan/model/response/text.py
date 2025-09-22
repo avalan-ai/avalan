@@ -44,6 +44,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _reasoning_parser: ReasoningParser | None = None
     _parser_queue: Queue[Token | TokenDetail | str] | None = None
     _logger: Logger
+    _prefetched_text: str | None = None
 
     def __init__(
         self,
@@ -81,6 +82,28 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 if inputs and "input_ids" in inputs
                 else 0
             )
+
+    def _ensure_non_stream_prefetched(self) -> None:
+        if self._use_async_generator:
+            return
+        if self._prefetched_text is not None:
+            return
+        if self._buffer.tell():
+            return
+
+        result = self._output_fn(*self._args, **self._kwargs)
+        if isinstance(result, TextGenerationSingleStream):
+            result = result.content
+
+        if isinstance(result, (Token, TokenDetail)):
+            text = result.token
+        else:
+            text = str(result)
+
+        self._prefetched_text = text
+        self._buffer = StringIO()
+        self._buffer.write(text)
+        self._output_token_count = len(text)
 
     def add_done_callback(
         self, callback: Callable[[], Awaitable[None] | None]
@@ -189,16 +212,19 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 self._output_token_count += 1
                 return self._parser_queue.get()
 
+    def __str__(self) -> str:
+        if not self._use_async_generator:
+            self._ensure_non_stream_prefetched()
+            return self._prefetched_text or ""
+        return super().__str__()
+
     async def to_str(self) -> str:
         if not self._use_async_generator:
-            result = self._output_fn(*self._args, **self._kwargs)
-            if isinstance(result, TextGenerationSingleStream):
-                result = result.content
-            token_str = result if isinstance(result, str) else result.token
-            self._buffer.write(token_str)
-            self._output_token_count = len(token_str)
+            self._ensure_non_stream_prefetched()
+            if self._prefetched_text is None:
+                return ""
             await self._trigger_consumed()
-            return token_str
+            return self._prefetched_text
 
         # Ensure buffer is filled, wether we were already iterating or not
         if not self._output:

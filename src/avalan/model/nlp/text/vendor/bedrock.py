@@ -303,13 +303,15 @@ class BedrockClient(TextGenerationVendor):
                 encoded_name = TextGenerationVendor.encode_tool_name(
                     tool_call.name
                 )
-                content_blocks.append({
-                    "toolUse": {
-                        "toolUseId": tool_call.id,
-                        "name": encoded_name,
-                        "input": tool_call.arguments or [],
+                content_blocks.append(
+                    {
+                        "toolUse": {
+                            "toolUseId": tool_call.id,
+                            "name": encoded_name,
+                            "input": tool_call.arguments or [],
+                        }
                     }
-                })
+                )
         return {"role": role, "content": content_blocks}
 
     def _format_content(
@@ -331,11 +333,13 @@ class BedrockClient(TextGenerationVendor):
                 if isinstance(block, MessageContentText):
                     blocks.append({"text": {"text": block.text}})
                 elif isinstance(block, MessageContentImage):
-                    blocks.append({
-                        "image": {
-                            "source": self._image_source(block.image_url)
+                    blocks.append(
+                        {
+                            "image": {
+                                "source": self._image_source(block.image_url)
+                            }
                         }
-                    })
+                    )
             return blocks
         return [{"text": {"text": str(content)}}]
 
@@ -394,13 +398,17 @@ class BedrockClient(TextGenerationVendor):
             encoded_name = TextGenerationVendor.encode_tool_name(
                 function.get("name", "")
             )
-            tools.append({
-                "toolSpec": {
-                    "name": encoded_name,
-                    "description": function.get("description", ""),
-                    "inputSchema": {"json": function.get("parameters", {})},
+            tools.append(
+                {
+                    "toolSpec": {
+                        "name": encoded_name,
+                        "description": function.get("description", ""),
+                        "inputSchema": {
+                            "json": function.get("parameters", {})
+                        },
+                    }
                 }
-            })
+            )
         return tools or None
 
 

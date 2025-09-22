@@ -498,7 +498,7 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                     call=SimpleNamespace(
                         id="call1",
                         function=SimpleNamespace(
-                            name="pkg__tool", arguments="{\"a\":1}"
+                            name="pkg__tool", arguments='{"a":1}'
                         ),
                     ),
                 ),
@@ -506,7 +506,9 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
         )
 
         create_mock = AsyncMock(return_value=response)
-        self.openai_stub.AsyncOpenAI.return_value.responses.create = create_mock
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
 
         with patch.object(
             self.mod.TextGenerationVendor,
@@ -515,7 +517,9 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
         ) as build_token:
             client = self.mod.OpenAIClient(api_key="key", base_url="url")
             message = Message(role=MessageRole.USER, content="hi")
-            stream = await client("model", [message], use_async_generator=False)
+            stream = await client(
+                "model", [message], use_async_generator=False
+            )
 
         from avalan.model.stream import TextGenerationSingleStream
 
