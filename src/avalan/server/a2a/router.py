@@ -3,13 +3,15 @@
 from asyncio import CancelledError
 from collections.abc import AsyncGenerator, AsyncIterable
 from enum import Enum, auto
+from json import JSONDecodeError
 from logging import Logger
 from re import compile
-from typing import Any, Iterable
+from typing import Any, Final, Iterable
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from a2a import types as a2a_types
 
@@ -114,6 +116,191 @@ def _task_metadata(payload: A2ATaskCreateRequest) -> dict[str, Any]:
             "response_format",
             payload.response_format.model_dump(mode="json"),
         )
+    return metadata
+
+
+MODEL_FALLBACK: Final[str] = "default"
+_JSONRPC_TEXT_PART_KINDS: Final[set[str]] = {"text", "input_text"}
+_JSONRPC_MODEL_KEYS: Final[tuple[str, ...]] = (
+    "model",
+    "modelId",
+    "defaultModel",
+)
+_JSONRPC_MODELS_KEYS: Final[tuple[str, ...]] = ("models", "modelIds")
+
+
+def _default_model_id(orchestrator: Orchestrator) -> str:
+    model_ids = getattr(orchestrator, "model_ids", None)
+    if model_ids:
+        candidates = sorted(
+            str(model_id) for model_id in model_ids if model_id
+        )
+        if candidates:
+            return candidates[0]
+    return MODEL_FALLBACK
+
+
+def _normalize_task_request(
+    payload: dict[str, Any], orchestrator: Orchestrator
+) -> dict[str, Any]:
+    if "jsonrpc" not in payload:
+        return payload
+    return _normalize_jsonrpc_task_request(payload, orchestrator)
+
+
+def _normalize_jsonrpc_task_request(
+    payload: dict[str, Any], orchestrator: Orchestrator
+) -> dict[str, Any]:
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        raise ValueError("JSON-RPC params must be an object")
+
+    configuration = params.get("configuration")
+    if configuration is not None and not isinstance(configuration, dict):
+        raise ValueError("JSON-RPC configuration must be an object")
+
+    message = params.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("JSON-RPC message must be an object")
+
+    method = str(payload.get("method") or "")
+    stream = method.endswith("/stream") or bool(params.get("stream"))
+
+    normalized: dict[str, Any] = {
+        "model": _select_jsonrpc_model(params, configuration, orchestrator),
+        "messages": _collect_jsonrpc_messages(params, message),
+        "stream": stream,
+    }
+
+    instructions = _extract_jsonrpc_instructions(params, configuration)
+    if instructions:
+        normalized["instructions"] = instructions
+
+    metadata = _extract_jsonrpc_metadata(
+        payload, params, configuration, message
+    )
+    if metadata:
+        normalized["metadata"] = metadata
+
+    return normalized
+
+
+def _select_jsonrpc_model(
+    params: dict[str, Any],
+    configuration: dict[str, Any] | None,
+    orchestrator: Orchestrator,
+) -> str:
+    for source in (params, configuration):
+        if not isinstance(source, dict):
+            continue
+        for key in _JSONRPC_MODEL_KEYS:
+            candidate = source.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+        for key in _JSONRPC_MODELS_KEYS:
+            models = source.get(key)
+            if isinstance(models, list):
+                for candidate in models:
+                    if isinstance(candidate, str) and candidate.strip():
+                        return candidate
+    return _default_model_id(orchestrator)
+
+
+def _collect_jsonrpc_messages(
+    params: dict[str, Any], message: dict[str, Any]
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+
+    def extend_from(candidate: Any) -> None:
+        if not isinstance(candidate, list):
+            return
+        for item in candidate:
+            if isinstance(item, dict):
+                messages.append(_jsonrpc_message_to_chat(item))
+
+    context = params.get("context")
+    if isinstance(context, dict):
+        extend_from(context.get("messages"))
+        extend_from(context.get("conversation"))
+        extend_from(context.get("history"))
+
+    extend_from(params.get("messages"))
+    extend_from(params.get("conversation"))
+
+    messages.append(_jsonrpc_message_to_chat(message))
+    return messages
+
+
+def _jsonrpc_message_to_chat(message: dict[str, Any]) -> dict[str, Any]:
+    role = str(message.get("role") or MessageRole.USER.value)
+    content = _jsonrpc_message_text(message)
+    return {"role": role, "content": content}
+
+
+def _jsonrpc_message_text(message: dict[str, Any]) -> str:
+    parts = message.get("parts")
+    if isinstance(parts, list) and parts:
+        text_parts: list[str] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            kind = part.get("kind")
+            if kind in _JSONRPC_TEXT_PART_KINDS:
+                text = part.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+            elif kind is not None:
+                continue
+        return "".join(text_parts)
+
+    for key in ("text", "content"):
+        value = message.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _extract_jsonrpc_instructions(
+    params: dict[str, Any], configuration: dict[str, Any] | None
+) -> str | None:
+    candidates: list[Any] = [params.get("instructions")]
+
+    context = params.get("context")
+    if isinstance(context, dict):
+        candidates.append(context.get("instructions"))
+
+    if isinstance(configuration, dict):
+        candidates.append(configuration.get("instructions"))
+
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return None
+
+
+def _extract_jsonrpc_metadata(
+    payload: dict[str, Any],
+    params: dict[str, Any],
+    configuration: dict[str, Any] | None,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+
+    jsonrpc_id = payload.get("id")
+    if jsonrpc_id is not None:
+        metadata["jsonrpc_id"] = jsonrpc_id
+
+    if isinstance(configuration, dict) and configuration:
+        metadata["configuration"] = configuration
+
+    params_metadata = params.get("metadata")
+    if isinstance(params_metadata, dict) and params_metadata:
+        metadata["params_metadata"] = params_metadata
+
+    message_metadata = message.get("metadata")
+    if isinstance(message_metadata, dict) and message_metadata:
+        metadata["message_metadata"] = message_metadata
+
     return metadata
 
 
@@ -408,11 +595,33 @@ class A2AResponseTranslator:
 
 @router.post("/tasks")
 async def create_task(
-    payload: A2ATaskCreateRequest,
+    request: Request,
     logger: Logger = Depends(_di_get_logger),
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
     store: TaskStore = Depends(di_get_task_store),
 ):
+    try:
+        raw_payload = await request.json()
+    except (JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid JSON body"
+        ) from exc
+
+    if not isinstance(raw_payload, dict):
+        raise HTTPException(
+            status_code=400, detail="Request body must be an object"
+        )
+
+    try:
+        normalized_payload = _normalize_task_request(raw_payload, orchestrator)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        payload = A2ATaskCreateRequest.model_validate(normalized_payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
     if not payload.messages:
         raise HTTPException(
             status_code=400, detail="Provide at least one message"
