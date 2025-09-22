@@ -93,11 +93,29 @@ def test_agent_card_uses_configured_tool() -> None:
     response = client.get("/agent")
     assert response.status_code == 200
     agent_card = response.json()
-    assert agent_card["tools"] == [
-        {"name": "execute", "description": "Execute the orchestrated agent"}
-    ]
-    assert agent_card["capabilities"]["tools"] is True
+    assert agent_card["defaultInputModes"] == ["text/plain"]
+    assert agent_card["defaultOutputModes"] == ["text/markdown"]
+    assert agent_card["url"].endswith("/tasks")
+
+    capabilities = agent_card["capabilities"]
+    assert capabilities["streaming"] is True
+    assert capabilities["stateTransitionHistory"] is True
+    extensions = capabilities.get("extensions")
+    assert extensions is not None
+    assert any(
+        extension["uri"] == "https://avalan.ai/extensions/models"
+        for extension in extensions
+    )
+
+    skills = agent_card["skills"]
+    assert len(skills) == 1
+    skill = skills[0]
+    assert skill["name"] == "execute"
+    assert skill["description"].startswith("Execute the orchestrated agent")
+    assert skill["inputModes"] == ["text/plain"]
+    assert skill["outputModes"] == ["text/markdown"]
+    assert "execute" in skill["tags"]
 
     well_known = client.get("/.well-known/a2a-agent.json")
     assert well_known.status_code == 200
-    assert well_known.json()["tools"] == agent_card["tools"]
+    assert well_known.json()["skills"] == agent_card["skills"]

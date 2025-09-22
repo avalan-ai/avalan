@@ -4,6 +4,7 @@ from asyncio import CancelledError
 from collections.abc import AsyncGenerator, AsyncIterable
 from enum import Enum, auto
 from logging import Logger
+from re import compile
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -45,6 +46,22 @@ async def _di_get_orchestrator(request: Request) -> Orchestrator:
 
 router = APIRouter(tags=["a2a"])
 well_known_router = APIRouter()
+
+
+_INPUT_TYPE_TO_MIME: dict[str, str] = {
+    "text": "text/plain",
+}
+
+
+_OUTPUT_TYPE_TO_MIME: dict[str, str] = {
+    "json": "application/json",
+    "text": "text/markdown",
+}
+
+
+_DEFAULT_INPUT_MODE = "text/plain"
+_DEFAULT_OUTPUT_MODE = "text/markdown"
+_WORD_PATTERN = compile(r"[0-9A-Za-z]+")
 
 
 class StreamState(Enum):
@@ -522,10 +539,12 @@ async def agent_card(
     request: Request,
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
 ):
+    interface_url = str(request.url_for("create_task"))
     card = _build_agent_card(
         orchestrator,
         getattr(request.app.state, "a2a_tool_name", "run"),
         getattr(request.app.state, "a2a_tool_description", None),
+        interface_url,
     )
     return _coerce("AgentCard", card)
 
@@ -535,10 +554,12 @@ async def well_known_agent_card(
     request: Request,
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
 ):
+    interface_url = str(request.url_for("create_task"))
     card = _build_agent_card(
         orchestrator,
         getattr(request.app.state, "a2a_tool_name", "run"),
         getattr(request.app.state, "a2a_tool_description", None),
+        interface_url,
     )
     return _coerce("AgentCard", card)
 
@@ -592,46 +613,247 @@ def _token_text(item: Token | TokenDetail | Event | str) -> str:
     return ""
 
 
+def _enum_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    candidate = getattr(value, "value", value)
+    text = str(candidate)
+    return text if text else None
+
+
+def _append_unique(target: list[str], candidate: str | None) -> None:
+    if not candidate:
+        return
+    text = candidate.strip()
+    if not text or text in target:
+        return
+    target.append(text)
+
+
+def _input_mode_for_spec(spec: Any) -> str:
+    value = _enum_value(getattr(spec, "input_type", None))
+    return _INPUT_TYPE_TO_MIME.get(value or "", _DEFAULT_INPUT_MODE)
+
+
+def _output_mode_for_spec(spec: Any) -> str:
+    value = _enum_value(getattr(spec, "output_type", None))
+    return _OUTPUT_TYPE_TO_MIME.get(value or "", _DEFAULT_OUTPUT_MODE)
+
+
+def _skill_tags(*values: str | None) -> list[str]:
+    tags: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        for match in _WORD_PATTERN.findall(value.lower()):
+            if match not in tags:
+                tags.append(match)
+    if not tags:
+        tags.append("general")
+    return tags
+
+
+def _skill_from_spec(
+    index: int,
+    spec: Any,
+    tool_name: str | None,
+    tool_description: str | None,
+    orchestrator: Orchestrator,
+) -> dict[str, Any]:
+    goal = getattr(spec, "goal", None)
+    goal_task = getattr(goal, "task", None) if goal else None
+    goal_instructions = list(getattr(goal, "instructions", []) or [])
+
+    description_parts: list[str] = []
+    _append_unique(description_parts, tool_description)
+    _append_unique(description_parts, goal_task)
+    for item in goal_instructions:
+        _append_unique(description_parts, item)
+    if not description_parts:
+        _append_unique(
+            description_parts,
+            orchestrator.name or "Avalan orchestrated agent",
+        )
+
+    name = next(
+        (
+            candidate
+            for candidate in (
+                goal_task,
+                tool_name,
+                orchestrator.name,
+                "Avalan Agent",
+            )
+            if candidate and candidate.strip()
+        ),
+        "Avalan Agent",
+    )
+
+    skill: dict[str, Any] = {
+        "id": f"skill-{index + 1}",
+        "name": name.strip(),
+        "description": " ".join(description_parts),
+        "tags": _skill_tags(tool_name, goal_task, orchestrator.name),
+    }
+
+    examples = [
+        item.strip() for item in goal_instructions if item and item.strip()
+    ]
+    if examples:
+        skill["examples"] = examples
+
+    input_mode = _input_mode_for_spec(spec)
+    if input_mode:
+        skill["input_modes"] = [input_mode]
+
+    output_mode = _output_mode_for_spec(spec)
+    if output_mode:
+        skill["output_modes"] = [output_mode]
+
+    return skill
+
+
+def _default_skill(
+    tool_name: str | None,
+    tool_description: str | None,
+    orchestrator: Orchestrator,
+    input_modes: list[str],
+    output_modes: list[str],
+    examples: list[str],
+) -> dict[str, Any]:
+    name = next(
+        (
+            candidate
+            for candidate in (
+                tool_name,
+                orchestrator.name,
+                "Avalan Agent",
+            )
+            if candidate and candidate.strip()
+        ),
+        "Avalan Agent",
+    )
+    description_parts: list[str] = []
+    _append_unique(description_parts, tool_description)
+    _append_unique(description_parts, orchestrator.name)
+    if not description_parts:
+        _append_unique(description_parts, "Avalan orchestrated agent")
+
+    skill: dict[str, Any] = {
+        "id": "skill-1",
+        "name": name.strip(),
+        "description": " ".join(description_parts),
+        "tags": _skill_tags(tool_name, orchestrator.name),
+    }
+    if examples:
+        skill["examples"] = examples
+    if input_modes:
+        skill["input_modes"] = input_modes
+    if output_modes:
+        skill["output_modes"] = output_modes
+    return skill
+
+
+def _capability_extensions(
+    instructions: list[str], model_ids: Iterable[str] | None
+) -> list[dict[str, Any]]:
+    extensions: list[dict[str, Any]] = []
+    if instructions:
+        extensions.append(
+            {
+                "uri": "https://avalan.ai/extensions/instructions",
+                "description": "System and goal instructions for the agent.",
+                "params": {"instructions": instructions},
+                "required": False,
+            }
+        )
+    if model_ids:
+        extensions.append(
+            {
+                "uri": "https://avalan.ai/extensions/models",
+                "description": "Models available to the orchestrated agent.",
+                "params": {"models": sorted(model_ids)},
+                "required": False,
+            }
+        )
+    return extensions
+
+
 def _build_agent_card(
     orchestrator: Orchestrator,
     tool_name: str | None,
     tool_description: str | None,
+    interface_url: str,
 ) -> dict[str, Any]:
     instructions: list[str] = []
-    for operation in orchestrator.operations:
-        spec = operation.specification
-        if spec.system_prompt:
-            instructions.append(spec.system_prompt)
-        if spec.developer_prompt:
-            instructions.append(spec.developer_prompt)
-        if spec.goal and spec.goal.instructions:
-            instructions.extend(spec.goal.instructions)
+    skills: list[dict[str, Any]] = []
+    default_input_modes: set[str] = set()
+    default_output_modes: set[str] = set()
 
-    name = tool_name.strip() if tool_name else ""
-    description = tool_description.strip() if tool_description else None
-    if description == "":
-        description = None
-    tools = []
-    if name:
-        tools.append({"name": name, "description": description})
+    operations = getattr(orchestrator, "operations", []) or []
+    for index, operation in enumerate(operations):
+        spec = getattr(operation, "specification", None)
+        if spec is None:
+            continue
+        _append_unique(instructions, getattr(spec, "system_prompt", None))
+        _append_unique(instructions, getattr(spec, "developer_prompt", None))
+        goal = getattr(spec, "goal", None)
+        if goal and getattr(goal, "instructions", None):
+            for instruction in goal.instructions:
+                _append_unique(instructions, instruction)
 
-    capabilities = {
+        default_input_modes.add(_input_mode_for_spec(spec))
+        default_output_modes.add(_output_mode_for_spec(spec))
+        skills.append(
+            _skill_from_spec(
+                index,
+                spec,
+                tool_name,
+                tool_description,
+                orchestrator,
+            )
+        )
+
+    if not default_input_modes:
+        default_input_modes.add(_DEFAULT_INPUT_MODE)
+    if not default_output_modes:
+        default_output_modes.add(_DEFAULT_OUTPUT_MODE)
+
+    input_modes_list = sorted(default_input_modes)
+    output_modes_list = sorted(default_output_modes)
+
+    if not skills:
+        skills.append(
+            _default_skill(
+                tool_name,
+                tool_description,
+                orchestrator,
+                input_modes_list,
+                output_modes_list,
+                list(instructions),
+            )
+        )
+
+    capabilities: dict[str, Any] = {
         "streaming": True,
-        "tools": bool(tools),
-        "reasoning": True,
+        "state_transition_history": True,
     }
+    extensions = _capability_extensions(
+        list(instructions), getattr(orchestrator, "model_ids", None)
+    )
+    if extensions:
+        capabilities["extensions"] = extensions
 
     return {
         "id": str(orchestrator.id),
         "name": orchestrator.name or "Avalan Agent",
         "version": "1.0",
         "description": orchestrator.name or "Avalan orchestrated agent",
+        "url": interface_url,
         "capabilities": capabilities,
-        "tools": tools,
-        "models": (
-            sorted(orchestrator.model_ids) if orchestrator.model_ids else []
-        ),
-        "instructions": instructions,
+        "default_input_modes": input_modes_list,
+        "default_output_modes": output_modes_list,
+        "skills": skills,
     }
 
 
