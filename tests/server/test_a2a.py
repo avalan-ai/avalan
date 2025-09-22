@@ -115,6 +115,8 @@ async def _run_artifact_delta_parts_flow() -> None:
 
     reasoning_chunks: list[str] = []
     answer_chunks: list[str] = []
+    reasoning_last_chunks: list[str] = []
+    answer_last_chunks: list[str] = []
     async for raw_event in translator.run_stream(stream()):
         converted = await converter.convert(raw_event)
         if not isinstance(converted, dict) or "result" not in converted:
@@ -125,10 +127,7 @@ async def _run_artifact_delta_parts_flow() -> None:
             )
         )
         result = response.result
-        if not (
-            isinstance(result, a2a_types.TaskArtifactUpdateEvent)
-            and result.append
-        ):
+        if not isinstance(result, a2a_types.TaskArtifactUpdateEvent):
             continue
         parts = result.artifact.parts
         assert parts, "expected at least one part"
@@ -136,12 +135,133 @@ async def _run_artifact_delta_parts_flow() -> None:
         text = getattr(part.root, "text", None)
         assert isinstance(text, str)
         if result.artifact.artifact_id == "reasoning":
-            reasoning_chunks.append(text)
+            if result.last_chunk:
+                reasoning_last_chunks.append(text)
+            elif result.append:
+                reasoning_chunks.append(text)
         elif result.artifact.artifact_id == "answer":
-            answer_chunks.append(text)
+            if result.last_chunk:
+                answer_last_chunks.append(text)
+            elif result.append:
+                answer_chunks.append(text)
 
     assert reasoning_chunks == ["first", "second"]
     assert answer_chunks == ["A", "B"]
+    assert reasoning_last_chunks == ["second"]
+    assert answer_last_chunks == ["B"]
+
+
+def test_tool_events_emit_status_updates() -> None:
+    asyncio.run(_run_tool_status_flow())
+
+
+async def _run_tool_status_flow() -> None:
+    store = TaskStore()
+    task_id = "task-tool-status"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+
+    translator = A2AResponseTranslator(task_id, store)
+    converter = A2AStreamEventConverter(task_id, store)
+
+    base_call = ToolCall(
+        id="call-status", name="echo", arguments={"text": "hi"}
+    )
+    tool_result = ToolCallResult(
+        id="result-status",
+        call=base_call,
+        result="ok",
+        name=base_call.name,
+        arguments=base_call.arguments,
+    )
+
+    async def stream():
+        yield ToolCallToken(token="", call=base_call)
+        yield Event(
+            type=EventType.TOOL_RESULT, payload={"result": tool_result}
+        )
+        yield Token(token="done")
+
+    status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
+    async for raw_event in translator.run_stream(stream()):
+        converted = await converter.convert(raw_event)
+        if not isinstance(converted, dict) or "result" not in converted:
+            continue
+        response = (
+            a2a_types.SendStreamingMessageSuccessResponse.model_validate(
+                converted
+            )
+        )
+        result = response.result
+        if isinstance(result, a2a_types.TaskStatusUpdateEvent):
+            status_updates.append(result)
+
+    assert status_updates
+    tool_processing = [
+        update
+        for update in status_updates
+        if update.metadata
+        and update.metadata.get("phase") == "tool_processing"
+    ]
+    assert any(
+        update.status.state is a2a_types.TaskState.working
+        for update in tool_processing
+    )
+    tool_completed = [
+        update
+        for update in status_updates
+        if update.metadata and update.metadata.get("phase") == "tool_completed"
+    ]
+    assert tool_completed
+    for update in tool_completed:
+        assert update.status.state is a2a_types.TaskState.completed
+        assert update.final is True
+
+
+def test_final_status_update_is_marked_final() -> None:
+    asyncio.run(_run_final_status_flow())
+
+
+async def _run_final_status_flow() -> None:
+    store = TaskStore()
+    task_id = "task-final-status"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+
+    translator = A2AResponseTranslator(task_id, store)
+    converter = A2AStreamEventConverter(task_id, store)
+
+    async def stream():
+        yield Token(token="done")
+
+    status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
+    async for raw_event in translator.run_stream(stream()):
+        converted = await converter.convert(raw_event)
+        if not isinstance(converted, dict) or "result" not in converted:
+            continue
+        response = (
+            a2a_types.SendStreamingMessageSuccessResponse.model_validate(
+                converted
+            )
+        )
+        result = response.result
+        if isinstance(result, a2a_types.TaskStatusUpdateEvent):
+            status_updates.append(result)
+
+    assert status_updates
+    final_update = status_updates[-1]
+    assert final_update.status.state is a2a_types.TaskState.completed
+    assert final_update.final is True
 
 
 def test_agent_card_uses_configured_tool() -> None:

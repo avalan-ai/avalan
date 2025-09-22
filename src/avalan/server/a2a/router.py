@@ -728,6 +728,21 @@ class A2AResponseTranslator:
                 self._task_id, self._tool_artifact_id
             )
         )
+        status_metadata: dict[str, Any] = {
+            "phase": "tool_completed",
+            "tool_call_id": artifact_id,
+            "tool_name": artifact_name,
+        }
+        outcome = metadata.get("status")
+        if outcome:
+            status_metadata["tool_status"] = outcome
+        events.extend(
+            await self._store.add_status_event(
+                self._task_id,
+                status="completed",
+                metadata=status_metadata,
+            )
+        )
         self._tool_artifact_id = None
         return events
 
@@ -802,6 +817,7 @@ class A2AStreamEventConverter:
         self._cached_response_id: str | int | None | object = (
             _STREAM_RESPONSE_ID_UNSET
         )
+        self._artifact_progress: dict[str, int] = {}
 
     async def convert(self, event: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -1006,16 +1022,44 @@ class A2AStreamEventConverter:
             event_metadata["state"] = state
         append = event_name == "artifact.delta"
         last_chunk = event_name == "artifact.completed"
-        if append:
+        payload_items: list[Any]
+        previous_count = self._artifact_progress.get(artifact_id, 0)
+
+        if event_name == "artifact.delta":
             delta_payload = artifact_data.get("payload")
             if isinstance(delta_payload, list):
-                parts_payload = delta_payload
+                payload_items = list(delta_payload)
             elif delta_payload is None:
-                parts_payload = []
+                payload_items = []
             else:
-                parts_payload = [delta_payload]
+                payload_items = [delta_payload]
+            self._artifact_progress[artifact_id] = previous_count + len(
+                payload_items
+            )
         else:
-            parts_payload = artifact_payload.get("content")
+            content_payload = artifact_payload.get("content")
+            if isinstance(content_payload, list):
+                content_items = list(content_payload)
+            elif content_payload is None:
+                content_items = []
+            else:
+                content_items = [content_payload]
+
+            if last_chunk:
+                append = True
+                if previous_count < len(content_items):
+                    payload_items = content_items[previous_count:]
+                elif content_items:
+                    payload_items = content_items[-1:]
+                else:
+                    payload_items = []
+                self._artifact_progress.pop(artifact_id, None)
+            else:
+                append = False
+                payload_items = content_items
+                self._artifact_progress[artifact_id] = len(payload_items)
+
+        parts_payload: Any = payload_items
         artifact = a2a_types.Artifact(
             artifact_id=artifact_id,
             name=artifact_payload.get("name"),
