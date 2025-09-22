@@ -1,4 +1,6 @@
 import asyncio
+import importlib
+import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -20,6 +22,8 @@ from avalan.server.a2a.router import (
     well_known_router,
 )
 from avalan.server.a2a.store import TaskStore
+
+a2a_router_module = importlib.import_module("avalan.server.a2a.router")
 
 
 def test_translator_updates_task_store() -> None:
@@ -119,3 +123,58 @@ def test_agent_card_uses_configured_tool() -> None:
     well_known = client.get("/.well-known/a2a-agent.json")
     assert well_known.status_code == 200
     assert well_known.json()["skills"] == agent_card["skills"]
+
+
+def test_create_task_streams_jsonrpc_request(monkeypatch) -> None:
+    class StubOrchestrator:
+        def __init__(self) -> None:
+            self.id = uuid4()
+            self.name = "Test Agent"
+            self.model_ids = {"test-model"}
+            self.synced = False
+
+        async def sync_messages(self) -> None:
+            self.synced = True
+
+    async def orchestrate_stub(*_args):
+        async def iterator():
+            yield "Hello!"
+
+        return iterator(), uuid4(), 0
+
+    app = FastAPI()
+    app.include_router(a2a_router)
+    app.state.logger = logging.getLogger("test")
+    orchestrator = StubOrchestrator()
+    app.state.orchestrator = orchestrator
+
+    monkeypatch.setattr(a2a_router_module, "orchestrate", orchestrate_stub)
+
+    client = TestClient(app)
+    payload = {
+        "id": "msg-123",
+        "jsonrpc": "2.0",
+        "method": "message/stream",
+        "params": {
+            "configuration": {"acceptedOutputModes": ["text/plain"]},
+            "message": {
+                "kind": "message",
+                "messageId": "msg-123",
+                "metadata": {},
+                "parts": [{"kind": "text", "text": "Ping"}],
+                "role": "user",
+            },
+        },
+    }
+
+    with client.stream("POST", "/tasks", json=payload) as response:
+        assert response.status_code == 200
+        content_type = response.headers["content-type"]
+        assert content_type.startswith("text/event-stream")
+        body = b"".join(response.iter_bytes())
+
+    text = body.decode("utf-8")
+    assert "Hello!" in text
+    assert "task.stream.completed" in text
+    assert "test-model" in text
+    assert orchestrator.synced is True
