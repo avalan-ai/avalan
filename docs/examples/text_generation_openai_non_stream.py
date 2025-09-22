@@ -19,12 +19,16 @@ async def example() -> None:
             times.
         """
 
-        async for token in await lm(
+        answer = await lm(
             "Who are you?",
             system_prompt=system_prompt,
-            settings=GenerationSettings(temperature=0.9, max_new_tokens=256),
-        ):
-            print(token.token, end="", flush=True)
+            settings=GenerationSettings(
+                temperature=0.9,
+                max_new_tokens=256,
+                use_async_generator=False,
+            ),
+        )
+        print(answer)
 
 
 if __name__ == "__main__":

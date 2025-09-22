@@ -13,6 +13,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
 from anthropic import AsyncAnthropic
@@ -130,17 +131,24 @@ class AnthropicClient(TextGenerationVendor):
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
-        stream = self._client.messages.stream(
-            model=model_id,
-            system=system_prompt,
-            messages=template_messages,
-            max_tokens=settings.max_new_tokens,
-            temperature=settings.temperature,
-            tools=AnthropicClient._tool_schemas(tool) if tool else None,
-            tool_choice={"type": "auto"},
-        )
-        events = await self._exit_stack.enter_async_context(stream)
-        return AnthropicStream(events=events)
+        kwargs = {
+            "model": model_id,
+            "system": system_prompt,
+            "messages": template_messages,
+            "max_tokens": settings.max_new_tokens,
+            "temperature": settings.temperature,
+            "tools": AnthropicClient._tool_schemas(tool) if tool else [],
+            "tool_choice": {"type": "auto"},
+        }
+
+        if use_async_generator:
+            stream = self._client.messages.stream(**kwargs)
+            events = await self._exit_stack.enter_async_context(stream)
+            return AnthropicStream(events=events)
+
+        response = await self._client.messages.create(**kwargs)
+        content = self._non_stream_response_content(response)
+        return TextGenerationSingleStream(content)
 
     def _template_messages(
         self,
@@ -234,6 +242,32 @@ class AnthropicClient(TextGenerationVendor):
             if schemas
             else None
         )
+
+    @staticmethod
+    def _non_stream_response_content(response: object) -> str:
+        def _get(value: object, attribute: str) -> object | None:
+            if isinstance(value, dict):
+                return value.get(attribute)
+            return getattr(value, attribute, None)
+
+        parts: list[str] = []
+        for block in _get(response, "content") or []:
+            block_type = _get(block, "type")
+            if block_type == "text":
+                text = _get(block, "text")
+                if isinstance(text, str):
+                    parts.append(text)
+                continue
+
+            if block_type == "tool_use":
+                token = TextGenerationVendor.build_tool_call_token(
+                    _get(block, "id"),
+                    _get(block, "name"),
+                    _get(block, "input"),
+                )
+                parts.append(token.token)
+
+        return "".join(parts)
 
 
 class AnthropicModel(TextGenerationVendorModel):

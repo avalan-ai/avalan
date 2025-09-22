@@ -160,6 +160,63 @@ def test_client_call_and_model(anthropic_mod):
     assert loaded is ClientMock.return_value
 
 
+def test_client_non_stream_tool_messages(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+
+    call = ToolCall(id="call1", name="pkg.tool", arguments={"a": 1})
+    result = ToolCallResult(
+        id="call1", name="pkg.tool", call=call, result={"ok": True}
+    )
+    messages = [
+        Message(role=MessageRole.SYSTEM, content="sys"),
+        Message(role=MessageRole.USER, content="hi"),
+        Message(role=MessageRole.ASSISTANT, content="ack"),
+        Message(role=MessageRole.TOOL, tool_call_result=result),
+    ]
+
+    response = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text="hello"),
+            SimpleNamespace(
+                type="tool_use",
+                id="call1",
+                name="pkg__tool",
+                input={"a": 1},
+            ),
+        ]
+    )
+
+    stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        return_value=response
+    )
+
+    with patch.object(
+        mod.TextGenerationVendor,
+        "build_tool_call_token",
+        return_value=ToolCallToken(token="<tool_call />"),
+    ) as build_token:
+        stream = asyncio.run(
+            client(
+                "model",
+                messages,
+                use_async_generator=False,
+            )
+        )
+
+    from avalan.model.stream import TextGenerationSingleStream
+
+    assert isinstance(stream, TextGenerationSingleStream)
+    assert stream.content == "hello<tool_call />"
+    build_token.assert_called_once_with("call1", "pkg__tool", {"a": 1})
+
+    create_mock = stub.AsyncAnthropic.return_value.messages.create
+    create_mock.assert_awaited_once()
+    kwargs = create_mock.await_args.kwargs
+    assert all(msg["role"] != "tool" for msg in kwargs["messages"])
+
+
 def test_template_messages_and_exclude_roles(anthropic_mod):
     mod, _ = anthropic_mod
     exit_stack = AsyncExitStack()

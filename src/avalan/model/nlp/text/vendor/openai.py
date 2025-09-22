@@ -4,6 +4,7 @@ from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....compat import override
 from .....entities import (
     GenerationSettings,
+    Input,
     Message,
     MessageRole,
     ReasoningToken,
@@ -12,6 +13,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.response.text import TextGenerationResponse
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
@@ -151,15 +153,11 @@ class OpenAIClient(TextGenerationVendor):
                 kwargs["tools"] = schemas
         client_stream = await self._client.responses.create(**kwargs)
 
-        stream = (
-            OpenAIStream(stream=client_stream)
-            if use_async_generator
-            else TextGenerationSingleStream(
-                client_stream.output[0].content[0].text
-            )
-        )
+        if use_async_generator:
+            return OpenAIStream(stream=client_stream)
 
-        return stream
+        content = OpenAIClient._non_stream_response_content(client_stream)
+        return TextGenerationSingleStream(content)
 
     def _template_messages(
         self,
@@ -218,6 +216,65 @@ class OpenAIClient(TextGenerationVendor):
             else None
         )
 
+    @staticmethod
+    def _non_stream_response_content(response: object) -> str:
+        def _get(value: object, attribute: str) -> object | None:
+            if isinstance(value, dict):
+                return value.get(attribute)
+            return getattr(value, attribute, None)
+
+        parts: list[str] = []
+        for item in _get(response, "output") or []:
+            item_type = _get(item, "type")
+            contents = _get(item, "content") or []
+
+            if item_type in {None, "message", "output_text"}:
+                for content in contents:
+                    text = _get(content, "text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                continue
+
+            if item_type in {"tool_call", "function_call"}:
+                call = _get(item, "call") or item
+                function = _get(call, "function") or call
+                token = TextGenerationVendor.build_tool_call_token(
+                    _get(call, "id"),
+                    _get(function, "name"),
+                    _get(function, "arguments"),
+                )
+                parts.append(token.token)
+
+        return "".join(parts)
+
+
+class OpenAINonStreamingResponse(TextGenerationResponse):
+    _static_response_text: str | None
+
+    def __init__(
+        self,
+        *args,
+        static_response_text: str | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._static_response_text = static_response_text
+
+    def __str__(self) -> str:
+        if self._static_response_text is not None:
+            return self._static_response_text
+
+        buffered = self._buffer.getvalue()
+        if buffered is not None:
+            return buffered
+
+        return object.__repr__(self)
+
+    async def to_str(self) -> str:
+        text = await super().to_str()
+        self._static_response_text = text
+        return text
+
 
 class OpenAIModel(TextGenerationVendorModel):
     def _load_model(
@@ -227,4 +284,47 @@ class OpenAIModel(TextGenerationVendorModel):
         return OpenAIClient(
             base_url=self._settings.base_url,
             api_key=self._settings.access_token,
+        )
+
+    @override
+    async def __call__(
+        self,
+        input: Input,
+        system_prompt: str | None = None,
+        developer_prompt: str | None = None,
+        settings: GenerationSettings | None = None,
+        *,
+        tool: ToolManager | None = None,
+    ) -> TextGenerationResponse:
+        generation_settings = settings or GenerationSettings()
+        messages = self._messages(input, system_prompt, developer_prompt, tool)
+        streamer = await self._model(
+            self._model_id,
+            messages,
+            generation_settings,
+            tool=tool,
+            use_async_generator=generation_settings.use_async_generator,
+        )
+
+        if generation_settings.use_async_generator:
+            return TextGenerationResponse(
+                streamer,
+                logger=self._logger,
+                generation_settings=generation_settings,
+                settings=generation_settings,
+                use_async_generator=True,
+            )
+
+        static_text: str | None = None
+        if isinstance(streamer, TextGenerationSingleStream):
+            content = streamer.content
+            static_text = content if isinstance(content, str) else None
+
+        return OpenAINonStreamingResponse(
+            streamer,
+            logger=self._logger,
+            generation_settings=generation_settings,
+            settings=generation_settings,
+            use_async_generator=False,
+            static_response_text=static_text,
         )
