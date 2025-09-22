@@ -451,7 +451,12 @@ async def create_task(
                 )
         finally:
             yield sse_message(
-                to_json({"event": "task.stream.completed", "task_id": task_id}),
+                to_json(
+                    {
+                        "event": "task.stream.completed",
+                        "task_id": task_id,
+                    }
+                ),
                 event="task.stream.completed",
             )
             yield sse_message("{}", event="done")
@@ -514,17 +519,27 @@ async def get_artifact(
 
 @router.get("/agent")
 async def agent_card(
+    request: Request,
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
 ):
-    card = _build_agent_card(orchestrator)
+    card = _build_agent_card(
+        orchestrator,
+        getattr(request.app.state, "a2a_tool_name", "run"),
+        getattr(request.app.state, "a2a_tool_description", None),
+    )
     return _coerce("AgentCard", card)
 
 
 @well_known_router.get("/.well-known/a2a-agent.json")
 async def well_known_agent_card(
+    request: Request,
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
 ):
-    card = _build_agent_card(orchestrator)
+    card = _build_agent_card(
+        orchestrator,
+        getattr(request.app.state, "a2a_tool_name", "run"),
+        getattr(request.app.state, "a2a_tool_description", None),
+    )
     return _coerce("AgentCard", card)
 
 
@@ -577,22 +592,11 @@ def _token_text(item: Token | TokenDetail | Event | str) -> str:
     return ""
 
 
-def _build_agent_card(orchestrator: Orchestrator) -> dict[str, Any]:
-    tools_enabled = orchestrator.tool and not orchestrator.tool.is_empty
-    tool_descriptions = []
-    if tools_enabled and orchestrator.tool.tools:
-        for tool in orchestrator.tool.tools:
-            name = getattr(tool, "__name__", tool.__class__.__name__)
-            description = getattr(tool, "__doc__", None)
-            tool_descriptions.append(
-                {
-                    "name": name,
-                    "description": (
-                        description.strip() if description else None
-                    ),
-                }
-            )
-
+def _build_agent_card(
+    orchestrator: Orchestrator,
+    tool_name: str | None,
+    tool_description: str | None,
+) -> dict[str, Any]:
     instructions: list[str] = []
     for operation in orchestrator.operations:
         spec = operation.specification
@@ -603,9 +607,17 @@ def _build_agent_card(orchestrator: Orchestrator) -> dict[str, Any]:
         if spec.goal and spec.goal.instructions:
             instructions.extend(spec.goal.instructions)
 
+    name = tool_name.strip() if tool_name else ""
+    description = tool_description.strip() if tool_description else None
+    if description == "":
+        description = None
+    tools = []
+    if name:
+        tools.append({"name": name, "description": description})
+
     capabilities = {
         "streaming": True,
-        "tools": bool(tools_enabled),
+        "tools": bool(tools),
         "reasoning": True,
     }
 
@@ -615,7 +627,7 @@ def _build_agent_card(orchestrator: Orchestrator) -> dict[str, Any]:
         "version": "1.0",
         "description": orchestrator.name or "Avalan orchestrated agent",
         "capabilities": capabilities,
-        "tools": tool_descriptions,
+        "tools": tools,
         "models": (
             sorted(orchestrator.model_ids) if orchestrator.model_ids else []
         ),
@@ -658,4 +670,3 @@ def _filter_payload(cls: Any, payload: dict[str, Any]) -> dict[str, Any]:
         return payload
     allowed = set(fields.keys())
     return {key: value for key, value in payload.items() if key in allowed}
-

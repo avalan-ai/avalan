@@ -1,4 +1,9 @@
 import asyncio
+from types import SimpleNamespace
+from uuid import uuid4
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from avalan.entities import (
     ReasoningToken,
@@ -8,8 +13,13 @@ from avalan.entities import (
     ToolCallToken,
 )
 from avalan.event import Event, EventType
+from avalan.server.a2a.router import (
+    A2AResponseTranslator,
+    _di_get_orchestrator,
+    router as a2a_router,
+    well_known_router,
+)
 from avalan.server.a2a.store import TaskStore
-from avalan.server.a2a.router import A2AResponseTranslator
 
 
 def test_translator_updates_task_store() -> None:
@@ -57,3 +67,37 @@ async def _run_translator_flow() -> None:
     event_names = {event["event"] for event in events}
     assert "message.delta" in event_names
     assert "artifact.completed" in event_names
+
+
+def test_agent_card_uses_configured_tool() -> None:
+    orchestrator = SimpleNamespace(
+        id=uuid4(),
+        name="Test Agent",
+        operations=[],
+        model_ids={"test-model"},
+    )
+
+    app = FastAPI()
+    app.include_router(a2a_router)
+    app.include_router(well_known_router)
+
+    async def orchestrator_override() -> SimpleNamespace:
+        return orchestrator
+
+    app.dependency_overrides[_di_get_orchestrator] = orchestrator_override
+    app.state.a2a_tool_name = "execute"
+    app.state.a2a_tool_description = "Execute the orchestrated agent"
+
+    client = TestClient(app)
+
+    response = client.get("/agent")
+    assert response.status_code == 200
+    agent_card = response.json()
+    assert agent_card["tools"] == [
+        {"name": "execute", "description": "Execute the orchestrated agent"}
+    ]
+    assert agent_card["capabilities"]["tools"] is True
+
+    well_known = client.get("/.well-known/a2a-agent.json")
+    assert well_known.status_code == 200
+    assert well_known.json()["tools"] == agent_card["tools"]

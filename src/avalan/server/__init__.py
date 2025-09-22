@@ -35,6 +35,8 @@ def agents_server(
     logger: Logger,
     mcp_description: str | None = None,
     a2a_prefix: str = "/a2a",
+    a2a_tool_name: str = "run",
+    a2a_tool_description: str | None = None,
     agent_id: UUID | None = None,
     participant_id: UUID | None = None,
     allow_origins: list[str] | None = None,
@@ -82,6 +84,9 @@ def agents_server(
             app.state.mcp_tool_name = mcp_name or "run"
             if mcp_description:
                 app.state.mcp_tool_description = mcp_description
+            app.state.a2a_tool_name = a2a_tool_name or "run"
+            if a2a_tool_description:
+                app.state.a2a_tool_description = a2a_tool_description
             yield
 
     logger.debug("Creating %s server", name)

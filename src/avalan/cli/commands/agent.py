@@ -658,6 +658,8 @@ async def agent_serve(
         a2a_prefix=getattr(args, "a2a_prefix", "/a2a") or "/a2a",
         mcp_name=getattr(args, "mcp_name", "run") or "run",
         mcp_description=getattr(args, "mcp_description", None),
+        a2a_tool_name=getattr(args, "a2a_name", "run") or "run",
+        a2a_tool_description=getattr(args, "a2a_description", None),
         specs_path=specs_path,
         settings=settings,
         tool_settings=tool_settings,
