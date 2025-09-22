@@ -64,6 +64,10 @@ _WORD_PATTERN = compile(r"[0-9A-Za-z]+")
 
 
 _STREAM_RESPONSE_ID_UNSET: Final[object] = object()
+_REASONING_ARTIFACT_ID: Final[str] = "reasoning"
+_ANSWER_ARTIFACT_ID: Final[str] = "answer"
+_REASONING_ARTIFACT_KIND: Final[str] = "reasoning"
+_ANSWER_ARTIFACT_KIND: Final[str] = "answer"
 _STATUS_TO_STATE: Final[dict[str, a2a_types.TaskState]] = {
     "accepted": a2a_types.TaskState.submitted,
     "in_progress": a2a_types.TaskState.working,
@@ -428,8 +432,9 @@ class A2AResponseTranslator:
         self._task_id = task_id
         self._store = store
         self._state: StreamState | None = None
-        self._message_id: str | None = None
-        self._artifact_id: str | None = None
+        self._reasoning_artifact_id: str | None = None
+        self._answer_artifact_id: str | None = None
+        self._tool_artifact_id: str | None = None
         self._answer: list[str] = []
 
     @property
@@ -467,10 +472,13 @@ class A2AResponseTranslator:
         events.extend(await self._switch_state(state, call_id))
 
         if isinstance(item, ReasoningToken):
-            assert self._message_id
+            events.extend(await self._ensure_reasoning_artifact())
+            assert self._reasoning_artifact_id
             events.extend(
-                await self._store.add_message_delta(
-                    self._task_id, self._message_id, item.token
+                await self._store.add_artifact_delta(
+                    self._task_id,
+                    self._reasoning_artifact_id,
+                    {"type": "text", "text": item.token},
                 )
             )
             return events
@@ -490,23 +498,34 @@ class A2AResponseTranslator:
 
         text = _token_text(item)
         if text:
-            if not self._message_id:
-                self._message_id, created = await self._store.ensure_message(
-                    self._task_id,
-                    role=str(MessageRole.ASSISTANT),
-                    channel="output",
-                )
-                events.extend(created)
+            events.extend(await self._ensure_answer_artifact())
+            assert self._answer_artifact_id
             self._answer.append(text)
             events.extend(
-                await self._store.add_message_delta(
-                    self._task_id, self._message_id, text
+                await self._store.add_artifact_delta(
+                    self._task_id,
+                    self._answer_artifact_id,
+                    {"type": "text", "text": text},
                 )
             )
         return events
 
     async def _finish(self) -> list[dict[str, Any]]:
         events = await self._switch_state(None, None)
+        if self._reasoning_artifact_id:
+            events.extend(
+                await self._store.complete_artifact(
+                    self._task_id, self._reasoning_artifact_id
+                )
+            )
+            self._reasoning_artifact_id = None
+        if self._answer_artifact_id:
+            events.extend(
+                await self._store.complete_artifact(
+                    self._task_id, self._answer_artifact_id
+                )
+            )
+            self._answer_artifact_id = None
         events.extend(await self._store.complete_task(self._task_id))
         return events
 
@@ -517,47 +536,53 @@ class A2AResponseTranslator:
             self._state is StreamState.TOOL
             and state is StreamState.TOOL
             and call_id is not None
-            and call_id != self._artifact_id
+            and call_id != self._tool_artifact_id
         )
         if not changed:
             return []
 
         events: list[dict[str, Any]] = []
 
-        if self._state is StreamState.REASONING and self._message_id:
-            events.extend(
-                await self._store.complete_message(
-                    self._task_id, self._message_id
-                )
-            )
-            self._message_id = None
-        elif self._state is StreamState.TOOL and self._artifact_id:
+        if self._state is StreamState.TOOL and self._tool_artifact_id:
             events.extend(
                 await self._store.complete_artifact(
-                    self._task_id, self._artifact_id
+                    self._task_id, self._tool_artifact_id
                 )
             )
-            self._artifact_id = None
-        elif self._state is StreamState.ANSWER and self._message_id:
+            self._tool_artifact_id = None
+        elif (
+            self._state is StreamState.REASONING
+            and state is None
+            and self._reasoning_artifact_id
+        ):
             events.extend(
-                await self._store.complete_message(
-                    self._task_id, self._message_id
+                await self._store.complete_artifact(
+                    self._task_id, self._reasoning_artifact_id
                 )
             )
-            self._message_id = None
+            self._reasoning_artifact_id = None
+        elif (
+            self._state is StreamState.ANSWER
+            and state is None
+            and self._answer_artifact_id
+        ):
+            events.extend(
+                await self._store.complete_artifact(
+                    self._task_id, self._answer_artifact_id
+                )
+            )
+            self._answer_artifact_id = None
 
         self._state = state
 
         if state is StreamState.REASONING:
-            self._message_id, created = await self._store.ensure_message(
-                self._task_id,
-                role=str(MessageRole.ASSISTANT),
-                channel="reasoning",
-            )
-            events.extend(created)
+            events.extend(await self._ensure_reasoning_artifact())
         elif state is StreamState.TOOL:
             artifact = call_id or str(uuid4())
-            self._artifact_id, created = await self._store.ensure_artifact(
+            (
+                self._tool_artifact_id,
+                created,
+            ) = await self._store.ensure_artifact(
                 self._task_id,
                 artifact_id=artifact,
                 name=None,
@@ -566,14 +591,37 @@ class A2AResponseTranslator:
             )
             events.extend(created)
         elif state is StreamState.ANSWER:
-            self._message_id, created = await self._store.ensure_message(
-                self._task_id,
-                role=str(MessageRole.ASSISTANT),
-                channel="output",
-            )
-            events.extend(created)
+            events.extend(await self._ensure_answer_artifact())
 
         return events
+
+    async def _ensure_reasoning_artifact(self) -> list[dict[str, Any]]:
+        if self._reasoning_artifact_id:
+            return []
+        artifact_id, created = await self._store.ensure_artifact(
+            self._task_id,
+            artifact_id=_REASONING_ARTIFACT_ID,
+            name="Reasoning",
+            kind=_REASONING_ARTIFACT_KIND,
+            role=str(MessageRole.ASSISTANT),
+            metadata={"channel": "reasoning"},
+        )
+        self._reasoning_artifact_id = artifact_id
+        return created
+
+    async def _ensure_answer_artifact(self) -> list[dict[str, Any]]:
+        if self._answer_artifact_id:
+            return []
+        artifact_id, created = await self._store.ensure_artifact(
+            self._task_id,
+            artifact_id=_ANSWER_ARTIFACT_ID,
+            name="Answer",
+            kind=_ANSWER_ARTIFACT_KIND,
+            role=str(MessageRole.ASSISTANT),
+            metadata={"channel": "output"},
+        )
+        self._answer_artifact_id = artifact_id
+        return created
 
     async def _handle_tool_process(self, event: Event) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -586,7 +634,10 @@ class A2AResponseTranslator:
             if not isinstance(call, ToolCall):
                 continue
             artifact_id = str(call.id)
-            self._artifact_id, created = await self._store.ensure_artifact(
+            (
+                self._tool_artifact_id,
+                created,
+            ) = await self._store.ensure_artifact(
                 self._task_id,
                 artifact_id=artifact_id,
                 name=call.name,
@@ -598,10 +649,21 @@ class A2AResponseTranslator:
             events.extend(
                 await self._store.add_artifact_delta(
                     self._task_id,
-                    self._artifact_id,
+                    self._tool_artifact_id,
                     {
                         "type": "arguments",
                         "arguments": call.arguments or {},
+                    },
+                )
+            )
+            events.extend(
+                await self._store.add_status_event(
+                    self._task_id,
+                    status="in_progress",
+                    metadata={
+                        "phase": "tool_processing",
+                        "tool_call_id": artifact_id,
+                        "tool_name": call.name,
                     },
                 )
             )
@@ -620,20 +682,23 @@ class A2AResponseTranslator:
         if isinstance(result, ToolCallResult):
             artifact_id = str(result.call.id)
             artifact_name = result.call.name
-            content = {"type": "result", "content": result.result}
+            content = {"type": "data", "data": result.result}
             metadata["status"] = "success"
         elif isinstance(result, ToolCallError):
             artifact_id = str(result.call.id)
             artifact_name = result.call.name
-            content = {"type": "error", "error": result.message}
+            content = {
+                "type": "data",
+                "data": {"error": result.message},
+            }
             metadata["status"] = "error"
         elif isinstance(payload, ToolCall):
             artifact_id = str(payload.id)
             artifact_name = payload.name
-            content = {"type": "result", "content": None}
+            content = {"type": "data", "data": None}
         else:
-            artifact_id = self._artifact_id
-            content = {"type": "result", "content": result}
+            artifact_id = self._tool_artifact_id
+            content = {"type": "data", "data": result}
 
         if call and isinstance(call, ToolCall):
             artifact_id = str(call.id)
@@ -642,7 +707,7 @@ class A2AResponseTranslator:
         if artifact_id is None:
             artifact_id = str(uuid4())
 
-        self._artifact_id, created = await self._store.ensure_artifact(
+        self._tool_artifact_id, created = await self._store.ensure_artifact(
             self._task_id,
             artifact_id=artifact_id,
             name=artifact_name,
@@ -654,15 +719,16 @@ class A2AResponseTranslator:
         events.extend(
             await self._store.add_artifact_delta(
                 self._task_id,
-                self._artifact_id,
+                self._tool_artifact_id,
                 content,
             )
         )
         events.extend(
             await self._store.complete_artifact(
-                self._task_id, self._artifact_id
+                self._task_id, self._tool_artifact_id
             )
         )
+        self._tool_artifact_id = None
         return events
 
     async def _handle_tool_token(
@@ -671,7 +737,10 @@ class A2AResponseTranslator:
         events: list[dict[str, Any]] = []
         if token.call is not None:
             artifact_id = str(token.call.id)
-            self._artifact_id, created = await self._store.ensure_artifact(
+            (
+                self._tool_artifact_id,
+                created,
+            ) = await self._store.ensure_artifact(
                 self._task_id,
                 artifact_id=artifact_id,
                 name=token.call.name,
@@ -683,16 +752,30 @@ class A2AResponseTranslator:
             events.extend(
                 await self._store.add_artifact_delta(
                     self._task_id,
-                    self._artifact_id,
+                    self._tool_artifact_id,
                     {
                         "type": "arguments",
                         "arguments": token.call.arguments or {},
                     },
                 )
             )
+            events.extend(
+                await self._store.add_status_event(
+                    self._task_id,
+                    status="in_progress",
+                    metadata={
+                        "phase": "tool_processing",
+                        "tool_call_id": artifact_id,
+                        "tool_name": token.call.name,
+                    },
+                )
+            )
         else:
-            if not self._artifact_id:
-                self._artifact_id, created = await self._store.ensure_artifact(
+            if not self._tool_artifact_id:
+                (
+                    self._tool_artifact_id,
+                    created,
+                ) = await self._store.ensure_artifact(
                     self._task_id,
                     artifact_id=str(uuid4()),
                     name=None,
@@ -703,7 +786,7 @@ class A2AResponseTranslator:
             events.extend(
                 await self._store.add_artifact_delta(
                     self._task_id,
-                    self._artifact_id,
+                    self._tool_artifact_id,
                     {"type": "text", "text": token.token},
                 )
             )
@@ -749,8 +832,14 @@ class A2AStreamEventConverter:
             payload = event.get("data")
             status_payload = payload if isinstance(payload, dict) else {}
             status_override = status_payload.get("status")
+            extra_metadata: dict[str, Any] = {"event": name}
+            metadata_payload = status_payload.get("metadata")
+            if isinstance(metadata_payload, dict):
+                for key, value in metadata_payload.items():
+                    if value is not None:
+                        extra_metadata[key] = value
             result = await self._status_update_result(
-                event, status_override, {"event": name}
+                event, status_override, extra_metadata
             )
         elif name == "task.failed":
             payload = event.get("data")
@@ -908,14 +997,6 @@ class A2AStreamEventConverter:
         kind = artifact_payload.get("kind")
         if kind:
             artifact_metadata.setdefault("kind", kind)
-        artifact = a2a_types.Artifact(
-            artifact_id=artifact_id,
-            name=artifact_payload.get("name"),
-            metadata=artifact_metadata or None,
-            parts=_artifact_parts_from_payload(
-                artifact_payload.get("content")
-            ),
-        )
         event_name = event.get("event")
         event_metadata: dict[str, Any] = {}
         if event_name:
@@ -925,6 +1006,22 @@ class A2AStreamEventConverter:
             event_metadata["state"] = state
         append = event_name == "artifact.delta"
         last_chunk = event_name == "artifact.completed"
+        if append:
+            delta_payload = artifact_data.get("payload")
+            if isinstance(delta_payload, list):
+                parts_payload = delta_payload
+            elif delta_payload is None:
+                parts_payload = []
+            else:
+                parts_payload = [delta_payload]
+        else:
+            parts_payload = artifact_payload.get("content")
+        artifact = a2a_types.Artifact(
+            artifact_id=artifact_id,
+            name=artifact_payload.get("name"),
+            metadata=artifact_metadata or None,
+            parts=_artifact_parts_from_payload(parts_payload),
+        )
         event_metadata = {
             key: value
             for key, value in event_metadata.items()

@@ -213,6 +213,31 @@ class TaskStore:
             )
         return [event.to_payload(task_id)]
 
+    async def add_status_event(
+        self,
+        task_id: str,
+        *,
+        status: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        async with self._lock:
+            record = self._tasks[task_id]
+            payload: dict[str, Any] = {"status": status}
+            if metadata:
+                metadata_payload = {
+                    key: value
+                    for key, value in metadata.items()
+                    if value is not None
+                }
+                if metadata_payload:
+                    payload["metadata"] = metadata_payload
+            event = self._append_event(
+                record,
+                "task.status.changed",
+                payload,
+            )
+        return [event.to_payload(task_id)]
+
     async def fail_task(
         self, task_id: str, message: str
     ) -> list[dict[str, Any]]:

@@ -17,6 +17,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.server.a2a.router import (
     A2AResponseTranslator,
+    A2AStreamEventConverter,
     _di_get_orchestrator,
     router as a2a_router,
     well_known_router,
@@ -64,13 +65,83 @@ async def _run_translator_flow() -> None:
 
     task = await store.get_task(task_id)
     assert task["status"] == "completed"
-    assert task["messages"][-1]["content"][0]["text"] == "hello"
-    assert task["artifacts"][-1]["state"] == "completed"
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+    assert "reasoning" in artifacts
+    assert artifacts["reasoning"]["content"][0]["text"] == "thinking"
+    assert "answer" in artifacts
+    assert artifacts["answer"]["content"][0]["text"] == "hello"
+    assert artifacts["answer"]["state"] == "completed"
+    tool_artifact = artifacts["call-1"]
+    assert tool_artifact["metadata"]["status"] == "success"
+    assert any(
+        part.get("type") == "data" and part.get("data") == "ok"
+        for part in tool_artifact["content"]
+    )
 
     events = await store.get_events(task_id)
     event_names = {event["event"] for event in events}
-    assert "message.delta" in event_names
+    assert "artifact.delta" in event_names
     assert "artifact.completed" in event_names
+    assert any(
+        event["data"].get("metadata", {}).get("phase") == "tool_processing"
+        for event in events
+        if event["event"] == "task.status.changed"
+    )
+
+
+def test_artifact_delta_parts_are_incremental() -> None:
+    asyncio.run(_run_artifact_delta_parts_flow())
+
+
+async def _run_artifact_delta_parts_flow() -> None:
+    store = TaskStore()
+    task_id = "task-delta"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+
+    translator = A2AResponseTranslator(task_id, store)
+    converter = A2AStreamEventConverter(task_id, store)
+
+    async def stream():
+        yield ReasoningToken("first")
+        yield ReasoningToken("second")
+        yield Token(token="A")
+        yield Token(token="B")
+
+    reasoning_chunks: list[str] = []
+    answer_chunks: list[str] = []
+    async for raw_event in translator.run_stream(stream()):
+        converted = await converter.convert(raw_event)
+        if not isinstance(converted, dict) or "result" not in converted:
+            continue
+        response = (
+            a2a_types.SendStreamingMessageSuccessResponse.model_validate(
+                converted
+            )
+        )
+        result = response.result
+        if not (
+            isinstance(result, a2a_types.TaskArtifactUpdateEvent)
+            and result.append
+        ):
+            continue
+        parts = result.artifact.parts
+        assert parts, "expected at least one part"
+        part = parts[0]
+        text = getattr(part.root, "text", None)
+        assert isinstance(text, str)
+        if result.artifact.artifact_id == "reasoning":
+            reasoning_chunks.append(text)
+        elif result.artifact.artifact_id == "answer":
+            answer_chunks.append(text)
+
+    assert reasoning_chunks == ["first", "second"]
+    assert answer_chunks == ["A", "B"]
 
 
 def test_agent_card_uses_configured_tool() -> None:
@@ -201,7 +272,11 @@ def test_create_task_streams_jsonrpc_request(monkeypatch) -> None:
 
     assert results
     assert any(isinstance(result, a2a_types.Task) for result in results)
-    assert any(isinstance(result, a2a_types.Message) for result in results)
+    assert any(
+        isinstance(result, a2a_types.TaskArtifactUpdateEvent)
+        and result.artifact.artifact_id == "answer"
+        for result in results
+    )
     assert any(
         isinstance(result, a2a_types.TaskStatusUpdateEvent)
         and result.status.state is a2a_types.TaskState.completed

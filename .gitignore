@@ -6,7 +6,7 @@ __pycache__/
 *.egg-info/
 dist/
 .DS_Store
-*.sw[nop]
+*.sw[lnop]
 .session.vim
 .env
 .env.sh
