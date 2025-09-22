@@ -701,19 +701,34 @@ async def _stream_mcp_response(
                 continue
 
             text = _token_text(item)
+
             if text:
-                answer_chunks.append(text)
-                notification: JSONObject = {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/progress",
-                    "params": {
-                        "progressToken": progress_token,
-                        "progress": {
-                            "type": "answer.delta",
-                            "delta": text,
+                if isinstance(item, Token):
+                    answer_chunks.append(text)
+                    notification: JSONObject = {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/message",
+                        "params": {
+                            "level": "debug",
+                            "message": {
+                                "type": "answer",
+                                "delta": item.token,
+                            },
                         },
-                    },
-                }
+                    }
+                else:
+                    answer_chunks.append(text)
+                    notification: JSONObject = {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/progress",
+                        "params": {
+                            "progressToken": progress_token,
+                            "progress": {
+                                "type": "answer.delta",
+                                "delta": text,
+                            },
+                        },
+                    }
                 for payload in emit(notification):
                     yield payload
 
