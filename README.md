@@ -38,7 +38,7 @@ These features make avalan ideal for everything from quick experiments to enterp
 
 # Quick Look
 
-Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), including serving over open protocols: [OpenAI completion and responses API](#openai-completion-and-responses-api), the [MCP server](#mcp-server), and the [A2A server](#a2a-server). For full CLI reference see the [CLI docs](docs/CLI.md).
+Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), including serving over open protocols: [OpenAI API](#openai-completion-and-responses-api), [MCP](#mcp-server), and [A2A (Agent to Agent)](#a2a-server). For full CLI reference see the [CLI docs](docs/CLI.md).
 
 ## Models
 
@@ -1294,9 +1294,9 @@ folder.
 
 ### Serving agents
 
-Avalan agents can be exposed over two open interfaces: OpenAI-compatible REST endpoints and the Model Context Protocol (MCP) as first-class tools. Both surfaces are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
+Avalan agents can be exposed over three open protocols: OpenAI-compatible REST endpoints (supporting completions and streaming responses), Model Context Protocol (MCP), and Agent to Agent (A2A) as first-class tools. They are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
 
-Both interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
+All three interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
 
 #### OpenAI completion and responses API
 
