@@ -1,20 +1,3 @@
-"""FastAPI router exposing Avalan via the A2A protocol."""
-
-from asyncio import CancelledError
-from collections.abc import AsyncGenerator, AsyncIterable
-from enum import Enum, auto
-from json import JSONDecodeError
-from logging import Logger
-from re import compile
-from typing import Any, Final, Iterable
-from uuid import uuid4
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
-from pydantic import ValidationError
-
-from a2a import types as a2a_types
-
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     MessageRole,
@@ -32,6 +15,20 @@ from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from ..sse import sse_message
 from .store import TaskStore
+from a2a import types as a2a_types
+from asyncio import CancelledError
+from collections.abc import AsyncGenerator, AsyncIterable
+from datetime import datetime, timezone
+from enum import Enum, auto
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from json import JSONDecodeError
+from logging import Logger
+from pydantic import ValidationError
+from re import compile
+from time import time
+from typing import Any, Final, Iterable
+from uuid import uuid4
 
 
 def _di_get_logger(request: Request) -> Logger:
@@ -64,6 +61,126 @@ _OUTPUT_TYPE_TO_MIME: dict[str, str] = {
 _DEFAULT_INPUT_MODE = "text/plain"
 _DEFAULT_OUTPUT_MODE = "text/markdown"
 _WORD_PATTERN = compile(r"[0-9A-Za-z]+")
+
+
+_STREAM_RESPONSE_ID_UNSET: Final[object] = object()
+_STATUS_TO_STATE: Final[dict[str, a2a_types.TaskState]] = {
+    "accepted": a2a_types.TaskState.submitted,
+    "in_progress": a2a_types.TaskState.working,
+    "completed": a2a_types.TaskState.completed,
+    "failed": a2a_types.TaskState.failed,
+}
+_FINAL_TASK_STATES: Final[set[a2a_types.TaskState]] = {
+    a2a_types.TaskState.completed,
+    a2a_types.TaskState.failed,
+    a2a_types.TaskState.canceled,
+    a2a_types.TaskState.rejected,
+}
+_ROLE_MAPPING: Final[dict[str, a2a_types.Role]] = {
+    "agent": a2a_types.Role.agent,
+    "assistant": a2a_types.Role.agent,
+    "system": a2a_types.Role.agent,
+    "user": a2a_types.Role.user,
+}
+
+
+def _timestamp_to_iso(value: float | None) -> str | None:
+    if value is None:
+        return None
+    timestamp = datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+    return timestamp[:-6] + "Z" if timestamp.endswith("+00:00") else timestamp
+
+
+def _status_to_state(status: str) -> a2a_types.TaskState:
+    return _STATUS_TO_STATE.get(status, a2a_types.TaskState.unknown)
+
+
+def _is_final_state(state: a2a_types.TaskState) -> bool:
+    return state in _FINAL_TASK_STATES
+
+
+def _role_from_payload(role: str | None) -> a2a_types.Role:
+    if not role:
+        return a2a_types.Role.agent
+    return _ROLE_MAPPING.get(role.lower(), a2a_types.Role.agent)
+
+
+def _message_parts_from_payload(content: Any) -> list[a2a_types.Part]:
+    parts: list[a2a_types.Part] = []
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict):
+                item_type = item.get("type")
+                if item_type == "text":
+                    text = str(item.get("text") or "")
+                    parts.append(
+                        a2a_types.Part(root=a2a_types.TextPart(text=text))
+                    )
+                else:
+                    parts.append(
+                        a2a_types.Part(
+                            root=a2a_types.DataPart(
+                                data={
+                                    key: value for key, value in item.items()
+                                }
+                            )
+                        )
+                    )
+            elif isinstance(item, str):
+                parts.append(
+                    a2a_types.Part(root=a2a_types.TextPart(text=item))
+                )
+    if not parts:
+        parts.append(a2a_types.Part(root=a2a_types.TextPart(text="")))
+    return parts
+
+
+def _artifact_parts_from_payload(content: Any) -> list[a2a_types.Part]:
+    parts: list[a2a_types.Part] = []
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict):
+                item_type = item.get("type")
+                if item_type == "text":
+                    text = str(item.get("text") or "")
+                    parts.append(
+                        a2a_types.Part(root=a2a_types.TextPart(text=text))
+                    )
+                else:
+                    parts.append(
+                        a2a_types.Part(
+                            root=a2a_types.DataPart(
+                                data={
+                                    key: value for key, value in item.items()
+                                }
+                            )
+                        )
+                    )
+            elif isinstance(item, str):
+                parts.append(
+                    a2a_types.Part(root=a2a_types.TextPart(text=item))
+                )
+            else:
+                parts.append(
+                    a2a_types.Part(
+                        root=a2a_types.DataPart(data={"value": item})
+                    )
+                )
+    if not parts:
+        parts.append(a2a_types.Part(root=a2a_types.TextPart(text="")))
+    return parts
+
+
+def _task_metadata_from_overview(overview: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(overview.get("metadata") or {})
+    metadata.pop("jsonrpc_id", None)
+    model = overview.get("model")
+    if model is not None:
+        metadata.setdefault("model", model)
+    instructions = overview.get("instructions")
+    if instructions:
+        metadata.setdefault("instructions", instructions)
+    return metadata
 
 
 class StreamState(Enum):
@@ -593,6 +710,236 @@ class A2AResponseTranslator:
         return events
 
 
+class A2AStreamEventConverter:
+    """Translate internal task events into A2A streaming responses."""
+
+    def __init__(self, task_id: str, store: TaskStore) -> None:
+        self._task_id = task_id
+        self._store = store
+        self._cached_response_id: str | int | None | object = (
+            _STREAM_RESPONSE_ID_UNSET
+        )
+
+    async def convert(self, event: dict[str, Any]) -> dict[str, Any]:
+        try:
+            converted = await self._convert(event)
+        except Exception:  # pragma: no cover - defensive fallback
+            return event
+        if converted is None:
+            return event
+        return converted.model_dump(mode="json", by_alias=True)
+
+    async def _convert(
+        self, event: dict[str, Any]
+    ) -> a2a_types.SendStreamingMessageSuccessResponse | None:
+        name = event.get("event")
+        if not isinstance(name, str):
+            return None
+
+        result: (
+            a2a_types.Task
+            | a2a_types.Message
+            | a2a_types.TaskStatusUpdateEvent
+            | a2a_types.TaskArtifactUpdateEvent
+            | None
+        )
+        if name == "task.created":
+            result = await self._task_result(event)
+        elif name == "task.status.changed":
+            payload = event.get("data")
+            status_payload = payload if isinstance(payload, dict) else {}
+            status_override = status_payload.get("status")
+            result = await self._status_update_result(
+                event, status_override, {"event": name}
+            )
+        elif name == "task.failed":
+            payload = event.get("data")
+            error_payload = payload if isinstance(payload, dict) else {}
+            error_message = error_payload.get("error")
+            result = await self._status_update_result(
+                event,
+                "failed",
+                {"event": name, "error": error_message},
+            )
+        elif name.startswith("message."):
+            result = await self._message_result(event)
+        elif name.startswith("artifact."):
+            result = await self._artifact_result(event)
+        elif name in {"task.stream.completed", "done"}:
+            result = await self._status_update_result(
+                event, None, {"event": name}
+            )
+        else:
+            return None
+
+        if result is None:
+            return None
+
+        return a2a_types.SendStreamingMessageSuccessResponse(
+            id=await self._response_id(),
+            result=result,
+        )
+
+    async def _response_id(self) -> str | int | None:
+        if self._cached_response_id is _STREAM_RESPONSE_ID_UNSET:
+            overview = await self._store.get_task_overview(self._task_id)
+            metadata = overview.get("metadata") or {}
+            self._cached_response_id = metadata.get("jsonrpc_id")
+        return (
+            None
+            if self._cached_response_id is _STREAM_RESPONSE_ID_UNSET
+            else self._cached_response_id
+        )
+
+    async def _task_result(self, event: dict[str, Any]) -> a2a_types.Task:
+        overview = await self._store.get_task_overview(self._task_id)
+        status = _status_to_state(str(overview.get("status") or ""))
+        metadata = _task_metadata_from_overview(overview)
+        task_status = a2a_types.TaskStatus(
+            state=status,
+            timestamp=_timestamp_to_iso(event.get("created_at")),
+        )
+        return a2a_types.Task(
+            id=self._task_id,
+            context_id=self._task_id,
+            status=task_status,
+            metadata=metadata or None,
+        )
+
+    async def _status_update_result(
+        self,
+        event: dict[str, Any],
+        status_override: str | None,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> a2a_types.TaskStatusUpdateEvent:
+        overview = await self._store.get_task_overview(self._task_id)
+        status_value = status_override or str(overview.get("status") or "")
+        state = _status_to_state(status_value)
+        metadata: dict[str, Any] = {"raw_status": status_value}
+        error_text = overview.get("error")
+        if error_text and state is a2a_types.TaskState.failed:
+            metadata.setdefault("error", error_text)
+        if extra_metadata:
+            for key, value in extra_metadata.items():
+                if value is not None:
+                    metadata[key] = value
+        task_status = a2a_types.TaskStatus(
+            state=state,
+            timestamp=_timestamp_to_iso(event.get("created_at")),
+        )
+        return a2a_types.TaskStatusUpdateEvent(
+            task_id=self._task_id,
+            context_id=self._task_id,
+            status=task_status,
+            final=_is_final_state(state),
+            metadata=metadata or None,
+        )
+
+    async def _message_result(
+        self, event: dict[str, Any]
+    ) -> a2a_types.Message | None:
+        payload = (
+            event.get("data") if isinstance(event.get("data"), dict) else {}
+        )
+        message_data = (
+            payload.get("message") if isinstance(payload, dict) else None
+        )
+        if not isinstance(message_data, dict):
+            return None
+        message_id_value = message_data.get("id") or message_data.get(
+            "messageId"
+        )
+        if message_id_value is None:
+            return None
+        message_id = str(message_id_value)
+        message_payload = await self._store.get_message_payload(
+            self._task_id, message_id
+        )
+        metadata: dict[str, Any] = {}
+        channel = message_payload.get("channel")
+        if channel:
+            metadata["channel"] = channel
+        state = message_payload.get("state")
+        if state:
+            metadata["state"] = state
+        event_name = event.get("event")
+        if event_name:
+            metadata["raw_event"] = event_name
+        if event_name == "message.delta":
+            metadata["delta"] = message_data.get("delta")
+        if event_name == "message.completed":
+            metadata["completed"] = True
+        metadata = {
+            key: value for key, value in metadata.items() if value is not None
+        }
+        return a2a_types.Message(
+            message_id=message_id,
+            task_id=self._task_id,
+            context_id=self._task_id,
+            role=_role_from_payload(message_payload.get("role")),
+            parts=_message_parts_from_payload(message_payload.get("content")),
+            metadata=metadata or None,
+        )
+
+    async def _artifact_result(
+        self, event: dict[str, Any]
+    ) -> a2a_types.TaskArtifactUpdateEvent | None:
+        payload = (
+            event.get("data") if isinstance(event.get("data"), dict) else {}
+        )
+        artifact_data = (
+            payload.get("artifact") if isinstance(payload, dict) else None
+        )
+        if not isinstance(artifact_data, dict):
+            return None
+        artifact_id_value = artifact_data.get("id") or artifact_data.get(
+            "artifactId"
+        )
+        if artifact_id_value is None:
+            return None
+        artifact_id = str(artifact_id_value)
+        artifact_payload = await self._store.get_artifact(
+            self._task_id, artifact_id
+        )
+        artifact_metadata = dict(artifact_payload.get("metadata") or {})
+        role = artifact_payload.get("role")
+        if role:
+            artifact_metadata.setdefault("role", role)
+        kind = artifact_payload.get("kind")
+        if kind:
+            artifact_metadata.setdefault("kind", kind)
+        artifact = a2a_types.Artifact(
+            artifact_id=artifact_id,
+            name=artifact_payload.get("name"),
+            metadata=artifact_metadata or None,
+            parts=_artifact_parts_from_payload(
+                artifact_payload.get("content")
+            ),
+        )
+        event_name = event.get("event")
+        event_metadata: dict[str, Any] = {}
+        if event_name:
+            event_metadata["raw_event"] = event_name
+        state = artifact_payload.get("state")
+        if state:
+            event_metadata["state"] = state
+        append = event_name == "artifact.delta"
+        last_chunk = event_name == "artifact.completed"
+        event_metadata = {
+            key: value
+            for key, value in event_metadata.items()
+            if value is not None
+        }
+        return a2a_types.TaskArtifactUpdateEvent(
+            task_id=self._task_id,
+            context_id=self._task_id,
+            artifact=artifact,
+            append=True if append else None,
+            last_chunk=True if last_chunk else None,
+            metadata=event_metadata or None,
+        )
+
+
 @router.post("/tasks")
 async def create_task(
     request: Request,
@@ -654,16 +1001,19 @@ async def create_task(
     )
 
     translator = A2AResponseTranslator(task_id, store)
+    converter = A2AStreamEventConverter(task_id, store)
 
     async def stream() -> AsyncGenerator[str, None]:
         try:
             for event in initial_events:
                 yield sse_message(
-                    to_json(event), event=event.get("event") or "message"
+                    to_json(await converter.convert(event)),
+                    event=event.get("event") or "message",
                 )
             async for event in translator.run_stream(response):
                 yield sse_message(
-                    to_json(event), event=event.get("event") or "message"
+                    to_json(await converter.convert(event)),
+                    event=event.get("event") or "message",
                 )
         except CancelledError:
             raise
@@ -673,19 +1023,30 @@ async def create_task(
             )
             for event in await store.fail_task(task_id, str(exc)):
                 yield sse_message(
-                    to_json(event), event=event.get("event") or "message"
+                    to_json(await converter.convert(event)),
+                    event=event.get("event") or "message",
                 )
         finally:
+            completion_event = {
+                "event": "task.stream.completed",
+                "task_id": task_id,
+                "created_at": time(),
+                "data": {},
+            }
             yield sse_message(
-                to_json(
-                    {
-                        "event": "task.stream.completed",
-                        "task_id": task_id,
-                    }
-                ),
+                to_json(await converter.convert(completion_event)),
                 event="task.stream.completed",
             )
-            yield sse_message("{}", event="done")
+            done_event = {
+                "event": "done",
+                "task_id": task_id,
+                "created_at": time(),
+                "data": {},
+            }
+            yield sse_message(
+                to_json(await converter.convert(done_event)),
+                event="done",
+            )
             await orchestrator.sync_messages()
 
     if payload.stream:

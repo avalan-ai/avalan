@@ -414,6 +414,29 @@ class TaskStore:
             artifact = record.artifacts[artifact_id]
             return artifact.to_payload()
 
+    async def get_message_payload(
+        self, task_id: str, message_id: str
+    ) -> dict[str, Any]:
+        async with self._lock:
+            record = self._tasks[task_id]
+            message = record.messages[message_id]
+            return message.to_payload()
+
+    async def get_task_overview(self, task_id: str) -> dict[str, Any]:
+        async with self._lock:
+            record = self._tasks[task_id]
+            return {
+                "id": record.id,
+                "status": record.status,
+                "model": record.model,
+                "instructions": record.instructions,
+                "metadata": dict(record.metadata),
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+                "completed_at": record.completed_at,
+                "error": record.error,
+            }
+
     def _append_event(
         self, record: TaskRecord, event: str, data: dict[str, Any]
     ) -> TaskEvent:

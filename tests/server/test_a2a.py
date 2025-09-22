@@ -4,9 +4,9 @@ import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
+from a2a import types as a2a_types
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from avalan.entities import (
     ReasoningToken,
     Token,
@@ -177,4 +177,35 @@ def test_create_task_streams_jsonrpc_request(monkeypatch) -> None:
     assert "Hello!" in text
     assert "task.stream.completed" in text
     assert "test-model" in text
+
+    results: list[
+        a2a_types.Task
+        | a2a_types.Message
+        | a2a_types.TaskStatusUpdateEvent
+        | a2a_types.TaskArtifactUpdateEvent
+    ] = []
+    for block in text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        for line in block.splitlines():
+            if not line.startswith("data:"):
+                continue
+            _, _, data = line.partition("data:")
+            payload_text = data.strip()
+            if not payload_text:
+                continue
+            response_model = a2a_types.SendStreamingMessageSuccessResponse.model_validate_json(  # noqa: E501
+                payload_text
+            )
+            results.append(response_model.result)
+
+    assert results
+    assert any(isinstance(result, a2a_types.Task) for result in results)
+    assert any(isinstance(result, a2a_types.Message) for result in results)
+    assert any(
+        isinstance(result, a2a_types.TaskStatusUpdateEvent)
+        and result.status.state is a2a_types.TaskState.completed
+        for result in results
+    )
+
     assert orchestrator.synced is True
