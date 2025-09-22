@@ -151,15 +151,11 @@ class OpenAIClient(TextGenerationVendor):
                 kwargs["tools"] = schemas
         client_stream = await self._client.responses.create(**kwargs)
 
-        stream = (
-            OpenAIStream(stream=client_stream)
-            if use_async_generator
-            else TextGenerationSingleStream(
-                client_stream.output[0].content[0].text
-            )
-        )
+        if use_async_generator:
+            return OpenAIStream(stream=client_stream)
 
-        return stream
+        content = OpenAIClient._non_stream_response_content(client_stream)
+        return TextGenerationSingleStream(content)
 
     def _template_messages(
         self,
@@ -217,6 +213,37 @@ class OpenAIClient(TextGenerationVendor):
             if schemas
             else None
         )
+
+    @staticmethod
+    def _non_stream_response_content(response: object) -> str:
+        def _get(value: object, attribute: str) -> object | None:
+            if isinstance(value, dict):
+                return value.get(attribute)
+            return getattr(value, attribute, None)
+
+        parts: list[str] = []
+        for item in _get(response, "output") or []:
+            item_type = _get(item, "type")
+            contents = _get(item, "content") or []
+
+            if item_type in {None, "output_text"}:
+                for content in contents:
+                    text = _get(content, "text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                continue
+
+            if item_type in {"tool_call", "function_call"}:
+                call = _get(item, "call") or item
+                function = _get(call, "function") or call
+                token = TextGenerationVendor.build_tool_call_token(
+                    _get(call, "id"),
+                    _get(function, "name"),
+                    _get(function, "arguments"),
+                )
+                parts.append(token.token)
+
+        return "".join(parts)
 
 
 class OpenAIModel(TextGenerationVendorModel):

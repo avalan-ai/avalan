@@ -486,6 +486,43 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_non_stream_tool_call_output(self):
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="output_text",
+                    content=[SimpleNamespace(text="hello ")],
+                ),
+                SimpleNamespace(
+                    type="tool_call",
+                    call=SimpleNamespace(
+                        id="call1",
+                        function=SimpleNamespace(
+                            name="pkg__tool", arguments="{\"a\":1}"
+                        ),
+                    ),
+                ),
+            ]
+        )
+
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = create_mock
+
+        with patch.object(
+            self.mod.TextGenerationVendor,
+            "build_tool_call_token",
+            return_value=ToolCallToken(token="<tool_call />"),
+        ) as build_token:
+            client = self.mod.OpenAIClient(api_key="key", base_url="url")
+            message = Message(role=MessageRole.USER, content="hi")
+            stream = await client("model", [message], use_async_generator=False)
+
+        from avalan.model.stream import TextGenerationSingleStream
+
+        self.assertIsInstance(stream, TextGenerationSingleStream)
+        self.assertEqual(stream.content, "hello <tool_call />")
+        build_token.assert_called_once_with("call1", "pkg__tool", '{"a":1}')
+
 
 class TemplateAndToolSchemaTestCase(TestCase):
     def setUp(self):
