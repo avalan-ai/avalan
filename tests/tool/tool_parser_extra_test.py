@@ -74,6 +74,69 @@ class ToolCallParserExtraTestCase(TestCase):
             ]
             self.assertEqual(parser(text), expected)
 
+    def test_message_tool_calls_tuple_payload(self):
+        parser = ToolCallParser(tool_format=ToolFormat.JSON)
+        text = '{"tool": "calculator", "arguments": {"value": 2}}'
+        calls = parser.message_tool_calls(text)
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "id": None,
+                    "name": "calculator",
+                    "arguments": {"value": 2},
+                    "content_type": "json",
+                }
+            ],
+        )
+
+    def test_message_tool_calls_tuple_invalid_name(self):
+        parser = ToolCallParser(tool_format=ToolFormat.JSON)
+        text = '{"tool": 123, "arguments": {}}'
+        self.assertEqual(parser.message_tool_calls(text), [])
+
+    def test_extract_harmony_content_skips_empty_segments(self):
+        parser = ToolCallParser()
+        text = (
+            "intro\n\n\n"
+            "<|channel|>analysis<|message|>   <|call|>"
+            "\n\n\noutro"
+        )
+        thinking, content = parser.extract_harmony_content(text)
+        self.assertIsNone(thinking)
+        self.assertEqual(content, "intro\n\nanalysis   \n\noutro")
+
+    def test_resolve_text_source_prefers_serialized_payloads(self):
+        parser = ToolCallParser()
+        self.assertEqual(
+            parser._resolve_text_source(None, "serialized"),
+            "serialized",
+        )
+        self.assertEqual(
+            parser._resolve_text_source(
+                None,
+                {"type": "text", "text": "dict text"},
+            ),
+            "dict text",
+        )
+        self.assertEqual(
+            parser._resolve_text_source(
+                None,
+                [{"type": "text", "text": "list text"}],
+            ),
+            "list text",
+        )
+
+    def test_merge_thinking_handles_none_and_combines(self):
+        parser = ToolCallParser()
+        message_dict: dict[str, object] = {"thinking": ""}
+        parser._merge_thinking(message_dict, None)
+        self.assertIsNone(message_dict["thinking"])
+
+        message_dict = {"thinking": "existing"}
+        parser._merge_thinking(message_dict, "new")
+        self.assertEqual(message_dict["thinking"], "existing\n\nnew")
+
 
 if __name__ == "__main__":
     main()
