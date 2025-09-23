@@ -1685,6 +1685,23 @@ class CLI:
             help="URL prefix for OpenAI endpoints (defaults to /v1)",
         )
         parser.add_argument(
+            "--a2a-prefix",
+            default="/a2a",
+            type=str,
+            help="URL prefix for A2A endpoints (defaults to /a2a)",
+        )
+        parser.add_argument(
+            "--a2a-name",
+            default="run",
+            type=str,
+            help="A2A tool name for task execution (defaults to run)",
+        )
+        parser.add_argument(
+            "--a2a-description",
+            type=str,
+            help="A2A tool description for the agent card",
+        )
+        parser.add_argument(
             "--reload",
             action="store_true",
             default=False,

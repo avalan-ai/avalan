@@ -38,7 +38,7 @@ These features make avalan ideal for everything from quick experiments to enterp
 
 # Quick Look
 
-Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), including serving over open protocols: [OpenAI completion and responses API](#openai-completion-and-responses-api) and the [MCP server](#mcp-server). For full CLI reference see the [CLI docs](docs/CLI.md).
+Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), including serving over open protocols: [OpenAI API](#openai-completion-and-responses-api), [MCP](#mcp-server), and [A2A (Agent to Agent)](#a2a-server). For full CLI reference see the [CLI docs](docs/CLI.md).
 
 ## Models
 
@@ -1294,9 +1294,9 @@ folder.
 
 ### Serving agents
 
-Avalan agents can be exposed over two open interfaces: OpenAI-compatible REST endpoints and the Model Context Protocol (MCP) as first-class tools. Both surfaces are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
+Avalan agents can be exposed over three open protocols: OpenAI-compatible REST endpoints (supporting completions and streaming responses), Model Context Protocol (MCP), and Agent to Agent (A2A) as first-class tools. They are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
 
-Both interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
+All three interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
 
 #### OpenAI completion and responses API
 
@@ -1339,8 +1339,7 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 
 Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
 endpoints whenever you run `avalan agent serve`. It is mounted at `/mcp` by
-default and can be changed with `--mcp-prefix`. Both surfaces fully support
-streaming, including incremental tool calling and intermediate outputs.
+default and can be changed with `--mcp-prefix`.
 
 > [!TIP]
 > Debug the MCP stream with the MCP Inspector:
@@ -1354,6 +1353,26 @@ streaming, including incremental tool calling and intermediate outputs.
 > calls with their arguments and results.
 
 You can customize the MCP tool identity with `--mcp-name` (defaults to `run`) and `--mcp-description` when running `avalan agent serve`.
+
+#### A2A server
+
+Avalan also embeds an A2A-compatible server alongside the OpenAI-compatible
+endpoints whenever you run `avalan agent serve`. It is mounted at `/a2a` by
+default and can be configured with `--a2a-prefix`. The A2A surface supports
+streaming, including incremental tool calling and intermediate outputs.
+
+You can customize the A2A agent identity with `--a2a-name` (defaults to `run`)
+and `--a2a-description` when running `avalan agent serve`.
+
+> [!TIP]
+> Inspect the A2A stream with the a2a inspector:
+>
+> Use the [a2a inspector](https://github.com/a2aproject/a2a-inspector) and
+> enter your agent card URL — the value you configured with `--a2a-prefix`
+> when running `avalan agent serve` (default: `http://localhost:9001/a2a/agent`).
+> You can customize the agent identity with `--a2a-name` and
+> `--a2a-description`, then observe the streaming notifications, tool calls,
+> and final responses.
 
 #### Proxy agents
 
