@@ -12,6 +12,7 @@ from ...entities import (
     Similarity,
     Token,
     TokenizerConfig,
+    ToolCallError,
     User,
     ImageEntity,
 )
@@ -2246,9 +2247,22 @@ class FancyTheme(Theme):
                                             ].call.arguments
                                             or []
                                         ),
-                                        result="[spring_green3]"
-                                        + (to_json(event.payload["result"]))
-                                        + "[/spring_green3]",
+                                        result=(
+                                            "[red]"
+                                            + event.payload["result"].message
+                                            + "[/red]"
+                                        )
+                                        if isinstance(
+                                            event.payload["result"],
+                                            ToolCallError
+                                        )
+                                        else (
+                                            "[spring_green3]"
+                                            + to_json(
+                                            event.payload["result"].result
+                                            )
+                                            + "[/spring_green3]"
+                                        ),
                                     )
                                     if event.type == EventType.TOOL_RESULT
                                     and event.payload["result"]
