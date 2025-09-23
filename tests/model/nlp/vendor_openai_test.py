@@ -630,6 +630,112 @@ class TemplateAndToolSchemaTestCase(TestCase):
         )
 
 
+class OpenAIAdditionalCoverageTestCase(TestCase):
+    def setUp(self):
+        self.openai_stub, self.patch = patch_openai_imports()
+        importlib.reload(
+            importlib.import_module("avalan.model.nlp.text.vendor.openai")
+        )
+        self.mod = importlib.import_module(
+            "avalan.model.nlp.text.vendor.openai"
+        )
+
+    def tearDown(self):
+        self.patch.stop()
+
+    def test_non_stream_response_content_handles_dict(self):
+        response = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"text": "hello"}],
+                },
+                {
+                    "type": "tool_call",
+                    "call": {
+                        "id": "call-id",
+                        "function": {
+                            "name": "pkg.tool",
+                            "arguments": "{\"a\":1}",
+                        },
+                    },
+                },
+            ]
+        }
+        token = SimpleNamespace(token="<tool>")
+        with patch.object(
+            self.mod.TextGenerationVendor,
+            "build_tool_call_token",
+            return_value=token,
+        ) as build:
+            text = self.mod.OpenAIClient._non_stream_response_content(response)
+
+        self.assertEqual(text, "hello<tool>")
+        build.assert_called_once_with("call-id", "pkg.tool", "{\"a\":1}")
+
+    def test_non_streaming_response_str_variants(self):
+        settings = GenerationSettings()
+        response = self.mod.OpenAINonStreamingResponse(
+            lambda **_: "value",
+            logger=MagicMock(),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+            static_response_text="cached",
+        )
+        self.assertEqual(str(response), "cached")
+
+        buffered = self.mod.OpenAINonStreamingResponse(
+            lambda **_: "value",
+            logger=MagicMock(),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+        buffered._buffer.write("buffered")
+        self.assertEqual(str(buffered), "buffered")
+
+        fallback = self.mod.OpenAINonStreamingResponse(
+            lambda **_: "value",
+            logger=MagicMock(),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+        fallback._buffer = SimpleNamespace(getvalue=lambda: None)
+        self.assertIn("OpenAINonStreamingResponse", str(fallback))
+
+
+class OpenAIModelStreamingFlagTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.openai_stub, self.patch = patch_openai_imports()
+        importlib.reload(
+            importlib.import_module("avalan.model.nlp.text.vendor.openai")
+        )
+        self.mod = importlib.import_module(
+            "avalan.model.nlp.text.vendor.openai"
+        )
+
+    def tearDown(self):
+        self.patch.stop()
+
+    async def test_call_returns_streaming_response(self):
+        settings = TransformerEngineSettings(access_token="tok")
+        model = self.mod.OpenAIModel("model-id", settings)
+        model._model = AsyncMock(
+            return_value=lambda *_args, **_kwargs: AsyncIter([])
+        )
+
+        response = await model(
+            "prompt",
+            system_prompt="sys",
+            developer_prompt="dev",
+            settings=GenerationSettings(),
+        )
+
+        self.assertIsInstance(response, self.mod.TextGenerationResponse)
+
+
 if __name__ == "__main__":
     from unittest import main
 

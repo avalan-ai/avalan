@@ -1,16 +1,23 @@
 import asyncio
 
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from avalan.entities import (
     Backend,
     EngineUri,
+    GenerationSettings,
     Modality,
+    Operation,
+    OperationParameters,
+    OperationTextParameters,
     TransformerEngineSettings,
 )
+from avalan.event import EventType
+from avalan.event.manager import EventManager
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
-from logging import Logger
-from unittest import TestCase
-from unittest.mock import MagicMock, patch
 
 
 class ModelManagerExtraTestCase(TestCase):
@@ -163,3 +170,69 @@ class ModelManagerExtraTestCase(TestCase):
                 self.assertIs(mm, manager)
 
         asyncio.run(run())
+
+
+class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
+    async def test_triggers_events_and_closes_stack(self) -> None:
+        hub = MagicMock(spec=HuggingfaceHub)
+        hub.cache_dir = "cache"
+        logger = MagicMock(spec=Logger)
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        manager = ModelManager(hub, logger, event_manager=event_manager)
+        manager._stack.aclose = AsyncMock()  # type: ignore[assignment]
+
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="model",
+            params={},
+        )
+        operation = Operation(
+            generation_settings=GenerationSettings(),
+            input="prompt",
+            modality=Modality.TEXT_GENERATION,
+            parameters=OperationParameters(
+                text=OperationTextParameters(
+                    system_prompt="system",
+                    developer_prompt="dev",
+                )
+            ),
+        )
+        expected = object()
+
+        async def handler(
+            engine_uri_arg: EngineUri,
+            model_arg: object,
+            operation_arg: Operation,
+            tool_arg: object,
+        ) -> object:
+            self.assertIs(engine_uri_arg, engine_uri)
+            self.assertIs(operation_arg, operation)
+            self.assertIsNone(tool_arg)
+            return expected
+
+        with patch(
+            "avalan.model.manager.ModalityRegistry.get",
+            return_value=handler,
+        ):
+            result = await manager(engine_uri, object(), operation)
+
+        self.assertIs(result, expected)
+        self.assertEqual(event_manager.trigger.await_count, 2)
+        before_event = event_manager.trigger.await_args_list[0].args[0]
+        self.assertEqual(before_event.type, EventType.MODEL_MANAGER_CALL_BEFORE)
+        self.assertEqual(before_event.payload["modality"], Modality.TEXT_GENERATION)
+        after_event = event_manager.trigger.await_args_list[1].args[0]
+        self.assertEqual(after_event.type, EventType.MODEL_MANAGER_CALL_AFTER)
+        self.assertIs(after_event.payload["result"], expected)
+        self.assertIsNotNone(after_event.started)
+        self.assertIsNotNone(after_event.finished)
+        self.assertIsNotNone(after_event.elapsed)
+
+        manager.__exit__(None, None, None)
+        await asyncio.sleep(0)
+        manager._stack.aclose.assert_awaited_once()
