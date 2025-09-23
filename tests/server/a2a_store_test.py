@@ -162,4 +162,3 @@ async def _exercise_task_store() -> None:
 
     overview = await store.get_task_overview("task")
     assert overview["error"] == "boom"
-
