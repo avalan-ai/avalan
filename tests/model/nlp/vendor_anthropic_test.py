@@ -320,3 +320,28 @@ def test_tool_schemas_variants(anthropic_mod):
     ]
     assert mod.AnthropicClient._tool_schemas(DummyTool([])) is None
     assert mod.AnthropicClient._tool_schemas(DummyTool(None)) is None
+
+
+def test_non_stream_response_content_from_dict(anthropic_mod):
+    mod, _ = anthropic_mod
+    response = {
+        "content": [
+            {"type": "text", "text": "alpha"},
+            {
+                "type": "tool_use",
+                "id": "call-id",
+                "name": "pkg.tool",
+                "input": {"foo": "bar"},
+            },
+        ]
+    }
+    token = SimpleNamespace(token="<tool>")
+    with patch.object(
+        mod.TextGenerationVendor,
+        "build_tool_call_token",
+        return_value=token,
+    ) as build:
+        text = mod.AnthropicClient._non_stream_response_content(response)
+
+    assert text == "alpha<tool>"
+    build.assert_called_once_with("call-id", "pkg.tool", {"foo": "bar"})
