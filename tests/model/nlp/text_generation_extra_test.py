@@ -10,6 +10,7 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    MessageToolCall,
     TransformerEngineSettings,
 )
 from avalan.model.nlp.text.generation import TextGenerationModel
@@ -268,6 +269,200 @@ class TokenizeInputContentListTestCase(TestCase):
         result = model._tokenize_input(message, None, context=None)
         tokenizer.assert_called_once()
         self.assertEqual(tokenizer.call_args[0][0], "None\n\na\nb\n")
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+
+class TokenizeInputHarmonyContentTestCase(TestCase):
+    def test_harmony_tags_split_into_fields(self) -> None:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+            ),
+        )
+        model._model = MagicMock(device="cpu")
+        tokenizer = MagicMock()
+        token_out = MagicMock()
+        token_out.to.return_value = token_out
+        tokenizer.chat_template = "tpl"
+        tokenizer.apply_chat_template.return_value = token_out
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+
+        message = Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "<|start|>assistant<|channel|>analysis<|message|>think<|end|>"
+                "<|start|>assistant<|channel|>final<|message|>answer<|end|>"
+            ),
+        )
+
+        result = model._tokenize_input(message, None, context=None)
+
+        tokenizer.apply_chat_template.assert_called_once()
+        template_messages = tokenizer.apply_chat_template.call_args[0][0]
+        self.assertEqual(template_messages[0]["thinking"], "think")
+        self.assertEqual(template_messages[0]["content"], "answer")
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+    def test_harmony_tool_call_sets_empty_content(self) -> None:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+            ),
+        )
+        model._model = MagicMock(device="cpu")
+        tokenizer = MagicMock()
+        token_out = MagicMock()
+        token_out.to.return_value = token_out
+        tokenizer.chat_template = "tpl"
+        tokenizer.apply_chat_template.return_value = token_out
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+
+        tool_call = MessageToolCall(id="c1", name="fn", arguments=[])
+        message = Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "<|start|>assistant<|channel|>analysis<|message|>think<|end|>"
+                "<|start|>assistant<|channel|>commentary to=fn<|message|>{}"
+                "<|call|>"
+            ),
+            tool_calls=[tool_call],
+        )
+
+        result = model._tokenize_input(message, None, context=None)
+
+        tokenizer.apply_chat_template.assert_called_once()
+        template_messages = tokenizer.apply_chat_template.call_args[0][0]
+        self.assertEqual(template_messages[0]["thinking"], "think")
+        self.assertEqual(template_messages[0]["content"], "")
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+    def test_harmony_tool_call_inferred_from_content(self) -> None:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+            ),
+        )
+        model._model = MagicMock(device="cpu")
+        tokenizer = MagicMock()
+        token_out = MagicMock()
+        token_out.to.return_value = token_out
+        tokenizer.chat_template = "tpl"
+        tokenizer.apply_chat_template.return_value = token_out
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+
+        message = Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "<|start|>assistant<|channel|>analysis<|message|>think<|end|>"
+                "<|start|>assistant<|channel|>commentary to=fn<|message|>{}"
+                "<|call|>"
+            ),
+        )
+
+        result = model._tokenize_input(message, None, context=None)
+
+        tokenizer.apply_chat_template.assert_called_once()
+        template_messages = tokenizer.apply_chat_template.call_args[0][0]
+        self.assertEqual(template_messages[0]["thinking"], "think")
+        self.assertEqual(template_messages[0]["content"], "")
+        tool_calls = template_messages[0]["tool_calls"]
+        self.assertEqual(len(tool_calls), 1)
+        self.assertEqual(tool_calls[0]["name"], "fn")
+        self.assertEqual(tool_calls[0]["arguments"], {})
+        self.assertEqual(tool_calls[0]["content_type"], "json")
+        self.assertIsInstance(tool_calls[0]["id"], str)
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+    def test_harmony_message_content_text_processed(self) -> None:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+            ),
+        )
+        model._model = MagicMock(device="cpu")
+        tokenizer = MagicMock()
+        token_out = MagicMock()
+        token_out.to.return_value = token_out
+        tokenizer.chat_template = "tpl"
+        tokenizer.apply_chat_template.return_value = token_out
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+
+        message = Message(
+            role=MessageRole.ASSISTANT,
+            content=MessageContentText(
+                type="text",
+                text=(
+                    "<|start|>assistant<|channel|>analysis<|message|>plan<|end|>"
+                    "<|start|>assistant<|channel|>final<|message|>done<|end|>"
+                ),
+            ),
+        )
+
+        result = model._tokenize_input(message, None, context=None)
+
+        tokenizer.apply_chat_template.assert_called_once()
+        template_message = tokenizer.apply_chat_template.call_args[0][0][0]
+        self.assertEqual(template_message["thinking"], "plan")
+        self.assertEqual(template_message["content"], "done")
+        self.assertNotIn("<|channel|>", template_message["thinking"])
+        self.assertNotIn("<|channel|>", template_message["content"])
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+    def test_harmony_message_content_list_processed(self) -> None:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+            ),
+        )
+        model._model = MagicMock(device="cpu")
+        tokenizer = MagicMock()
+        token_out = MagicMock()
+        token_out.to.return_value = token_out
+        tokenizer.chat_template = "tpl"
+        tokenizer.apply_chat_template.return_value = token_out
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+
+        message = Message(
+            role=MessageRole.ASSISTANT,
+            content=[
+                MessageContentText(
+                    type="text",
+                    text=(
+                        "<|start|>assistant<|channel|>analysis<|message|>reason<|end|>"
+                        "<|start|>assistant<|channel|>final<|message|>result<|end|>"
+                    ),
+                )
+            ],
+        )
+
+        result = model._tokenize_input(message, None, context=None)
+
+        tokenizer.apply_chat_template.assert_called_once()
+        template_message = tokenizer.apply_chat_template.call_args[0][0][0]
+        self.assertEqual(template_message["thinking"], "reason")
+        self.assertEqual(template_message["content"], "result")
+        self.assertNotIn("<|channel|>", template_message["thinking"])
+        self.assertNotIn("<|channel|>", template_message["content"])
         token_out.to.assert_called_once_with("cpu")
         self.assertIs(result, token_out)
 

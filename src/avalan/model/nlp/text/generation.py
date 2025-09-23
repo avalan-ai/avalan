@@ -1,4 +1,3 @@
-from asyncio import sleep
 from ....compat import override
 from ....entities import (
     GenerationSettings,
@@ -14,17 +13,20 @@ from ....entities import (
     TokenDetail,
     TransformerEngineSettings,
 )
+from ....model.engine import Engine
+from ....model.nlp import BaseNLPModel
 from ....model.response.text import TextGenerationResponse
 from ....model.vendor import TextGenerationVendor
-from ....model.nlp import BaseNLPModel
-from ....model.engine import Engine
 from ....tool.manager import ToolManager
+from ....tool.parser import ToolCallParser
+
+from asyncio import sleep
 from dataclasses import asdict, replace
 from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Thread
-from torch import log_softmax, softmax, topk, Tensor
+from torch import Tensor, log_softmax, softmax, topk
 from torch.nn.functional import gumbel_softmax
 from transformers import (
     AsyncTextIteratorStreamer,
@@ -37,6 +39,8 @@ from transformers import (
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
 from typing import AsyncGenerator, Literal
+
+_TOOL_MESSAGE_PARSER = ToolCallParser()
 
 
 class TextGenerationModel(BaseNLPModel):
@@ -424,12 +428,15 @@ class TextGenerationModel(BaseNLPModel):
         template_messages = []
         for message in messages:
             message_dict = asdict(message)
-            if not message_dict["tool_calls"]:
-                message_dict["tool_calls"] = []
+            prepared = _TOOL_MESSAGE_PARSER.prepare_message_for_template(
+                message, message_dict
+            )
+            message_dict = prepared.message_dict
+            template_content = prepared.template_content
             template_messages.append(
                 {
                     **message_dict,
-                    **{"content": _format_content(message.content)},
+                    **{"content": _format_content(template_content)},
                 }
             )
 

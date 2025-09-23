@@ -163,7 +163,9 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         output.extend(await parser.push('{"a":1}'))
         output.extend(await parser.push("</tool_call>"))
 
-        self.assertTrue(any(isinstance(item, ToolCallToken) for item in output))
+        self.assertTrue(
+            any(isinstance(item, ToolCallToken) for item in output)
+        )
         event = next(item for item in output if isinstance(item, Event))
         self.assertEqual(event.type, EventType.TOOL_PROCESS)
         self.assertEqual(event.payload, [SimpleNamespace(name="call")])
@@ -178,7 +180,9 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
     async def test_handles_non_matching_tokens(self) -> None:
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = False
-        manager.tool_call_status.return_value = ToolCallParser.ToolCallBufferStatus.NONE
+        manager.tool_call_status.return_value = (
+            ToolCallParser.ToolCallBufferStatus.NONE
+        )
         manager.get_calls.return_value = []
         parser = ToolCallResponseParser(manager, None)
         parser._pending_tokens = ["pending"]
@@ -193,7 +197,9 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
     async def test_return_empty_result_when_list_ignores_appends(self) -> None:
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = True
-        manager.tool_call_status.return_value = ToolCallParser.ToolCallBufferStatus.OPEN
+        manager.tool_call_status.return_value = (
+            ToolCallParser.ToolCallBufferStatus.OPEN
+        )
 
         class NonAppendingList(list):
             def append(self, value):  # type: ignore[override]

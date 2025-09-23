@@ -1085,7 +1085,9 @@ async def _run_translator_finish_handles_answer_artifact() -> None:
     assert any(event["event"] == "artifact.completed" for event in events)
 
 
-def test_artifact_result_additional_cases(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_artifact_result_additional_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     asyncio.run(_run_artifact_result_additional_cases(monkeypatch))
 
 
@@ -1112,7 +1114,7 @@ async def _run_artifact_result_additional_cases(
 
     delta_list_event = {
         "event": "artifact.delta",
-        "data": {"artifact": {"id": artifact_id, "payload": [{"v": 1}]}}
+        "data": {"artifact": {"id": artifact_id, "payload": [{"v": 1}]}},
     }
     delta_list_result = await converter._artifact_result(delta_list_event)
     assert delta_list_result.artifact.artifact_id == artifact_id
@@ -1124,9 +1126,7 @@ async def _run_artifact_result_additional_cases(
     delta_none_result = await converter._artifact_result(delta_none_event)
     assert delta_none_result.artifact.artifact_id == artifact_id
 
-    async def artifact_with_none(
-        task: str, art: str
-    ) -> dict[str, object]:
+    async def artifact_with_none(task: str, art: str) -> dict[str, object]:
         return {
             "id": art,
             "status": "completed",
@@ -1136,16 +1136,19 @@ async def _run_artifact_result_additional_cases(
             "kind": None,
         }
 
-    monkeypatch.setattr(store, "get_artifact", artifact_with_none, raising=False)
+    monkeypatch.setattr(
+        store, "get_artifact", artifact_with_none, raising=False
+    )
     converter._artifact_progress.clear()
-    completed_event = {"event": "artifact.completed", "data": {"artifact": {"id": artifact_id}}}
+    completed_event = {
+        "event": "artifact.completed",
+        "data": {"artifact": {"id": artifact_id}},
+    }
     none_content_result = await converter._artifact_result(completed_event)
     assert none_content_result.append is True
     assert none_content_result.artifact.artifact_id == artifact_id
 
-    async def artifact_with_value(
-        task: str, art: str
-    ) -> dict[str, object]:
+    async def artifact_with_value(task: str, art: str) -> dict[str, object]:
         return {
             "id": art,
             "status": "completed",
@@ -1155,7 +1158,9 @@ async def _run_artifact_result_additional_cases(
             "kind": None,
         }
 
-    monkeypatch.setattr(store, "get_artifact", artifact_with_value, raising=False)
+    monkeypatch.setattr(
+        store, "get_artifact", artifact_with_value, raising=False
+    )
     converter._artifact_progress.clear()
     value_content_result = await converter._artifact_result(completed_event)
     assert value_content_result.artifact.artifact_id == artifact_id
@@ -1180,4 +1185,6 @@ def test_coerce_handles_plain_classes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(task, PlainTask) and task.id == "plain"
 
     events = _coerce_list("TaskEvent", event_payload)
-    assert isinstance(events[0], PlainEvent) and events[0].event == "task.created"
+    assert (
+        isinstance(events[0], PlainEvent) and events[0].event == "task.created"
+    )

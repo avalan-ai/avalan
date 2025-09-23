@@ -526,4 +526,3 @@ class BedrockStreamHelpersTest(TestCase):
         module = import_module("avalan.model.nlp.text.vendor.bedrock")
         obj = SimpleNamespace(value="x")
         self.assertEqual(module._get(obj, "value"), "x")
-

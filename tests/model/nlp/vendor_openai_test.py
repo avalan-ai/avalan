@@ -656,7 +656,7 @@ class OpenAIAdditionalCoverageTestCase(TestCase):
                         "id": "call-id",
                         "function": {
                             "name": "pkg.tool",
-                            "arguments": "{\"a\":1}",
+                            "arguments": '{"a":1}',
                         },
                     },
                 },
@@ -671,7 +671,7 @@ class OpenAIAdditionalCoverageTestCase(TestCase):
             text = self.mod.OpenAIClient._non_stream_response_content(response)
 
         self.assertEqual(text, "hello<tool>")
-        build.assert_called_once_with("call-id", "pkg.tool", "{\"a\":1}")
+        build.assert_called_once_with("call-id", "pkg.tool", '{"a":1}')
 
     def test_non_streaming_response_str_variants(self):
         settings = GenerationSettings()
