@@ -88,12 +88,14 @@ def test_timestamp_role_and_parts_helpers() -> None:
     empty_parts = _message_parts_from_payload("ignored")
     assert getattr(empty_parts[0].root, "text") == ""
 
-    artifact_parts = _artifact_parts_from_payload([
-        {"type": "text", "text": "chunk"},
-        {"type": "blob", "value": 2},
-        "trail",
-        3,
-    ])
+    artifact_parts = _artifact_parts_from_payload(
+        [
+            {"type": "text", "text": "chunk"},
+            {"type": "blob", "value": 2},
+            "trail",
+            3,
+        ]
+    )
     assert getattr(artifact_parts[0].root, "text") == "chunk"
     assert getattr(artifact_parts[1].root, "data")["type"] == "blob"
     assert getattr(artifact_parts[2].root, "text") == "trail"
@@ -107,7 +109,11 @@ def test_timestamp_role_and_parts_helpers() -> None:
         "instructions": "act",
     }
     metadata = _task_metadata_from_overview(overview)
-    assert metadata == {"foo": "bar", "model": "model-x", "instructions": "act"}
+    assert metadata == {
+        "foo": "bar",
+        "model": "model-x",
+        "instructions": "act",
+    }
 
 
 def test_task_request_conversation_and_metadata() -> None:
@@ -211,9 +217,13 @@ def test_normalize_jsonrpc_errors() -> None:
     with pytest.raises(ValueError):
         _normalize_jsonrpc_task_request({}, orchestrator)
     with pytest.raises(ValueError):
-        _normalize_jsonrpc_task_request({"params": {"configuration": []}}, orchestrator)
+        _normalize_jsonrpc_task_request(
+            {"params": {"configuration": []}}, orchestrator
+        )
     with pytest.raises(ValueError):
-        _normalize_jsonrpc_task_request({"params": {"configuration": {}, "message": []}}, orchestrator)
+        _normalize_jsonrpc_task_request(
+            {"params": {"configuration": {}, "message": []}}, orchestrator
+        )
 
 
 def test_jsonrpc_helper_functions() -> None:
@@ -239,7 +249,10 @@ def test_jsonrpc_helper_functions() -> None:
 
     selection_params = {"models": ["", "pick"], "model": "explicit"}
     orchestrator = SimpleNamespace(model_ids={"z"})
-    assert _select_jsonrpc_model(selection_params, None, orchestrator) == "explicit"
+    assert (
+        _select_jsonrpc_model(selection_params, None, orchestrator)
+        == "explicit"
+    )
     assert (
         _select_jsonrpc_model({}, {"modelIds": ["foo", "bar"]}, orchestrator)
         == "foo"
@@ -286,10 +299,9 @@ def test_jsonrpc_helper_functions() -> None:
 
 def test_model_selection_and_message_text_fallbacks() -> None:
     orchestrator = SimpleNamespace(model_ids={"beta", "alpha"})
-    assert (
-        _select_jsonrpc_model([], "ignored", orchestrator)
-        == _default_model_id(orchestrator)
-    )
+    assert _select_jsonrpc_model(
+        [], "ignored", orchestrator
+    ) == _default_model_id(orchestrator)
     assert _jsonrpc_message_text({}) == ""
 
 
@@ -312,16 +324,20 @@ async def _run_translator_switch_state_paths() -> None:
     assert created
     assert await translator._switch_state(StreamState.REASONING, None) == []
     completed_reasoning = await translator._switch_state(None, None)
-    assert any(event["event"] == "artifact.completed" for event in completed_reasoning)
+    assert any(
+        event["event"] == "artifact.completed" for event in completed_reasoning
+    )
 
     tool_events = await translator._switch_state(StreamState.TOOL, "tool-1")
     assert translator._tool_artifact_id == "tool-1"
     assert tool_events
     replaced_tool = await translator._switch_state(StreamState.TOOL, "tool-2")
     assert translator._tool_artifact_id == "tool-2"
-    assert any(event["event"] == "artifact.completed" for event in replaced_tool)
+    assert any(
+        event["event"] == "artifact.completed" for event in replaced_tool
+    )
 
-    answer_events = await translator._switch_state(StreamState.ANSWER, None)
+    await translator._switch_state(StreamState.ANSWER, None)
     assert translator._tool_artifact_id is None
     assert translator._answer_artifact_id == "answer"
     finished = await translator._switch_state(None, None)
@@ -357,20 +373,28 @@ async def _run_tool_handlers_cover_branches() -> None:
     translator_list = await prepare("tool-list")
     call_none = ToolCall(id="call-2", name="tool", arguments=None)
     event_list = Event(type=EventType.TOOL_PROCESS, payload=[call_none])
-    process_list_events = await translator_list._handle_tool_process(event_list)
+    process_list_events = await translator_list._handle_tool_process(
+        event_list
+    )
     assert process_list_events
 
     translator_result = await prepare("tool-result")
     result_call = ToolCall(id="call-3", name="tool", arguments=None)
     result = ToolCallResult(
-        id="res-1", call=result_call, result={"ok": True}, name="tool", arguments=None
+        id="res-1",
+        call=result_call,
+        result={"ok": True},
+        name="tool",
+        arguments=None,
     )
     result_event = Event(
         type=EventType.TOOL_RESULT,
         payload={"result": result, "call": result_call},
     )
     result_events = await translator_result._handle_tool_result(result_event)
-    assert any(event["event"] == "artifact.completed" for event in result_events)
+    assert any(
+        event["event"] == "artifact.completed" for event in result_events
+    )
 
     translator_error = await prepare("tool-error")
     error_call = ToolCall(id="call-4", name="tool", arguments=None)
@@ -387,19 +411,27 @@ async def _run_tool_handlers_cover_branches() -> None:
         payload={"result": error, "call": error_call},
     )
     error_events = await translator_error._handle_tool_result(error_event)
-    assert any(event["event"] == "artifact.completed" for event in error_events)
+    assert any(
+        event["event"] == "artifact.completed" for event in error_events
+    )
 
     translator_payload = await prepare("tool-payload")
     payload_call = ToolCall(id="call-5", name="tool", arguments=None)
     payload_event = Event(type=EventType.TOOL_RESULT, payload=payload_call)
-    payload_events = await translator_payload._handle_tool_result(payload_event)
+    payload_events = await translator_payload._handle_tool_result(
+        payload_event
+    )
     assert payload_events
 
     translator_fallback = await prepare("tool-fallback")
     translator_fallback._tool_artifact_id = "call-6"
     fallback_event = Event(type=EventType.TOOL_RESULT, payload={})
-    fallback_events = await translator_fallback._handle_tool_result(fallback_event)
-    assert any(event["event"] == "artifact.completed" for event in fallback_events)
+    fallback_events = await translator_fallback._handle_tool_result(
+        fallback_event
+    )
+    assert any(
+        event["event"] == "artifact.completed" for event in fallback_events
+    )
 
     translator_uuid = await prepare("tool-uuid")
     translator_uuid._tool_artifact_id = None
@@ -421,7 +453,11 @@ def test_translator_additional_branches() -> None:
 async def _run_translator_additional_branches() -> None:
     store = TaskStore()
     await store.create_task(
-        "extra", model="model", instructions=None, input_messages=[], metadata={}
+        "extra",
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
     )
     translator = A2AResponseTranslator("extra", store)
 
@@ -429,11 +465,15 @@ async def _run_translator_additional_branches() -> None:
     translator._state = StreamState.REASONING
     non_tool_event = Event(type=EventType.START, payload={})
     non_tool_events = await translator._process_item(non_tool_event)
-    assert any(event["event"] == "artifact.completed" for event in non_tool_events)
+    assert any(
+        event["event"] == "artifact.completed" for event in non_tool_events
+    )
 
     await translator._process_item("chunk")
     finish_events = await translator._finish()
-    assert any(event["event"] == "artifact.completed" for event in finish_events)
+    assert any(
+        event["event"] == "artifact.completed" for event in finish_events
+    )
 
     translator_tool = A2AResponseTranslator("extra-tool", store)
     await store.create_task(
@@ -526,7 +566,9 @@ async def _run_event_converter_fallbacks() -> None:
     )
     converter = A2AStreamEventConverter(task_id, store)
 
-    assert await converter.convert({"event": "unknown"}) == {"event": "unknown"}
+    assert await converter.convert({"event": "unknown"}) == {
+        "event": "unknown"
+    }
 
     message_event = {
         "event": "message.delta",
@@ -557,7 +599,10 @@ async def _run_message_and_artifact_result_branches() -> None:
     )
     assert (
         await converter._message_result(
-            {"event": "message.delta", "data": {"message": {"id": None}}}
+            {
+                "event": "message.delta",
+                "data": {"message": {"id": None}},
+            }
         )
         is None
     )
@@ -566,7 +611,10 @@ async def _run_message_and_artifact_result_branches() -> None:
     assert await converter._artifact_result(artifact_event) is None
     assert (
         await converter._artifact_result(
-            {"event": "artifact.delta", "data": {"artifact": {}}}
+            {
+                "event": "artifact.delta",
+                "data": {"artifact": {}},
+            }
         )
         is None
     )
@@ -632,7 +680,9 @@ def test_agent_card_and_skills() -> None:
     assert card["capabilities"]["extensions"]
     assert card["skills"][0]["examples"] == ["Step 1", "Step 2"]
 
-    default_skill = _default_skill("Run", None, orchestrator, ["text"], ["json"], [])
+    default_skill = _default_skill(
+        "Run", None, orchestrator, ["text"], ["json"], []
+    )
     assert default_skill["input_modes"] == ["text"]
 
     extensions = _capability_extensions(["instruction"], ["x", "y"])
@@ -666,7 +716,9 @@ def test_skill_and_extension_fallbacks() -> None:
     ]
 
 
-def test_coerce_list_exception_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_coerce_list_exception_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class RaisingEvent:
         @classmethod
         def model_validate(cls, payload: dict[str, object]) -> None:
@@ -727,7 +779,9 @@ def test_create_task_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(_run_create_task_error_paths(monkeypatch))
 
 
-async def _run_create_task_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+async def _run_create_task_error_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = FastAPI()
     app.include_router(router)
     app.state.logger = logging.getLogger("test")
@@ -757,7 +811,9 @@ async def _run_create_task_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
 
     client = TestClient(app)
 
-    response = client.post("/tasks", data="not json", headers={"content-type": "application/json"})
+    response = client.post(
+        "/tasks", data="not json", headers={"content-type": "application/json"}
+    )
     assert response.status_code == 400
 
     response = client.post("/tasks", json=[1, 2, 3])
@@ -783,7 +839,11 @@ async def _run_create_task_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
 
     response = client.post(
         "/tasks",
-        json={"model": "model", "messages": [{"role": "user", "content": "hi"}], "stream": False},
+        json={
+            "model": "model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+        },
     )
     assert response.status_code == 200
     task_payload = response.json()
@@ -828,8 +888,14 @@ async def _run_additional_router_helpers() -> None:
     )
 
     assert _state_for_item(ReasoningToken("thinking")) is StreamState.REASONING
-    assert _state_for_item(Event(type=EventType.TOOL_PROCESS, payload={})) is StreamState.TOOL
-    assert _state_for_item(Event(type=EventType.TOOL_RESULT, payload={})) is StreamState.TOOL
+    assert (
+        _state_for_item(Event(type=EventType.TOOL_PROCESS, payload={}))
+        is StreamState.TOOL
+    )
+    assert (
+        _state_for_item(Event(type=EventType.TOOL_RESULT, payload={}))
+        is StreamState.TOOL
+    )
     assert _state_for_item(Event(type=EventType.START, payload={})) is None
     assert _state_for_item("text") is StreamState.ANSWER
     assert _state_for_item(Token(token="text")) is StreamState.ANSWER
@@ -837,17 +903,30 @@ async def _run_additional_router_helpers() -> None:
 
     call = ToolCall(id="call", name="tool", arguments=None)
     assert _call_identifier(ToolCallToken(token="", call=call)) == "call"
-    process_event = Event(type=EventType.TOOL_PROCESS, payload={"calls": [call]})
+    process_event = Event(
+        type=EventType.TOOL_PROCESS, payload={"calls": [call]}
+    )
     assert _call_identifier(process_event) == "call"
     process_list_event = Event(type=EventType.TOOL_PROCESS, payload=[call])
     assert _call_identifier(process_list_event) == "call"
     result_event = Event(
         type=EventType.TOOL_RESULT,
-        payload={"result": ToolCallResult(id="r", call=call, result={}, name="tool", arguments=None)},
+        payload={
+            "result": ToolCallResult(
+                id="r", call=call, result={}, name="tool", arguments=None
+            )
+        },
     )
     assert _call_identifier(result_event) == "call"
-    assert _call_identifier(Event(type=EventType.TOOL_RESULT, payload={"call": call})) == "call"
-    assert _call_identifier(Event(type=EventType.TOOL_RESULT, payload={})) is None
+    assert (
+        _call_identifier(
+            Event(type=EventType.TOOL_RESULT, payload={"call": call})
+        )
+        == "call"
+    )
+    assert (
+        _call_identifier(Event(type=EventType.TOOL_RESULT, payload={})) is None
+    )
 
     assert _token_text("plain") == "plain"
     assert _token_text(Token(token="value")) == "value"
@@ -866,7 +945,12 @@ async def _run_stream_generator_handles_cancelled(
     router_module = importlib.import_module("avalan.server.a2a.router")
 
     class DummyStreamingResponse:
-        def __init__(self, iterator: AsyncGenerator[str, None], *args: object, **kwargs: object) -> None:
+        def __init__(
+            self,
+            iterator: AsyncGenerator[str, None],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
             self.body_iterator = iterator
 
     async def orchestrate_stub(*args: object, **kwargs: object):
@@ -877,12 +961,16 @@ async def _run_stream_generator_handles_cancelled(
 
         return iterator(), uuid4(), 0
 
-    async def canceling_run_stream(self: A2AResponseTranslator, response: object) -> AsyncGenerator[dict[str, object], None]:
+    async def canceling_run_stream(
+        self: A2AResponseTranslator, response: object
+    ) -> AsyncGenerator[dict[str, object], None]:
         if False:
             yield {}
         raise CancelledError()
 
-    monkeypatch.setattr(router_module, "StreamingResponse", DummyStreamingResponse)
+    monkeypatch.setattr(
+        router_module, "StreamingResponse", DummyStreamingResponse
+    )
     monkeypatch.setattr(router_module, "orchestrate", orchestrate_stub)
     monkeypatch.setattr(
         A2AResponseTranslator,
@@ -943,7 +1031,9 @@ async def _run_stream_generator_handles_cancelled(
         orchestrator=orchestrator,
         store=store,
     )
-    agen: AsyncGenerator[str, None] | None = getattr(response, "body_iterator", None)
+    agen: AsyncGenerator[str, None] | None = getattr(
+        response, "body_iterator", None
+    )
     assert agen is not None
 
     try:

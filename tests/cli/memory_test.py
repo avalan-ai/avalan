@@ -370,7 +370,9 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 memory_cmds, "get_model_settings", return_value={}
             ) as gms_patch,
-            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                memory_cmds, "ModelManager", return_value=manager
+            ) as mm_patch,
             patch.object(memory_cmds, "model_display"),
         ):
             await memory_cmds.memory_embeddings(
@@ -384,11 +386,12 @@ class CliMemoryEmbeddingsTestCase(IsolatedAsyncioTestCase):
             is_quiet=self.args.quiet,
             tty_path="/dev/tty",
         )
+        mm_patch.parse_uri.assert_called_once_with(self.args.model)
         gms_patch.assert_called_once_with(
             self.args,
             self.hub,
             self.logger,
-            self.args.model,
+            mm_patch.parse_uri.return_value,
             modality=Modality.EMBEDDING,
         )
         model.assert_awaited_once_with(["text", *self.args.compare])

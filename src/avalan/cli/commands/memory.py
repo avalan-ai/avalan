@@ -167,8 +167,9 @@ async def memory_embeddings(
     }[sort_by]
     reverse_sort = sort_by in (DistanceType.COSINE, DistanceType.PEARSON)
 
+    engine_uri = ModelManager.parse_uri(model_id)
     model_settings = get_model_settings(
-        args, hub, logger, model_id, modality=Modality.EMBEDDING
+        args, hub, logger, engine_uri, modality=Modality.EMBEDDING
     )
     with ModelManager(hub, logger) as manager:
         with manager.load(**model_settings) as stm:
@@ -394,8 +395,9 @@ async def memory_search(
     if not input_string:
         return
 
+    engine_uri = ModelManager.parse_uri(model_id)
     model_settings = get_model_settings(
-        args, hub, logger, model_id, modality=Modality.EMBEDDING
+        args, hub, logger, engine_uri, modality=Modality.EMBEDDING
     )
 
     with ModelManager(hub, logger) as manager:
