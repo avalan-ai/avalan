@@ -431,6 +431,14 @@ async def _run_translator_additional_branches() -> None:
     non_tool_events = await translator._process_item(non_tool_event)
     assert any(event["event"] == "artifact.completed" for event in non_tool_events)
 
+    tool_call = ToolCall(id="proc", name="processor", arguments={"a": 1})
+    process_event = Event(
+        type=EventType.TOOL_PROCESS,
+        payload={"calls": [tool_call]},
+    )
+    process_events = await translator._process_item(process_event)
+    assert any(event["event"] == "artifact.delta" for event in process_events)
+
     await translator._process_item("chunk")
     finish_events = await translator._finish()
     assert any(event["event"] == "artifact.completed" for event in finish_events)
@@ -619,10 +627,11 @@ def test_agent_card_and_skills() -> None:
     spec.input_type = SimpleNamespace(value="text")
     spec.output_type = SimpleNamespace(value="json")
     operation = SimpleNamespace(specification=spec)
+    ignored_operation = SimpleNamespace(specification=None)
     orchestrator = SimpleNamespace(
         id=uuid4(),
         name="Agent",
-        operations=[operation],
+        operations=[ignored_operation, operation],
         model_ids={"m1", "m2"},
     )
 
@@ -957,3 +966,128 @@ async def _run_stream_generator_handles_cancelled(
         await agen.aclose()
 
     assert orchestrator.synced is True
+
+
+def test_translator_finish_handles_answer_artifact() -> None:
+    asyncio.run(_run_translator_finish_handles_answer_artifact())
+
+
+async def _run_translator_finish_handles_answer_artifact() -> None:
+    store = TaskStore()
+    await store.create_task(
+        "finish",
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator("finish", store)
+    artifact_id, _ = await store.ensure_artifact(
+        "finish",
+        artifact_id="answer-art",
+        name="Answer",
+        kind="output",
+        role=str(MessageRole.ASSISTANT),
+    )
+    translator._answer_artifact_id = artifact_id
+    events = await translator._finish()
+    assert translator._answer_artifact_id is None
+    assert any(event["event"] == "artifact.completed" for event in events)
+
+
+def test_artifact_result_additional_cases(monkeypatch: pytest.MonkeyPatch) -> None:
+    asyncio.run(_run_artifact_result_additional_cases(monkeypatch))
+
+
+async def _run_artifact_result_additional_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = TaskStore()
+    task_id = "artifact-cases"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    artifact_id, _ = await store.ensure_artifact(
+        task_id,
+        artifact_id="artifact",
+        name="Artifact",
+        kind="output",
+        role=str(MessageRole.ASSISTANT),
+    )
+    converter = A2AStreamEventConverter(task_id, store)
+
+    delta_list_event = {
+        "event": "artifact.delta",
+        "data": {"artifact": {"id": artifact_id, "payload": [{"v": 1}]}}
+    }
+    delta_list_result = await converter._artifact_result(delta_list_event)
+    assert delta_list_result.artifact.artifact_id == artifact_id
+
+    delta_none_event = {
+        "event": "artifact.delta",
+        "data": {"artifact": {"id": artifact_id, "payload": None}},
+    }
+    delta_none_result = await converter._artifact_result(delta_none_event)
+    assert delta_none_result.artifact.artifact_id == artifact_id
+
+    async def artifact_with_none(
+        task: str, art: str
+    ) -> dict[str, object]:
+        return {
+            "id": art,
+            "status": "completed",
+            "metadata": {},
+            "content": None,
+            "role": None,
+            "kind": None,
+        }
+
+    monkeypatch.setattr(store, "get_artifact", artifact_with_none, raising=False)
+    converter._artifact_progress.clear()
+    completed_event = {"event": "artifact.completed", "data": {"artifact": {"id": artifact_id}}}
+    none_content_result = await converter._artifact_result(completed_event)
+    assert none_content_result.append is True
+    assert none_content_result.artifact.artifact_id == artifact_id
+
+    async def artifact_with_value(
+        task: str, art: str
+    ) -> dict[str, object]:
+        return {
+            "id": art,
+            "status": "completed",
+            "metadata": {},
+            "content": "chunk",
+            "role": None,
+            "kind": None,
+        }
+
+    monkeypatch.setattr(store, "get_artifact", artifact_with_value, raising=False)
+    converter._artifact_progress.clear()
+    value_content_result = await converter._artifact_result(completed_event)
+    assert value_content_result.artifact.artifact_id == artifact_id
+
+
+def test_coerce_handles_plain_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+    class PlainTask:
+        def __init__(self, id: str) -> None:
+            self.id = id
+
+    class PlainEvent:
+        def __init__(self, event: str) -> None:
+            self.event = event
+
+    monkeypatch.setattr(a2a_types, "Task", PlainTask, raising=False)
+    monkeypatch.setattr(a2a_types, "TaskEvent", PlainEvent, raising=False)
+
+    payload = {"id": "plain"}
+    event_payload = [{"event": "task.created"}]
+
+    task = _coerce("Task", payload)
+    assert isinstance(task, PlainTask) and task.id == "plain"
+
+    events = _coerce_list("TaskEvent", event_payload)
+    assert isinstance(events[0], PlainEvent) and events[0].event == "task.created"

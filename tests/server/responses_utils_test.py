@@ -210,3 +210,7 @@ class ResponsesUtilsTestCase(TestCase):
     def test_sse_formats_event_and_data(self) -> None:
         result = sse_message(to_json({"a": 1}), event="test.event")
         self.assertEqual(result, 'event: test.event\ndata: {"a": 1}\n\n')
+
+    def test_sse_message_handles_empty_payload(self) -> None:
+        result = sse_message("", event="empty")
+        self.assertEqual(result, "event: empty\ndata: \n\n")
