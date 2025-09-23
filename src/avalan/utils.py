@@ -3,6 +3,7 @@ from decimal import Decimal
 from json import dumps
 from logging import getLogger, Logger
 from typing import Any
+from uuid import UUID
 
 
 def _lf(items: list) -> list:
@@ -30,7 +31,7 @@ def to_json(item: Any) -> str:
     def _default(o):
         if is_dataclass(o):
             return asdict(o)
-        elif isinstance(o, Decimal):
+        elif isinstance(o, (Decimal, UUID)):
             return str(o)
         raise TypeError(
             f"Object of type {type(o).__name__} is not JSON serializable"
