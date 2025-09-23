@@ -1,11 +1,24 @@
-from ..entities import ToolCall, ToolFormat
+from ..entities import (
+    Message,
+    MessageContent,
+    MessageContentText,
+    ToolCall,
+    ToolFormat,
+)
 from ast import literal_eval
+from dataclasses import dataclass, field
 from enum import Enum
 from json import JSONDecodeError, loads
-from re import DOTALL, finditer, search
+from re import DOTALL, compile, finditer, search, sub
 from typing import Any
 from uuid import uuid4
 from xml.etree import ElementTree
+
+_HARMONY_SEGMENT_PATTERN = compile(
+    r"<\|channel\|>(?P<channel>\w+).*?<\|message\|>(?P<message>.*?)(?:<\|call\|>|<\|end\|>)",
+    DOTALL,
+)
+_SPECIAL_TOKEN_PATTERN = compile(r"<\|[^>]+?\|>")
 
 
 class ToolCallParser:
@@ -62,6 +75,206 @@ class ToolCallParser:
         that could form a tool call.
         """
         return bool(token_str and token_str.strip())
+
+    @dataclass(frozen=True, kw_only=True, slots=True)
+    class StructuredMessage:
+        """Structured content extracted from a raw message payload."""
+
+        content: str
+        thinking: str | None = None
+        tool_calls: list[dict[str, object]] = field(default_factory=list)
+
+    @dataclass(frozen=True, kw_only=True, slots=True)
+    class PreparedMessage:
+        """Normalized message ready for chat template consumption."""
+
+        template_content: str | MessageContent | list[MessageContent] | None
+        message_dict: dict[str, object]
+
+    def prepare_message_for_template(
+        self,
+        message: Message,
+        message_dict: dict[str, object],
+    ) -> "ToolCallParser.PreparedMessage":
+        """Return a message payload ready for chat template rendering.
+
+        The method normalizes ``message_dict`` in-place, ensuring thinking and
+        tool call metadata are consistent with any structured content detected
+        in ``message``.
+        """
+        if not isinstance(message_dict.get("tool_calls"), list):
+            message_dict["tool_calls"] = []
+
+        template_content: (
+            str | MessageContent | list[MessageContent] | None
+        ) = message.content
+        source = self._resolve_text_source(
+            template_content, message_dict.get("content")
+        )
+
+        if source:
+            structured = self.extract_structured_message(source)
+            if structured:
+                self._merge_thinking(message_dict, structured.thinking)
+                message_dict["content"] = structured.content
+                template_content = structured.content
+
+                if structured.tool_calls and not message_dict["tool_calls"]:
+                    message_dict["tool_calls"] = structured.tool_calls
+
+        return ToolCallParser.PreparedMessage(
+            template_content=template_content,
+            message_dict=message_dict,
+        )
+
+    def extract_structured_message(
+        self, text: str
+    ) -> "ToolCallParser.StructuredMessage | None":
+        """Parse ``text`` looking for structured content markers.
+
+        Currently Harmony-formatted payloads are recognized automatically, but
+        the method can be extended to additional formats over time. When no
+        structure is detected ``None`` is returned.
+        """
+        if "<|channel|>" not in text:
+            return None
+
+        thinking, content = self.extract_harmony_content(text)
+        tool_calls = self.message_tool_calls(text)
+        return ToolCallParser.StructuredMessage(
+            content=content,
+            thinking=thinking,
+            tool_calls=tool_calls,
+        )
+
+    def message_tool_calls(self, text: str) -> list[dict[str, object]]:
+        """Return tool calls extracted from ``text`` in message format."""
+        parsed = None
+        if "<|call|>" in text and "<|channel|>" in text:
+            parsed = self._parse_harmony(text)
+        elif self._tool_format:
+            parsed = self(text)
+
+        if not parsed:
+            return []
+
+        if isinstance(parsed, list):
+            return [
+                {
+                    "id": str(call.id),
+                    "name": call.name,
+                    "arguments": call.arguments or {},
+                    "content_type": "json",
+                }
+                for call in parsed
+            ]
+
+        if isinstance(parsed, tuple) and len(parsed) == 2:
+            name, arguments = parsed
+            if isinstance(name, str):
+                return [
+                    {
+                        "id": None,
+                        "name": name,
+                        "arguments": arguments or {},
+                        "content_type": "json",
+                    }
+                ]
+
+        return []
+
+    @staticmethod
+    def extract_harmony_content(text: str) -> tuple[str | None, str]:
+        """Return thinking and content sections from Harmony transcripts."""
+        analysis_parts: list[str] = []
+        final_parts: list[str] = []
+        for match in _HARMONY_SEGMENT_PATTERN.finditer(text):
+            channel = match.group("channel")
+            message = match.group("message").strip()
+            if not message:
+                continue
+            if channel == "analysis":
+                analysis_parts.append(message)
+            elif channel == "final":
+                final_parts.append(message)
+
+        thinking = "\n\n".join(analysis_parts) if analysis_parts else None
+        if final_parts:
+            content = "\n\n".join(final_parts).strip()
+        elif analysis_parts:
+            content = ""
+        else:
+            content = sub(
+                r"\n{3,}", "\n\n", _SPECIAL_TOKEN_PATTERN.sub("", text)
+            ).strip()
+        return thinking, content
+
+    def _resolve_text_source(
+        self,
+        template_content: str | MessageContent | list[MessageContent] | None,
+        serialized_content: object,
+    ) -> str | None:
+        if isinstance(template_content, str):
+            return template_content
+
+        if isinstance(template_content, MessageContentText):
+            return template_content.text
+
+        if (
+            isinstance(template_content, list)
+            and len(template_content) == 1
+            and isinstance(template_content[0], MessageContentText)
+        ):
+            return template_content[0].text
+
+        if isinstance(serialized_content, str):
+            return serialized_content
+
+        if (
+            isinstance(serialized_content, dict)
+            and serialized_content.get("type") == "text"
+        ):
+            text_value = serialized_content.get("text")
+            if isinstance(text_value, str):
+                return text_value
+
+        if (
+            isinstance(serialized_content, list)
+            and len(serialized_content) == 1
+            and isinstance(serialized_content[0], dict)
+            and serialized_content[0].get("type") == "text"
+        ):
+            text_value = serialized_content[0].get("text")
+            if isinstance(text_value, str):
+                return text_value
+
+        return None
+
+    @staticmethod
+    def _merge_thinking(
+        message_dict: dict[str, object], thinking: str | None
+    ) -> None:
+        if thinking is None:
+            existing_thinking = message_dict.get("thinking")
+            if existing_thinking in (None, ""):
+                message_dict["thinking"] = None
+            return
+
+        existing_thinking = message_dict.get("thinking")
+        if (
+            isinstance(existing_thinking, str)
+            and not existing_thinking.strip()
+        ):
+            existing_thinking = None
+
+        if existing_thinking:
+            combined = "\n\n".join(
+                part for part in (existing_thinking, thinking) if part
+            )
+        else:
+            combined = thinking
+
+        message_dict["thinking"] = combined
 
     class ToolCallBufferStatus(Enum):
         """Status of a buffer relative to a tool call."""

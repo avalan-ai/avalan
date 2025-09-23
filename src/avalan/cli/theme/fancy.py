@@ -2248,20 +2248,26 @@ class FancyTheme(Theme):
                                             or []
                                         ),
                                         result=(
-                                            "[red]"
-                                            + event.payload["result"].message
-                                            + "[/red]"
-                                        )
-                                        if isinstance(
-                                            event.payload["result"],
-                                            ToolCallError
-                                        )
-                                        else (
-                                            "[spring_green3]"
-                                            + to_json(
-                                            event.payload["result"].result
+                                            (
+                                                "[red]"
+                                                + event.payload[
+                                                    "result"
+                                                ].message
+                                                + "[/red]"
                                             )
-                                            + "[/spring_green3]"
+                                            if isinstance(
+                                                event.payload["result"],
+                                                ToolCallError,
+                                            )
+                                            else (
+                                                "[spring_green3]"
+                                                + to_json(
+                                                    event.payload[
+                                                        "result"
+                                                    ].result
+                                                )
+                                                + "[/spring_green3]"
+                                            )
                                         ),
                                     )
                                     if event.type == EventType.TOOL_RESULT

@@ -224,8 +224,12 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, expected)
         self.assertEqual(event_manager.trigger.await_count, 2)
         before_event = event_manager.trigger.await_args_list[0].args[0]
-        self.assertEqual(before_event.type, EventType.MODEL_MANAGER_CALL_BEFORE)
-        self.assertEqual(before_event.payload["modality"], Modality.TEXT_GENERATION)
+        self.assertEqual(
+            before_event.type, EventType.MODEL_MANAGER_CALL_BEFORE
+        )
+        self.assertEqual(
+            before_event.payload["modality"], Modality.TEXT_GENERATION
+        )
         after_event = event_manager.trigger.await_args_list[1].args[0]
         self.assertEqual(after_event.type, EventType.MODEL_MANAGER_CALL_AFTER)
         self.assertIs(after_event.payload["result"], expected)

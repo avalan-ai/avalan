@@ -12,7 +12,6 @@ from ....entities import (
     Token,
     TokenDetail,
     TransformerEngineSettings,
-    ToolFormat,
 )
 from ....model.engine import Engine
 from ....model.nlp import BaseNLPModel
@@ -26,10 +25,7 @@ from dataclasses import asdict, replace
 from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import Logger, getLogger
-from re import DOTALL, compile, sub
 from threading import Thread
-from typing import AsyncGenerator, Literal
-
 from torch import Tensor, log_softmax, softmax, topk
 from torch.nn.functional import gumbel_softmax
 from transformers import (
@@ -42,56 +38,9 @@ from transformers import (
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
+from typing import AsyncGenerator, Literal
 
-_HARMONY_SEGMENT_PATTERN = compile(
-    r"<\|channel\|>(?P<channel>\w+).*?<\|message\|>(?P<message>.*?)(?:<\|call\|>|<\|end\|>)",
-    DOTALL,
-)
-_SPECIAL_TOKEN_PATTERN = compile(r"<\|[^>]+?\|>")
-_HARMONY_TOOL_PARSER = ToolCallParser(tool_format=ToolFormat.HARMONY)
-
-
-def _parse_harmony_tool_calls(text: str) -> list[dict[str, object]]:
-    calls = _HARMONY_TOOL_PARSER(text)
-    if not calls:
-        return []
-
-    parsed_calls: list[dict[str, object]] = []
-    for call in calls:
-        parsed_calls.append(
-            {
-                "id": str(call.id),
-                "name": call.name,
-                "arguments": call.arguments or {},
-                "content_type": "json",
-            }
-        )
-    return parsed_calls
-
-
-def _extract_harmony_content(text: str) -> tuple[str | None, str]:
-    analysis_parts: list[str] = []
-    final_parts: list[str] = []
-    for match in _HARMONY_SEGMENT_PATTERN.finditer(text):
-        channel = match.group("channel")
-        message = match.group("message").strip()
-        if not message:
-            continue
-        if channel == "analysis":
-            analysis_parts.append(message)
-        elif channel == "final":
-            final_parts.append(message)
-
-    thinking = "\n\n".join(analysis_parts) if analysis_parts else None
-    if final_parts:
-        content = "\n\n".join(final_parts).strip()
-    elif analysis_parts:
-        content = ""
-    else:
-        content = sub(
-            r"\n{3,}", "\n\n", _SPECIAL_TOKEN_PATTERN.sub("", text)
-        ).strip()
-    return thinking, content
+_TOOL_MESSAGE_PARSER = ToolCallParser()
 
 
 class TextGenerationModel(BaseNLPModel):
@@ -479,71 +428,11 @@ class TextGenerationModel(BaseNLPModel):
         template_messages = []
         for message in messages:
             message_dict = asdict(message)
-            if not message_dict["tool_calls"]:
-                message_dict["tool_calls"] = []
-            template_content = message.content
-            content_value = message_dict.get("content")
-            harmony_source: str | None = None
-            if isinstance(template_content, str):
-                harmony_source = template_content
-            elif isinstance(template_content, MessageContentText):
-                harmony_source = template_content.text
-            elif (
-                isinstance(template_content, list)
-                and len(template_content) == 1
-                and isinstance(template_content[0], MessageContentText)
-            ):
-                harmony_source = template_content[0].text
-            elif isinstance(content_value, str):
-                harmony_source = content_value
-            elif (
-                isinstance(content_value, dict)
-                and content_value.get("type") == "text"
-            ):
-                text_value = content_value.get("text")
-                if isinstance(text_value, str):
-                    harmony_source = text_value
-            elif (
-                isinstance(content_value, list)
-                and len(content_value) == 1
-                and isinstance(content_value[0], dict)
-                and content_value[0].get("type") == "text"
-            ):
-                text_value = content_value[0].get("text")
-                if isinstance(text_value, str):
-                    harmony_source = text_value
-
-            if harmony_source and "<|channel|>" in harmony_source:
-                parsed_thinking, parsed_content = _extract_harmony_content(
-                    harmony_source
-                )
-                existing_thinking = message_dict.get("thinking")
-                if (
-                    isinstance(existing_thinking, str)
-                    and not existing_thinking.strip()
-                ):
-                    existing_thinking = None
-                if parsed_thinking:
-                    if existing_thinking:
-                        combined = "\n\n".join(
-                            part
-                            for part in (existing_thinking, parsed_thinking)
-                            if part
-                        )
-                    else:
-                        combined = parsed_thinking
-                    message_dict["thinking"] = combined
-                elif existing_thinking is None:
-                    message_dict["thinking"] = None
-                message_dict["content"] = parsed_content
-                template_content = parsed_content
-                if (
-                    not message_dict["tool_calls"]
-                    and "<|call|>" in harmony_source
-                ):
-                    parsed_calls = _parse_harmony_tool_calls(harmony_source)
-                    if parsed_calls:
-                        message_dict["tool_calls"] = parsed_calls
+            prepared = _TOOL_MESSAGE_PARSER.prepare_message_for_template(
+                message, message_dict
+            )
+            message_dict = prepared.message_dict
+            template_content = prepared.template_content
             template_messages.append(
                 {
                     **message_dict,
