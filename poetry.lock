@@ -8380,7 +8380,7 @@ type = ["pytest-mypy"]
 
 [extras]
 agent = ["jinja2"]
-all = ["RestrictedPython", "SQLAlchemy", "a2a-sdk", "accelerate", "aiomysql", "anthropic", "asyncpg", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "imageio", "imageio-ffmpeg", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "openai", "opencv-python", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
+all = ["RestrictedPython", "SQLAlchemy", "a2a-sdk", "accelerate", "aiomysql", "anthropic", "asyncpg", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "imageio", "imageio-ffmpeg", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "openai", "opencv-python", "pgvector", "pillow", "protobuf", "psycopg", "pydantic", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
 apple = ["mlx", "mlx-lm"]
 audio = ["soundfile", "torchaudio"]
 cpu = ["accelerate"]
@@ -8389,9 +8389,9 @@ mlx = ["mlx", "mlx-lm"]
 nvidia = ["bitsandbytes", "vllm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
-server = ["a2a-sdk", "fastapi", "mcp", "pydantic", "uvicorn"]
-test = ["RestrictedPython", "SQLAlchemy", "a2a-sdk", "aiomysql", "asyncpg", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "huggingface-hub", "imageio", "imageio-ffmpeg", "keyring", "litellm", "markdownify", "markitdown", "mcp", "mlx", "mlx-lm", "openai", "opencv-python", "pgvector", "pillow", "playwright", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
-tool = ["RestrictedPython", "SQLAlchemy", "aiomysql", "asyncpg", "playwright", "sympy", "youtube-transcript-api"]
+server = ["a2a-sdk", "fastapi", "pydantic", "uvicorn"]
+test = ["RestrictedPython", "SQLAlchemy", "a2a-sdk", "aiomysql", "asyncpg", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "huggingface-hub", "imageio", "imageio-ffmpeg", "keyring", "litellm", "markdownify", "markitdown", "mlx", "mlx-lm", "openai", "opencv-python", "pgvector", "pillow", "psycopg", "pydantic", "pytest", "pytest-cov", "sympy", "tiktoken", "torchaudio", "tree-sitter", "tree-sitter-python"]
+tool = ["RestrictedPython", "SQLAlchemy", "aiomysql", "asyncpg", "sympy", "youtube-transcript-api"]
 translation = ["protobuf", "sentencepiece", "tiktoken"]
 vendors = ["anthropic", "google-genai", "litellm", "openai", "pillow", "tiktoken"]
 vision = ["diffusers", "imageio", "imageio-ffmpeg", "opencv-python", "pillow", "torchvision"]
@@ -8400,4 +8400,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "01c2b261fd26b481b6e5b39492c86572812674f96c3f597d6f49ab2a37b3640b"
+content-hash = "e2157224f47fcf1d20c65ad70e9b395e7e445e1b45b7fbaee08d9b1f40e5fed5"

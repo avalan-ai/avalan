@@ -83,6 +83,18 @@ class BrowserToolSetTestCase(IsolatedAsyncioTestCase):
         dummy_tool.with_client.assert_called_once_with("client2")
 
 
+class BrowserToolSetMissingDependencyTestCase(TestCase):
+    def test_init_raises_without_playwright(self):
+        with (
+            patch("avalan.tool.browser.async_playwright", None),
+            patch("avalan.tool.browser._PLAYWRIGHT_IMPORT_ERROR", ImportError()),
+        ):
+            with self.assertRaises(RuntimeError) as exc:
+                BrowserToolSet(settings=BrowserToolSettings())
+
+        self.assertIn("Playwright", str(exc.exception))
+
+
 class BrowserToolWithClientTestCase(TestCase):
     def test_with_client(self):
         client1 = MagicMock()

@@ -1,21 +1,41 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import Message, MessageRole, ToolCallContext
 from ..filters import Partitioner
+from . import Tool, ToolSet
+
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
-from faiss import IndexFlatL2
 from io import BytesIO, TextIOBase
+from typing import TYPE_CHECKING, Any, Literal
+
+from faiss import IndexFlatL2
 from markitdown import MarkItDown
 from numpy import vstack
-from playwright.async_api import (
-    async_playwright,
-    Browser,
-    Page,
-    PlaywrightContextManager,
-)
-from typing import Literal
+
+try:  # pragma: no cover - import guard
+    from playwright.async_api import async_playwright
+except ImportError as exc:  # pragma: no cover - dependency missing
+    async_playwright = None  # type: ignore[assignment]
+    _PLAYWRIGHT_IMPORT_ERROR = exc
+else:  # pragma: no cover - dependency present
+    _PLAYWRIGHT_IMPORT_ERROR = None
+
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from playwright.async_api import Browser, Page, PlaywrightContextManager
+else:
+    Browser = Page = PlaywrightContextManager = Any
+
+
+def _ensure_playwright_installed() -> None:
+    if async_playwright is not None:
+        return
+
+    message = (
+        "Browser tooling requires the Playwright package. "
+        "Install `playwright==1.54.0` and run `playwright install`."
+    )
+    raise RuntimeError(message) from _PLAYWRIGHT_IMPORT_ERROR
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -275,6 +295,9 @@ class BrowserToolSet(ToolSet):
         if not exit_stack:
             exit_stack = AsyncExitStack()
 
+        _ensure_playwright_installed()
+
+        assert async_playwright
         self._client = async_playwright()
 
         tools = [BrowserTool(settings, self._client, partitioner=partitioner)]

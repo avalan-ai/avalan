@@ -75,7 +75,6 @@ quantization = [
 server = [
   "a2a-sdk==0.3.6",
   "fastapi==0.116.1",
-  "mcp==1.12.3",
   "pydantic==2.11.7",
   "uvicorn==0.35.0",
 ]
@@ -97,13 +96,11 @@ test = [
   "markdownify==1.1.0",
   "mlx==0.28.0",
   "mlx-lm==0.26.3",
-  "mcp==1.12.3",
   "pgvector==0.4.1",
   "pillow==11.3.0",
   # version limited because of vllm
   "openai==1.90.0",
   "opencv-python==4.12.0.88",
-  "playwright==1.54.0",
   "psycopg[binary,pool]==3.2.9",
   "pydantic==2.11.7",
   "pytest==8.4.1",
@@ -120,7 +117,6 @@ test = [
 tool = [
   "aiomysql==0.2.0",
   "asyncpg==0.30.0",
-  "playwright==1.54.0",
   "RestrictedPython==8.0",
   "SQLAlchemy==2.0.43",
   "sympy==1.14.0",
@@ -182,7 +178,6 @@ all = [
   "keyring==25.6.0",
   "markitdown[pdf]==0.1.2",
   "markdownify==1.1.0",
-  "mcp==1.12.3",
   # version limited because of vllm
   "openai==1.90.0",
   "litellm==1.75.0",
@@ -194,7 +189,6 @@ all = [
   "protobuf==6.31.1",
   "psycopg[binary,pool]==3.2.9",
   "pgvector==0.4.1",
-  "playwright==1.54.0",
   "pydantic==2.11.7",
   "pytest==8.4.1",
   "pytest-cov==6.2.1",
