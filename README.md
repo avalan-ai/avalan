@@ -1342,10 +1342,8 @@ endpoints whenever you run `avalan agent serve`. It is mounted at `/mcp` by
 default and can be changed with `--mcp-prefix`.
 
 > [!TIP]
-> Debug the MCP stream with the MCP Inspector:
->
 > Use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) and
-> enter your MCP endpoint URL — the value you configured with `--mcp-prefix`
+> enter your MCP endpoint URL, the value you configured with `--mcp-prefix`
 > when running `avalan agent serve` (default: `http://localhost:9001/mcp`).
 > Click `Connect`, then `List Tools`, run the tool that appears (it will match
 > your `--mcp-name` and `--mcp-description`), and observe the streaming
@@ -1365,10 +1363,8 @@ You can customize the A2A agent identity with `--a2a-name` (defaults to `run`)
 and `--a2a-description` when running `avalan agent serve`.
 
 > [!TIP]
-> Inspect the A2A stream with the a2a inspector:
->
 > Use the [a2a inspector](https://github.com/a2aproject/a2a-inspector) and
-> enter your agent card URL — the value you configured with `--a2a-prefix`
+> enter your agent card URL, the value you configured with `--a2a-prefix`
 > when running `avalan agent serve` (default: `http://localhost:9001/a2a/agent`).
 > You can customize the agent identity with `--a2a-name` and
 > `--a2a-description`, then observe the streaming notifications, tool calls,
