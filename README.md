@@ -996,7 +996,9 @@ For a runnable script, see [docs/examples/vision_text_to_video.py](docs/examples
 
 ## Tools
 
-Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. The example below uses a local 8B LLM, enables recent memory, and loads a calculator tool. The agent begins with a math question and stays open for follow-ups:
+Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. Avalan ships native helpers for `math.calculator`, `code.run`, `browser.open`, `database.*`, amongst others, so agents can reason with numbers, execute code, browse the web, and interact with SQL databases from a single prompt.
+
+The example below uses a local 8B LLM, enables recent memory, and loads a calculator tool. The agent begins with a math question and stays open for follow-ups:
 
 ```bash
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
@@ -1045,6 +1047,24 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
       --tool "code.run" \
       --memory-recent \
       --run-max-new-tokens 1024 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
+```
+
+When your agent needs live access to relational data, configure the database toolset. In the example below we point the agent to a local SQLite database using SQLAlchemy's DSN format and allow it to inspect the schema with `database.tables` before running SQL with `database.run`:
+
+```bash
+echo "List the five most recent orders with their total amount" | \
+    avalan agent run \
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --tool "database.tables" \
+      --tool "database.run" \
+      --tool-database-dsn "sqlite+aiosqlite:///Users/you/datasets/sales.db" \
+      --memory-recent \
+      --tool-format harmony \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
