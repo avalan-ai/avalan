@@ -2,7 +2,8 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
-from ..memory.permanent import VectorFunction
+from ..memory.permanent import Memory, VectorFunction
+
 from contextlib import AsyncExitStack
 
 
@@ -51,6 +52,51 @@ class MessageReadTool(Tool):
         return MessageReadTool._NOT_FOUND
 
 
+class MemoryReadTool(Tool):
+    """Search permanent memories for stored knowledge."""
+
+    _memory_manager: MemoryManager
+
+    def __init__(self, memory_manager: MemoryManager) -> None:
+        super().__init__()
+        self._memory_manager = memory_manager
+        self.__name__ = "read"
+
+    async def __call__(
+        self,
+        namespace: str,
+        search: str,
+        *,
+        context: ToolCallContext,
+        limit: int | None = None,
+        function: VectorFunction = VectorFunction.L2_DISTANCE,
+    ) -> list[Memory]:
+        """Return permanent memories that match the search query."""
+        if (
+            not namespace
+            or not namespace.strip()
+            or not search
+            or not search.strip()
+        ):
+            return []
+
+        if not context.participant_id:
+            return []
+
+        try:
+            memories = await self._memory_manager.search(
+                search,
+                participant_id=context.participant_id,
+                namespace=namespace,
+                function=function,
+                limit=limit,
+            )
+        except KeyError:
+            return []
+
+        return memories
+
+
 class MemoryToolSet(ToolSet):
     @override
     def __init__(
@@ -60,7 +106,10 @@ class MemoryToolSet(ToolSet):
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
     ) -> None:
-        tools = [MessageReadTool(memory_manager)]
+        tools = [
+            MessageReadTool(memory_manager),
+            MemoryReadTool(memory_manager),
+        ]
         super().__init__(
             exit_stack=exit_stack, namespace=namespace, tools=tools
         )

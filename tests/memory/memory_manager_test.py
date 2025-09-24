@@ -88,7 +88,7 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
             logger=MagicMock(),
             event_manager=self.event_manager,
         )
-        self.permanent = AsyncMock()
+        self.permanent = AsyncMock(spec=PermanentMemory)
 
     async def test_append_message(self):
         partitions = ["p"]
@@ -151,6 +151,32 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         self.tp.assert_awaited_once_with("hi")
         self.pm.search_messages.assert_awaited_once()
         self.assertEqual(messages, result)
+
+    async def test_search_permanent_memory(self):
+        namespace = "docs"
+        partitions = ["p2"]
+        participant_id = uuid4()
+        self.tp.return_value = partitions
+        self.permanent.search_memories.return_value = ["memory"]
+        self.manager.add_permanent_memory(namespace, self.permanent)
+
+        memories = await self.manager.search(
+            "query",
+            participant_id=participant_id,
+            namespace=namespace,
+            function=VectorFunction.L2_DISTANCE,
+            limit=5,
+        )
+
+        self.tp.assert_awaited_once_with("query")
+        self.permanent.search_memories.assert_awaited_once_with(
+            search_partitions=partitions,
+            participant_id=participant_id,
+            namespace=namespace,
+            function=VectorFunction.L2_DISTANCE,
+            limit=5,
+        )
+        self.assertEqual(memories, ["memory"])
 
     def test_add_and_delete_permanent_memory(self):
         self.manager.add_permanent_memory("code", self.permanent)
