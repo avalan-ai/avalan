@@ -53,8 +53,15 @@ class MessageReadTool(Tool):
 
 
 class MemoryReadTool(Tool):
-    """Search permanent memories for stored knowledge."""
+    """Search permanent memories for stored knowledge.
 
+    Args:
+        search: What information to fetch. For example: "usage instructions".
+
+    Returns:
+        The search results, if any.
+    """
+    
     _memory_manager: MemoryManager
 
     def __init__(self, memory_manager: MemoryManager) -> None:
