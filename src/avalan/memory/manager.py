@@ -4,8 +4,9 @@ from ..event.manager import EventManager
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import (
-    PermanentMessageMemory,
+    Memory,
     PermanentMemory,
+    PermanentMessageMemory,
     VectorFunction,
 )
 from time import perf_counter
@@ -324,6 +325,26 @@ class MemoryManager:
             exclude_session_id=exclude_session_id,
         )
         return messages
+
+    async def search(
+        self,
+        search: str,
+        *,
+        participant_id: UUID,
+        namespace: str,
+        function: VectorFunction,
+        limit: int | None = None,
+    ) -> list[Memory]:
+        memory_store = self._permanent_memories[namespace]
+        search_partitions = await self._text_partitioner(search)
+        memories = await memory_store.search_memories(
+            search_partitions=search_partitions,
+            participant_id=participant_id,
+            namespace=namespace,
+            function=function,
+            limit=limit,
+        )
+        return memories
 
     def __exit__(
         self,

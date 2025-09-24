@@ -6,10 +6,10 @@ from avalan.entities import (
 )
 from avalan.memory.manager import MemoryManager
 from avalan.memory.permanent import VectorFunction
-from avalan.tool.memory import MemoryToolSet, MessageReadTool
+from avalan.tool.memory import MemoryReadTool, MemoryToolSet, MessageReadTool
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 from uuid import uuid4
 
 
@@ -25,14 +25,20 @@ class MemoryToolSetTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(toolset.namespace, "mem")
-        self.assertEqual(len(toolset.tools), 1)
-        tool = toolset.tools[0]
-        self.assertIsInstance(tool, MessageReadTool)
+        self.assertEqual(len(toolset.tools), 2)
+        message_tool, memory_tool = toolset.tools
+        self.assertIsInstance(message_tool, MessageReadTool)
+        self.assertIsInstance(memory_tool, MemoryReadTool)
 
         result = await toolset.__aenter__()
 
         self.assertIs(result, toolset)
-        exit_stack.enter_async_context.assert_awaited_once_with(tool)
+        exit_stack.enter_async_context.assert_has_awaits(
+            [
+                call(message_tool),
+                call(memory_tool),
+            ]
+        )
 
 
 class MessageReadToolTestCase(IsolatedAsyncioTestCase):
@@ -99,6 +105,59 @@ class MessageReadToolTestCase(IsolatedAsyncioTestCase):
 
         self.manager.search_messages.assert_awaited_once()
         self.assertEqual(result, MessageReadTool._NOT_FOUND)
+
+
+class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.manager = AsyncMock(spec=MemoryManager)
+        self.tool = MemoryReadTool(self.manager)
+        self.participant_id = uuid4()
+
+    async def test_returns_empty_when_missing_participant(self):
+        ctx = ToolCallContext()
+
+        result = await self.tool("docs", "query", context=ctx)
+
+        self.assertEqual(result, [])
+        self.manager.search.assert_not_awaited()
+
+    async def test_returns_empty_when_input_invalid(self):
+        ctx = ToolCallContext(participant_id=self.participant_id)
+
+        for namespace, query in [("", "q"), ("docs", ""), (" ", "q")]:
+            with self.subTest(namespace=namespace, query=query):
+                result = await self.tool(namespace, query, context=ctx)
+                self.assertEqual(result, [])
+        self.manager.search.assert_not_awaited()
+
+    async def test_returns_memories(self):
+        ctx = ToolCallContext(participant_id=self.participant_id)
+        memory = MagicMock()
+        self.manager.search.return_value = [memory]
+
+        result = await self.tool(
+            "docs",
+            "agent architecture",
+            context=ctx,
+            limit=3,
+        )
+
+        self.manager.search.assert_awaited_once_with(
+            "agent architecture",
+            participant_id=self.participant_id,
+            namespace="docs",
+            function=VectorFunction.L2_DISTANCE,
+            limit=3,
+        )
+        self.assertEqual(result, [memory])
+
+    async def test_returns_empty_on_missing_namespace(self):
+        ctx = ToolCallContext(participant_id=self.participant_id)
+        self.manager.search.side_effect = KeyError("docs")
+
+        result = await self.tool("docs", "query", context=ctx)
+
+        self.assertEqual(result, [])
 
 
 if __name__ == "__main__":
