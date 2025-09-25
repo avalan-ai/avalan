@@ -5,9 +5,10 @@ from avalan.entities import (
     ToolCallContext,
 )
 from avalan.memory.manager import MemoryManager
-from avalan.memory.permanent import VectorFunction
+from avalan.memory.permanent import PermanentMemoryPartition, VectorFunction
 from avalan.tool.memory import MemoryReadTool, MemoryToolSet, MessageReadTool
 from contextlib import AsyncExitStack
+from pytest import raises
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, call
 from uuid import uuid4
@@ -132,14 +133,14 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
 
     async def test_returns_memories(self):
         ctx = ToolCallContext(participant_id=self.participant_id)
-        memory = MagicMock()
-        self.manager.search_partitions.return_value = [memory]
+        memory_partition = MagicMock(spec=PermanentMemoryPartition)
+        type(memory_partition).data = "Leo Messi is the GOAT"
+        self.manager.search_partitions.return_value = [memory_partition]
 
         result = await self.tool(
             "docs",
             "agent architecture",
             context=ctx,
-            limit=3,
         )
 
         self.manager.search_partitions.assert_awaited_once_with(
@@ -147,17 +148,16 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
             participant_id=self.participant_id,
             namespace="docs",
             function=VectorFunction.L2_DISTANCE,
-            limit=3,
+            limit=10,
         )
-        self.assertEqual(result, [memory])
+        self.assertEqual(result, ["Leo Messi is the GOAT"])
 
     async def test_returns_empty_on_missing_namespace(self):
         ctx = ToolCallContext(participant_id=self.participant_id)
         self.manager.search_partitions.side_effect = KeyError("docs")
 
-        result = await self.tool("docs", "query", context=ctx)
-
-        self.assertEqual(result, [])
+        with raises(KeyError):
+            await self.tool("docs", "query", context=ctx)
 
 
 if __name__ == "__main__":

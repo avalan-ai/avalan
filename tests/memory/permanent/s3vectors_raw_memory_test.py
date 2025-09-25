@@ -1,5 +1,9 @@
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import MemoryType, PermanentMemoryPartition, VectorFunction
+from avalan.memory.permanent import (
+    MemoryType,
+    PermanentMemoryPartition,
+    VectorFunction,
+)
 from avalan.memory.permanent.s3vectors.raw import S3VectorsRawMemory
 from datetime import datetime, timezone
 import numpy as np

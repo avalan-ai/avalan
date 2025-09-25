@@ -136,9 +136,7 @@ def get_orchestrator_settings(
                 ns: dsn
                 for ns, dsn in (
                     item.split("@", 1)
-                    for item in (
-                        memory_permanent or args.memory_permanent or []
-                    )
+                    for item in memory_permanent or args.memory_permanent or []
                 )
             }
             if (memory_permanent or args.memory_permanent)

@@ -1,6 +1,6 @@
 from avalan.entities import EngineMessage, Message, MessageRole
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import VectorFunction, MemoryType
+from avalan.memory.permanent import VectorFunction
 from avalan.memory.permanent.pgsql.message import PgsqlMessageMemory
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone
@@ -879,7 +879,9 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
 
                 for i, partition in enumerate(partitions):
                     result_item = result[i]
-                    self.assertEqual(result_item.participant_id, participant_id)
+                    self.assertEqual(
+                        result_item.participant_id, participant_id
+                    )
                     self.assertEqual(result_item.memory_id, partition[0])
                     self.assertEqual(result_item.partition, partition[1])
                     self.assertEqual(result_item.data, partition[2])

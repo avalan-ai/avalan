@@ -70,7 +70,7 @@ class MemoryReadTool(Tool):
     def __init__(
         self,
         memory_manager: MemoryManager,
-        function: VectorFunction = VectorFunction.L2_DISTANCE
+        function: VectorFunction = VectorFunction.L2_DISTANCE,
     ) -> None:
         super().__init__()
         self._memory_manager = memory_manager

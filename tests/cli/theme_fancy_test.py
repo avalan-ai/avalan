@@ -450,7 +450,9 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             embedding=np.array([0.1]),
             created_at=datetime.now(),
         )
-        group = self.theme.memory_search_matches(UUID(int=1), "ns", [partition])
+        group = self.theme.memory_search_matches(
+            UUID(int=1), "ns", [partition]
+        )
         self.assertEqual(len(group.renderables), 1)
 
     def test_tokenizer_config(self):

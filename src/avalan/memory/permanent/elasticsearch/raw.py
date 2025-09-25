@@ -158,5 +158,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
             )
         return results
 
-    async def search(self, query: str) -> list[PermanentMemoryPartition] | None:
+    async def search(
+        self, query: str
+    ) -> list[PermanentMemoryPartition] | None:
         raise NotImplementedError()

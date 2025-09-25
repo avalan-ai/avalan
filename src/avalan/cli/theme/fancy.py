@@ -18,7 +18,7 @@ from ...entities import (
 )
 from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
-from ...memory.permanent import Memory, PermanentMemoryPartition
+from ...memory.permanent import PermanentMemoryPartition
 from ...utils import _j, _lf, to_json
 from datetime import datetime
 from humanize import (
@@ -1424,9 +1424,12 @@ class FancyTheme(Theme):
                         ),
                         title_align="left",
                         subtitle=_(
-                            "Participant: {participant} – Namespace: {ns} – Partition: {partition}"
+                            "Participant: {participant} – Namespace: {ns} –"
+                            " Partition: {partition}"
                         ).format(
-                            participant=_f("participant_id", str(participant_id)),
+                            participant=_f(
+                                "participant_id", str(participant_id)
+                            ),
                             ns=_f("id", namespace),
                             partition=_f("number", memory.partition),
                         ),

@@ -17,7 +17,7 @@ from ...entities import (
 )
 from ...event import Event, EventStats
 from ...memory.partitioner.text import TextPartition
-from ...memory.permanent import Memory, PermanentMemoryPartition
+from ...memory.permanent import Memory as Memory, PermanentMemoryPartition
 from dataclasses import fields
 from datetime import datetime
 from enum import StrEnum

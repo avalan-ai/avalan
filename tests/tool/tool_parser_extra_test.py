@@ -98,9 +98,7 @@ class ToolCallParserExtraTestCase(TestCase):
     def test_extract_harmony_content_skips_empty_segments(self):
         parser = ToolCallParser()
         text = (
-            "intro\n\n\n"
-            "<|channel|>analysis<|message|>   <|call|>"
-            "\n\n\noutro"
+            "intro\n\n\n<|channel|>analysis<|message|>   <|call|>\n\n\noutro"
         )
         thinking, content = parser.extract_harmony_content(text)
         self.assertIsNone(thinking)

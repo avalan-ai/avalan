@@ -336,7 +336,7 @@ class MemoryManager:
         limit: int | None = None,
     ) -> list[PermanentMemoryPartition]:
         if namespace not in self._permanent_memories:
-            raise ValueError(f"Memory namespace {namespace} not defined")
+            raise KeyError(f"Memory namespace {namespace} not defined")
 
         search_partitions = await self._text_partitioner(search)
         memory_store = self._permanent_memories[namespace]
