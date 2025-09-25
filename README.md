@@ -1271,49 +1271,31 @@ avalan memory document index \
     "https://trucogame.com/pages/reglamento-de-truco-argentino"
 ```
 
-Now create an agent definition in [docs/examples/agent_memory.toml](docs/examples/agent_memory.toml), giving it access to the memory store we just indexed:
+Create an agent, give it access to the indexed memory store and the `memory` tool, and your question:
 
-```toml
-[agent]
-system = """
-Reasoning: high
-"""
-
-developer = """
-You are an expert assistant that can use the memory tool to answer questions
-about card games.
-"""
-
-[engine]
-uri = "ai://local/openai/gpt-oss-20b"
-backend = "mlx"
-
-[tool]
-format = "harmony"
-
-[memory]
-recent = true
-
-[memory.engine]
-model_id = "sentence-transformers/all-MiniLM-L6-v2"
-max_tokens = 500
-overlap_size = 125
-window_size = 250
-
-[memory.permanent]
-"games.cards.truco" = "postgresql://root:password@localhost/avalan"
-
-[run]
-max_new_tokens = 8192
-temperature = 0.1
-top_p = 0.9
-top_k = 40
-```
-
-Now run the agent with your question:
+> [!TIP]
+> If you rather create a permanent agent, see the equivalent
+> [agent_memory.toml](docs/examples/agent_memory.toml) agent definition.
 
 ```bash
-echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | avalan agent run docs/examples/agent_memory.toml
+echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | \
+  avalan agent run \
+    --engine-uri "ai://local/openai/gpt-oss-20b" \
+    --backend mlx \
+    --tool-format harmony \
+    --tool memory \
+    --system "Reasoning: high" \
+    --developer "You are an expert assistant that can use the memory tool to answer questions about card games." \
+    --memory-recent \
+    --memory-engine-model-id "sentence-transformers/all-MiniLM-L6-v2" \
+    --memory-engine-max-tokens 500 \
+    --memory-engine-overlap 125 \
+    --memory-engine-window 250 \
+    --memory-permanent "games.cards.truco@postgresql://root:password@localhost/avalan" \
+    --run-max-new-tokens 8192 \
+    --run-temperature 0.1 \
+    --run-top-p 0.9 \
+    --run-top-k 40
 ```
 
 And you should get your answer:
@@ -1332,6 +1314,27 @@ Key points from the memory:
 | **Retrucar is a valid move only when the opponent has said “Quiero”** | If the opponent says anything other than *“Quiero”* (e.g., “sí”, “vemos”), the retrucar is not considered valid. |
 
 So, in short, the memory explains that **retrucar is the act of raising the bet again after the opponent has accepted the original *Truco* call, and it can only be done by the team that has just said “Quiero.”**%
+```
+
+```bash
+echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | \
+  avalan agent run \
+    --engine-uri "ai://local/openai/gpt-oss-20b" \
+    --backend mlx \
+    --tool-format harmony \
+    --tool database \
+    --system "Reasoning: high" \
+    --developer "You are an expert assistant that can use the memory tool to answer questions about card games." \
+    --memory-recent \
+    --memory-engine-model-id "sentence-transformers/all-MiniLM-L6-v2" \
+    --memory-engine-max-tokens 500 \
+    --memory-engine-overlap 125 \
+    --memory-engine-window 250 \
+    --memory-permanent "games.cards.truco@postgresql://root:password@localhost/avalan" \
+    --run-max-new-tokens 8192 \
+    --run-temperature 0.1 \
+    --run-top-p 0.9 \
+    --run-top-k 40
 ```
 
 ## Agents
