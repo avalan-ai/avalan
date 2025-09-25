@@ -160,7 +160,7 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         self.permanent.search_memories.return_value = ["memory"]
         self.manager.add_permanent_memory(namespace, self.permanent)
 
-        memories = await self.manager.search(
+        memories = await self.manager.search_partitions(
             "query",
             participant_id=participant_id,
             namespace=namespace,

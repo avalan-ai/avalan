@@ -119,7 +119,7 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
         result = await self.tool("docs", "query", context=ctx)
 
         self.assertEqual(result, [])
-        self.manager.search.assert_not_awaited()
+        self.manager.search_partitions.assert_not_awaited()
 
     async def test_returns_empty_when_input_invalid(self):
         ctx = ToolCallContext(participant_id=self.participant_id)
@@ -128,12 +128,12 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
             with self.subTest(namespace=namespace, query=query):
                 result = await self.tool(namespace, query, context=ctx)
                 self.assertEqual(result, [])
-        self.manager.search.assert_not_awaited()
+        self.manager.search_partitions.assert_not_awaited()
 
     async def test_returns_memories(self):
         ctx = ToolCallContext(participant_id=self.participant_id)
         memory = MagicMock()
-        self.manager.search.return_value = [memory]
+        self.manager.search_partitions.return_value = [memory]
 
         result = await self.tool(
             "docs",
@@ -142,7 +142,7 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
             limit=3,
         )
 
-        self.manager.search.assert_awaited_once_with(
+        self.manager.search_partitions.assert_awaited_once_with(
             "agent architecture",
             participant_id=self.participant_id,
             namespace="docs",
@@ -153,7 +153,7 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
 
     async def test_returns_empty_on_missing_namespace(self):
         ctx = ToolCallContext(participant_id=self.participant_id)
-        self.manager.search.side_effect = KeyError("docs")
+        self.manager.search_partitions.side_effect = KeyError("docs")
 
         result = await self.tool("docs", "query", context=ctx)
 

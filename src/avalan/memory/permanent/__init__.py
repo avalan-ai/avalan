@@ -345,7 +345,7 @@ class PermanentMemory(MemoryStore[Memory]):
         namespace: str,
         function: VectorFunction,
         limit: int | None = None,
-    ) -> list[Memory]:
+    ) -> list[PermanentMemoryPartition]:
         raise NotImplementedError()
 
     @staticmethod
