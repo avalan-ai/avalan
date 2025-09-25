@@ -335,8 +335,11 @@ class MemoryManager:
         function: VectorFunction,
         limit: int | None = None,
     ) -> list[Memory]:
-        memory_store = self._permanent_memories[namespace]
+        if namespace not in self._permanent_memories:
+            raise ValueError(f"Memory namespace {namespace} not defined")
+
         search_partitions = await self._text_partitioner(search)
+        memory_store = self._permanent_memories[namespace]
         memories = await memory_store.search_memories(
             search_partitions=search_partitions,
             participant_id=participant_id,
