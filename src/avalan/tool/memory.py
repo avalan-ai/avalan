@@ -83,7 +83,6 @@ class MemoryReadTool(Tool):
         search: str,
         *,
         context: ToolCallContext,
-        limit: int | None = None,
     ) -> list[PermanentMemoryPartition]:
         """Return memory partitions that match the search query."""
         if (
@@ -97,17 +96,15 @@ class MemoryReadTool(Tool):
         if not context.participant_id:
             return []
 
-        try:
-            memories = await self._memory_manager.search_partitions(
-                search,
-                participant_id=context.participant_id,
-                namespace=namespace,
-                function=self._function,
-                limit=limit,
-            )
-        except KeyError:
-            return []
-
+        default_limit = 10
+        memory_partitions = await self._memory_manager.search_partitions(
+            search,
+            participant_id=context.participant_id,
+            namespace=namespace,
+            function=self._function,
+            limit=default_limit,
+        )
+        memories = [mp.data for mp in memory_partitions]
         return memories
 
 

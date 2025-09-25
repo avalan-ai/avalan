@@ -194,7 +194,6 @@ class ToolManager(ContextDecorator):
                     if transformed is not None:
                         result = transformed
 
-            print("RESULT", result)
             return ToolCallResult(
                 id=uuid4(),
                 call=call,
