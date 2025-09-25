@@ -1,5 +1,5 @@
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import MemoryType
+from avalan.memory.permanent import MemoryType, PermanentMemoryPartition, VectorFunction
 from avalan.memory.permanent.s3vectors.raw import S3VectorsRawMemory
 from datetime import datetime, timezone
 import numpy as np
@@ -74,25 +74,21 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
             data="x", embeddings=np.array([0.3]), total_tokens=1
         )
         client = MagicMock()
+        created_at = datetime.now(timezone.utc)
         client.query_vector.return_value = {
-            "Items": [{"Metadata": {"memory_id": str(mem_id)}}]
-        }
-        client.get_object.return_value = {
-            "Body": MagicMock(
-                read=MagicMock(
-                    return_value=(
-                        b'{"id": "%s", "model_id": "m", "type": "raw", '
-                        b'"participant_id": "%s", "namespace": "ns", '
-                        b'"identifier": "id", "data": "d", "partitions": 1, '
-                        b'"symbols": {}, "created_at": "%s"}'
-                    )
-                    % (
-                        str(mem_id).encode(),
-                        str(mem_id).encode(),
-                        datetime.now(timezone.utc).isoformat().encode(),
-                    )
-                )
-            )
+            "Items": [
+                {
+                    "Metadata": {
+                        "memory_id": str(mem_id),
+                        "participant_id": str(mem_id),
+                        "namespace": "ns",
+                        "partition": 0,
+                        "data": "partition-data",
+                        "embedding": [0.3],
+                        "created_at": created_at.isoformat(),
+                    }
+                }
+            ]
         }
         memory = S3VectorsRawMemory(
             bucket="b", collection="c", client=client, logger=MagicMock()
@@ -111,11 +107,16 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
                 search_partitions=[part],
                 participant_id=mem_id,
                 namespace="ns",
-                function=MemoryType.RAW,  # type: ignore[arg-type]
+                function=VectorFunction.L2_DISTANCE,
                 limit=1,
             )
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].id, mem_id)
+        partition = result[0]
+        self.assertIsInstance(partition, PermanentMemoryPartition)
+        self.assertEqual(partition.memory_id, mem_id)
+        self.assertEqual(partition.data, "partition-data")
+        self.assertTrue(np.array_equal(partition.embedding, np.array([0.3])))
+        self.assertEqual(partition.created_at, created_at)
 
     async def test_search_memories_missing_id(self):
         part = TextPartition(
@@ -140,11 +141,10 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
                 search_partitions=[part],
                 participant_id=uuid4(),
                 namespace="ns",
-                function=MemoryType.RAW,  # type: ignore[arg-type]
+                function=VectorFunction.L2_DISTANCE,
                 limit=1,
             )
         self.assertEqual(result, [])
-        client.get_object.assert_not_called()
 
     async def test_search_not_implemented(self):
         memory = S3VectorsRawMemory(

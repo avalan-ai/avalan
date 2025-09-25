@@ -4,8 +4,8 @@ from ..event.manager import EventManager
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import (
-    Memory,
     PermanentMemory,
+    PermanentMemoryPartition,
     PermanentMessageMemory,
     VectorFunction,
 )
@@ -326,7 +326,7 @@ class MemoryManager:
         )
         return messages
 
-    async def search(
+    async def search_partitions(
         self,
         search: str,
         *,
@@ -334,7 +334,7 @@ class MemoryManager:
         namespace: str,
         function: VectorFunction,
         limit: int | None = None,
-    ) -> list[Memory]:
+    ) -> list[PermanentMemoryPartition]:
         if namespace not in self._permanent_memories:
             raise ValueError(f"Memory namespace {namespace} not defined")
 

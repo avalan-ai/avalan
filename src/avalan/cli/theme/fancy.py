@@ -18,7 +18,7 @@ from ...entities import (
 )
 from ...event import Event, EventStats, EventType, TOOL_TYPES
 from ...memory.partitioner.text import TextPartition
-from ...memory.permanent import Memory
+from ...memory.permanent import Memory, PermanentMemoryPartition
 from ...utils import _j, _lf, to_json
 from datetime import datetime
 from humanize import (
@@ -1406,7 +1406,10 @@ class FancyTheme(Theme):
         return group
 
     def memory_search_matches(
-        self, participant_id: UUID, namespace: str, memories: list[Memory]
+        self,
+        participant_id: UUID,
+        namespace: str,
+        memories: list[PermanentMemoryPartition],
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         group = Group(
@@ -1415,14 +1418,17 @@ class FancyTheme(Theme):
                     Panel(
                         memory.data,
                         title=(
-                            _i["memory"] + " " + _f("id", memory.identifier)
+                            _i["memory"]
+                            + " "
+                            + _f("id", str(memory.memory_id))
                         ),
                         title_align="left",
                         subtitle=_(
-                            "Participant: {participant} – Namespace: {ns}"
+                            "Participant: {participant} – Namespace: {ns} – Partition: {partition}"
                         ).format(
-                            participant=_f("participant_id", participant_id),
+                            participant=_f("participant_id", str(participant_id)),
                             ns=_f("id", namespace),
+                            partition=_f("number", memory.partition),
                         ),
                         subtitle_align="left",
                         expand=True,

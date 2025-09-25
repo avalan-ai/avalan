@@ -10,7 +10,11 @@ es_stub.__spec__ = importlib.machinery.ModuleSpec("elasticsearch", loader=None)
 sys.modules.setdefault("elasticsearch", es_stub)
 
 from avalan.memory.partitioner.text import TextPartition  # noqa: E402
-from avalan.memory.permanent import MemoryType  # noqa: E402
+from avalan.memory.permanent import (  # noqa: E402
+    MemoryType,
+    PermanentMemoryPartition,
+    VectorFunction,
+)
 from avalan.memory.permanent.elasticsearch.raw import (  # noqa: E402
     ElasticsearchRawMemory,
 )
@@ -87,22 +91,21 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
             data="x", embeddings=np.array([0.3]), total_tokens=1
         )
         client = MagicMock()
+        created_at = datetime.now(timezone.utc)
         client.query_vector.return_value = {
-            "Items": [{"Metadata": {"memory_id": str(mem_id)}}]
-        }
-        client.get.return_value = {
-            "_source": {
-                "id": str(mem_id),
-                "model_id": "m",
-                "type": "raw",
-                "participant_id": str(mem_id),
-                "namespace": "ns",
-                "identifier": "id",
-                "data": "d",
-                "partitions": 1,
-                "symbols": {},
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
+            "Items": [
+                {
+                    "Metadata": {
+                        "memory_id": str(mem_id),
+                        "participant_id": str(mem_id),
+                        "namespace": "ns",
+                        "partition": 0,
+                        "data": "partition-data",
+                        "embedding": [0.3],
+                        "created_at": created_at.isoformat(),
+                    }
+                }
+            ]
         }
         memory = ElasticsearchRawMemory(
             index="idx", client=client, logger=MagicMock()
@@ -121,11 +124,16 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 search_partitions=[part],
                 participant_id=mem_id,
                 namespace="ns",
-                function=MemoryType.RAW,  # type: ignore[arg-type]
+                function=VectorFunction.L2_DISTANCE,
                 limit=1,
             )
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].id, mem_id)
+        partition = result[0]
+        self.assertIsInstance(partition, PermanentMemoryPartition)
+        self.assertEqual(partition.memory_id, mem_id)
+        self.assertEqual(partition.data, "partition-data")
+        self.assertTrue(np.array_equal(partition.embedding, np.array([0.3])))
+        self.assertEqual(partition.created_at, created_at)
 
     async def test_search_memories_missing_id(self):
         part = TextPartition(
@@ -150,11 +158,10 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 search_partitions=[part],
                 participant_id=uuid4(),
                 namespace="ns",
-                function=MemoryType.RAW,  # type: ignore[arg-type]
+                function=VectorFunction.L2_DISTANCE,
                 limit=1,
             )
         self.assertEqual(result, [])
-        client.get.assert_not_called()
 
     async def test_search_memories_missing_source(self):
         mem_id_valid = uuid4()
@@ -168,26 +175,19 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 {},
                 {"Metadata": {}},
                 {"Metadata": {"memory_id": str(mem_id_no_source)}},
-                {"Metadata": {"memory_id": str(mem_id_valid)}},
+                {
+                    "Metadata": {
+                        "memory_id": str(mem_id_valid),
+                        "participant_id": str(mem_id_valid),
+                        "namespace": "ns",
+                        "partition": 0,
+                        "data": "partition-data",
+                        "embedding": [0.5],
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
             ]
         }
-        client.get.side_effect = [
-            {},
-            {
-                "_source": {
-                    "id": str(mem_id_valid),
-                    "model_id": "m",
-                    "type": "raw",
-                    "participant_id": str(mem_id_valid),
-                    "namespace": "ns",
-                    "identifier": "id",
-                    "data": "d",
-                    "partitions": 1,
-                    "symbols": {},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-            },
-        ]
         memory = ElasticsearchRawMemory(
             index="idx", client=client, logger=MagicMock()
         )
@@ -205,11 +205,11 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 search_partitions=[part],
                 participant_id=mem_id_valid,
                 namespace="ns",
-                function=MemoryType.RAW,  # type: ignore[arg-type]
+                function=VectorFunction.L2_DISTANCE,
                 limit=4,
             )
         self.assertEqual(len(result), 1)
-        self.assertEqual(client.get.call_count, 2)
+        self.assertIsInstance(result[0], PermanentMemoryPartition)
 
     async def test_search_not_implemented(self):
         memory = ElasticsearchRawMemory(

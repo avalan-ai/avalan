@@ -2,7 +2,7 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
-from ..memory.permanent import Memory, VectorFunction
+from ..memory.permanent import PermanentMemoryPartition, VectorFunction
 
 from contextlib import AsyncExitStack
 
@@ -84,8 +84,8 @@ class MemoryReadTool(Tool):
         *,
         context: ToolCallContext,
         limit: int | None = None,
-    ) -> list[Memory]:
-        """Return permanent memories that match the search query."""
+    ) -> list[PermanentMemoryPartition]:
+        """Return memory partitions that match the search query."""
         if (
             not namespace
             or not namespace.strip()
@@ -98,7 +98,7 @@ class MemoryReadTool(Tool):
             return []
 
         try:
-            memories = await self._memory_manager.search(
+            memories = await self._memory_manager.search_partitions(
                 search,
                 participant_id=context.participant_id,
                 namespace=namespace,
