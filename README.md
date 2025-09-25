@@ -1316,27 +1316,6 @@ Key points from the memory:
 So, in short, the memory explains that **retrucar is the act of raising the bet again after the opponent has accepted the original *Truco* call, and it can only be done by the team that has just said “Quiero.”**%
 ```
 
-```bash
-echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | \
-  avalan agent run \
-    --engine-uri "ai://local/openai/gpt-oss-20b" \
-    --backend mlx \
-    --tool-format harmony \
-    --tool database \
-    --system "Reasoning: high" \
-    --developer "You are an expert assistant that can use the memory tool to answer questions about card games." \
-    --memory-recent \
-    --memory-engine-model-id "sentence-transformers/all-MiniLM-L6-v2" \
-    --memory-engine-max-tokens 500 \
-    --memory-engine-overlap 125 \
-    --memory-engine-window 250 \
-    --memory-permanent "games.cards.truco@postgresql://root:password@localhost/avalan" \
-    --run-max-new-tokens 8192 \
-    --run-temperature 0.1 \
-    --run-top-p 0.9 \
-    --run-top-k 40
-```
-
 ## Agents
 
 You can easily create AI agents from configuration files. Let's create one to handle gettext translations.
