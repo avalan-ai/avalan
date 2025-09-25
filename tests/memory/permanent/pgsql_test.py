@@ -1,6 +1,6 @@
 from avalan.entities import EngineMessage, Message, MessageRole
 from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent import VectorFunction, MemoryType
+from avalan.memory.permanent import VectorFunction
 from avalan.memory.permanent.pgsql.message import PgsqlMessageMemory
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
 from datetime import datetime, timezone
@@ -164,24 +164,40 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 uuid4(),
                 "people",
                 2,
-                "microsoft/Phi-4-mini-instruct",
-                MemoryType.RAW,
                 VectorFunction.L2_DISTANCE,
                 [
-                    ("leo", "about leo", {"role": "footballer"}),
-                    ("dibu", "about dibu", {"role": "goalkeeper"}),
+                    (
+                        uuid4(),
+                        1,
+                        "about leo",
+                        datetime.now(timezone.utc),
+                    ),
+                    (
+                        uuid4(),
+                        1,
+                        "about dibu",
+                        datetime.now(timezone.utc),
+                    ),
                 ],
             ),
             (
                 uuid4(),
                 "pets",
                 None,
-                "openai/gpt",
-                MemoryType.RAW,
                 VectorFunction.COSINE_DISTANCE,
                 [
-                    ("fido", "about fido", {"role": "dog"}),
-                    ("garfield", "about garfield", {"role": "cat"}),
+                    (
+                        uuid4(),
+                        1,
+                        "about fido",
+                        datetime.now(timezone.utc),
+                    ),
+                    (
+                        uuid4(),
+                        1,
+                        "about garfield",
+                        datetime.now(timezone.utc),
+                    ),
                 ],
             ),
         ]
@@ -777,10 +793,8 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 participant_id,
                 namespace,
                 limit,
-                model_id,
-                mem_type,
                 function,
-                memories,
+                partitions,
             ) = fixture
 
             self.assertIsInstance(participant_id, UUID)
@@ -789,18 +803,14 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 pool_mock, connection_mock, cursor_mock = self.mock_query(
                     [
                         {
-                            "id": uuid4(),
-                            "model_id": model_id,
-                            "type": str(mem_type),
                             "participant_id": participant_id,
-                            "namespace": namespace,
-                            "identifier": m[0],
-                            "data": m[1],
-                            "partitions": 1,
-                            "symbols": m[2],
-                            "created_at": datetime.now(timezone.utc),
+                            "memory_id": partition[0],
+                            "partition": partition[1],
+                            "data": partition[2],
+                            "embedding": rand(384),
+                            "created_at": partition[3],
                         }
-                        for m in memories
+                        for partition in partitions
                     ],
                     fetch_all=True,
                 )
@@ -832,18 +842,14 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                     cursor_mock,
                     f"""
                     SELECT
-                        "memories"."id",
-                        "memories"."model_id",
-                        "memories"."memory_type" AS "type",
-                        "memories"."participant_id",
-                        "memories"."namespace",
-                        "memories"."identifier",
-                        "memories"."data",
-                        "memories"."partitions",
-                        "memories"."symbols",
-                        "memories"."created_at"
-                    FROM "memories"
-                    INNER JOIN "memory_partitions" ON (
+                        "memory_partitions"."participant_id",
+                        "memory_partitions"."memory_id",
+                        "memory_partitions"."partition",
+                        "memory_partitions"."data",
+                        "memory_partitions"."embedding",
+                        "memory_partitions"."created_at"
+                    FROM "memory_partitions"
+                    INNER JOIN "memories" ON (
                         "memory_partitions"."memory_id" = "memories"."id"
                     )
                     WHERE "memories"."participant_id" = %s
@@ -865,22 +871,21 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
                 )
 
                 expected_count = (
-                    limit if limit and len(memories) > limit else len(memories)
+                    limit
+                    if limit and len(partitions) > limit
+                    else len(partitions)
                 )
                 self.assertEqual(len(result), expected_count)
 
-                for i, mem in enumerate(memories):
-                    identifier, data, symbols = mem
+                for i, partition in enumerate(partitions):
                     result_item = result[i]
-                    self.assertEqual(result_item.model_id, model_id)
-                    self.assertEqual(result_item.type, mem_type)
                     self.assertEqual(
                         result_item.participant_id, participant_id
                     )
-                    self.assertEqual(result_item.namespace, namespace)
-                    self.assertEqual(result_item.identifier, identifier)
-                    self.assertEqual(result_item.data, data)
-                    self.assertEqual(result_item.symbols, symbols)
+                    self.assertEqual(result_item.memory_id, partition[0])
+                    self.assertEqual(result_item.partition, partition[1])
+                    self.assertEqual(result_item.data, partition[2])
+                    self.assertEqual(result_item.created_at, partition[3])
                     if i == expected_count - 1:
                         break
 

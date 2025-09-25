@@ -3,6 +3,7 @@ from avalan.entities import Model
 from avalan.event import Event
 import unittest
 from datetime import datetime
+from uuid import UUID
 from types import SimpleNamespace
 import numpy as np
 
@@ -357,7 +358,9 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.search_message_matches(
                 self.theme, "id", SimpleNamespace(), []
             ),
-            lambda: Theme.memory_search_matches(self.theme, "id", "ns", []),
+            lambda: Theme.memory_search_matches(
+                self.theme, UUID(int=0), "ns", []
+            ),
             lambda: Theme.tokenizer_config(self.theme, None),
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
             lambda: Theme.display_image_entities(self.theme, [], False),

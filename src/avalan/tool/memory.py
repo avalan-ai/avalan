@@ -2,7 +2,7 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
-from ..memory.permanent import Memory, VectorFunction
+from ..memory.permanent import PermanentMemoryPartition, VectorFunction
 
 from contextlib import AsyncExitStack
 
@@ -56,17 +56,25 @@ class MemoryReadTool(Tool):
     """Search permanent memories for stored knowledge.
 
     Args:
-        search: What information to fetch. For example: "usage instructions".
+        namespace: Namespace to fetch information from.
+        search: What information to fetch.
+        limit: Maximum number of matches to fetch (optional).
 
     Returns:
         The search results, if any.
     """
-    
-    _memory_manager: MemoryManager
 
-    def __init__(self, memory_manager: MemoryManager) -> None:
+    _memory_manager: MemoryManager
+    _function: VectorFunction
+
+    def __init__(
+        self,
+        memory_manager: MemoryManager,
+        function: VectorFunction = VectorFunction.L2_DISTANCE,
+    ) -> None:
         super().__init__()
         self._memory_manager = memory_manager
+        self._function = function
         self.__name__ = "read"
 
     async def __call__(
@@ -75,10 +83,8 @@ class MemoryReadTool(Tool):
         search: str,
         *,
         context: ToolCallContext,
-        limit: int | None = None,
-        function: VectorFunction = VectorFunction.L2_DISTANCE,
-    ) -> list[Memory]:
-        """Return permanent memories that match the search query."""
+    ) -> list[PermanentMemoryPartition]:
+        """Return memory partitions that match the search query."""
         if (
             not namespace
             or not namespace.strip()
@@ -90,17 +96,15 @@ class MemoryReadTool(Tool):
         if not context.participant_id:
             return []
 
-        try:
-            memories = await self._memory_manager.search(
-                search,
-                participant_id=context.participant_id,
-                namespace=namespace,
-                function=function,
-                limit=limit,
-            )
-        except KeyError:
-            return []
-
+        default_limit = 10
+        memory_partitions = await self._memory_manager.search_partitions(
+            search,
+            participant_id=context.participant_id,
+            namespace=namespace,
+            function=self._function,
+            limit=default_limit,
+        )
+        memories = [mp.data for mp in memory_partitions]
         return memories
 
 

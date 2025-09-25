@@ -17,7 +17,7 @@ from ...entities import (
 )
 from ...event import Event, EventStats
 from ...memory.partitioner.text import TextPartition
-from ...memory.permanent import Memory
+from ...memory.permanent import Memory as Memory, PermanentMemoryPartition
 from dataclasses import fields
 from datetime import datetime
 from enum import StrEnum
@@ -264,7 +264,10 @@ class Theme(ABC):
 
     @abstractmethod
     def memory_search_matches(
-        self, participant_id: UUID, namespace: str, memories: list[Memory]
+        self,
+        participant_id: UUID,
+        namespace: str,
+        memories: list[PermanentMemoryPartition],
     ) -> RenderableType:
         raise NotImplementedError()
 

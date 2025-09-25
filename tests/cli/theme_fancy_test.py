@@ -28,7 +28,7 @@ from avalan.entities import (
     ImageEntity,
     User,
 )
-from avalan.memory.permanent import Memory, MemoryType
+from avalan.memory.permanent import PermanentMemoryPartition
 from avalan.memory.partitioner.text import TextPartition
 
 from avalan.cli.theme.fancy import FancyTheme
@@ -442,19 +442,17 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(group.renderables), 1)
 
     def test_memory_search_matches(self):
-        mem = Memory(
-            id=UUID(int=0),
-            model_id="m",
-            type=MemoryType.RAW,
-            participant_id=str(UUID(int=1)),
-            namespace="ns",
-            identifier="id",
+        partition = PermanentMemoryPartition(
+            participant_id=UUID(int=1),
+            memory_id=UUID(int=0),
+            partition=1,
             data="d",
-            partitions=1,
-            symbols={},
+            embedding=np.array([0.1]),
             created_at=datetime.now(),
         )
-        group = self.theme.memory_search_matches(str(UUID(int=1)), "ns", [mem])
+        group = self.theme.memory_search_matches(
+            UUID(int=1), "ns", [partition]
+        )
         self.assertEqual(len(group.renderables), 1)
 
     def test_tokenizer_config(self):

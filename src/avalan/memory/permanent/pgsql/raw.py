@@ -5,6 +5,7 @@ from ....memory.permanent import (
     Memory,
     MemoryType,
     PermanentMemory,
+    PermanentMemoryPartition,
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
@@ -141,27 +142,23 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         namespace: str,
         function: VectorFunction,
         limit: int | None = None,
-    ) -> list[Memory]:
+    ) -> list[PermanentMemoryPartition]:
         assert participant_id and namespace and search_partitions
         search_function = str(function)
         search_vector = Vector(search_partitions[0].embeddings)
         limit_value = limit or 10
-        memories = await self._fetch_all(
-            Memory,
+        partitions = await self._fetch_all(
+            PermanentMemoryPartition,
             f"""
             SELECT
-                "memories"."id",
-                "memories"."model_id",
-                "memories"."memory_type" AS "type",
-                "memories"."participant_id",
-                "memories"."namespace",
-                "memories"."identifier",
-                "memories"."data",
-                "memories"."partitions",
-                "memories"."symbols",
-                "memories"."created_at"
-            FROM "memories"
-            INNER JOIN "memory_partitions" ON (
+                "memory_partitions"."participant_id",
+                "memory_partitions"."memory_id",
+                "memory_partitions"."partition",
+                "memory_partitions"."data",
+                "memory_partitions"."embedding",
+                "memory_partitions"."created_at"
+            FROM "memory_partitions"
+            INNER JOIN "memories" ON (
                 "memory_partitions"."memory_id" = "memories"."id"
             )
             WHERE "memories"."participant_id" = %s
@@ -180,7 +177,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                 limit_value,
             ),
         )
-        return memories
+        return partitions
 
     async def upsert_hyperedge(
         self,

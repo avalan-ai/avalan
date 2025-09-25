@@ -7,12 +7,13 @@ from elasticsearch import AsyncElasticsearch
 
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
-    Memory,
     MemoryType,
     PermanentMemory,
+    PermanentMemoryPartition,
     VectorFunction,
 )
 from . import ElasticsearchMemory, to_thread  # noqa: F401
+import numpy as np
 
 
 class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
@@ -98,6 +99,10 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                     "memory_id": str(row.memory_id),
                     "participant_id": str(row.participant_id),
                     "namespace": namespace,
+                    "partition": row.partition,
+                    "data": row.data,
+                    "embedding": row.embedding.tolist(),
+                    "created_at": row.created_at.isoformat(),
                 },
             )
 
@@ -109,7 +114,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
         namespace: str,
         function: VectorFunction,
         limit: int | None = None,
-    ) -> list[Memory]:
+    ) -> list[PermanentMemoryPartition]:
         assert participant_id and namespace and search_partitions
         query = search_partitions[0].embeddings.tolist()
         response = await self._query_vector(
@@ -123,30 +128,37 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                 "namespace": namespace,
             },
         )
-        results: list[Memory] = []
+        results: list[PermanentMemoryPartition] = []
         for item in response.get("Items", []):
-            mem_id = item.get("Metadata", {}).get("memory_id")
-            if not mem_id:
-                continue
-            obj = await self._get_document(index=self._index, id=mem_id)
-            meta = obj.get("_source") if obj else None
-            if not meta:
+            metadata = item.get("Metadata") or {}
+            mem_id = metadata.get("memory_id")
+            partition_index = metadata.get("partition")
+            data = metadata.get("data")
+            participant = metadata.get("participant_id")
+            created_at = metadata.get("created_at")
+            embedding = metadata.get("embedding") or item.get("Vector")
+            if (
+                not mem_id
+                or partition_index is None
+                or data is None
+                or participant is None
+                or embedding is None
+                or created_at is None
+            ):
                 continue
             results.append(
-                Memory(
-                    id=UUID(meta["id"]),
-                    model_id=meta["model_id"],
-                    type=MemoryType(meta["type"]),
-                    participant_id=UUID(meta["participant_id"]),
-                    namespace=meta["namespace"],
-                    identifier=meta["identifier"],
-                    data=meta["data"],
-                    partitions=meta["partitions"],
-                    symbols=meta["symbols"],
-                    created_at=datetime.fromisoformat(meta["created_at"]),
+                PermanentMemoryPartition(
+                    participant_id=UUID(participant),
+                    memory_id=UUID(mem_id),
+                    partition=int(partition_index),
+                    data=data,
+                    embedding=np.array(embedding, dtype=float),
+                    created_at=datetime.fromisoformat(created_at),
                 )
             )
         return results
 
-    async def search(self, query: str) -> list[Memory] | None:
+    async def search(
+        self, query: str
+    ) -> list[PermanentMemoryPartition] | None:
         raise NotImplementedError()
