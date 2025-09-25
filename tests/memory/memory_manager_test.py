@@ -178,6 +178,18 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(memories, ["memory"])
 
+    async def test_search_permanent_memory_missing_namespace(self):
+        with self.assertRaises(KeyError) as caught:
+            await self.manager.search_partitions(
+                "query",
+                participant_id=uuid4(),
+                namespace="missing",
+                function=VectorFunction.L2_DISTANCE,
+            )
+
+        self.assertIn("Memory namespace missing not defined", str(caught.exception))
+        self.tp.assert_not_called()
+
     def test_add_and_delete_permanent_memory(self):
         self.manager.add_permanent_memory("code", self.permanent)
         self.assertIn("code", self.manager._permanent_memories)
