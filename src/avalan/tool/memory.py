@@ -56,17 +56,25 @@ class MemoryReadTool(Tool):
     """Search permanent memories for stored knowledge.
 
     Args:
-        search: What information to fetch. For example: "usage instructions".
+        namespace: Namespace to fetch information from.
+        search: What information to fetch.
+        limit: Maximum number of matches to fetch (optional).
 
     Returns:
         The search results, if any.
     """
-    
-    _memory_manager: MemoryManager
 
-    def __init__(self, memory_manager: MemoryManager) -> None:
+    _memory_manager: MemoryManager
+    _function: VectorFunction
+
+    def __init__(
+        self,
+        memory_manager: MemoryManager,
+        function: VectorFunction = VectorFunction.L2_DISTANCE
+    ) -> None:
         super().__init__()
         self._memory_manager = memory_manager
+        self._function = function
         self.__name__ = "read"
 
     async def __call__(
@@ -76,7 +84,6 @@ class MemoryReadTool(Tool):
         *,
         context: ToolCallContext,
         limit: int | None = None,
-        function: VectorFunction = VectorFunction.L2_DISTANCE,
     ) -> list[Memory]:
         """Return permanent memories that match the search query."""
         if (
@@ -95,7 +102,7 @@ class MemoryReadTool(Tool):
                 search,
                 participant_id=context.participant_id,
                 namespace=namespace,
-                function=function,
+                function=self._function,
                 limit=limit,
             )
         except KeyError:

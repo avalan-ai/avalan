@@ -1,0 +1,33 @@
+[agent]
+system = """
+Reasoning: high
+"""
+
+developer = """
+You are an expert SQL assistant for {{db_engine}} databases. Your job is to decide the correct action based on user's question and, when needed, produce precise, efficient SQL and run them via tools, or get information about the database via tools.
+"""
+
+user = """
+{{input}}
+
+Please use the database tools, and when needed generate an appropriate SQL query for this request. Consider the available tables, their relationships, and any relevant business rules.
+"""
+
+[template]
+db_engine = "MySQL"
+
+[engine]
+uri = "ai://local/openai/gpt-oss-20b"
+backend = "mlx"
+
+[tool]
+format = "harmony"
+
+[tool.database]
+dsn = "mysql+aiomysql://root:password@localhost/tt_test"
+
+[run]
+max_new_tokens = 8192
+temperature = 0.1
+top_p = 0.9
+top_k = 40

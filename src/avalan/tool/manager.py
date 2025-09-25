@@ -168,7 +168,7 @@ class ToolManager(ContextDecorator):
 
         try:
             result = (
-                await tool(*call.arguments.values(), context=context)
+                await tool(**call.arguments, context=context)
                 if is_native_tool and call.arguments
                 else (
                     await tool(context=context)
@@ -194,6 +194,7 @@ class ToolManager(ContextDecorator):
                     if transformed is not None:
                         result = transformed
 
+            print("RESULT", result)
             return ToolCallResult(
                 id=uuid4(),
                 call=call,
