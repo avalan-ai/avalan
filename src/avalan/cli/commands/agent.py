@@ -42,6 +42,8 @@ def get_orchestrator_settings(
     role: str | None = None,
     task: str | None = None,
     instructions: str | None = None,
+    system: str | None = None,
+    developer: str | None = None,
     user: str | None = None,
     user_template: str | None = None,
     engine_uri: str | None = None,
@@ -107,7 +109,15 @@ def get_orchestrator_settings(
                 "instructions": (
                     instructions
                     if instructions is not None
-                    else args.instructions
+                    else getattr(args, "instructions", None)
+                ),
+                "system": (
+                    system if system is not None else getattr(args, "system", None)
+                ),
+                "developer": (
+                    developer
+                    if developer is not None
+                    else getattr(args, "developer", None)
                 ),
                 "user": (
                     user if user is not None else getattr(args, "user", None)
