@@ -1,0 +1,34 @@
+[agent]
+system = """
+Reasoning: high
+"""
+
+developer = """
+You are an expert assistant that can use the memory tool to answer questions
+about card games.
+"""
+
+[engine]
+uri = "ai://local/openai/gpt-oss-20b"
+backend = "mlx"
+
+[tool]
+format = "harmony"
+
+[memory]
+recent = true
+
+[memory.engine]
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+max_tokens = 500
+overlap_size = 125
+window_size = 250
+
+[memory.permanent]
+"games.cards.truco" = "postgresql://root:password@localhost/avalan"
+
+[run]
+max_new_tokens = 8192
+temperature = 0.1
+top_p = 0.9
+top_k = 40

@@ -1271,6 +1271,69 @@ avalan memory document index \
     "https://trucogame.com/pages/reglamento-de-truco-argentino"
 ```
 
+Now create an agent definition in [docs/examples/agent_memory.toml](docs/examples/agent_memory.toml), giving it access to the memory store we just indexed:
+
+```toml
+[agent]
+system = """
+Reasoning: high
+"""
+
+developer = """
+You are an expert assistant that can use the memory tool to answer questions
+about card games.
+"""
+
+[engine]
+uri = "ai://local/openai/gpt-oss-20b"
+backend = "mlx"
+
+[tool]
+format = "harmony"
+
+[memory]
+recent = true
+
+[memory.engine]
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+max_tokens = 500
+overlap_size = 125
+window_size = 250
+
+[memory.permanent]
+"games.cards.truco" = "postgresql://root:password@localhost/avalan"
+
+[run]
+max_new_tokens = 8192
+temperature = 0.1
+top_p = 0.9
+top_k = 40
+```
+
+Now run the agent with your question:
+
+```bash
+echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | avalan agent run docs/examples/agent_memory.toml
+```
+
+And you should get your answer:
+
+```text
+<|channel|>analysis<|message|>We need to fetch memory stored in namespace games.cards.truco. Use memory.read.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.read <|constrain|>json<|message|>{"namespace":"games.cards.truco","search":"retrucar"}<|call|><|channel|>analysis<|message|>We have the memory content. We need to answer: "What does the memory stored in namespace games.cards.truco say about retrucar?" Summarize relevant parts. The memory says: In Truco, after a Truco call, the next player can retrucar. Retrucar is a counter-raise. Only the team that has wanted the last bet can retrucar. The team that has retrucado cannot raise again; only the opposing team can. Retrucar is only possible after a "Quiero" response. Also, the team that has wanted the Truco can retrucar at any time. The team that has called Truco cannot raise until the other team raises. So answer accordingly.<|end|><|start|>assistant<|channel|>final<|message|>In the Truco rules stored in the **games.cards.truco** namespace, “retrucar” is described as the **counter‑raise** that a team can make after the opponent has called *Truco* and the other team has answered *“Quiero”*.
+
+Key points from the memory:
+
+| What the memory says | Explanation |
+|----------------------|-------------|
+| **Retrucar is only possible after a “Quiero”** | The team that has answered *“Quiero”* to the original *Truco* can now raise the stakes again. |
+| **Only the team that has wanted the last bet can retrucar** | The team that just said *“Quiero”* (the “last bet”) is the one that may retrucar. |
+| **The team that has retrucado cannot raise again** | Once a team has retrucado, it cannot raise the bet again; only the opposing team can do so. This is sometimes referred to as “tener el quiero.” |
+| **The team that called the original Truco cannot raise until the other team raises** | After the first *Truco* is called, the calling team must wait for the other team to raise (retrucar) before they can raise again. |
+| **Retrucar is a valid move only when the opponent has said “Quiero”** | If the opponent says anything other than *“Quiero”* (e.g., “sí”, “vemos”), the retrucar is not considered valid. |
+
+So, in short, the memory explains that **retrucar is the act of raising the bet again after the opponent has accepted the original *Truco* call, and it can only be done by the team that has just said “Quiero.”**%
+```
+
 ## Agents
 
 You can easily create AI agents from configuration files. Let's create one to handle gettext translations.
