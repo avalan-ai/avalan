@@ -636,6 +636,11 @@ async def agent_serve(
     browser_settings: BrowserToolSettings | None = None
     database_settings: DatabaseToolSettings | None = None
 
+    protocols = OrchestratorLoader.resolve_serve_protocols(
+        specs_path=specs_path,
+        cli_protocols=getattr(args, "protocol", None),
+    )
+
     if not specs_path:
         memory_recent = (
             args.memory_recent if args.memory_recent is not None else True
@@ -682,6 +687,7 @@ async def agent_serve(
         allow_methods=args.cors_method,
         allow_headers=args.cors_header,
         allow_credentials=args.cors_credentials,
+        protocols=protocols,
     )
     await server.serve()
 

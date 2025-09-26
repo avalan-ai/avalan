@@ -11,6 +11,7 @@ about card games.
 [engine]
 uri = "ai://local/openai/gpt-oss-20b"
 backend = "mlx"
+tools = ["memory"]
 
 [tool]
 format = "harmony"
