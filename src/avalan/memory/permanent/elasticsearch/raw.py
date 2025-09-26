@@ -4,16 +4,17 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from elasticsearch import AsyncElasticsearch
+import numpy as np
 
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
+    Memory,
     MemoryType,
     PermanentMemory,
     PermanentMemoryPartition,
     VectorFunction,
 )
 from . import ElasticsearchMemory, to_thread  # noqa: F401
-import numpy as np
 
 
 class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
@@ -57,6 +58,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        description: str | None = None,
     ) -> None:
         assert (
             namespace and participant_id and data and identifier and partitions
@@ -73,6 +75,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
             symbols=symbols,
             model_id=model_id,
             memory_id=uuid4(),
+            description=description,
         )
         await self._index_document(
             index=self._index,
@@ -88,6 +91,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                 "partitions": entry.partitions,
                 "symbols": entry.symbols,
                 "created_at": entry.created_at.isoformat(),
+                "description": entry.description,
             },
         )
         for row in partition_rows:
@@ -157,6 +161,52 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                 )
             )
         return results
+
+    async def list_memories(
+        self,
+        *,
+        participant_id: UUID,
+        namespace: str,
+    ) -> list[Memory]:
+        assert participant_id and namespace
+        response = await self._call_client(
+            self._client.search,
+            index=self._index,
+            body={
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"term": {"participant_id": str(participant_id)}},
+                            {"term": {"namespace": namespace}},
+                        ]
+                    }
+                },
+                "sort": [{"created_at": {"order": "desc"}}],
+                "size": 1000,
+            },
+        )
+        hits = response.get("hits", {}).get("hits", []) if response else []
+        memories: list[Memory] = []
+        for hit in hits:
+            source = hit.get("_source")
+            if not source:
+                continue
+            memories.append(
+                Memory(
+                    id=UUID(source["id"]),
+                    model_id=source.get("model_id"),
+                    type=MemoryType(source["type"]),
+                    participant_id=UUID(source["participant_id"]),
+                    namespace=source["namespace"],
+                    identifier=source["identifier"],
+                    data=source["data"],
+                    partitions=source["partitions"],
+                    symbols=source.get("symbols"),
+                    created_at=datetime.fromisoformat(source["created_at"]),
+                    description=source.get("description"),
+                )
+            )
+        return memories
 
     async def search(
         self, query: str

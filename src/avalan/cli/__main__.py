@@ -963,6 +963,11 @@ class CLI:
             help="Identifier for the memory entry (defaults to the source)",
         )
         memory_doc_index_parser.add_argument(
+            "--description",
+            type=str,
+            help="Description for the memory entry",
+        )
+        memory_doc_index_parser.add_argument(
             "--dsn",
             type=str,
             required=True,
@@ -1706,8 +1711,9 @@ class CLI:
             action="append",
             dest="protocol",
             help=(
-                "Protocol to expose (e.g. openai, openai:responses,completion). "
-                "May be specified multiple times"
+                "Protocol to expose (e.g. openai,"
+                " openai:responses,completion). May be specified multiple"
+                " times"
             ),
         )
         parser.add_argument(

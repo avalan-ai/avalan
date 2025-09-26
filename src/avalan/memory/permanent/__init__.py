@@ -57,15 +57,16 @@ class Session:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Memory:
     id: UUID
-    model_id: str
+    model_id: str | None
     type: MemoryType
     participant_id: UUID
     namespace: str
     identifier: str
-    data: str
+    data: str | None = None
     partitions: int
-    symbols: dict
+    symbols: dict | None
     created_at: datetime
+    description: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -333,6 +334,7 @@ class PermanentMemory(MemoryStore[Memory]):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        description: str | None = None,
     ) -> None:
         raise NotImplementedError()
 
@@ -348,6 +350,15 @@ class PermanentMemory(MemoryStore[Memory]):
     ) -> list[PermanentMemoryPartition]:
         raise NotImplementedError()
 
+    @abstractmethod
+    async def list_memories(
+        self,
+        *,
+        participant_id: UUID,
+        namespace: str,
+    ) -> list[Memory]:
+        raise NotImplementedError()
+
     @staticmethod
     def _build_memory_with_partitions(
         namespace: str,
@@ -361,6 +372,7 @@ class PermanentMemory(MemoryStore[Memory]):
         symbols: dict | None = None,
         model_id: str | None = None,
         memory_id: UUID | None = None,
+        description: str | None = None,
     ) -> tuple[Memory, list[PermanentMemoryPartition]]:
         if memory_id is None:
             memory_id = uuid4()
@@ -375,6 +387,7 @@ class PermanentMemory(MemoryStore[Memory]):
             partitions=len(partitions),
             symbols=symbols,
             created_at=created_at,
+            description=description,
         )
         partition_rows = [
             PermanentMemoryPartition(

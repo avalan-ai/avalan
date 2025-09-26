@@ -165,6 +165,14 @@ class PermanentMemoryTestCase(IsolatedAsyncioTestCase):
                 function=VectorFunction.COSINE_DISTANCE,
             )
 
+    async def test_list_memories_not_implemented(self):
+        with self.assertRaises(NotImplementedError):
+            await PermanentMemory.list_memories(
+                self.memory,
+                participant_id=uuid4(),
+                namespace="ns",
+            )
+
 
 class BuildPartitionsTestCase(TestCase):
     def setUp(self):

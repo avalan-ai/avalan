@@ -145,7 +145,9 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
             "openai": {"responses"},
             "a2a": set(),
         }
-        self.assertEqual(srv_patch.call_args.kwargs["protocols"], expected_protocols)
+        self.assertEqual(
+            srv_patch.call_args.kwargs["protocols"], expected_protocols
+        )
 
     async def test_agent_serve_cli_protocol_variations(self) -> None:
         hub = MagicMock()
@@ -184,7 +186,9 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
                         )
 
                     server.serve.assert_awaited_once()
-                    self.assertEqual(srv_patch.call_args.kwargs["protocols"], expected)
+                    self.assertEqual(
+                        srv_patch.call_args.kwargs["protocols"], expected
+                    )
 
     async def test_agent_serve_spec_protocol_variations(self) -> None:
         hub = MagicMock()
@@ -203,7 +207,7 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
 
         for config_protocols, expected in cases:
             protocols_literal = ", ".join(
-                f"\"{value}\"" for value in config_protocols
+                f'"{value}"' for value in config_protocols
             )
             with self.subTest(protocols=config_protocols):
                 with NamedTemporaryFile("w") as spec:
@@ -223,7 +227,9 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
                         )
 
                     server.serve.assert_awaited_once()
-                    self.assertEqual(srv_patch.call_args.kwargs["protocols"], expected)
+                    self.assertEqual(
+                        srv_patch.call_args.kwargs["protocols"], expected
+                    )
 
     async def test_agent_serve_cli_protocols_override_spec(self) -> None:
         hub = MagicMock()
@@ -231,7 +237,7 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
 
         with NamedTemporaryFile("w") as spec:
             spec.write("[agent]\nname='a'\n[engine]\nuri='m'\n")
-            spec.write("[serve]\nprotocols = [\"mcp\"]\n")
+            spec.write('[serve]\nprotocols = ["mcp"]\n')
             spec.flush()
 
             args = self._make_args(

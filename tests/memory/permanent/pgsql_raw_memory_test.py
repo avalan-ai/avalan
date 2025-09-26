@@ -46,6 +46,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             partitions=0,
             symbols={},
             created_at=datetime.now(timezone.utc),
+            description="desc",
         )
         partitions = [
             TextPartition(
@@ -69,6 +70,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 partitions=partitions,
                 symbols=base_memory.symbols,
                 model_id=base_memory.model_id,
+                description=base_memory.description,
             )
 
         connection_mock.transaction.assert_called_once()
@@ -84,10 +86,11 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                             "data",
                             "partitions",
                             "symbols",
-                            "created_at"
+                            "created_at",
+                            "description"
                         ) VALUES (
                             %s, %s, %s, %s::memory_types,
-                            %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
             (
@@ -101,6 +104,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 len(partitions),
                 dumps(base_memory.symbols),
                 ANY,
+                base_memory.description,
             ),
         )
         cursor_mock.executemany.assert_awaited_once()
@@ -143,12 +147,76 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             partitions=partitions,
             symbols=base_memory.symbols,
             model_id=base_memory.model_id,
+            description=None,
         )
 
         connection_mock.transaction.assert_called_once()
         cursor_mock.execute.assert_awaited_once()
         args = cursor_mock.execute.call_args[0][1]
         self.assertIsNone(args[1])
+        self.assertIsNone(args[-1])
+
+    async def test_list_memories(self):
+        participant_id = uuid4()
+        created_at = datetime.now(timezone.utc)
+        record_set = [
+            {
+                "id": uuid4(),
+                "model_id": "model",
+                "memory_type": "raw",
+                "participant_id": participant_id,
+                "namespace": "ns",
+                "identifier": "id",
+                "partitions": 2,
+                "symbols": {"a": 1},
+                "created_at": created_at,
+                "description": "desc",
+            }
+        ]
+        pool_mock, connection_mock, cursor_mock = self.mock_query(
+            record_set, fetch_all=True
+        )
+        memory_store = await PgsqlRawMemory.create_instance_from_pool(
+            pool=pool_mock,
+            logger=MagicMock(),
+        )
+
+        memories = await memory_store.list_memories(
+            participant_id=participant_id,
+            namespace="ns",
+        )
+
+        expected_query = """
+            SELECT
+                "id",
+                "model_id",
+                "memory_type",
+                "participant_id",
+                "namespace",
+                "identifier",
+                "partitions",
+                "symbols",
+                "created_at",
+                "description"
+            FROM "memories"
+            WHERE "participant_id" = %s
+              AND "namespace" = %s
+              AND "is_deleted" = FALSE
+            ORDER BY "created_at" DESC
+        """
+        self.assert_query(
+            connection_mock,
+            cursor_mock,
+            expected_query,
+            expected_parameters=(str(participant_id), "ns"),
+            fetch_all=True,
+        )
+        self.assertEqual(len(memories), 1)
+        memory = memories[0]
+        self.assertEqual(memory.description, "desc")
+        self.assertEqual(memory.type, MemoryType.RAW)
+        self.assertEqual(memory.partitions, 2)
+        self.assertEqual(memory.created_at, created_at)
 
     async def test_upsert_hyperedge(self):
         pool_mock, connection_mock, cursor_mock, txn_mock = self.mock_insert()

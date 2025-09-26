@@ -43,16 +43,18 @@ def _normalize_protocols(
                 normalized_endpoints = set(_OPENAI_ENDPOINTS)
             else:
                 missing = normalized_endpoints - _OPENAI_ENDPOINTS
-                assert not missing, (
-                    f"Unsupported OpenAI endpoints: {sorted(missing)}"
-                )
+                assert (
+                    not missing
+                ), f"Unsupported OpenAI endpoints: {sorted(missing)}"
             normalized[protocol] = {
-                endpoint for endpoint in normalized_endpoints if endpoint in _OPENAI_ENDPOINTS
+                endpoint
+                for endpoint in normalized_endpoints
+                if endpoint in _OPENAI_ENDPOINTS
             }
         else:
-            assert not endpoints, (
-                f"Protocol '{protocol}' does not accept endpoint selection"
-            )
+            assert (
+                not endpoints
+            ), f"Protocol '{protocol}' does not accept endpoint selection"
             normalized[protocol] = set()
     return normalized
 
@@ -163,7 +165,9 @@ def agents_server(
             responses_router_module = import_module(
                 "avalan.server.routers.responses"
             )
-            app.include_router(responses_router_module.router, prefix=openai_prefix)
+            app.include_router(
+                responses_router_module.router, prefix=openai_prefix
+            )
         engine_router_module = import_module("avalan.server.routers.engine")
         app.include_router(engine_router_module.router)
 

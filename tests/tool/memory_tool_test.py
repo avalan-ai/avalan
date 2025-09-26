@@ -6,7 +6,12 @@ from avalan.entities import (
 )
 from avalan.memory.manager import MemoryManager
 from avalan.memory.permanent import PermanentMemoryPartition, VectorFunction
-from avalan.tool.memory import MemoryReadTool, MemoryToolSet, MessageReadTool
+from avalan.tool.memory import (
+    MemoryListTool,
+    MemoryReadTool,
+    MemoryToolSet,
+    MessageReadTool,
+)
 from contextlib import AsyncExitStack
 from pytest import raises
 from unittest import IsolatedAsyncioTestCase, main
@@ -26,10 +31,11 @@ class MemoryToolSetTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(toolset.namespace, "mem")
-        self.assertEqual(len(toolset.tools), 2)
-        message_tool, memory_tool = toolset.tools
+        self.assertEqual(len(toolset.tools), 3)
+        message_tool, memory_tool, list_tool = toolset.tools
         self.assertIsInstance(message_tool, MessageReadTool)
         self.assertIsInstance(memory_tool, MemoryReadTool)
+        self.assertIsInstance(list_tool, MemoryListTool)
 
         result = await toolset.__aenter__()
 
@@ -38,6 +44,7 @@ class MemoryToolSetTestCase(IsolatedAsyncioTestCase):
             [
                 call(message_tool),
                 call(memory_tool),
+                call(list_tool),
             ]
         )
 
@@ -158,6 +165,46 @@ class MemoryReadToolTestCase(IsolatedAsyncioTestCase):
 
         with raises(KeyError):
             await self.tool("docs", "query", context=ctx)
+
+
+class MemoryListToolTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.manager = AsyncMock(spec=MemoryManager)
+        self.tool = MemoryListTool(self.manager)
+        self.participant_id = uuid4()
+
+    async def test_returns_empty_without_participant(self):
+        ctx = ToolCallContext()
+        result = await self.tool("docs", context=ctx)
+        self.assertEqual(result, [])
+        self.manager.list_memories.assert_not_awaited()
+
+    async def test_returns_empty_when_namespace_invalid(self):
+        ctx = ToolCallContext(participant_id=self.participant_id)
+        result = await self.tool(" ", context=ctx)
+        self.assertEqual(result, [])
+        self.manager.list_memories.assert_not_awaited()
+
+    async def test_returns_empty_on_missing_namespace(self):
+        ctx = ToolCallContext(participant_id=self.participant_id)
+        self.manager.list_memories.side_effect = KeyError("docs")
+        with raises(KeyError):
+            await self.tool("docs", context=ctx)
+        self.manager.list_memories.assert_awaited_once_with(
+            participant_id=self.participant_id,
+            namespace="docs",
+        )
+
+    async def test_returns_memories(self):
+        ctx = ToolCallContext(participant_id=self.participant_id)
+        memories = [MagicMock()]
+        self.manager.list_memories.return_value = memories
+        result = await self.tool("docs", context=ctx)
+        self.manager.list_memories.assert_awaited_once_with(
+            participant_id=self.participant_id,
+            namespace="docs",
+        )
+        self.assertIs(result, memories)
 
 
 if __name__ == "__main__":

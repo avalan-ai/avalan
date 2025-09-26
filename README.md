@@ -1295,7 +1295,8 @@ echo "What does the memory stored in namespace games.cards.truco say about retru
     --run-max-new-tokens 8192 \
     --run-temperature 0.1 \
     --run-top-p 0.9 \
-    --run-top-k 40
+    --run-top-k 40 \
+    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58"
 ```
 
 And you should get your answer:
@@ -1314,6 +1315,53 @@ Key points from the memory:
 | **Retrucar is a valid move only when the opponent has said “Quiero”** | If the opponent says anything other than *“Quiero”* (e.g., “sí”, “vemos”), the retrucar is not considered valid. |
 
 So, in short, the memory explains that **retrucar is the act of raising the bet again after the opponent has accepted the original *Truco* call, and it can only be done by the team that has just said “Quiero.”**%
+```
+
+PDF files are natively supported by memories. Let's index an arxiv paper (in its PDF format) from September 2025, considerably after the training date of the model we'll later use to query it:
+
+```bash
+avalan memory document index \
+    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
+    --dsn "postgresql://root:password@localhost/avalan" \
+    --namespace "papers" \
+    "sentence-transformers/all-MiniLM-L6-v2" \
+    "https://arxiv.org/pdf/2509.17325"
+```
+
+Now let's ask the memory agent about that paper:
+
+```bash
+echo "What papers do you have stored in memory?" | \
+  avalan agent run \
+    --engine-uri "ai://local/openai/gpt-oss-20b" \
+    --backend mlx \
+    --tool-format harmony \
+    --tool memory \
+    --system "Reasoning: high" \
+    --developer "You are an expert assistant that can use the memory tool to answer questions about card games." \
+    --memory-recent \
+    --memory-engine-model-id "sentence-transformers/all-MiniLM-L6-v2" \
+    --memory-engine-max-tokens 500 \
+    --memory-engine-overlap 125 \
+    --memory-engine-window 250 \
+    --memory-permanent "papers@postgresql://root:password@localhost/avalan" \
+    --run-max-new-tokens 8192 \
+    --run-temperature 0.1 \
+    --run-top-p 0.9 \
+    --run-top-k 40 \
+    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58"
+```
+
+And the stored paper is found:
+
+```text
+<|channel|>analysis<|message|>We need to list stored papers. We have memory functions. Use memory.list with namespace "papers".<|end|><|start|>assistant<|channel|>commentary to=functions.memory.list <|constrain|>json<|message|>{"namespace":"papers"}<|call|><|channel|>analysis<|message|>We have only one memory entry. The user asked "What papers do you have stored in memory?" We should respond with the list. Provide the URL. Also mention that only one paper is stored.<|end|><|start|>assistant<|channel|>final<|message|>I currently have **one paper** stored in memory:
+
+| # | Identifier | URL |
+|---|------------|-----|
+| 1 | `https://arxiv.org/pdf/2509.17325` | https://arxiv.org/pdf/2509.17325 |
+
+If you’d like more details about this paper or want to add additional papers to the memory, just let me know!
 ```
 
 ## Agents

@@ -81,9 +81,12 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 partitions=[part1, part2],
                 symbols={},
                 model_id="m",
+                description="desc",
             )
         self.assertTrue(memory._client.index.called)
         self.assertEqual(memory._client.index_vector.call_count, 2)
+        document = memory._client.index.await_args.kwargs["document"]
+        self.assertEqual(document["description"], "desc")
 
     async def test_search_memories(self):
         mem_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -162,6 +165,58 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 limit=1,
             )
         self.assertEqual(result, [])
+
+    async def test_list_memories(self):
+        participant_id = uuid4()
+        created_at = datetime.now(timezone.utc)
+        client = AsyncMock()
+        client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {},
+                    {"_source": None},
+                    {
+                        "_source": {
+                            "id": str(uuid4()),
+                            "model_id": "model",
+                            "type": MemoryType.RAW.value,
+                            "participant_id": str(participant_id),
+                            "namespace": "ns",
+                            "identifier": "id",
+                            "data": "data",
+                            "partitions": 1,
+                            "symbols": {"a": 1},
+                            "created_at": created_at.isoformat(),
+                            "description": "desc",
+                        }
+                    },
+                ]
+            }
+        }
+        memory = ElasticsearchRawMemory(
+            index="idx", client=client, logger=MagicMock()
+        )
+        with (
+            patch(
+                "avalan.memory.permanent.elasticsearch.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.elasticsearch.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+        ):
+            memories = await memory.list_memories(
+                participant_id=participant_id,
+                namespace="ns",
+            )
+
+        client.search.assert_awaited_once()
+        self.assertEqual(len(memories), 1)
+        memory_entry = memories[0]
+        self.assertEqual(memory_entry.description, "desc")
+        self.assertEqual(memory_entry.type, MemoryType.RAW)
+        self.assertEqual(memory_entry.partitions, 1)
 
     async def test_search_memories_missing_source(self):
         mem_id_valid = uuid4()

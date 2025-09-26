@@ -39,11 +39,20 @@ class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
 
     _ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
-    _OPENAI_COMPLETION_ALIASES = frozenset({"chat", "completion", "completions"})
+    _OPENAI_COMPLETION_ALIASES = frozenset(
+        {
+            "chat",
+            "completion",
+            "completions",
+        }
+    )
     _OPENAI_ENDPOINT_COMPLETIONS = "completions"
     _OPENAI_ENDPOINT_RESPONSES = "responses"
     _OPENAI_ENDPOINTS = frozenset(
-        {_OPENAI_ENDPOINT_COMPLETIONS, _OPENAI_ENDPOINT_RESPONSES}
+        {
+            _OPENAI_ENDPOINT_COMPLETIONS,
+            _OPENAI_ENDPOINT_RESPONSES,
+        }
     )
     _OPENAI_RESPONSES_ALIASES = frozenset({"response", "responses"})
 
@@ -90,7 +99,9 @@ class OrchestratorLoader:
                 endpoints = selection.setdefault(protocol, set())
                 for endpoint in endpoints_text.split(","):
                     endpoint_name = endpoint.strip().lower()
-                    assert endpoint_name, "OpenAI endpoint name cannot be empty"
+                    assert (
+                        endpoint_name
+                    ), "OpenAI endpoint name cannot be empty"
                     if endpoint_name in cls._OPENAI_COMPLETION_ALIASES:
                         endpoints.add(cls._OPENAI_ENDPOINT_COMPLETIONS)
                     elif endpoint_name in cls._OPENAI_RESPONSES_ALIASES:
@@ -128,7 +139,9 @@ class OrchestratorLoader:
 
         parsed_protocols: list[str] = []
         for item in raw_protocols:
-            assert isinstance(item, str), "Serve protocol entries must be strings"
+            assert isinstance(
+                item, str
+            ), "Serve protocol entries must be strings"
             value = item.strip()
             assert value, "Serve protocol entries cannot be empty"
             parsed_protocols.append(value)

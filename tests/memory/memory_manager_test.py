@@ -187,14 +187,46 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
                 function=VectorFunction.L2_DISTANCE,
             )
 
-        self.assertIn("Memory namespace missing not defined", str(caught.exception))
+        self.assertIn(
+            "Memory namespace missing not defined", str(caught.exception)
+        )
         self.tp.assert_not_called()
+
+    async def test_list_memories_missing_namespace(self):
+        with self.assertRaises(KeyError) as caught:
+            await self.manager.list_memories(
+                participant_id=uuid4(),
+                namespace="missing",
+            )
+
+        self.assertIn(
+            "Memory namespace missing not defined", str(caught.exception)
+        )
+        self.permanent.list_memories.assert_not_called()
 
     def test_add_and_delete_permanent_memory(self):
         self.manager.add_permanent_memory("code", self.permanent)
         self.assertIn("code", self.manager._permanent_memories)
         self.manager.delete_permanent_memory("code")
         self.assertNotIn("code", self.manager._permanent_memories)
+
+    async def test_list_permanent_memories(self):
+        namespace = "docs"
+        participant_id = uuid4()
+        expected = [MagicMock()]
+        self.permanent.list_memories.return_value = expected
+        self.manager.add_permanent_memory(namespace, self.permanent)
+
+        memories = await self.manager.list_memories(
+            participant_id=participant_id,
+            namespace=namespace,
+        )
+
+        self.permanent.list_memories.assert_awaited_once_with(
+            participant_id=participant_id,
+            namespace=namespace,
+        )
+        self.assertIs(memories, expected)
 
 
 class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
