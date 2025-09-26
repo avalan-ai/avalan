@@ -34,57 +34,6 @@ from typing import Mapping
 from uuid import UUID, uuid4
 
 
-_ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
-_OPENAI_COMPLETION_ALIASES = frozenset({"chat", "completion", "completions"})
-_OPENAI_ENDPOINT_COMPLETIONS = "completions"
-_OPENAI_ENDPOINT_RESPONSES = "responses"
-_OPENAI_ENDPOINTS = frozenset(
-    {_OPENAI_ENDPOINT_COMPLETIONS, _OPENAI_ENDPOINT_RESPONSES}
-)
-_OPENAI_RESPONSES_ALIASES = frozenset({"response", "responses"})
-
-
-def _parse_protocol_arguments(
-    raw_protocols: list[str] | None,
-) -> dict[str, set[str]] | None:
-    """Parse ``--protocol`` CLI arguments into a selection mapping."""
-    if not raw_protocols:
-        return None
-
-    selection: dict[str, set[str]] = {}
-    for raw_protocol in raw_protocols:
-        assert raw_protocol, "Protocol value cannot be empty"
-        protocol_part, _, endpoints_part = raw_protocol.partition(":")
-        protocol = protocol_part.strip().lower()
-        assert protocol, "Protocol name cannot be empty"
-        assert protocol in _ALLOWED_PROTOCOLS, f"Unsupported protocol '{protocol}'"
-
-        endpoints_text = endpoints_part.strip()
-        if endpoints_text:
-            assert (
-                protocol == "openai"
-            ), "Only the openai protocol accepts endpoint selection"
-            endpoints = selection.setdefault(protocol, set())
-            for endpoint in endpoints_text.split(","):
-                endpoint_name = endpoint.strip().lower()
-                assert endpoint_name, "OpenAI endpoint name cannot be empty"
-                if endpoint_name in _OPENAI_COMPLETION_ALIASES:
-                    endpoints.add(_OPENAI_ENDPOINT_COMPLETIONS)
-                elif endpoint_name in _OPENAI_RESPONSES_ALIASES:
-                    endpoints.add(_OPENAI_ENDPOINT_RESPONSES)
-                else:
-                    raise AssertionError(
-                        f"Unsupported OpenAI endpoint '{endpoint_name}'"
-                    )
-        else:
-            if protocol == "openai":
-                selection[protocol] = set(_OPENAI_ENDPOINTS)
-            else:
-                selection[protocol] = set()
-
-    return selection
-
-
 def get_orchestrator_settings(
     args: Namespace,
     *,
@@ -687,7 +636,10 @@ async def agent_serve(
     browser_settings: BrowserToolSettings | None = None
     database_settings: DatabaseToolSettings | None = None
 
-    protocols = _parse_protocol_arguments(getattr(args, "protocol", None))
+    protocols = OrchestratorLoader.resolve_serve_protocols(
+        specs_path=specs_path,
+        cli_protocols=getattr(args, "protocol", None),
+    )
 
     if not specs_path:
         memory_recent = (
