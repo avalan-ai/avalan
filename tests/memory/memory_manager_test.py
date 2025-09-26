@@ -192,6 +192,18 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         )
         self.tp.assert_not_called()
 
+    async def test_list_memories_missing_namespace(self):
+        with self.assertRaises(KeyError) as caught:
+            await self.manager.list_memories(
+                participant_id=uuid4(),
+                namespace="missing",
+            )
+
+        self.assertIn(
+            "Memory namespace missing not defined", str(caught.exception)
+        )
+        self.permanent.list_memories.assert_not_called()
+
     def test_add_and_delete_permanent_memory(self):
         self.manager.add_permanent_memory("code", self.permanent)
         self.assertIn("code", self.manager._permanent_memories)

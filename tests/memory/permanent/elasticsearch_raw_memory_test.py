@@ -173,6 +173,8 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
         client.search.return_value = {
             "hits": {
                 "hits": [
+                    {},
+                    {"_source": None},
                     {
                         "_source": {
                             "id": str(uuid4()),
@@ -187,7 +189,7 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                             "created_at": created_at.isoformat(),
                             "description": "desc",
                         }
-                    }
+                    },
                 ]
             }
         }
