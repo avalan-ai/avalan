@@ -45,6 +45,7 @@ async def memory_document_index(
     namespace = args.namespace
     dsn = args.dsn
     identifier = args.identifier or None
+    description = args.description or None
     display_partitions = (
         args.display_partitions if not args.no_display_partitions else None
     )
@@ -128,6 +129,7 @@ async def memory_document_index(
                 partitions=partitions,
                 symbols={},
                 model_id=model_id,
+                description=description,
             )
 
             if display_partitions:

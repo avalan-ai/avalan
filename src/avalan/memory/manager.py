@@ -4,6 +4,7 @@ from ..event.manager import EventManager
 from ..memory import RecentMessageMemory
 from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import (
+    Memory,
     PermanentMemory,
     PermanentMemoryPartition,
     PermanentMessageMemory,
@@ -346,6 +347,22 @@ class MemoryManager:
             namespace=namespace,
             function=function,
             limit=limit,
+        )
+        return memories
+
+    async def list_memories(
+        self,
+        *,
+        participant_id: UUID,
+        namespace: str,
+    ) -> list[Memory]:
+        if namespace not in self._permanent_memories:
+            raise KeyError(f"Memory namespace {namespace} not defined")
+
+        memory_store = self._permanent_memories[namespace]
+        memories = await memory_store.list_memories(
+            participant_id=participant_id,
+            namespace=namespace,
         )
         return memories
 

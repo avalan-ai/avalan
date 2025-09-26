@@ -1,6 +1,7 @@
 from ....deploy.aws import AsyncClient
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
+    Memory,
     MemoryType,
     PermanentMemory,
     PermanentMemoryPartition,
@@ -9,7 +10,7 @@ from ....memory.permanent import (
 from . import S3VectorsMemory
 from asyncio import to_thread  # noqa: F401
 from datetime import datetime, timezone
-from json import dumps
+from json import dumps, loads
 from logging import Logger
 from typing import Any
 from uuid import UUID, uuid4
@@ -71,6 +72,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        description: str | None = None,
     ) -> None:
         assert (
             namespace and participant_id and data and identifier and partitions
@@ -87,6 +89,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             symbols=symbols,
             model_id=model_id,
             memory_id=uuid4(),
+            description=description,
         )
         await self._put_object(
             Bucket=self._bucket,
@@ -103,6 +106,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
                     "partitions": entry.partitions,
                     "symbols": entry.symbols,
                     "created_at": entry.created_at.isoformat(),
+                    "description": entry.description,
                 }
             ).encode(),
         )
@@ -175,6 +179,51 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
                 )
             )
         return results
+
+    async def list_memories(
+        self,
+        *,
+        participant_id: UUID,
+        namespace: str,
+    ) -> list[Memory]:
+        assert participant_id and namespace
+        response = await self._call_client(
+            self._client.list_objects_v2,
+            Bucket=self._bucket,
+            Prefix=f"{self._collection}/",
+        )
+        objects = response.get("Contents", []) if response else []
+        memories: list[Memory] = []
+        for obj in objects:
+            key = obj.get("Key")
+            if not key:
+                continue
+            document = await self._get_object(Bucket=self._bucket, Key=key)
+            body = document.get("Body") if document else None
+            if not body:
+                continue
+            metadata = loads(body.read().decode())
+            if (
+                metadata.get("participant_id") != str(participant_id)
+                or metadata.get("namespace") != namespace
+            ):
+                continue
+            memories.append(
+                Memory(
+                    id=UUID(metadata["id"]),
+                    model_id=metadata.get("model_id"),
+                    type=MemoryType(metadata["type"]),
+                    participant_id=UUID(metadata["participant_id"]),
+                    namespace=metadata["namespace"],
+                    identifier=metadata["identifier"],
+                    data=metadata["data"],
+                    partitions=metadata["partitions"],
+                    symbols=metadata.get("symbols"),
+                    created_at=datetime.fromisoformat(metadata["created_at"]),
+                    description=metadata.get("description"),
+                )
+            )
+        return memories
 
     async def search(
         self, query: str

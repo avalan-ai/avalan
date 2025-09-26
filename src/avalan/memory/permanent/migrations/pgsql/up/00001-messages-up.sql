@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS "memories" (
     "partitions" INT NOT NULL CHECK ("partitions" > 0),
     "created_at" TIMESTAMP WITH TIME ZONE NOT NULL
                  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    "description" TEXT default NULL,
     "is_deleted" BOOLEAN NOT NULL DEFAULT FALSE,
     "deleted_at" TIMESTAMP WITH TIME ZONE default NULL,
 

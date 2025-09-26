@@ -6,6 +6,7 @@ from avalan.memory.permanent import (
 )
 from avalan.memory.permanent.s3vectors.raw import S3VectorsRawMemory
 from datetime import datetime, timezone
+import json
 import numpy as np
 from uuid import uuid4, UUID
 from unittest import IsolatedAsyncioTestCase
@@ -68,9 +69,13 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
                 partitions=[part1, part2],
                 symbols={},
                 model_id="m",
+                description="desc",
             )
         self.assertTrue(memory._client.put_object.called)
         self.assertEqual(memory._client.put_vector.call_count, 2)
+        body = memory._client.put_object.await_args.kwargs["Body"]
+        payload = json.loads(body.decode())
+        self.assertEqual(payload["description"], "desc")
 
     async def test_search_memories(self):
         mem_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -149,6 +154,57 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
                 limit=1,
             )
         self.assertEqual(result, [])
+
+    async def test_list_memories(self):
+        participant_id = uuid4()
+        created_at = datetime.now(timezone.utc)
+        document = {
+            "id": str(uuid4()),
+            "model_id": "model",
+            "type": MemoryType.RAW.value,
+            "participant_id": str(participant_id),
+            "namespace": "ns",
+            "identifier": "id",
+            "data": "data",
+            "partitions": 1,
+            "symbols": {"a": 1},
+            "created_at": created_at.isoformat(),
+            "description": "desc",
+        }
+        body = MagicMock()
+        body.read.return_value = json.dumps(document).encode()
+        client = AsyncMock()
+        client.list_objects_v2.return_value = {
+            "Contents": [{"Key": "c/obj.json"}]
+        }
+        client.get_object.return_value = {"Body": body}
+        memory = S3VectorsRawMemory(
+            bucket="b", collection="c", client=client, logger=MagicMock()
+        )
+        with (
+            patch(
+                "avalan.memory.permanent.s3vectors.raw.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+            patch(
+                "avalan.memory.permanent.s3vectors.to_thread",
+                AsyncMock(side_effect=lambda fn, **kw: fn(**kw)),
+            ),
+        ):
+            memories = await memory.list_memories(
+                participant_id=participant_id,
+                namespace="ns",
+            )
+
+        client.list_objects_v2.assert_awaited_once_with(
+            Bucket="b", Prefix="c/"
+        )
+        client.get_object.assert_awaited_once_with(Bucket="b", Key="c/obj.json")
+        self.assertEqual(len(memories), 1)
+        memory_entry = memories[0]
+        self.assertEqual(memory_entry.description, "desc")
+        self.assertEqual(memory_entry.type, MemoryType.RAW)
+        self.assertEqual(memory_entry.partitions, 1)
 
     async def test_search_not_implemented(self):
         memory = S3VectorsRawMemory(

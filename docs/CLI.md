@@ -2170,7 +2170,8 @@ sequence_parallel,replicate}]
                                     [--partitioner {text,code}]
                                     [--language LANGUAGE]
                                     [--encoding ENCODING]
-                                    [--identifier IDENTIFIER] --dsn DSN
+                                    [--identifier IDENTIFIER]
+                                    [--description DESCRIPTION] --dsn DSN
                                     --participant PARTICIPANT --namespace
                                     NAMESPACE
                                     model source
@@ -2258,6 +2259,8 @@ sequence_parallel,replicate}
   --identifier IDENTIFIER
                         Identifier for the memory entry (defaults to the
                         source)
+  --description DESCRIPTION
+                        Description for the memory entry
   --dsn DSN             PostgreSQL DSN for storing the document
   --participant PARTICIPANT
                         Participant ID for the memory entry

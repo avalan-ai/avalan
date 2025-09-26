@@ -2,7 +2,7 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
-from ..memory.permanent import PermanentMemoryPartition, VectorFunction
+from ..memory.permanent import Memory, PermanentMemoryPartition, VectorFunction
 
 from contextlib import AsyncExitStack
 
@@ -108,6 +108,36 @@ class MemoryReadTool(Tool):
         return memories
 
 
+class MemoryListTool(Tool):
+    """List permanent memories available for a namespace."""
+
+    _memory_manager: MemoryManager
+
+    def __init__(self, memory_manager: MemoryManager) -> None:
+        super().__init__()
+        self._memory_manager = memory_manager
+        self.__name__ = "list"
+
+    async def __call__(
+        self,
+        namespace: str,
+        *,
+        context: ToolCallContext,
+    ) -> list[Memory]:
+        if not namespace or not namespace.strip():
+            return []
+        if not context.participant_id:
+            return []
+        try:
+            memories = await self._memory_manager.list_memories(
+                participant_id=context.participant_id,
+                namespace=namespace,
+            )
+        except KeyError:
+            return []
+        return memories
+
+
 class MemoryToolSet(ToolSet):
     @override
     def __init__(
@@ -120,6 +150,7 @@ class MemoryToolSet(ToolSet):
         tools = [
             MessageReadTool(memory_manager),
             MemoryReadTool(memory_manager),
+            MemoryListTool(memory_manager),
         ]
         super().__init__(
             exit_stack=exit_stack, namespace=namespace, tools=tools

@@ -47,6 +47,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             participant="11111111-1111-1111-1111-111111111111",
             namespace="ns",
             identifier=None,
+            description="Knowledge base",
             display_partitions=1,
             no_display_partitions=False,
         )
@@ -127,6 +128,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             partitions=[partition],
             symbols={},
             model_id=self.args.model,
+            description=self.args.description,
         )
         self.console.print.assert_called_once_with("panel")
 
@@ -206,6 +208,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             partitions=[partition],
             symbols={},
             model_id=self.args.model,
+            description=self.args.description,
         )
         self.console.print.assert_called_once_with("panel")
 

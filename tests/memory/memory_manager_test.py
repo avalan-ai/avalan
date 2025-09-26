@@ -196,6 +196,24 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         self.manager.delete_permanent_memory("code")
         self.assertNotIn("code", self.manager._permanent_memories)
 
+    async def test_list_permanent_memories(self):
+        namespace = "docs"
+        participant_id = uuid4()
+        expected = [MagicMock()]
+        self.permanent.list_memories.return_value = expected
+        self.manager.add_permanent_memory(namespace, self.permanent)
+
+        memories = await self.manager.list_memories(
+            participant_id=participant_id,
+            namespace=namespace,
+        )
+
+        self.permanent.list_memories.assert_awaited_once_with(
+            participant_id=participant_id,
+            namespace=namespace,
+        )
+        self.assertIs(memories, expected)
+
 
 class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
     def test_constructor_variants(self):

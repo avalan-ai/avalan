@@ -9,9 +9,10 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
-from logging import Logger
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from json import dumps
+from logging import Logger
 from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
 
@@ -50,6 +51,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        description: str | None = None,
     ) -> None:
         assert (
             namespace and participant_id and data and identifier and partitions
@@ -66,6 +68,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             symbols=symbols,
             model_id=model_id,
             memory_id=uuid4(),
+            description=description,
         )
 
         async with self._database.connection() as connection:
@@ -83,10 +86,11 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             "data",
                             "partitions",
                             "symbols",
-                            "created_at"
+                            "created_at",
+                            "description"
                         ) VALUES (
                             %s, %s, %s, %s::memory_types,
-                            %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
                         (
@@ -104,6 +108,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                                 else None
                             ),
                             entry.created_at,
+                            entry.description,
                         ),
                     )
 
@@ -133,6 +138,74 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                         ],
                     )
                     await cursor.close()
+
+    @dataclass(frozen=True, kw_only=True, slots=True)
+    class _MemoryRow:
+        id: UUID
+        model_id: str | None
+        memory_type: str
+        participant_id: UUID
+        namespace: str
+        identifier: str
+        data: str
+        partitions: int
+        symbols: dict | None
+        created_at: datetime
+        description: str | None
+
+    async def list_memories(
+        self,
+        *,
+        participant_id: UUID,
+        namespace: str,
+    ) -> list[Memory]:
+        assert participant_id and namespace
+        records = await self._fetch_all(
+            self._MemoryRow,
+            """
+            SELECT
+                "id",
+                "model_id",
+                "memory_type" as memory_type,
+                "participant_id",
+                "namespace",
+                "identifier",
+                "data",
+                "partitions",
+                "symbols",
+                "created_at",
+                "description"
+            FROM "memories"
+            WHERE "participant_id" = %s
+              AND "namespace" = %s
+              AND "is_deleted" = FALSE
+            ORDER BY "created_at" DESC
+            """,
+            (str(participant_id), namespace),
+        )
+        memories: list[Memory] = []
+        for record in records:
+            memory_type = (
+                record.memory_type
+                if isinstance(record.memory_type, MemoryType)
+                else MemoryType(record.memory_type)
+            )
+            memories.append(
+                Memory(
+                    id=record.id,
+                    model_id=record.model_id,
+                    type=memory_type,
+                    participant_id=record.participant_id,
+                    namespace=record.namespace,
+                    identifier=record.identifier,
+                    data=record.data,
+                    partitions=record.partitions,
+                    symbols=record.symbols,
+                    created_at=record.created_at,
+                    description=record.description,
+                )
+            )
+        return memories
 
     async def search_memories(
         self,
