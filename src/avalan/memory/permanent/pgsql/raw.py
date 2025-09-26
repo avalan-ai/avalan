@@ -147,7 +147,6 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         participant_id: UUID
         namespace: str
         identifier: str
-        data: str
         partitions: int
         symbols: dict | None
         created_at: datetime
@@ -166,11 +165,10 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             SELECT
                 "id",
                 "model_id",
-                "memory_type" as memory_type,
+                "memory_type",
                 "participant_id",
                 "namespace",
                 "identifier",
-                "data",
                 "partitions",
                 "symbols",
                 "created_at",
@@ -198,7 +196,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                     participant_id=record.participant_id,
                     namespace=record.namespace,
                     identifier=record.identifier,
-                    data=record.data,
+                    data=None,
                     partitions=record.partitions,
                     symbols=record.symbols,
                     created_at=record.created_at,

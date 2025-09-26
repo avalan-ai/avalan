@@ -199,7 +199,9 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         client.list_objects_v2.assert_awaited_once_with(
             Bucket="b", Prefix="c/"
         )
-        client.get_object.assert_awaited_once_with(Bucket="b", Key="c/obj.json")
+        client.get_object.assert_awaited_once_with(
+            Bucket="b", Key="c/obj.json"
+        )
         self.assertEqual(len(memories), 1)
         memory_entry = memories[0]
         self.assertEqual(memory_entry.description, "desc")

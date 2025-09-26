@@ -188,8 +188,8 @@ class MemoryListToolTestCase(IsolatedAsyncioTestCase):
     async def test_returns_empty_on_missing_namespace(self):
         ctx = ToolCallContext(participant_id=self.participant_id)
         self.manager.list_memories.side_effect = KeyError("docs")
-        result = await self.tool("docs", context=ctx)
-        self.assertEqual(result, [])
+        with raises(KeyError):
+            await self.tool("docs", context=ctx)
         self.manager.list_memories.assert_awaited_once_with(
             participant_id=self.participant_id,
             namespace="docs",

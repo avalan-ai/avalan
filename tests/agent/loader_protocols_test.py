@@ -61,17 +61,23 @@ protocols = [
         path = tmp_path / "config.toml"
         path.write_text("[other]\nvalue = 1\n", encoding="utf-8")
 
-        assert OrchestratorLoader._load_serve_protocol_strings(str(path)) is None
+        assert (
+            OrchestratorLoader._load_serve_protocol_strings(str(path)) is None
+        )
 
     def test_missing_protocols_key_returns_none(self, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"
         path.write_text("[serve]\nvalue=1\n", encoding="utf-8")
 
-        assert OrchestratorLoader._load_serve_protocol_strings(str(path)) is None
+        assert (
+            OrchestratorLoader._load_serve_protocol_strings(str(path)) is None
+        )
 
 
 class TestResolveServeProtocols:
-    def test_prefers_cli_protocols(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_prefers_cli_protocols(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         expected = {"openai": {"responses"}}
 
         monkeypatch.setattr(
@@ -82,7 +88,9 @@ class TestResolveServeProtocols:
         monkeypatch.setattr(
             OrchestratorLoader,
             "_load_serve_protocol_strings",
-            lambda path: pytest.fail("_load_serve_protocol_strings should not run"),
+            lambda path: pytest.fail(
+                "_load_serve_protocol_strings should not run"
+            ),
         )
 
         result = OrchestratorLoader.resolve_serve_protocols(
@@ -94,7 +102,7 @@ class TestResolveServeProtocols:
 
     def test_reads_from_specs_file(self, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"
-        path.write_text("[serve]\nprotocols=[\"openai\"]\n", encoding="utf-8")
+        path.write_text('[serve]\nprotocols=["openai"]\n', encoding="utf-8")
 
         result = OrchestratorLoader.resolve_serve_protocols(
             specs_path=str(path),

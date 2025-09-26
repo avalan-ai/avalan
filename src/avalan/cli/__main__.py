@@ -1711,8 +1711,9 @@ class CLI:
             action="append",
             dest="protocol",
             help=(
-                "Protocol to expose (e.g. openai, openai:responses,completion). "
-                "May be specified multiple times"
+                "Protocol to expose (e.g. openai,"
+                " openai:responses,completion). May be specified multiple"
+                " times"
             ),
         )
         parser.add_argument(

@@ -109,7 +109,14 @@ class MemoryReadTool(Tool):
 
 
 class MemoryListTool(Tool):
-    """List permanent memories available for a namespace."""
+    """List permanent memories available for a namespace.
+
+    Args:
+        namespace: Namespace to fetch information from.
+
+    Returns:
+        List of memories on the given namespace.
+    """
 
     _memory_manager: MemoryManager
 
@@ -128,13 +135,10 @@ class MemoryListTool(Tool):
             return []
         if not context.participant_id:
             return []
-        try:
-            memories = await self._memory_manager.list_memories(
-                participant_id=context.participant_id,
-                namespace=namespace,
-            )
-        except KeyError:
-            return []
+        memories = await self._memory_manager.list_memories(
+            participant_id=context.participant_id,
+            namespace=namespace,
+        )
         return memories
 
 

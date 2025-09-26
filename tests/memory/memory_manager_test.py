@@ -187,7 +187,9 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
                 function=VectorFunction.L2_DISTANCE,
             )
 
-        self.assertIn("Memory namespace missing not defined", str(caught.exception))
+        self.assertIn(
+            "Memory namespace missing not defined", str(caught.exception)
+        )
         self.tp.assert_not_called()
 
     def test_add_and_delete_permanent_memory(self):

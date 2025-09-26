@@ -112,7 +112,9 @@ def get_orchestrator_settings(
                     else getattr(args, "instructions", None)
                 ),
                 "system": (
-                    system if system is not None else getattr(args, "system", None)
+                    system
+                    if system is not None
+                    else getattr(args, "system", None)
                 ),
                 "developer": (
                     developer

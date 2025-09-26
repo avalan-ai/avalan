@@ -62,7 +62,7 @@ class Memory:
     participant_id: UUID
     namespace: str
     identifier: str
-    data: str
+    data: str | None = None
     partitions: int
     symbols: dict | None
     created_at: datetime
