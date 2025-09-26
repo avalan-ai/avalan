@@ -1271,17 +1271,6 @@ avalan memory document index \
     "https://trucogame.com/pages/reglamento-de-truco-argentino"
 ```
 
-Let's index an arxiv paper (in its PDF format) from September 2025, considerably after the training date of the model we'll later use to query it:
-
-```bash
-avalan memory document index \
-    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
-    --dsn "postgresql://root:password@localhost/avalan" \
-    --namespace "papers.arxiv" \
-    "sentence-transformers/all-MiniLM-L6-v2" \
-    "https://arxiv.org/pdf/2509.17325"
-```
-
 Create an agent, give it access to the indexed memory store and the `memory` tool, and your question:
 
 > [!TIP]
