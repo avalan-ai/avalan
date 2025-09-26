@@ -254,6 +254,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 allow_methods=None,
                 allow_headers=None,
                 allow_credentials=False,
+                protocols=None,
             )
         server.serve.assert_awaited_once()
 
@@ -314,6 +315,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 allow_methods=["GET"],
                 allow_headers=["X-Test"],
                 allow_credentials=True,
+                protocols=None,
             )
         server.serve.assert_awaited_once()
 
@@ -416,6 +418,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             allow_methods=None,
             allow_headers=None,
             allow_credentials=False,
+            protocols=None,
         )
         server.serve.assert_awaited_once()
 

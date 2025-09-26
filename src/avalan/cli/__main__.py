@@ -1702,6 +1702,15 @@ class CLI:
             help="A2A tool description for the agent card",
         )
         parser.add_argument(
+            "--protocol",
+            action="append",
+            dest="protocol",
+            help=(
+                "Protocol to expose (e.g. openai, openai:responses,completion). "
+                "May be specified multiple times"
+            ),
+        )
+        parser.add_argument(
             "--reload",
             action="store_true",
             default=False,

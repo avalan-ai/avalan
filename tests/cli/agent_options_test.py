@@ -58,6 +58,20 @@ class AgentParserOptionsTestCase(TestCase):
         self.assertTrue(args.participant)
         self.assertIsNone(args.id)
 
+    def test_serve_parser_protocol_option(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "serve",
+                "spec.toml",
+                "--protocol",
+                "openai:responses",
+                "--protocol",
+                "mcp",
+            ]
+        )
+        self.assertEqual(args.protocol, ["openai:responses", "mcp"])
+
 
 class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
     async def test_agent_serve_passes_ids(self) -> None:
@@ -82,6 +96,7 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
             cors_method=None,
             cors_header=None,
             cors_credentials=False,
+            protocol=None,
         )
         hub = MagicMock()
         logger = MagicMock(spec=Logger)
@@ -96,4 +111,44 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(srv_patch.call_args.kwargs["agent_id"], "aid")
         self.assertEqual(srv_patch.call_args.kwargs["participant_id"], "pid")
         self.assertEqual(srv_patch.call_args.kwargs["a2a_prefix"], "/a2a")
+        self.assertIsNone(srv_patch.call_args.kwargs["protocols"])
         server.serve.assert_awaited_once()
+
+    async def test_agent_serve_protocols_forwarded(self) -> None:
+        args = Namespace(
+            specifications_file="spec.toml",
+            engine_uri=None,
+            memory_recent=None,
+            tool=None,
+            tools=None,
+            host="localhost",
+            port=9001,
+            openai_prefix="/v1",
+            mcp_prefix="/mcp",
+            a2a_prefix="/a2a",
+            mcp_name="run",
+            mcp_description=None,
+            reload=False,
+            id="aid",
+            participant="pid",
+            cors_origin=None,
+            cors_origin_regex=None,
+            cors_method=None,
+            cors_header=None,
+            cors_credentials=False,
+            protocol=["openai:responses", "a2a"],
+        )
+        hub = MagicMock()
+        logger = MagicMock(spec=Logger)
+        server = MagicMock()
+        server.serve = AsyncMock()
+        with patch(
+            "avalan.cli.commands.agent.agents_server", return_value=server
+        ) as srv_patch:
+            await agent_cmds.agent_serve(args, hub, logger, "name", "v")
+
+        expected_protocols = {
+            "openai": {"responses"},
+            "a2a": set(),
+        }
+        self.assertEqual(srv_patch.call_args.kwargs["protocols"], expected_protocols)

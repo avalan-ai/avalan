@@ -192,3 +192,50 @@ class AgentsServerHttpTestCase(TestCase):
                 )
 
         app.add_middleware.assert_called_once()
+
+    def test_agents_server_protocol_filtering(self) -> None:
+        modules = self._install_modules()
+
+        logger = MagicMock(spec=Logger)
+        logger.handlers = []
+        logger.level = 0
+        logger.propagate = False
+
+        app = MagicMock()
+        app.include_router = MagicMock()
+        app.add_middleware = MagicMock()
+        self.FastAPI.return_value = app
+
+        with patch.dict(sys.modules, modules):
+            with (
+                patch("avalan.server.FastAPI", self.FastAPI),
+                patch("avalan.server.logger_replace"),
+                patch(
+                    "avalan.server.mcp_router.create_router",
+                    return_value=MagicMock(),
+                ) as create_router,
+            ):
+                agents_server(
+                    hub=MagicMock(),
+                    name="srv",
+                    version="v",
+                    host="h",
+                    port=8080,
+                    reload=False,
+                    specs_path=None,
+                    settings=MagicMock(),
+                    tool_settings=None,
+                    mcp_prefix="/m",
+                    openai_prefix="/o",
+                    protocols={"openai": {"responses"}},
+                    mcp_name="run",
+                    mcp_description=None,
+                    logger=logger,
+                )
+
+        app.include_router.assert_any_call(self.responses_router, prefix="/o")
+        app.include_router.assert_any_call(self.engine_router)
+        for args, _ in app.include_router.call_args_list:
+            self.assertNotEqual(args[0], self.chat_router)
+            self.assertNotEqual(args[0], a2a_router)
+        create_router.assert_not_called()

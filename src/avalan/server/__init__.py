@@ -12,11 +12,49 @@ from importlib import import_module
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from logging import Logger
-from typing import TYPE_CHECKING
+from typing import Mapping, TYPE_CHECKING
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
     from uvicorn import Server
+
+
+_ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
+_OPENAI_ENDPOINTS = frozenset({"completions", "responses"})
+
+
+def _normalize_protocols(
+    protocols: Mapping[str, set[str]] | None,
+) -> dict[str, set[str]]:
+    if protocols is None:
+        return {
+            "openai": set(_OPENAI_ENDPOINTS),
+            "mcp": set(),
+            "a2a": set(),
+        }
+
+    normalized: dict[str, set[str]] = {}
+    for name, endpoints in protocols.items():
+        protocol = name.lower()
+        assert protocol in _ALLOWED_PROTOCOLS, f"Unsupported protocol '{name}'"
+        if protocol == "openai":
+            normalized_endpoints = {endpoint.lower() for endpoint in endpoints}
+            if not normalized_endpoints:
+                normalized_endpoints = set(_OPENAI_ENDPOINTS)
+            else:
+                missing = normalized_endpoints - _OPENAI_ENDPOINTS
+                assert not missing, (
+                    f"Unsupported OpenAI endpoints: {sorted(missing)}"
+                )
+            normalized[protocol] = {
+                endpoint for endpoint in normalized_endpoints if endpoint in _OPENAI_ENDPOINTS
+            }
+        else:
+            assert not endpoints, (
+                f"Protocol '{protocol}' does not accept endpoint selection"
+            )
+            normalized[protocol] = set()
+    return normalized
 
 
 def agents_server(
@@ -44,11 +82,14 @@ def agents_server(
     allow_methods: list[str] | None = None,
     allow_headers: list[str] | None = None,
     allow_credentials: bool = False,
+    protocols: Mapping[str, set[str]] | None = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
     assert (specs_path is None) ^ (
         settings is None
     ), "Provide either specs_path or settings, but not both"
+
+    selected_protocols = _normalize_protocols(protocols)
 
     from os import environ
     from uvicorn import Config, Server
@@ -78,15 +119,17 @@ def agents_server(
             app.state.loader = loader
             app.state.logger = logger
             app.state.agent_id = agent_id
-            app.state.a2a_store = TaskStore()
-            app.state.mcp_resource_store = mcp_router.MCPResourceStore()
-            app.state.mcp_resource_base_path = mcp_prefix
-            app.state.mcp_tool_name = mcp_name or "run"
-            if mcp_description:
-                app.state.mcp_tool_description = mcp_description
-            app.state.a2a_tool_name = a2a_tool_name or "run"
-            if a2a_tool_description:
-                app.state.a2a_tool_description = a2a_tool_description
+            if "a2a" in selected_protocols:
+                app.state.a2a_store = TaskStore()
+                app.state.a2a_tool_name = a2a_tool_name or "run"
+                if a2a_tool_description:
+                    app.state.a2a_tool_description = a2a_tool_description
+            if "mcp" in selected_protocols:
+                app.state.mcp_resource_store = mcp_router.MCPResourceStore()
+                app.state.mcp_resource_base_path = mcp_prefix
+                app.state.mcp_tool_name = mcp_name or "run"
+                if mcp_description:
+                    app.state.mcp_tool_description = mcp_description
             yield
 
     logger.debug("Creating %s server", name)
@@ -111,19 +154,28 @@ def agents_server(
         )
 
     logger.debug("Adding routes to %s server", name)
-    chat_router_module = import_module("avalan.server.routers.chat")
-    responses_router_module = import_module("avalan.server.routers.responses")
-    engine_router_module = import_module("avalan.server.routers.engine")
-    a2a_module = import_module("avalan.server.a2a")
-    app.include_router(chat_router_module.router, prefix=openai_prefix)
-    app.include_router(responses_router_module.router, prefix=openai_prefix)
-    app.include_router(engine_router_module.router)
-    app.include_router(a2a_module.router, prefix=a2a_prefix)
-    app.include_router(a2a_module.well_known_router)
+    openai_endpoints = selected_protocols.get("openai")
+    if openai_endpoints:
+        if "completions" in openai_endpoints:
+            chat_router_module = import_module("avalan.server.routers.chat")
+            app.include_router(chat_router_module.router, prefix=openai_prefix)
+        if "responses" in openai_endpoints:
+            responses_router_module = import_module(
+                "avalan.server.routers.responses"
+            )
+            app.include_router(responses_router_module.router, prefix=openai_prefix)
+        engine_router_module = import_module("avalan.server.routers.engine")
+        app.include_router(engine_router_module.router)
 
-    logger.debug("Creating MCP HTTP stream router")
-    mcp_http_router = mcp_router.create_router()
-    app.include_router(mcp_http_router, prefix=mcp_prefix)
+    if "a2a" in selected_protocols:
+        a2a_module = import_module("avalan.server.a2a")
+        app.include_router(a2a_module.router, prefix=a2a_prefix)
+        app.include_router(a2a_module.well_known_router)
+
+    if "mcp" in selected_protocols:
+        logger.debug("Creating MCP HTTP stream router")
+        mcp_http_router = mcp_router.create_router()
+        app.include_router(mcp_http_router, prefix=mcp_prefix)
 
     logger.debug("Starting %s server at %s:%d", name, host, port)
     config = Config(app, host=host, port=port, reload=reload)
