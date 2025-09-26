@@ -1380,6 +1380,9 @@ folder.
 
 Avalan agents can be exposed over three open protocols: OpenAI-compatible REST endpoints (supporting completions and streaming responses), Model Context Protocol (MCP), and Agent to Agent (A2A) as first-class tools. They are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
 
+> [!TIP]
+> Add one or more `--protocol` flags (for example `--protocol openai`) when running `avalan agent serve` to restrict the interfaces you expose without changing your configuration.
+
 All three interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
 
 #### OpenAI completion and responses API
@@ -1419,6 +1422,9 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
+> [!TIP]
+> Use `--protocol openai:responses,completion` to enable both OpenAI Responses and Completions endpoints, or narrow the surface by specifying just `responses` or `completion` after the colon.
+
 #### MCP server
 
 Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
@@ -1436,15 +1442,15 @@ default and can be changed with `--mcp-prefix`.
 
 You can customize the MCP tool identity with `--mcp-name` (defaults to `run`) and `--mcp-description` when running `avalan agent serve`.
 
+> [!TIP]
+> Use `--protocol mcp` (optionally along with other `--protocol` flags) to expose only the MCP interface when serving your agent.
+
 #### A2A server
 
 Avalan also embeds an A2A-compatible server alongside the OpenAI-compatible
 endpoints whenever you run `avalan agent serve`. It is mounted at `/a2a` by
 default and can be configured with `--a2a-prefix`. The A2A surface supports
 streaming, including incremental tool calling and intermediate outputs.
-
-You can customize the A2A agent identity with `--a2a-name` (defaults to `run`)
-and `--a2a-description` when running `avalan agent serve`.
 
 > [!TIP]
 > Use the [a2a inspector](https://github.com/a2aproject/a2a-inspector) and
@@ -1453,6 +1459,12 @@ and `--a2a-description` when running `avalan agent serve`.
 > You can customize the agent identity with `--a2a-name` and
 > `--a2a-description`, then observe the streaming notifications, tool calls,
 > and final responses.
+
+You can customize the A2A agent identity with `--a2a-name` (defaults to `run`)
+and `--a2a-description` when running `avalan agent serve`.
+
+> [!TIP]
+> Use `--protocol a2a` (optionally combined with other `--protocol` flags) to expose just the A2A interface for your served agent.
 
 #### Proxy agents
 
