@@ -24,8 +24,8 @@ from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
 from contextlib import AsyncExitStack
-from logging import Logger, DEBUG, INFO
-from os import access, R_OK
+from logging import DEBUG, INFO, Logger
+from os import R_OK, access
 from os.path import exists
 from tomllib import load
 from typing import Any, Callable
@@ -37,6 +37,15 @@ class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_MAX_TOKENS = 500
     DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE = 125
     DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
+
+    _ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
+    _OPENAI_COMPLETION_ALIASES = frozenset({"chat", "completion", "completions"})
+    _OPENAI_ENDPOINT_COMPLETIONS = "completions"
+    _OPENAI_ENDPOINT_RESPONSES = "responses"
+    _OPENAI_ENDPOINTS = frozenset(
+        {_OPENAI_ENDPOINT_COMPLETIONS, _OPENAI_ENDPOINT_RESPONSES}
+    )
+    _OPENAI_RESPONSES_ALIASES = frozenset({"response", "responses"})
 
     _hub: HuggingfaceHub
     _logger: Logger
@@ -55,6 +64,93 @@ class OrchestratorLoader:
         self._logger = logger
         self._participant_id = participant_id
         self._stack = stack
+
+    @classmethod
+    def _parse_serve_protocols(
+        cls, raw_protocols: list[str] | None
+    ) -> dict[str, set[str]] | None:
+        if not raw_protocols:
+            return None
+
+        selection: dict[str, set[str]] = {}
+        for raw_protocol in raw_protocols:
+            assert raw_protocol, "Protocol value cannot be empty"
+            protocol_part, _, endpoints_part = raw_protocol.partition(":")
+            protocol = protocol_part.strip().lower()
+            assert protocol, "Protocol name cannot be empty"
+            assert (
+                protocol in cls._ALLOWED_PROTOCOLS
+            ), f"Unsupported protocol '{protocol}'"
+
+            endpoints_text = endpoints_part.strip()
+            if endpoints_text:
+                assert (
+                    protocol == "openai"
+                ), "Only the openai protocol accepts endpoint selection"
+                endpoints = selection.setdefault(protocol, set())
+                for endpoint in endpoints_text.split(","):
+                    endpoint_name = endpoint.strip().lower()
+                    assert endpoint_name, "OpenAI endpoint name cannot be empty"
+                    if endpoint_name in cls._OPENAI_COMPLETION_ALIASES:
+                        endpoints.add(cls._OPENAI_ENDPOINT_COMPLETIONS)
+                    elif endpoint_name in cls._OPENAI_RESPONSES_ALIASES:
+                        endpoints.add(cls._OPENAI_ENDPOINT_RESPONSES)
+                    else:
+                        raise AssertionError(
+                            f"Unsupported OpenAI endpoint '{endpoint_name}'"
+                        )
+            else:
+                if protocol == "openai":
+                    selection[protocol] = set(cls._OPENAI_ENDPOINTS)
+                else:
+                    selection[protocol] = set()
+
+        return selection
+
+    @classmethod
+    def _load_serve_protocol_strings(cls, path: str) -> list[str] | None:
+        with open(path, "rb") as file:
+            config = load(file)
+
+        serve_section = config.get("serve")
+        if serve_section is None:
+            return None
+
+        assert isinstance(serve_section, dict), "Serve section must be a table"
+
+        raw_protocols = serve_section.get("protocols")
+        if raw_protocols is None:
+            return None
+
+        assert isinstance(
+            raw_protocols, list
+        ), "Serve protocols must be defined as a list"
+
+        parsed_protocols: list[str] = []
+        for item in raw_protocols:
+            assert isinstance(item, str), "Serve protocol entries must be strings"
+            value = item.strip()
+            assert value, "Serve protocol entries cannot be empty"
+            parsed_protocols.append(value)
+
+        return parsed_protocols
+
+    @classmethod
+    def resolve_serve_protocols(
+        cls,
+        *,
+        specs_path: str | None,
+        cli_protocols: list[str] | None,
+    ) -> dict[str, set[str]] | None:
+        protocols = cls._parse_serve_protocols(cli_protocols)
+        if protocols is not None:
+            return protocols
+
+        if not specs_path:
+            return None
+
+        config_protocols = cls._load_serve_protocol_strings(specs_path)
+        return cls._parse_serve_protocols(config_protocols)
 
     @property
     def hub(self) -> HuggingfaceHub:
