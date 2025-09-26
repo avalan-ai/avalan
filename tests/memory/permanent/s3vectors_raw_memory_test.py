@@ -173,11 +173,26 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         }
         body = MagicMock()
         body.read.return_value = json.dumps(document).encode()
+        mismatch_document = {
+            **document,
+            "participant_id": str(uuid4()),
+        }
+        mismatch_body = MagicMock()
+        mismatch_body.read.return_value = json.dumps(mismatch_document).encode()
         client = AsyncMock()
         client.list_objects_v2.return_value = {
-            "Contents": [{"Key": "c/obj.json"}]
+            "Contents": [
+                {"Key": None},
+                {"Key": "c/no-body.json"},
+                {"Key": "c/mismatch.json"},
+                {"Key": "c/obj.json"},
+            ]
         }
-        client.get_object.return_value = {"Body": body}
+        client.get_object.side_effect = [
+            {},
+            {"Body": mismatch_body},
+            {"Body": body},
+        ]
         memory = S3VectorsRawMemory(
             bucket="b", collection="c", client=client, logger=MagicMock()
         )
@@ -199,8 +214,10 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         client.list_objects_v2.assert_awaited_once_with(
             Bucket="b", Prefix="c/"
         )
-        client.get_object.assert_awaited_once_with(
-            Bucket="b", Key="c/obj.json"
+        self.assertEqual(len(client.get_object.await_args_list), 3)
+        self.assertEqual(
+            client.get_object.await_args_list[-1].kwargs,
+            {"Bucket": "b", "Key": "c/obj.json"},
         )
         self.assertEqual(len(memories), 1)
         memory_entry = memories[0]
