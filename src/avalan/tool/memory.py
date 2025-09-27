@@ -148,7 +148,10 @@ class MemoryListTool(Tool):
 
 
 class MemoryStoresTool(Tool):
-    """List configured permanent memory stores."""
+    """List memory stores available.
+
+    Returns:
+        List of memory stores."""
 
     _memory_manager: MemoryManager
 
