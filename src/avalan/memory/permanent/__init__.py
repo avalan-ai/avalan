@@ -5,7 +5,7 @@ from ...entities import (
     MessageContentText,
     MessageRole,
 )
-from ...memory import MessageMemory, MemoryStore
+from ...memory import MessageMemory, MemoryStore as MemoryStoreBase
 from ...memory.partitioner.text import TextPartition
 from ...model.nlp.sentence import SentenceTransformerModel
 from dataclasses import dataclass
@@ -66,6 +66,12 @@ class Memory:
     partitions: int
     symbols: dict | None
     created_at: datetime
+    description: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PermanentMemoryStore:
+    namespace: str
     description: str | None = None
 
 
@@ -306,7 +312,7 @@ class PermanentMessageMemory(MessageMemory):
         )
 
 
-class PermanentMemory(MemoryStore[Memory]):
+class PermanentMemory(MemoryStoreBase[Memory]):
     _sentence_model: SentenceTransformerModel
 
     def __init__(

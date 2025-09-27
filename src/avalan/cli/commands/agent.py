@@ -9,6 +9,7 @@ from ...entities import (
     Backend,
     GenerationCacheStrategy,
     OrchestratorSettings,
+    PermanentMemoryStoreSettings,
     ToolCall,
     ToolFormat,
 )
@@ -30,8 +31,20 @@ from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
-from typing import Mapping
+from typing import Iterable, Mapping
 from uuid import UUID, uuid4
+
+
+def _parse_permanent_memory_items(
+    items: Iterable[str],
+) -> dict[str, PermanentMemoryStoreSettings]:
+    stores: dict[str, PermanentMemoryStoreSettings] = {}
+    for item in items:
+        namespace, value = item.split("@", 1)
+        namespace = namespace.strip()
+        assert namespace, "Permanent memory namespace must be provided"
+        stores[namespace] = OrchestratorLoader.parse_permanent_store_value(value)
+    return stores
 
 
 def get_orchestrator_settings(
@@ -144,15 +157,13 @@ def get_orchestrator_settings(
             else args.memory_permanent_message
         ),
         permanent_memory=(
-            {
-                ns: dsn
-                for ns, dsn in (
-                    item.split("@", 1)
-                    for item in memory_permanent or args.memory_permanent or []
-                )
-            }
-            if (memory_permanent or args.memory_permanent)
-            else None
+            _parse_permanent_memory_items(memory_permanent)
+            if memory_permanent is not None
+            else (
+                _parse_permanent_memory_items(args.memory_permanent)
+                if args.memory_permanent
+                else None
+            )
         ),
         memory_recent=memory_recent,
         sentence_model_id=(

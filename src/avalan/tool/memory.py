@@ -2,7 +2,12 @@ from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
-from ..memory.permanent import Memory, PermanentMemoryPartition, VectorFunction
+from ..memory.permanent import (
+    Memory,
+    PermanentMemoryPartition,
+    PermanentMemoryStore,
+    VectorFunction,
+)
 
 from contextlib import AsyncExitStack
 
@@ -142,6 +147,24 @@ class MemoryListTool(Tool):
         return memories
 
 
+class MemoryStoresTool(Tool):
+    """List configured permanent memory stores."""
+
+    _memory_manager: MemoryManager
+
+    def __init__(self, memory_manager: MemoryManager) -> None:
+        super().__init__()
+        self._memory_manager = memory_manager
+        self.__name__ = "stores"
+
+    async def __call__(
+        self,
+        *,
+        context: ToolCallContext,
+    ) -> list[PermanentMemoryStore]:
+        return self._memory_manager.list_permanent_memory_stores()
+
+
 class MemoryToolSet(ToolSet):
     @override
     def __init__(
@@ -155,6 +178,7 @@ class MemoryToolSet(ToolSet):
             MessageReadTool(memory_manager),
             MemoryReadTool(memory_manager),
             MemoryListTool(memory_manager),
+            MemoryStoresTool(memory_manager),
         ]
         super().__init__(
             exit_stack=exit_stack, namespace=namespace, tools=tools

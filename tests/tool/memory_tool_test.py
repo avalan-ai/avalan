@@ -5,11 +5,16 @@ from avalan.entities import (
     ToolCallContext,
 )
 from avalan.memory.manager import MemoryManager
-from avalan.memory.permanent import PermanentMemoryPartition, VectorFunction
+from avalan.memory.permanent import (
+    PermanentMemoryPartition,
+    PermanentMemoryStore,
+    VectorFunction,
+)
 from avalan.tool.memory import (
     MemoryListTool,
     MemoryReadTool,
     MemoryToolSet,
+    MemoryStoresTool,
     MessageReadTool,
 )
 from contextlib import AsyncExitStack
@@ -31,11 +36,12 @@ class MemoryToolSetTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(toolset.namespace, "mem")
-        self.assertEqual(len(toolset.tools), 3)
-        message_tool, memory_tool, list_tool = toolset.tools
+        self.assertEqual(len(toolset.tools), 4)
+        message_tool, memory_tool, list_tool, stores_tool = toolset.tools
         self.assertIsInstance(message_tool, MessageReadTool)
         self.assertIsInstance(memory_tool, MemoryReadTool)
         self.assertIsInstance(list_tool, MemoryListTool)
+        self.assertIsInstance(stores_tool, MemoryStoresTool)
 
         result = await toolset.__aenter__()
 
@@ -45,6 +51,7 @@ class MemoryToolSetTestCase(IsolatedAsyncioTestCase):
                 call(message_tool),
                 call(memory_tool),
                 call(list_tool),
+                call(stores_tool),
             ]
         )
 
@@ -205,6 +212,35 @@ class MemoryListToolTestCase(IsolatedAsyncioTestCase):
             namespace="docs",
         )
         self.assertIs(result, memories)
+
+
+class MemoryStoresToolTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.manager = AsyncMock(spec=MemoryManager)
+        self.tool = MemoryStoresTool(self.manager)
+
+    async def test_returns_empty_when_no_stores(self):
+        self.manager.list_permanent_memory_stores.return_value = []
+        result = await self.tool(context=ToolCallContext())
+        self.assertEqual(result, [])
+        self.manager.list_permanent_memory_stores.assert_called_once_with()
+
+    async def test_returns_single_store(self):
+        store = PermanentMemoryStore(namespace="docs", description=None)
+        self.manager.list_permanent_memory_stores.return_value = [store]
+        result = await self.tool(context=ToolCallContext())
+        self.assertEqual(result, [store])
+        self.manager.list_permanent_memory_stores.assert_called_once_with()
+
+    async def test_returns_multiple_stores(self):
+        stores = [
+            PermanentMemoryStore(namespace="docs", description="Documents"),
+            PermanentMemoryStore(namespace="code", description=None),
+        ]
+        self.manager.list_permanent_memory_stores.return_value = stores
+        result = await self.tool(context=ToolCallContext())
+        self.assertEqual(result, stores)
+        self.manager.list_permanent_memory_stores.assert_called_once_with()
 
 
 if __name__ == "__main__":

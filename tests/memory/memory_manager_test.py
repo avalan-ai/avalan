@@ -6,6 +6,7 @@ from avalan.memory import RecentMessageMemory
 from avalan.memory.permanent import (
     PermanentMessageMemory,
     PermanentMemory,
+    PermanentMemoryStore,
     VectorFunction,
 )
 from uuid import uuid4
@@ -206,9 +207,12 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
 
     def test_add_and_delete_permanent_memory(self):
         self.manager.add_permanent_memory("code", self.permanent)
-        self.assertIn("code", self.manager._permanent_memories)
+        self.assertIn("code", self.manager._permanent_memory_stores)
+        store = self.manager._permanent_memory_stores["code"]
+        self.assertIs(store[0], self.permanent)
+        self.assertIsNone(store[1])
         self.manager.delete_permanent_memory("code")
-        self.assertNotIn("code", self.manager._permanent_memories)
+        self.assertNotIn("code", self.manager._permanent_memory_stores)
 
     async def test_list_permanent_memories(self):
         namespace = "docs"
@@ -227,6 +231,18 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
             namespace=namespace,
         )
         self.assertIs(memories, expected)
+
+    def test_list_permanent_memory_stores(self):
+        stores = self.manager.list_permanent_memory_stores()
+        self.assertEqual(stores, [])
+        self.manager.add_permanent_memory(
+            "code", self.permanent, description="Code docs"
+        )
+        stores = self.manager.list_permanent_memory_stores()
+        self.assertEqual(len(stores), 1)
+        self.assertIsInstance(stores[0], PermanentMemoryStore)
+        self.assertEqual(stores[0].namespace, "code")
+        self.assertEqual(stores[0].description, "Code docs")
 
 
 class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
@@ -257,11 +273,14 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=RecentMessageMemory(),
             text_partitioner=tp,
             logger=MagicMock(),
-            permanent_memories={"code": pmem},
+            permanent_memory_stores={
+                "code": (pmem, "Docs"),
+            },
             event_manager=MagicMock(spec=EventManager),
         )
         self.assertTrue(manager.has_recent_message)
-        self.assertIn("code", manager._permanent_memories)
+        self.assertIn("code", manager._permanent_memory_stores)
+        self.assertEqual(manager._permanent_memory_stores["code"][1], "Docs")
 
         pmem2 = MagicMock(spec=PermanentMemory)
         manager = MemoryManager(
@@ -271,10 +290,14 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             recent_message_memory=RecentMessageMemory(),
             text_partitioner=tp,
             logger=MagicMock(),
-            permanent_memories={"code": pmem, "docs": pmem2},
+            permanent_memory_stores={
+                "code": (pmem, "Docs"),
+                "docs": (pmem2, "Documents"),
+            },
             event_manager=MagicMock(spec=EventManager),
         )
-        self.assertEqual(len(manager._permanent_memories), 2)
+        self.assertEqual(len(manager._permanent_memory_stores), 2)
+        self.assertEqual(manager._permanent_memory_stores["docs"][1], "Documents")
 
 
 class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):

@@ -7,6 +7,7 @@ from ..memory.permanent import (
     Memory,
     PermanentMemory,
     PermanentMemoryPartition,
+    PermanentMemoryStore,
     PermanentMessageMemory,
     VectorFunction,
 )
@@ -20,7 +21,7 @@ class MemoryManager:
     _agent_id: UUID
     _participant_id: UUID
     _permanent_message_memory: PermanentMessageMemory | None = None
-    _permanent_memories: dict[str, PermanentMemory]
+    _permanent_memory_stores: dict[str, tuple[PermanentMemory, str | None]]
     _recent_message_memory: RecentMessageMemory | None = None
     _text_partitioner: TextPartitioner
     _logger: Logger
@@ -71,22 +72,27 @@ class MemoryManager:
         text_partitioner: TextPartitioner,
         logger: Logger,
         event_manager: EventManager | None = None,
-        permanent_memories: dict[str, PermanentMemory] | None = None,
+        permanent_memory_stores: dict[str, tuple[PermanentMemory, str | None]] | None = None,
     ):
         assert agent_id and participant_id
         self._logger = logger
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._text_partitioner = text_partitioner
-        self._permanent_memories = {}
+        self._permanent_memory_stores = {}
         self._event_manager = event_manager
         if permanent_message_memory:
             self.add_permanent_message_memory(permanent_message_memory)
         if recent_message_memory:
             self.add_recent_message_memory(recent_message_memory)
-        if permanent_memories:
-            for namespace, memory in permanent_memories.items():
-                self.add_permanent_memory(namespace, memory)
+        if permanent_memory_stores:
+            for namespace, store in permanent_memory_stores.items():
+                memory, description = store
+                self.add_permanent_memory(
+                    namespace,
+                    memory,
+                    description=description,
+                )
 
     @property
     def participant_id(self) -> UUID:
@@ -124,13 +130,23 @@ class MemoryManager:
         self._permanent_message_memory = memory
 
     def add_permanent_memory(
-        self, namespace: str, memory: PermanentMemory
+        self,
+        namespace: str,
+        memory: PermanentMemory,
+        *,
+        description: str | None = None,
     ) -> None:
         assert namespace and memory
-        self._permanent_memories[namespace] = memory
+        self._permanent_memory_stores[namespace] = (memory, description)
 
     def delete_permanent_memory(self, namespace: str) -> None:
-        self._permanent_memories.pop(namespace, None)
+        self._permanent_memory_stores.pop(namespace, None)
+
+    def list_permanent_memory_stores(self) -> list[PermanentMemoryStore]:
+        return [
+            PermanentMemoryStore(namespace=namespace, description=description)
+            for namespace, (_, description) in self._permanent_memory_stores.items()
+        ]
 
     async def append_message(self, engine_message: EngineMessage) -> None:
         if not (
@@ -336,12 +352,12 @@ class MemoryManager:
         function: VectorFunction,
         limit: int | None = None,
     ) -> list[PermanentMemoryPartition]:
-        if namespace not in self._permanent_memories:
+        if namespace not in self._permanent_memory_stores:
             raise KeyError(f"Memory namespace {namespace} not defined")
 
         search_partitions = await self._text_partitioner(search)
-        memory_store = self._permanent_memories[namespace]
-        memories = await memory_store.search_memories(
+        store, _ = self._permanent_memory_stores[namespace]
+        memories = await store.search_memories(
             search_partitions=search_partitions,
             participant_id=participant_id,
             namespace=namespace,
@@ -356,11 +372,11 @@ class MemoryManager:
         participant_id: UUID,
         namespace: str,
     ) -> list[Memory]:
-        if namespace not in self._permanent_memories:
+        if namespace not in self._permanent_memory_stores:
             raise KeyError(f"Memory namespace {namespace} not defined")
 
-        memory_store = self._permanent_memories[namespace]
-        memories = await memory_store.list_memories(
+        store, _ = self._permanent_memory_stores[namespace]
+        memories = await store.list_memories(
             participant_id=participant_id,
             namespace=namespace,
         )

@@ -1,4 +1,5 @@
 from avalan.agent.loader import OrchestratorLoader
+from avalan.entities import PermanentMemoryStoreSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from contextlib import AsyncExitStack
 from logging import Logger
@@ -60,7 +61,14 @@ debug_source = \"{debug_file.name}\"
                 )
                 self.assertEqual(
                     settings.permanent_memory,
-                    {"ns1": "dsn1", "ns2": "dsn2"},
+                    {
+                        "ns1": PermanentMemoryStoreSettings(
+                            dsn="dsn1", description=None
+                        ),
+                        "ns2": PermanentMemoryStoreSettings(
+                            dsn="dsn2", description=None
+                        ),
+                    },
                 )
                 bts_patch.assert_called_once()
                 self.assertEqual(

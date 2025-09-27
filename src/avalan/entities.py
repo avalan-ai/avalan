@@ -629,6 +629,12 @@ class ModelConfig:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class PermanentMemoryStoreSettings:
+    dsn: str
+    description: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class OrchestratorSettings:
     agent_id: UUID
     orchestrator_type: str | None
@@ -638,7 +644,7 @@ class OrchestratorSettings:
     call_options: dict | None
     template_vars: dict | None
     memory_permanent_message: str | None
-    permanent_memory: dict[str, str] | None
+    permanent_memory: dict[str, PermanentMemoryStoreSettings] | None
     memory_recent: bool
     sentence_model_id: str
     sentence_model_engine_config: dict | None
