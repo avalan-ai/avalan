@@ -1,5 +1,9 @@
 from avalan.agent.loader import OrchestratorLoader
-from avalan.entities import OrchestratorSettings, ToolFormat
+from avalan.entities import (
+    OrchestratorSettings,
+    PermanentMemoryStoreSettings,
+    ToolFormat,
+)
 from avalan.event import Event, EventType
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from contextlib import AsyncExitStack
@@ -8,7 +12,7 @@ from os import chmod, geteuid
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Callable
 from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
@@ -1020,18 +1024,21 @@ uri = \"ai://local/model\"
 permanent = {{ {entries} }}
 """
         cases = [
-            {"code": "dsn1"},
-            {"code": "dsn1", "docs": "dsn2"},
+            {"code": ("dsn1", None)},
+            {"code": ("dsn1", None), "docs": ("dsn2", None)},
             {
-                "code": "dsn1",
-                "docs": "dsn2",
-                "more": "dsn3",
+                "code": ("dsn1", "Code entries"),
+                "docs": ("dsn2", None),
+                "more": ("dsn3", "More docs"),
             },
         ]
 
         for case in cases:
             with self.subTest(case=case):
-                entries = ", ".join(f'{k} = "{v}"' for k, v in case.items())
+                entries = ", ".join(
+                    f'{k} = "{dsn}{"," + desc if desc else ""}"'
+                    for k, (dsn, desc) in case.items()
+                )
                 config = config_tmpl.format(entries=entries)
                 with TemporaryDirectory() as tmp:
                     path = f"{tmp}/agent.toml"
@@ -1058,7 +1065,13 @@ permanent = {{ {entries} }}
                         self.assertEqual(result, "orch")
                         lfs_patch.assert_awaited_once()
                         settings = lfs_patch.call_args.args[0]
-                        self.assertEqual(settings.permanent_memory, case)
+                        expected = {
+                            k: PermanentMemoryStoreSettings(
+                                dsn=dsn, description=desc
+                            )
+                            for k, (dsn, desc) in case.items()
+                        }
+                        self.assertEqual(settings.permanent_memory, expected)
                     await stack.aclose()
 
     async def test_engine_only_generates_id(self):
@@ -1308,12 +1321,29 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         )
 
         cases = [
-            {"code": "dsn1"},
-            {"code": "dsn1", "docs": "dsn2"},
             {
-                "code": "dsn1",
-                "docs": "dsn2",
-                "more": "dsn3",
+                "code": PermanentMemoryStoreSettings(
+                    dsn="dsn1", description=None
+                )
+            },
+            {
+                "code": PermanentMemoryStoreSettings(
+                    dsn="dsn1", description="Code store"
+                ),
+                "docs": PermanentMemoryStoreSettings(
+                    dsn="dsn2", description=None
+                ),
+            },
+            {
+                "code": PermanentMemoryStoreSettings(
+                    dsn="dsn1", description="Code entries"
+                ),
+                "docs": PermanentMemoryStoreSettings(
+                    dsn="dsn2", description="Docs store"
+                ),
+                "more": PermanentMemoryStoreSettings(
+                    dsn="dsn3", description=None
+                ),
             },
         ]
 
@@ -1340,6 +1370,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     permanent_memory=case,
                 )
 
+                store_instances = [MagicMock() for _ in case]
                 with (
                     patch(
                         "avalan.agent.loader.SentenceTransformerModel",
@@ -1356,7 +1387,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     ),
                     patch(
                         "avalan.agent.loader.PgsqlRawMemory.create_instance",
-                        new=AsyncMock(side_effect=[MagicMock() for _ in case]),
+                        new=AsyncMock(side_effect=store_instances),
                     ) as pg_patch,
                     patch(
                         "avalan.agent.loader.DefaultOrchestrator",
@@ -1380,8 +1411,24 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     await loader.from_settings(settings)
 
                     self.assertEqual(pg_patch.await_count, len(case))
+                    expected_store_calls = [
+                        call(dsn=store_settings.dsn, logger=logger)
+                        for store_settings in case.values()
+                    ]
+                    pg_patch.assert_has_awaits(expected_store_calls)
+                    expected_add_calls = [
+                        call(
+                            namespace,
+                            instance,
+                            description=case[namespace].description,
+                        )
+                        for (namespace, instance) in zip(
+                            case.keys(), store_instances
+                        )
+                    ]
                     self.assertEqual(
-                        memory.add_permanent_memory.call_count, len(case)
+                        memory.add_permanent_memory.call_args_list,
+                        expected_add_calls,
                     )
                 await stack.aclose()
 

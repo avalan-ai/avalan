@@ -4,6 +4,7 @@ from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
 from ..entities import (
     EngineUri,
     OrchestratorSettings,
+    PermanentMemoryStoreSettings,
     TransformerEngineSettings,
     ToolFormat,
     ToolManagerSettings,
@@ -73,6 +74,21 @@ class OrchestratorLoader:
         self._logger = logger
         self._participant_id = participant_id
         self._stack = stack
+
+    @staticmethod
+    def parse_permanent_store_value(
+        value: str,
+    ) -> PermanentMemoryStoreSettings:
+        raw_value = value.strip()
+        description: str | None = None
+        if "," in raw_value:
+            dsn, description_part = raw_value.split(",", 1)
+            description = description_part.strip() or None
+        else:
+            dsn = raw_value
+        dsn = dsn.strip()
+        assert dsn, "Permanent memory store DSN must be provided"
+        return PermanentMemoryStoreSettings(dsn=dsn, description=description)
 
     @classmethod
     def _parse_serve_protocols(
@@ -264,14 +280,16 @@ class OrchestratorLoader:
                 else None
             )
 
-            memory_permanent: dict[str, str] | None = None
+            memory_permanent: dict[str, PermanentMemoryStoreSettings] | None = None
             if memory_options and "permanent" in memory_options:
                 memory_permanent_option = memory_options["permanent"]
                 assert isinstance(
                     memory_permanent_option, dict
                 ), "Permanent memory should be a mapping"
                 memory_permanent = {
-                    str(ns): str(dsn)
+                    str(ns): OrchestratorLoader.parse_permanent_store_value(
+                        str(dsn)
+                    )
                     for ns, dsn in memory_permanent_option.items()
                 }
             memory_recent = (
@@ -462,16 +480,22 @@ class OrchestratorLoader:
             event_manager=event_manager,
         )
 
-        for namespace, dsn in (settings.permanent_memory or {}).items():
+        for namespace, store_settings in (
+            settings.permanent_memory or {}
+        ).items():
             _l(
                 "Loading permanent memory %s for agent %s",
                 namespace,
                 settings.agent_id,
             )
             store = await PgsqlRawMemory.create_instance(
-                dsn=dsn, logger=self._logger
+                dsn=store_settings.dsn, logger=self._logger
             )
-            memory.add_permanent_memory(namespace, store)
+            memory.add_permanent_memory(
+                namespace,
+                store,
+                description=store_settings.description,
+            )
 
         _l(
             "Loading tool manager for agent %s with partitioner and a sentence"

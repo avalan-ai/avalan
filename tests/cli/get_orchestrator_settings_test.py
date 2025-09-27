@@ -4,6 +4,7 @@ from uuid import UUID
 
 from avalan.cli.commands import agent as agent_cmds
 from avalan.agent.loader import OrchestratorLoader
+from avalan.entities import PermanentMemoryStoreSettings
 
 
 class GetOrchestratorSettingsTestCase(unittest.TestCase):
@@ -150,7 +151,10 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             {"name": "x", "role": "y", "task": "z", "instructions": "j"},
         )
         self.assertEqual(result.memory_permanent_message, "dsn")
-        self.assertEqual(result.permanent_memory, {"ns": "dsn2"})
+        self.assertEqual(
+            result.permanent_memory,
+            {"ns": PermanentMemoryStoreSettings(dsn="dsn2", description=None)},
+        )
         self.assertEqual(result.tools, ["b"])
         self.assertEqual(result.sentence_model_id, "m")
         self.assertEqual(result.engine_config, {"backend": "transformers"})
@@ -182,3 +186,34 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             result.call_options["chat_settings"]["enable_thinking"]
         )
         self.assertEqual(result.engine_config, {"backend": "transformers"})
+
+    def test_permanent_memory_cli_with_description(self):
+        args = Namespace(
+            name="agent",
+            role="role",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message=None,
+            memory_permanent=["docs@dsn,Documents"],
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000099")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(
+            result.permanent_memory,
+            {
+                "docs": PermanentMemoryStoreSettings(
+                    dsn="dsn", description="Documents"
+                )
+            },
+        )
