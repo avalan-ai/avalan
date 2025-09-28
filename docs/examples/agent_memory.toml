@@ -12,7 +12,7 @@ about card games.
 uri = "ai://local/openai/gpt-oss-20b"
 backend = "mlx"
 
-[tools]
+[tool]
 enable = ["memory"]
 format = "harmony"
 
