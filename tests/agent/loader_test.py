@@ -561,6 +561,36 @@ enable = 3
 
             await stack.aclose()
 
+    async def test_engine_section_tools_option_not_supported(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+tools = [\"math.calculator\"]
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaises(AssertionError):
+                await loader.from_file(path, agent_id=uuid4())
+
+            await stack.aclose()
+
     async def test_tools_format_variants(self):
         for value, expected in (
             ("react", ToolFormat.REACT),

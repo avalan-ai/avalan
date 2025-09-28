@@ -234,6 +234,12 @@ class OrchestratorLoader:
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
+            assert (
+                "tools" not in engine_config
+            ), (
+                "tools option in [engine] is no longer supported; "
+                "configure tools under [tools.enable]"
+            )
             tools_section = config.get("tools")
             if tools_section is None:
                 tools_section = {}
@@ -257,12 +263,6 @@ class OrchestratorLoader:
                             tool_name, str
                         ), "tools.enable entries must be strings"
                         enable_tools.append(tool_name)
-            legacy_tools = engine_config.pop("tools", None)
-            if enable_tools is None and legacy_tools is not None:
-                if isinstance(legacy_tools, str):
-                    enable_tools = [legacy_tools]
-                else:
-                    enable_tools = legacy_tools
             engine_config.pop("uri", None)
             orchestrator_type = (
                 config["agent"]["type"] if "type" in config["agent"] else None
