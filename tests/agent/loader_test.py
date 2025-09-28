@@ -384,7 +384,7 @@ role = \"assistant\"
 [engine]
 uri = \"ai://local/model\"
 
-[tool]
+[tools]
 format = \"react\"
 """
         with TemporaryDirectory() as tmp:
@@ -451,6 +451,158 @@ format = \"react\"
                 settings = tm_patch.call_args.kwargs["settings"]
                 self.assertEqual(settings.tool_format, ToolFormat.REACT)
             await stack.aclose()
+
+    async def test_tools_enable_accepts_list(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tools]
+enable = [\"math.calculator\", \"browser.open\"]
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=uuid4())
+
+                self.assertEqual(result, "orch")
+                settings = from_settings.call_args.args[0]
+                self.assertEqual(
+                    settings.tools, ["math.calculator", "browser.open"]
+                )
+            await stack.aclose()
+
+    async def test_tools_enable_accepts_string(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tools]
+enable = \"math.calculator\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(path, agent_id=uuid4())
+
+                settings = from_settings.call_args.args[0]
+                self.assertEqual(settings.tools, ["math.calculator"])
+            await stack.aclose()
+
+    async def test_tools_enable_invalid_type(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tools]
+enable = 3
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaises(AssertionError):
+                await loader.from_file(path, agent_id=uuid4())
+
+            await stack.aclose()
+
+    async def test_tools_format_variants(self):
+        for value, expected in (
+            ("react", ToolFormat.REACT),
+            ("json", ToolFormat.JSON),
+            ("openai", ToolFormat.OPENAI),
+        ):
+            with self.subTest(value=value):
+                config = f"""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tools]
+format = \"{value}\"
+"""
+                with TemporaryDirectory() as tmp:
+                    path = f"{tmp}/agent.toml"
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(config)
+
+                    stack = AsyncExitStack()
+                    hub = MagicMock(spec=HuggingfaceHub)
+                    logger = MagicMock(spec=Logger)
+
+                    with patch.object(
+                        OrchestratorLoader,
+                        "from_settings",
+                        new=AsyncMock(return_value="orch"),
+                    ) as from_settings:
+                        loader = OrchestratorLoader(
+                            hub=hub,
+                            logger=logger,
+                            participant_id=uuid4(),
+                            stack=stack,
+                        )
+                        await loader.from_file(path, agent_id=uuid4())
+
+                        tool_format = from_settings.call_args.kwargs["tool_format"]
+                        self.assertEqual(tool_format, expected)
+                    await stack.aclose()
 
     async def test_tool_settings_argument(self):
         config = """

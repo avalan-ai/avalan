@@ -234,11 +234,36 @@ class OrchestratorLoader:
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
-            enable_tools = (
-                engine_config["tools"] if "tools" in engine_config else None
-            )
+            tools_section = config.get("tools")
+            if tools_section is None:
+                tools_section = {}
+            else:
+                assert isinstance(
+                    tools_section, dict
+                ), "Tools section must be a mapping"
+
+            enable_tools_config = tools_section.get("enable")
+            enable_tools: list[str] | None = None
+            if enable_tools_config is not None:
+                if isinstance(enable_tools_config, str):
+                    enable_tools = [enable_tools_config]
+                else:
+                    assert isinstance(
+                        enable_tools_config, list
+                    ), "tools.enable must be a string or a list of strings"
+                    enable_tools = []
+                    for tool_name in enable_tools_config:
+                        assert isinstance(
+                            tool_name, str
+                        ), "tools.enable entries must be strings"
+                        enable_tools.append(tool_name)
+            legacy_tools = engine_config.pop("tools", None)
+            if enable_tools is None and legacy_tools is not None:
+                if isinstance(legacy_tools, str):
+                    enable_tools = [legacy_tools]
+                else:
+                    enable_tools = legacy_tools
             engine_config.pop("uri", None)
-            engine_config.pop("tools", None)
             orchestrator_type = (
                 config["agent"]["type"] if "type" in config["agent"] else None
             )
@@ -391,9 +416,11 @@ class OrchestratorLoader:
             )
 
             tool_format = None
-            tool_format_str = tool_section.get("format")
+            tool_format_str = tools_section.get("format")
             if tool_format_str:
                 tool_format = ToolFormat(tool_format_str)
+            elif "format" in tool_section:
+                tool_format = ToolFormat(tool_section["format"])
 
             _l("Loaded agent from %s", path, is_debug=False)
 
