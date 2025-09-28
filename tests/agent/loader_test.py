@@ -384,7 +384,7 @@ role = \"assistant\"
 [engine]
 uri = \"ai://local/model\"
 
-[tools]
+[tool]
 format = \"react\"
 """
         with TemporaryDirectory() as tmp:
@@ -452,7 +452,7 @@ format = \"react\"
                 self.assertEqual(settings.tool_format, ToolFormat.REACT)
             await stack.aclose()
 
-    async def test_tools_enable_accepts_list(self):
+    async def test_tool_enable_accepts_list(self):
         config = """
 [agent]
 role = \"assistant\"
@@ -460,7 +460,7 @@ role = \"assistant\"
 [engine]
 uri = \"ai://local/model\"
 
-[tools]
+[tool]
 enable = [\"math.calculator\", \"browser.open\"]
 """
         with TemporaryDirectory() as tmp:
@@ -492,7 +492,7 @@ enable = [\"math.calculator\", \"browser.open\"]
                 )
             await stack.aclose()
 
-    async def test_tools_enable_accepts_string(self):
+    async def test_tool_enable_accepts_string(self):
         config = """
 [agent]
 role = \"assistant\"
@@ -500,7 +500,7 @@ role = \"assistant\"
 [engine]
 uri = \"ai://local/model\"
 
-[tools]
+[tool]
 enable = \"math.calculator\"
 """
         with TemporaryDirectory() as tmp:
@@ -529,7 +529,7 @@ enable = \"math.calculator\"
                 self.assertEqual(settings.tools, ["math.calculator"])
             await stack.aclose()
 
-    async def test_tools_enable_invalid_type(self):
+    async def test_tool_enable_invalid_type(self):
         config = """
 [agent]
 role = \"assistant\"
@@ -537,7 +537,7 @@ role = \"assistant\"
 [engine]
 uri = \"ai://local/model\"
 
-[tools]
+[tool]
 enable = 3
 """
         with TemporaryDirectory() as tmp:
@@ -591,7 +591,7 @@ tools = [\"math.calculator\"]
 
             await stack.aclose()
 
-    async def test_tools_format_variants(self):
+    async def test_tool_format_variants(self):
         for value, expected in (
             ("react", ToolFormat.REACT),
             ("json", ToolFormat.JSON),
@@ -605,7 +605,7 @@ role = \"assistant\"
 [engine]
 uri = \"ai://local/model\"
 
-[tools]
+[tool]
 format = \"{value}\"
 """
                 with TemporaryDirectory() as tmp:

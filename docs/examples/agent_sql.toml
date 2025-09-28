@@ -20,7 +20,7 @@ db_engine = "MySQL"
 uri = "ai://local/openai/gpt-oss-20b"
 backend = "mlx"
 
-[tools]
+[tool]
 enable = ["database"]
 format = "harmony"
 

@@ -238,17 +238,17 @@ class OrchestratorLoader:
                 "tools" not in engine_config
             ), (
                 "tools option in [engine] is no longer supported; "
-                "configure tools under [tools.enable]"
+                "configure tools under [tool.enable]"
             )
-            tools_section = config.get("tools")
-            if tools_section is None:
-                tools_section = {}
+            tool_section = config.get("tool")
+            if tool_section is None:
+                tool_section = {}
             else:
                 assert isinstance(
-                    tools_section, dict
-                ), "Tools section must be a mapping"
+                    tool_section, dict
+                ), "Tool section must be a mapping"
 
-            enable_tools_config = tools_section.get("enable")
+            enable_tools_config = tool_section.get("enable")
             enable_tools: list[str] | None = None
             if enable_tools_config is not None:
                 if isinstance(enable_tools_config, str):
@@ -256,12 +256,12 @@ class OrchestratorLoader:
                 else:
                     assert isinstance(
                         enable_tools_config, list
-                    ), "tools.enable must be a string or a list of strings"
+                    ), "tool.enable must be a string or a list of strings"
                     enable_tools = []
                     for tool_name in enable_tools_config:
                         assert isinstance(
                             tool_name, str
-                        ), "tools.enable entries must be strings"
+                        ), "tool.enable entries must be strings"
                         enable_tools.append(tool_name)
             engine_config.pop("uri", None)
             orchestrator_type = (
@@ -383,10 +383,20 @@ class OrchestratorLoader:
                 log_events=True,
             )
 
-            tool_section = config.get("tool", {})
-            browser_config = tool_section.get("browser", {}).get("open")
-            if not browser_config and "browser" in tool_section:
-                browser_config = tool_section["browser"]
+            browser_config = None
+            browser_section = tool_section.get("browser")
+            if browser_section is not None:
+                assert isinstance(
+                    browser_section, dict
+                ), "tool.browser section must be a mapping"
+                browser_open_section = browser_section.get("open")
+                if browser_open_section is not None:
+                    assert isinstance(
+                        browser_open_section, dict
+                    ), "tool.browser.open section must be a mapping"
+                    browser_config = browser_open_section
+                else:
+                    browser_config = browser_section
             browser_settings = None
             if browser_config:
                 if "debug_source" in browser_config and isinstance(
@@ -400,6 +410,9 @@ class OrchestratorLoader:
             database_settings = None
             database_config = tool_section.get("database")
             if database_config:
+                assert isinstance(
+                    database_config, dict
+                ), "tool.database section must be a mapping"
                 database_settings = DatabaseToolSettings(**database_config)
 
             if tool_settings:
@@ -416,11 +429,9 @@ class OrchestratorLoader:
             )
 
             tool_format = None
-            tool_format_str = tools_section.get("format")
+            tool_format_str = tool_section.get("format")
             if tool_format_str:
                 tool_format = ToolFormat(tool_format_str)
-            elif "format" in tool_section:
-                tool_format = ToolFormat(tool_section["format"])
 
             _l("Loaded agent from %s", path, is_debug=False)
 
