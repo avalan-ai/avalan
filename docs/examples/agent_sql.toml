@@ -21,6 +21,7 @@ uri = "ai://local/openai/gpt-oss-20b"
 backend = "mlx"
 
 [tool]
+enable = ["database"]
 format = "harmony"
 
 [tool.database]

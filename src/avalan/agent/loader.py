@@ -234,11 +234,36 @@ class OrchestratorLoader:
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
-            enable_tools = (
-                engine_config["tools"] if "tools" in engine_config else None
+            assert (
+                "tools" not in engine_config
+            ), (
+                "tools option in [engine] is no longer supported; "
+                "configure tools under [tool.enable]"
             )
+            tool_section = config.get("tool")
+            if tool_section is None:
+                tool_section = {}
+            else:
+                assert isinstance(
+                    tool_section, dict
+                ), "Tool section must be a mapping"
+
+            enable_tools_config = tool_section.get("enable")
+            enable_tools: list[str] | None = None
+            if enable_tools_config is not None:
+                if isinstance(enable_tools_config, str):
+                    enable_tools = [enable_tools_config]
+                else:
+                    assert isinstance(
+                        enable_tools_config, list
+                    ), "tool.enable must be a string or a list of strings"
+                    enable_tools = []
+                    for tool_name in enable_tools_config:
+                        assert isinstance(
+                            tool_name, str
+                        ), "tool.enable entries must be strings"
+                        enable_tools.append(tool_name)
             engine_config.pop("uri", None)
-            engine_config.pop("tools", None)
             orchestrator_type = (
                 config["agent"]["type"] if "type" in config["agent"] else None
             )
@@ -358,10 +383,20 @@ class OrchestratorLoader:
                 log_events=True,
             )
 
-            tool_section = config.get("tool", {})
-            browser_config = tool_section.get("browser", {}).get("open")
-            if not browser_config and "browser" in tool_section:
-                browser_config = tool_section["browser"]
+            browser_config = None
+            browser_section = tool_section.get("browser")
+            if browser_section is not None:
+                assert isinstance(
+                    browser_section, dict
+                ), "tool.browser section must be a mapping"
+                browser_open_section = browser_section.get("open")
+                if browser_open_section is not None:
+                    assert isinstance(
+                        browser_open_section, dict
+                    ), "tool.browser.open section must be a mapping"
+                    browser_config = browser_open_section
+                else:
+                    browser_config = browser_section
             browser_settings = None
             if browser_config:
                 if "debug_source" in browser_config and isinstance(
@@ -375,6 +410,9 @@ class OrchestratorLoader:
             database_settings = None
             database_config = tool_section.get("database")
             if database_config:
+                assert isinstance(
+                    database_config, dict
+                ), "tool.database section must be a mapping"
                 database_settings = DatabaseToolSettings(**database_config)
 
             if tool_settings:

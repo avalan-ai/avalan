@@ -10,7 +10,9 @@
 
 [engine]
 uri = "NousResearch/Hermes-3-Llama-3.1-8B"
-tools = [
+
+[tool]
+enable = [
     "math.calculator"
 ]
 
