@@ -26,6 +26,9 @@ format = "harmony"
 
 [tool.database]
 dsn = "mysql+aiomysql://root:password@localhost/tt_test"
+# Normalize table names to match the case used by the database server (optional).
+# Use "lower" for MySQL deployments that expose lower-case table names, e.g. RDS.
+identifier_case = "lower"
 
 [run]
 max_new_tokens = 8192
