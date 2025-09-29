@@ -90,6 +90,14 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             conn.execute(
                 text("INSERT INTO books(author_id, title) VALUES (1, 'Book')")
             )
+            conn.execute(
+                text(
+                    'CREATE TABLE "CamelCase"(id INTEGER PRIMARY KEY, value TEXT)'
+                )
+            )
+            conn.execute(
+                text("INSERT INTO \"CamelCase\"(value) VALUES ('Item')")
+            )
         engine.dispose()
         self.patcher = patch(
             "avalan.tool.database.create_async_engine",
@@ -192,6 +200,42 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(mocked_sleep.await_count, 4)
         await engine.dispose()
 
+    async def test_tables_tool_respects_identifier_case(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, identifier_case="lower")
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseTablesTool(engine, settings)
+        tables = await tool(context=ToolCallContext())
+        self.assertIn("camelcase", tables["main"])
+        self.assertNotIn("CamelCase", tables["main"])
+        await engine.dispose()
+
+    async def test_run_tool_rewrites_identifier_case(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, identifier_case="lower")
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseRunTool(engine, settings)
+        rows = await tool(
+            "SELECT id, value FROM camelcase", context=ToolCallContext()
+        )
+        self.assertEqual(rows, [{"id": 1, "value": "Item"}])
+        await engine.dispose()
+
+    async def test_count_tool_with_normalized_identifier(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, identifier_case="lower")
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseCountTool(engine, settings)
+        count = await tool("camelcase", context=ToolCallContext())
+        self.assertEqual(count, 1)
+        await engine.dispose()
+
+    async def test_inspect_tool_with_normalized_identifier(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, identifier_case="lower")
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseInspectTool(engine, settings)
+        tables = await tool(["camelcase"], context=ToolCallContext())
+        self.assertEqual(tables[0].name, "camelcase")
+        self.assertIn("value", tables[0].columns)
+        await engine.dispose()
+
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
             count_tool, inspect_tool, run_tool, tables_tool = toolset.tools
@@ -218,6 +262,10 @@ class DatabaseInspectCollectTestCase(TestCase):
             get_foreign_keys=lambda table_name, schema: [],
         )
 
+        tool = DatabaseInspectTool(
+            SimpleNamespace(), DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        )
+
         with (
             patch("avalan.tool.database.inspect", return_value=inspector),
             patch(
@@ -225,7 +273,7 @@ class DatabaseInspectCollectTestCase(TestCase):
                 return_value=("public", []),
             ),
         ):
-            tables = DatabaseInspectTool._collect(
+            tables = tool._collect(
                 SimpleNamespace(), schema="other", table_names=["t"]
             )
         self.assertEqual(tables[0].name, "other.t")
@@ -245,6 +293,10 @@ class DatabaseInspectCollectTestCase(TestCase):
             get_foreign_keys=get_foreign_keys,
         )
 
+        tool = DatabaseInspectTool(
+            SimpleNamespace(), DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        )
+
         with (
             patch("avalan.tool.database.inspect", return_value=inspector),
             patch(
@@ -252,7 +304,7 @@ class DatabaseInspectCollectTestCase(TestCase):
                 return_value=("public", []),
             ),
         ):
-            tables = DatabaseInspectTool._collect(
+            tables = tool._collect(
                 SimpleNamespace(),
                 schema=None,
                 table_names=["missing", "present"],
