@@ -213,7 +213,7 @@ class DatabaseTool(Tool, ABC):
         try:
             tree = parse_one(sql, read=dialect) if dialect else parse_one(sql)
         except Exception:
-            return sql
+            return self._rewrite_sql_with_tokens(sql, replacements)
 
         def normalize_table(node: exp.Expression) -> exp.Expression:
             if isinstance(node, exp.Table):
@@ -243,6 +243,44 @@ class DatabaseTool(Tool, ABC):
         tree = tree.transform(normalize_table)
         return tree.sql(dialect=dialect) if dialect else tree.sql()
 
+    def _rewrite_sql_with_tokens(
+        self, sql: str, replacements: dict[str, str]
+    ) -> str:
+        if self._normalizer is None:
+            return sql
+
+        tokens = self._normalizer.iter_tokens(sql)
+        if not tokens:
+            return sql
+
+        rewritten: list[str] = []
+        cursor = 0
+
+        for token, start, end in tokens:
+            if start < cursor:
+                continue
+            rewritten.append(sql[cursor:start])
+
+            if self._token_is_quoted(sql, start, end):
+                rewritten.append(token)
+            else:
+                lookup = self._normalizer.normalize_token(token)
+                replacement = replacements.get(lookup)
+                rewritten.append(replacement or token)
+
+            cursor = end
+
+        rewritten.append(sql[cursor:])
+        return "".join(rewritten)
+
+    @staticmethod
+    def _token_is_quoted(sql: str, start: int, end: int) -> bool:
+        if start > 0 and sql[start - 1] in {'"', "'", "`"}:
+            return True
+        if end < len(sql) and sql[end] in {'"', "'", "`"}:
+            return True
+        return False
+
     def _normalize_sql(self, sql: str) -> str:
         dialect = _sqlglot_dialect_name(self._engine)
         try:
@@ -253,6 +291,8 @@ class DatabaseTool(Tool, ABC):
                     "Multiple SQL statements are not permitted in a single"
                     " execution.",
                 )
+        except PermissionError:
+            raise
         except Exception:
             pass
         return sql.strip()
