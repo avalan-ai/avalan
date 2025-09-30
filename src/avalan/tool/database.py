@@ -6,7 +6,7 @@ from asyncio import sleep
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from re import compile as regex_compile
-from typing import Literal
+from typing import Any, Literal
 from sqlalchemy import MetaData, event, func, inspect, select
 from sqlalchemy import Table as SATable
 from sqlalchemy.engine import Connection
@@ -32,7 +32,7 @@ class Table:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseToolSettings:
     dsn: str
-    delay_secs: int | None = None
+    delay_secs: float | None = None
     identifier_case: Literal["preserve", "lower", "upper"] = "preserve"
     read_only: bool = True
     allowed_commands: list[str] | None = field(
@@ -58,6 +58,8 @@ _KNOWN_COMMANDS = {
     "explain",
 }
 
+_DOLLAR_QUOTE_RE = regex_compile(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$")
+
 
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
@@ -66,9 +68,11 @@ def _split_sql_statements(sql: str) -> list[str]:
     length = len(sql)
     in_single_quote = False
     in_double_quote = False
+    in_backtick = False
     in_bracket = False
     in_line_comment = False
     in_block_comment = False
+    in_dollar_quote: str | None = None
 
     while idx < length:
         char = sql[idx]
@@ -84,6 +88,14 @@ def _split_sql_statements(sql: str) -> list[str]:
             if char == "*" and nxt == "/":
                 in_block_comment = False
                 idx += 2
+            else:
+                idx += 1
+            continue
+
+        if in_dollar_quote is not None:
+            if sql.startswith(in_dollar_quote, idx):
+                idx += len(in_dollar_quote)
+                in_dollar_quote = None
             else:
                 idx += 1
             continue
@@ -106,6 +118,15 @@ def _split_sql_statements(sql: str) -> list[str]:
             idx += 1
             continue
 
+        if in_backtick:
+            if char == "`" and nxt == "`":
+                idx += 2
+                continue
+            if char == "`":
+                in_backtick = False
+            idx += 1
+            continue
+
         if in_bracket:
             if char == "]":
                 in_bracket = False
@@ -122,6 +143,13 @@ def _split_sql_statements(sql: str) -> list[str]:
             idx += 2
             continue
 
+        if char == "$":
+            m = _DOLLAR_QUOTE_RE.match(sql, idx)
+            if m:
+                in_dollar_quote = m.group(0)
+                idx += len(in_dollar_quote)
+                continue
+
         if char == "'":
             in_single_quote = True
             idx += 1
@@ -129,6 +157,11 @@ def _split_sql_statements(sql: str) -> list[str]:
 
         if char == '"':
             in_double_quote = True
+            idx += 1
+            continue
+
+        if char == "`":
+            in_backtick = True
             idx += 1
             continue
 
@@ -156,9 +189,11 @@ def _extract_statement_command(statement: str) -> str | None:
     length = len(statement)
     in_single_quote = False
     in_double_quote = False
+    in_backtick = False
     in_bracket = False
     in_line_comment = False
     in_block_comment = False
+    in_dollar_quote: str | None = None
     paren_level = 0
     command: str | None = None
     with_clause = False
@@ -181,6 +216,14 @@ def _extract_statement_command(statement: str) -> str | None:
                 idx += 1
             continue
 
+        if in_dollar_quote is not None:
+            if statement.startswith(in_dollar_quote, idx):
+                idx += len(in_dollar_quote)
+                in_dollar_quote = None
+            else:
+                idx += 1
+            continue
+
         if in_single_quote:
             if char == "'" and nxt == "'":
                 idx += 2
@@ -196,6 +239,15 @@ def _extract_statement_command(statement: str) -> str | None:
                 continue
             if char == '"':
                 in_double_quote = False
+            idx += 1
+            continue
+
+        if in_backtick:
+            if char == "`" and nxt == "`":
+                idx += 2
+                continue
+            if char == "`":
+                in_backtick = False
             idx += 1
             continue
 
@@ -215,6 +267,13 @@ def _extract_statement_command(statement: str) -> str | None:
             idx += 2
             continue
 
+        if char == "$":
+            m = _DOLLAR_QUOTE_RE.match(statement, idx)
+            if m:
+                in_dollar_quote = m.group(0)
+                idx += len(in_dollar_quote)
+                continue
+
         if char == "'":
             in_single_quote = True
             idx += 1
@@ -222,6 +281,11 @@ def _extract_statement_command(statement: str) -> str | None:
 
         if char == '"':
             in_double_quote = True
+            idx += 1
+            continue
+
+        if char == "`":
+            in_backtick = True
             idx += 1
             continue
 
@@ -248,9 +312,7 @@ def _extract_statement_command(statement: str) -> str | None:
         if char.isalpha() or char == "_":
             start = idx
             idx += 1
-            while idx < length and (
-                statement[idx].isalpha() or statement[idx] == "_"
-            ):
+            while idx < length and (statement[idx].isalpha() or statement[idx] == "_"):
                 idx += 1
             token = statement[start:idx]
             lower = token.lower()
@@ -303,9 +365,7 @@ def _configure_read_only_engine(engine: AsyncEngine, read_only: bool) -> None:
     dialect_name = getattr(sync_engine.dialect, "name", "")
     statements_by_dialect: dict[str, tuple[str, ...]] = {
         "sqlite": ("PRAGMA query_only = ON",),
-        "postgresql": (
-            "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
-        ),
+        "postgresql": ("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",),
         "mysql": ("SET SESSION TRANSACTION READ ONLY",),
         "mariadb": ("SET SESSION TRANSACTION READ ONLY",),
         "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
@@ -351,6 +411,143 @@ class IdentifierCaseNormalizer:
             (match.group(0), match.start(), match.end())
             for match in self._token_pattern.finditer(sql)
         ]
+
+
+def _masked_spans(sql: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    length = len(sql)
+    idx = 0
+    in_single = False
+    in_double = False
+    in_backtick = False
+    in_bracket = False
+    in_line_comment = False
+    in_block_comment = False
+    in_dollar: str | None = None
+    start = 0
+
+    while idx < length:
+        char = sql[idx]
+        nxt = sql[idx + 1] if idx + 1 < length else ""
+
+        if in_line_comment:
+            if char == "\n":
+                spans.append((start, idx + 1))
+                in_line_comment = False
+            idx += 1
+            continue
+
+        if in_block_comment:
+            if char == "*" and nxt == "/":
+                spans.append((start, idx + 2))
+                in_block_comment = False
+                idx += 2
+            else:
+                idx += 1
+            continue
+
+        if in_dollar is not None:
+            if sql.startswith(in_dollar, idx):
+                idx += len(in_dollar)
+                spans.append((start, idx))
+                in_dollar = None
+            else:
+                idx += 1
+            continue
+
+        if in_single:
+            if char == "'" and nxt == "'":
+                idx += 2
+                continue
+            if char == "'":
+                spans.append((start, idx + 1))
+                in_single = False
+            idx += 1
+            continue
+
+        if in_double:
+            if char == '"' and nxt == '"':
+                idx += 2
+                continue
+            if char == '"':
+                spans.append((start, idx + 1))
+                in_double = False
+            idx += 1
+            continue
+
+        if in_backtick:
+            if char == "`" and nxt == "`":
+                idx += 2
+                continue
+            if char == "`":
+                spans.append((start, idx + 1))
+                in_backtick = False
+            idx += 1
+            continue
+
+        if in_bracket:
+            if char == "]":
+                spans.append((start, idx + 1))
+                in_bracket = False
+            idx += 1
+            continue
+
+        if char == "-" and nxt == "-":
+            in_line_comment = True
+            start = idx
+            idx += 2
+            continue
+
+        if char == "/" and nxt == "*":
+            in_block_comment = True
+            start = idx
+            idx += 2
+            continue
+
+        if char == "$":
+            m = _DOLLAR_QUOTE_RE.match(sql, idx)
+            if m:
+                in_dollar = m.group(0)
+                start = idx
+                idx += len(in_dollar)
+                continue
+
+        if char == "'":
+            in_single = True
+            start = idx
+            idx += 1
+            continue
+
+        if char == '"':
+            in_double = True
+            start = idx
+            idx += 1
+            continue
+
+        if char == "`":
+            in_backtick = True
+            start = idx
+            idx += 1
+            continue
+
+        if char == "[":
+            in_bracket = True
+            start = idx
+            idx += 1
+            continue
+
+        idx += 1
+
+    if in_line_comment or in_block_comment or in_dollar is not None or in_single or in_double or in_backtick or in_bracket:
+        spans.append((start, length))
+    return spans
+
+
+def _pos_in_spans(pos_start: int, pos_end: int, spans: list[tuple[int, int]]) -> bool:
+    for s, e in spans:
+        if (pos_start >= s and pos_start < e) or (pos_end - 1 >= s and pos_end - 1 < e):
+            return True
+    return False
 
 
 class DatabaseTool(Tool, ABC):
@@ -434,9 +631,7 @@ class DatabaseTool(Tool, ABC):
             for normalized, actual in table_map.items():
                 replacements[normalized] = actual
                 if schema is not None:
-                    replacements[
-                        f"{schema}.{normalized}"
-                    ] = f"{schema}.{actual}"
+                    replacements[f"{schema}.{normalized}"] = f"{schema}.{actual}"
 
         if not replacements:
             return sql
@@ -445,20 +640,15 @@ class DatabaseTool(Tool, ABC):
         if not tokens:
             return sql
 
+        spans = _masked_spans(sql)
         result_parts: list[str] = []
         last_end = 0
-        sql_length = len(sql)
         for token, start, end in tokens:
             result_parts.append(sql[last_end:start])
-            if start > 0 and sql[start - 1] in {'"', "'", "`"}:
+            if _pos_in_spans(start, end, spans):
                 result_parts.append(token)
                 last_end = end
                 continue
-            if end < sql_length and sql[end:end + 1] in {'"', "'", "`"}:
-                result_parts.append(token)
-                last_end = end
-                continue
-
             normalized = self._normalizer.normalize_token(token)
             replacement = replacements.get(normalized)
             if replacement is None:
@@ -509,7 +699,6 @@ class DatabaseTool(Tool, ABC):
                 schemas.append(default_schema)
             return default_schema, schemas
 
-        # Non-PostgreSQL: try to enumerate all schemas, filter known schemas
         all_schemas = inspector.get_schema_names() or (
             [default_schema] if default_schema is not None else [None]
         )
@@ -529,7 +718,7 @@ class DatabaseTool(Tool, ABC):
             },
             "mssql": {"INFORMATION_SCHEMA", "sys"},
             "oracle": {"SYS", "SYSTEM"},
-            "sqlite": set(),  # typically "main"/"temp" only
+            "sqlite": set(),
         }
         sys = sys_filters.get(dialect, set())
         schemas = [s for s in all_schemas if s not in sys]
@@ -539,7 +728,6 @@ class DatabaseTool(Tool, ABC):
                 [default_schema] if default_schema is not None else [None]
             )
 
-        # De-duplicate while preserving order
         seen: set[str | None] = set()
         uniq: list[str | None] = []
         for s in schemas:
@@ -547,7 +735,6 @@ class DatabaseTool(Tool, ABC):
                 uniq.append(s)
                 seen.add(s)
 
-        # Ensure default schema is included
         if default_schema not in seen:
             uniq.append(default_schema)
 
@@ -593,7 +780,6 @@ class DatabaseCountTool(DatabaseTool):
 
     @staticmethod
     def _split_schema_and_table(qualified: str) -> tuple[str | None, str]:
-        # Basic split; handles "schema.table". If no dot, schema is None.
         if "." in qualified:
             sch, tbl = qualified.split(".", 1)
             return (sch or None), tbl
@@ -682,7 +868,6 @@ class DatabaseInspectTool(DatabaseTool):
             actual_table = self._denormalize_table_name(
                 connection, sch, table_name
             )
-            # If the table doesn't exist, skip it (instead of failing all).
             try:
                 column_info = inspector.get_columns(actual_table, schema=sch)
             except NoSuchTableError:
@@ -755,7 +940,7 @@ class DatabaseRunTool(DatabaseTool):
 
     async def __call__(
         self, sql: str, *, context: ToolCallContext
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         async with self._engine.begin() as conn:
             if self._settings.delay_secs:
                 await sleep(self._settings.delay_secs)
@@ -872,7 +1057,12 @@ class DatabaseToolSet(ToolSet):
         )
 
     @override
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: BaseException | None,
+    ) -> bool:
         try:
             if self._engine is not None:
                 await self._engine.dispose()
