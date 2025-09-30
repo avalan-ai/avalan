@@ -1,6 +1,6 @@
 from asyncio import run
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 from avalan.tool.database import (
     DatabaseCountTool,
@@ -58,8 +58,12 @@ def test_register_table_names_and_normalize_output() -> None:
     assert tool._table_cache["main"]["camelcase"] == "CamelCase"
     assert tool._normalize_table_for_output("CamelCase") == "camelcase"
 
-    preserve_tool = DummyDatabaseTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
-    assert preserve_tool._normalize_table_for_output("CamelCase") == "CamelCase"
+    preserve_tool = DummyDatabaseTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
+    assert (
+        preserve_tool._normalize_table_for_output("CamelCase") == "CamelCase"
+    )
 
 
 def test_denormalize_table_name_uses_cache_without_inspection() -> None:
@@ -77,7 +81,9 @@ def test_denormalize_table_name_populates_cache_from_inspector() -> None:
     settings = DatabaseToolSettings(dsn="sqlite://", identifier_case="lower")
     tool = DummyDatabaseTool(SimpleNamespace(), settings)
 
-    inspector = _inspector(default_schema=None, table_names={None: ["CamelCase"]})
+    inspector = _inspector(
+        default_schema=None, table_names={None: ["CamelCase"]}
+    )
     with patch("avalan.tool.database.inspect", return_value=inspector):
         actual = tool._denormalize_table_name(_connection(), None, "camelcase")
 
@@ -101,7 +107,9 @@ def test_apply_identifier_case_returns_sql_when_no_replacements() -> None:
     tool = DummyDatabaseTool(SimpleNamespace(), settings)
     tool._table_cache = {None: {}}
 
-    inspector = _inspector(default_schema=None, schemas=[None], table_names={None: []})
+    inspector = _inspector(
+        default_schema=None, schemas=[None], table_names={None: []}
+    )
     with patch("avalan.tool.database.inspect", return_value=inspector):
         sql = tool._apply_identifier_case(
             _connection(), "SELECT something FROM nowhere"
@@ -118,8 +126,15 @@ def test_apply_identifier_case_skips_quoted_tokens_and_unknowns() -> None:
         "main": {"camelcase": "CamelCase"},
     }
 
-    inspector = _inspector(default_schema="main", schemas=["main"], table_names={"main": ["CamelCase"]})
-    sql = 'SELECT "CamelCase", CamelCase, CamelCase", main.CamelCase, Unknown FROM camelcase'
+    inspector = _inspector(
+        default_schema="main",
+        schemas=["main"],
+        table_names={"main": ["CamelCase"]},
+    )
+    sql = (
+        'SELECT "CamelCase", CamelCase, CamelCase", main.CamelCase, Unknown'
+        " FROM camelcase"
+    )
 
     with patch("avalan.tool.database.inspect", return_value=inspector):
         rewritten = tool._apply_identifier_case(_connection(), sql)
@@ -134,7 +149,9 @@ def test_apply_identifier_case_returns_sql_when_tokens_missing() -> None:
     tool = DummyDatabaseTool(SimpleNamespace(), settings)
     tool._table_cache = {None: {"camelcase": "CamelCase"}}
 
-    inspector = _inspector(default_schema=None, schemas=[None], table_names={None: []})
+    inspector = _inspector(
+        default_schema=None, schemas=[None], table_names={None: []}
+    )
     with patch("avalan.tool.database.inspect", return_value=inspector):
         sql = tool._apply_identifier_case(_connection(), "!! !")
 

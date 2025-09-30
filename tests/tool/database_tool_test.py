@@ -96,7 +96,8 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             )
             conn.execute(
                 text(
-                    'CREATE TABLE "CamelCase"(id INTEGER PRIMARY KEY, value TEXT)'
+                    'CREATE TABLE "CamelCase"(id INTEGER PRIMARY KEY, value'
+                    " TEXT)"
                 )
             )
             conn.execute(

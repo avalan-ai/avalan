@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlglot import parse, parse_one, exp
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -40,349 +41,55 @@ class DatabaseToolSettings:
     )
 
 
-_KNOWN_COMMANDS = {
-    "select",
-    "insert",
-    "update",
-    "delete",
-    "merge",
-    "replace",
-    "create",
-    "alter",
-    "drop",
-    "truncate",
-    "with",
-    "call",
-    "show",
-    "pragma",
-    "explain",
-}
-
-_DOLLAR_QUOTE_RE = regex_compile(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$")
+def _sqlglot_dialect_name(engine: AsyncEngine) -> str | None:
+    sync_engine = getattr(engine, "sync_engine", None)
+    if sync_engine is None:
+        return None
+    name = getattr(sync_engine.dialect, "name", None)
+    if name == "postgresql":
+        return "postgres"
+    if name == "mariadb":
+        return "mysql"
+    return name
 
 
-def _split_sql_statements(sql: str) -> list[str]:
-    statements: list[str] = []
-    start = 0
-    idx = 0
-    length = len(sql)
-    in_single_quote = False
-    in_double_quote = False
-    in_backtick = False
-    in_bracket = False
-    in_line_comment = False
-    in_block_comment = False
-    in_dollar_quote: str | None = None
-
-    while idx < length:
-        char = sql[idx]
-        nxt = sql[idx + 1] if idx + 1 < length else ""
-
-        if in_line_comment:
-            if char == "\n":
-                in_line_comment = False
-            idx += 1
-            continue
-
-        if in_block_comment:
-            if char == "*" and nxt == "/":
-                in_block_comment = False
-                idx += 2
-            else:
-                idx += 1
-            continue
-
-        if in_dollar_quote is not None:
-            if sql.startswith(in_dollar_quote, idx):
-                idx += len(in_dollar_quote)
-                in_dollar_quote = None
-            else:
-                idx += 1
-            continue
-
-        if in_single_quote:
-            if char == "'" and nxt == "'":
-                idx += 2
-                continue
-            if char == "'":
-                in_single_quote = False
-            idx += 1
-            continue
-
-        if in_double_quote:
-            if char == '"' and nxt == '"':
-                idx += 2
-                continue
-            if char == '"':
-                in_double_quote = False
-            idx += 1
-            continue
-
-        if in_backtick:
-            if char == "`" and nxt == "`":
-                idx += 2
-                continue
-            if char == "`":
-                in_backtick = False
-            idx += 1
-            continue
-
-        if in_bracket:
-            if char == "]":
-                in_bracket = False
-            idx += 1
-            continue
-
-        if char == "-" and nxt == "-":
-            in_line_comment = True
-            idx += 2
-            continue
-
-        if char == "/" and nxt == "*":
-            in_block_comment = True
-            idx += 2
-            continue
-
-        if char == "$":
-            m = _DOLLAR_QUOTE_RE.match(sql, idx)
-            if m:
-                in_dollar_quote = m.group(0)
-                idx += len(in_dollar_quote)
-                continue
-
-        if char == "'":
-            in_single_quote = True
-            idx += 1
-            continue
-
-        if char == '"':
-            in_double_quote = True
-            idx += 1
-            continue
-
-        if char == "`":
-            in_backtick = True
-            idx += 1
-            continue
-
-        if char == "[":
-            in_bracket = True
-            idx += 1
-            continue
-
-        if char == ";":
-            statements.append(sql[start:idx])
-            idx += 1
-            start = idx
-            continue
-
-        idx += 1
-
-    tail = sql[start:]
-    if tail.strip():
-        statements.append(tail)
-    return statements
-
-
-def _extract_statement_command(statement: str) -> str | None:
-    idx = 0
-    length = len(statement)
-    in_single_quote = False
-    in_double_quote = False
-    in_backtick = False
-    in_bracket = False
-    in_line_comment = False
-    in_block_comment = False
-    in_dollar_quote: str | None = None
-    paren_level = 0
-    command: str | None = None
-    with_clause = False
-
-    while idx < length:
-        char = statement[idx]
-        nxt = statement[idx + 1] if idx + 1 < length else ""
-
-        if in_line_comment:
-            if char == "\n":
-                in_line_comment = False
-            idx += 1
-            continue
-
-        if in_block_comment:
-            if char == "*" and nxt == "/":
-                in_block_comment = False
-                idx += 2
-            else:
-                idx += 1
-            continue
-
-        if in_dollar_quote is not None:
-            if statement.startswith(in_dollar_quote, idx):
-                idx += len(in_dollar_quote)
-                in_dollar_quote = None
-            else:
-                idx += 1
-            continue
-
-        if in_single_quote:
-            if char == "'" and nxt == "'":
-                idx += 2
-                continue
-            if char == "'":
-                in_single_quote = False
-            idx += 1
-            continue
-
-        if in_double_quote:
-            if char == '"' and nxt == '"':
-                idx += 2
-                continue
-            if char == '"':
-                in_double_quote = False
-            idx += 1
-            continue
-
-        if in_backtick:
-            if char == "`" and nxt == "`":
-                idx += 2
-                continue
-            if char == "`":
-                in_backtick = False
-            idx += 1
-            continue
-
-        if in_bracket:
-            if char == "]":
-                in_bracket = False
-            idx += 1
-            continue
-
-        if char == "-" and nxt == "-":
-            in_line_comment = True
-            idx += 2
-            continue
-
-        if char == "/" and nxt == "*":
-            in_block_comment = True
-            idx += 2
-            continue
-
-        if char == "$":
-            m = _DOLLAR_QUOTE_RE.match(statement, idx)
-            if m:
-                in_dollar_quote = m.group(0)
-                idx += len(in_dollar_quote)
-                continue
-
-        if char == "'":
-            in_single_quote = True
-            idx += 1
-            continue
-
-        if char == '"':
-            in_double_quote = True
-            idx += 1
-            continue
-
-        if char == "`":
-            in_backtick = True
-            idx += 1
-            continue
-
-        if char == "[":
-            in_bracket = True
-            idx += 1
-            continue
-
-        if char == "(":
-            paren_level += 1
-            idx += 1
-            continue
-
-        if char == ")":
-            if paren_level > 0:
-                paren_level -= 1
-            idx += 1
-            continue
-
-        if char.isspace():
-            idx += 1
-            continue
-
-        if char.isalpha() or char == "_":
-            start = idx
-            idx += 1
-            while idx < length and (statement[idx].isalpha() or statement[idx] == "_"):
-                idx += 1
-            token = statement[start:idx]
-            lower = token.lower()
-
-            if command is None:
-                command = token
-                if lower == "with":
-                    with_clause = True
-                    continue
-                return token
-
-            if with_clause and paren_level == 0:
-                if lower == "recursive":
-                    continue
-                if lower in _KNOWN_COMMANDS:
-                    return token
-            continue
-
-        idx += 1
-
-    return command
-
-
-def _ensure_sql_command_allowed(statement: str, allowed: list[str]) -> None:
+def _ensure_sql_command_allowed(
+    statement: str, allowed: list[str], dialect_name: str | None = None
+) -> None:
     normalized_allowed = {command.lower() for command in allowed}
     if not normalized_allowed:
         raise PermissionError(
             "No SQL commands are permitted by the current configuration.",
         )
 
-    command = _extract_statement_command(statement)
-    if command is None:
-        return
-    if command.lower() not in normalized_allowed:
-        allowed_display = ", ".join(sorted(normalized_allowed))
+    try:
+        expr = (
+            parse_one(statement, read=dialect_name)
+            if dialect_name
+            else parse_one(statement)
+        )
+    except Exception:
         raise PermissionError(
-            f"SQL command '{command.upper()}' is not permitted."
-            f" Allowed commands: {allowed_display}.",
+            "SQL could not be parsed to enforce allowed commands.",
         )
 
-
-def _configure_read_only_engine(engine: AsyncEngine, read_only: bool) -> None:
-    if not read_only:
+    if expr is None:
         return
 
-    sync_engine = getattr(engine, "sync_engine", None)
-    if sync_engine is None:
+    key = (expr.key or "").lower()
+    if key == "with":
+        inner = getattr(expr, "this", None)
+        if inner is not None and getattr(inner, "key", None):
+            key = inner.key.lower()
+
+    if not key:
         return
-
-    dialect_name = getattr(sync_engine.dialect, "name", "")
-    statements_by_dialect: dict[str, tuple[str, ...]] = {
-        "sqlite": ("PRAGMA query_only = ON",),
-        "postgresql": ("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",),
-        "mysql": ("SET SESSION TRANSACTION READ ONLY",),
-        "mariadb": ("SET SESSION TRANSACTION READ ONLY",),
-        "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
-    }
-
-    statements = statements_by_dialect.get(dialect_name)
-    if statements is None:
-        return
-
-    @event.listens_for(sync_engine, "connect")
-    def _set_read_only(dbapi_connection, _connection_record):  # type: ignore[arg-type]
-        cursor = dbapi_connection.cursor()
-        try:
-            for statement in statements:
-                cursor.execute(statement)
-        finally:
-            cursor.close()
+    if key not in normalized_allowed:
+        allowed_display = ", ".join(sorted(normalized_allowed))
+        raise PermissionError(
+            f"SQL command '{key.upper()}' is not permitted."
+            f" Allowed commands: {allowed_display}.",
+        )
 
 
 class IdentifierCaseNormalizer:
@@ -390,7 +97,9 @@ class IdentifierCaseNormalizer:
 
     def __init__(self, mode: Literal["preserve", "lower", "upper"]) -> None:
         self._mode = mode
-        self._token_pattern = regex_compile(r"[0-9A-Za-z_]+(?:\.[0-9A-Za-z_]+)?")
+        self._token_pattern = regex_compile(
+            r"[0-9A-Za-z_]+(?:\.[0-9A-Za-z_]+)?"
+        )
 
     def normalize(self, identifier: str) -> str:
         if self._mode == "lower":
@@ -411,148 +120,6 @@ class IdentifierCaseNormalizer:
             (match.group(0), match.start(), match.end())
             for match in self._token_pattern.finditer(sql)
         ]
-
-
-def _masked_spans(sql: str) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    length = len(sql)
-    idx = 0
-    in_single = False
-    in_double = False
-    in_backtick = False
-    in_bracket = False
-    in_line_comment = False
-    in_block_comment = False
-    in_dollar: str | None = None
-    start = 0
-
-    while idx < length:
-        char = sql[idx]
-        nxt = sql[idx + 1] if idx + 1 < length else ""
-
-        if in_line_comment:
-            if char == "\n":
-                spans.append((start, idx + 1))
-                in_line_comment = False
-            idx += 1
-            continue
-
-        if in_block_comment:
-            if char == "*" and nxt == "/":
-                spans.append((start, idx + 2))
-                in_block_comment = False
-                idx += 2
-            else:
-                idx += 1
-            continue
-
-        if in_dollar is not None:
-            if sql.startswith(in_dollar, idx):
-                idx += len(in_dollar)
-                spans.append((start, idx))
-                in_dollar = None
-            else:
-                idx += 1
-            continue
-
-        if in_single:
-            if char == "'" and nxt == "'":
-                idx += 2
-                continue
-            if char == "'":
-                spans.append((start, idx + 1))
-                in_single = False
-            idx += 1
-            continue
-
-        if in_double:
-            if char == '"' and nxt == '"':
-                idx += 2
-                continue
-            if char == '"':
-                spans.append((start, idx + 1))
-                in_double = False
-            idx += 1
-            continue
-
-        if in_backtick:
-            if char == "`" and nxt == "`":
-                idx += 2
-                continue
-            if char == "`":
-                spans.append((start, idx + 1))
-                in_backtick = False
-            idx += 1
-            continue
-
-        if in_bracket:
-            if char == "]":
-                spans.append((start, idx + 1))
-                in_bracket = False
-            idx += 1
-            continue
-
-        if char == "-" and nxt == "-":
-            in_line_comment = True
-            start = idx
-            idx += 2
-            continue
-
-        if char == "/" and nxt == "*":
-            in_block_comment = True
-            start = idx
-            idx += 2
-            continue
-
-        if char == "$":
-            m = _DOLLAR_QUOTE_RE.match(sql, idx)
-            if m:
-                in_dollar = m.group(0)
-                start = idx
-                idx += len(in_dollar)
-                continue
-
-        if char == "'":
-            in_single = True
-            start = idx
-            idx += 1
-            continue
-
-        if char == '"':
-            if not in_double:
-                prev = sql[idx - 1] if idx > 0 else ""
-                if prev.isalnum() or prev == "_":
-                    idx += 1
-                    continue
-                in_double = True
-                start = idx
-                idx += 1
-                continue
-
-        if char == "`":
-            in_backtick = True
-            start = idx
-            idx += 1
-            continue
-
-        if char == "[":
-            in_bracket = True
-            start = idx
-            idx += 1
-            continue
-
-        idx += 1
-
-    if in_line_comment or in_block_comment or in_dollar is not None or in_single or in_double or in_backtick or in_bracket:
-        spans.append((start, length))
-    return spans
-
-
-def _pos_in_spans(pos_start: int, pos_end: int, spans: list[tuple[int, int]]) -> bool:
-    for s, e in spans:
-        if (pos_start >= s and pos_start < e) or (pos_end - 1 >= s and pos_end - 1 < e):
-            return True
-    return False
 
 
 class DatabaseTool(Tool, ABC):
@@ -605,7 +172,8 @@ class DatabaseTool(Tool, ABC):
             inspector = inspect(connection)
             actual_tables = inspector.get_table_names(schema=schema)
             cache = {
-                self._normalizer.normalize(name): name for name in actual_tables
+                self._normalizer.normalize(name): name
+                for name in actual_tables
             }
             self._table_cache[schema] = cache
 
@@ -616,9 +184,7 @@ class DatabaseTool(Tool, ABC):
             return table_name
         return self._normalizer.normalize(table_name)
 
-    def _apply_identifier_case(
-        self, connection: Connection, sql: str
-    ) -> str:
+    def _apply_identifier_case(self, connection: Connection, sql: str) -> str:
         if self._normalizer is None:
             return sql
 
@@ -636,54 +202,69 @@ class DatabaseTool(Tool, ABC):
             for normalized, actual in table_map.items():
                 replacements[normalized] = actual
                 if schema is not None:
-                    replacements[f"{schema}.{normalized}"] = f"{schema}.{actual}"
+                    replacements[f"{schema}.{normalized}"] = (
+                        f"{schema}.{actual}"
+                    )
 
         if not replacements:
             return sql
 
-        tokens = self._normalizer.iter_tokens(sql)
-        if not tokens:
+        dialect = _sqlglot_dialect_name(self._engine)
+        try:
+            tree = parse_one(sql, read=dialect) if dialect else parse_one(sql)
+        except Exception:
             return sql
 
-        spans = _masked_spans(sql)
-        result_parts: list[str] = []
-        last_end = 0
-        for token, start, end in tokens:
-            result_parts.append(sql[last_end:start])
-            if _pos_in_spans(start, end, spans):
-                result_parts.append(token)
-                last_end = end
-                continue
-            normalized = self._normalizer.normalize_token(token)
-            replacement = replacements.get(normalized)
-            if replacement is None:
-                result_parts.append(token)
-            else:
-                result_parts.append(replacement)
-            last_end = end
+        def normalize_table(node: exp.Expression) -> exp.Expression:
+            if isinstance(node, exp.Table):
+                ident = node.this
+                if isinstance(ident, exp.Identifier) and not ident.quoted:
+                    name = ident.this
+                    schema_ident = node.args.get("db")
+                    schema = (
+                        schema_ident.this
+                        if isinstance(schema_ident, exp.Identifier)
+                        else None
+                    )
+                    key = self._normalizer.normalize(name)
+                    lookup = f"{schema}.{key}" if schema else key
+                    actual = replacements.get(lookup) or replacements.get(key)
+                    if actual:
+                        if schema and "." in actual:
+                            _, actual_name = actual.split(".", 1)
+                        else:
+                            actual_name = actual
+                        node.set(
+                            "this",
+                            exp.Identifier(this=actual_name, quoted=False),
+                        )
+            return node
 
-        result_parts.append(sql[last_end:])
-        return "".join(result_parts)
+        tree = tree.transform(normalize_table)
+        return tree.sql(dialect=dialect) if dialect else tree.sql()
 
     def _normalize_sql(self, sql: str) -> str:
-        statements = [
-            statement.strip()
-            for statement in _split_sql_statements(sql)
-            if statement.strip()
-        ]
-        if len(statements) > 1:
-            raise PermissionError(
-                "Multiple SQL statements are not permitted in a single execution.",
-            )
-        if statements:
-            return statements[0]
+        dialect = _sqlglot_dialect_name(self._engine)
+        try:
+            trees = parse(sql, read=dialect) if dialect else parse(sql)
+            count = len([t for t in trees if t is not None])
+            if count > 1:
+                raise PermissionError(
+                    "Multiple SQL statements are not permitted in a single"
+                    " execution.",
+                )
+        except Exception:
+            pass
         return sql.strip()
 
     def _prepare_sql_for_execution(self, sql: str) -> str:
         normalized_sql = self._normalize_sql(sql)
         if self._settings.allowed_commands is None:
             return normalized_sql
-        _ensure_sql_command_allowed(normalized_sql, self._settings.allowed_commands)
+        dialect = _sqlglot_dialect_name(self._engine)
+        _ensure_sql_command_allowed(
+            normalized_sql, self._settings.allowed_commands, dialect
+        )
         return normalized_sql
 
     @staticmethod
@@ -753,6 +334,49 @@ class DatabaseTool(Tool, ABC):
         traceback: BaseException | None,
     ) -> bool:
         return await super().__aexit__(exc_type, exc_value, traceback)
+
+
+def _configure_read_only_engine(engine: AsyncEngine, read_only: bool) -> None:
+    if not read_only:
+        return
+
+    sync_engine = getattr(engine, "sync_engine", None)
+    if sync_engine is None:
+        return
+
+    sg_name = _sqlglot_dialect_name(engine)
+    statements_by_sqlglot: dict[str, tuple[str, ...]] = {
+        "sqlite": ("PRAGMA query_only = ON",),
+        "postgres": ("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",),
+        "mysql": ("SET SESSION TRANSACTION READ ONLY",),
+        "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
+    }
+    statements = statements_by_sqlglot.get(sg_name or "")
+
+    if statements is None:
+        dialect_name = getattr(sync_engine.dialect, "name", "")
+        statements_by_sa: dict[str, tuple[str, ...]] = {
+            "sqlite": ("PRAGMA query_only = ON",),
+            "postgresql": (
+                "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+            ),
+            "mysql": ("SET SESSION TRANSACTION READ ONLY",),
+            "mariadb": ("SET SESSION TRANSACTION READ ONLY",),
+            "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
+        }
+        statements = statements_by_sa.get(dialect_name)
+
+    if statements is None:
+        return
+
+    @event.listens_for(sync_engine, "connect")
+    def _set_read_only(dbapi_connection, _connection_record):  # type: ignore[arg-type]
+        cursor = dbapi_connection.cursor()
+        try:
+            for statement in statements:
+                cursor.execute(statement)
+        finally:
+            cursor.close()
 
 
 class DatabaseCountTool(DatabaseTool):
@@ -1001,7 +625,8 @@ class DatabaseTablesTool(DatabaseTool):
             actual_tables = inspector.get_table_names(schema=schema)
             self._register_table_names(schema, actual_tables)
             result[schema] = [
-                self._normalize_table_for_output(name) for name in actual_tables
+                self._normalize_table_for_output(name)
+                for name in actual_tables
             ]
         return result
 

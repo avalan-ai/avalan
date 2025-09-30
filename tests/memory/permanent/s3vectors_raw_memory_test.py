@@ -178,7 +178,9 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
             "participant_id": str(uuid4()),
         }
         mismatch_body = MagicMock()
-        mismatch_body.read.return_value = json.dumps(mismatch_document).encode()
+        mismatch_body.read.return_value = json.dumps(
+            mismatch_document
+        ).encode()
         client = AsyncMock()
         client.list_objects_v2.return_value = {
             "Contents": [

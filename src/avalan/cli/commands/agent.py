@@ -43,7 +43,9 @@ def _parse_permanent_memory_items(
         namespace, value = item.split("@", 1)
         namespace = namespace.strip()
         assert namespace, "Permanent memory namespace must be provided"
-        stores[namespace] = OrchestratorLoader.parse_permanent_store_value(value)
+        stores[namespace] = OrchestratorLoader.parse_permanent_store_value(
+            value
+        )
     return stores
 
 

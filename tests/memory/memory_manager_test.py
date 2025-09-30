@@ -297,7 +297,9 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
             event_manager=MagicMock(spec=EventManager),
         )
         self.assertEqual(len(manager._permanent_memory_stores), 2)
-        self.assertEqual(manager._permanent_memory_stores["docs"][1], "Documents")
+        self.assertEqual(
+            manager._permanent_memory_stores["docs"][1], "Documents"
+        )
 
 
 class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
