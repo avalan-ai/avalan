@@ -110,6 +110,7 @@ test = [
   "pytest-cov==6.2.1",
   "RestrictedPython==8.0",
   "SQLAlchemy==2.0.43",
+  "sqlglot==27.20.0",
   "sympy==1.14.0",
   "tiktoken==0.10.0",
   # version limited because of vllm
@@ -123,6 +124,7 @@ tool = [
   "playwright==1.54.0",
   "RestrictedPython==8.0",
   "SQLAlchemy==2.0.43",
+  "sqlglot==27.20.0",
   "sympy==1.14.0",
   "youtube-transcript-api==1.2.2",
 ]
@@ -203,6 +205,7 @@ all = [
   "sentencepiece==0.2.0",
   "soundfile==0.13.1",
   "SQLAlchemy==2.0.43",
+  "sqlglot==27.20.0",
   "sympy==1.14.0",
   "tiktoken==0.10.0",
   # version limited because of vllm
