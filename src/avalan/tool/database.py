@@ -4,10 +4,10 @@ from ..entities import ToolCallContext
 from abc import ABC
 from asyncio import sleep
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from re import compile as regex_compile
 from typing import Literal
-from sqlalchemy import MetaData, func, inspect, select
+from sqlalchemy import MetaData, event, func, inspect, select
 from sqlalchemy import Table as SATable
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
@@ -34,6 +34,295 @@ class DatabaseToolSettings:
     dsn: str
     delay_secs: int | None = None
     identifier_case: Literal["preserve", "lower", "upper"] = "preserve"
+    read_only: bool = True
+    allowed_commands: list[str] | None = field(
+        default_factory=lambda: ["select"],
+    )
+
+
+_KNOWN_COMMANDS = {
+    "select",
+    "insert",
+    "update",
+    "delete",
+    "merge",
+    "replace",
+    "create",
+    "alter",
+    "drop",
+    "truncate",
+    "with",
+    "call",
+    "show",
+    "pragma",
+    "explain",
+}
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    statements: list[str] = []
+    start = 0
+    idx = 0
+    length = len(sql)
+    in_single_quote = False
+    in_double_quote = False
+    in_bracket = False
+    in_line_comment = False
+    in_block_comment = False
+
+    while idx < length:
+        char = sql[idx]
+        nxt = sql[idx + 1] if idx + 1 < length else ""
+
+        if in_line_comment:
+            if char == "\n":
+                in_line_comment = False
+            idx += 1
+            continue
+
+        if in_block_comment:
+            if char == "*" and nxt == "/":
+                in_block_comment = False
+                idx += 2
+            else:
+                idx += 1
+            continue
+
+        if in_single_quote:
+            if char == "'" and nxt == "'":
+                idx += 2
+                continue
+            if char == "'":
+                in_single_quote = False
+            idx += 1
+            continue
+
+        if in_double_quote:
+            if char == '"' and nxt == '"':
+                idx += 2
+                continue
+            if char == '"':
+                in_double_quote = False
+            idx += 1
+            continue
+
+        if in_bracket:
+            if char == "]":
+                in_bracket = False
+            idx += 1
+            continue
+
+        if char == "-" and nxt == "-":
+            in_line_comment = True
+            idx += 2
+            continue
+
+        if char == "/" and nxt == "*":
+            in_block_comment = True
+            idx += 2
+            continue
+
+        if char == "'":
+            in_single_quote = True
+            idx += 1
+            continue
+
+        if char == '"':
+            in_double_quote = True
+            idx += 1
+            continue
+
+        if char == "[":
+            in_bracket = True
+            idx += 1
+            continue
+
+        if char == ";":
+            statements.append(sql[start:idx])
+            idx += 1
+            start = idx
+            continue
+
+        idx += 1
+
+    tail = sql[start:]
+    if tail.strip():
+        statements.append(tail)
+    return statements
+
+
+def _extract_statement_command(statement: str) -> str | None:
+    idx = 0
+    length = len(statement)
+    in_single_quote = False
+    in_double_quote = False
+    in_bracket = False
+    in_line_comment = False
+    in_block_comment = False
+    paren_level = 0
+    command: str | None = None
+    with_clause = False
+
+    while idx < length:
+        char = statement[idx]
+        nxt = statement[idx + 1] if idx + 1 < length else ""
+
+        if in_line_comment:
+            if char == "\n":
+                in_line_comment = False
+            idx += 1
+            continue
+
+        if in_block_comment:
+            if char == "*" and nxt == "/":
+                in_block_comment = False
+                idx += 2
+            else:
+                idx += 1
+            continue
+
+        if in_single_quote:
+            if char == "'" and nxt == "'":
+                idx += 2
+                continue
+            if char == "'":
+                in_single_quote = False
+            idx += 1
+            continue
+
+        if in_double_quote:
+            if char == '"' and nxt == '"':
+                idx += 2
+                continue
+            if char == '"':
+                in_double_quote = False
+            idx += 1
+            continue
+
+        if in_bracket:
+            if char == "]":
+                in_bracket = False
+            idx += 1
+            continue
+
+        if char == "-" and nxt == "-":
+            in_line_comment = True
+            idx += 2
+            continue
+
+        if char == "/" and nxt == "*":
+            in_block_comment = True
+            idx += 2
+            continue
+
+        if char == "'":
+            in_single_quote = True
+            idx += 1
+            continue
+
+        if char == '"':
+            in_double_quote = True
+            idx += 1
+            continue
+
+        if char == "[":
+            in_bracket = True
+            idx += 1
+            continue
+
+        if char == "(":
+            paren_level += 1
+            idx += 1
+            continue
+
+        if char == ")":
+            if paren_level > 0:
+                paren_level -= 1
+            idx += 1
+            continue
+
+        if char.isspace():
+            idx += 1
+            continue
+
+        if char.isalpha() or char == "_":
+            start = idx
+            idx += 1
+            while idx < length and (
+                statement[idx].isalpha() or statement[idx] == "_"
+            ):
+                idx += 1
+            token = statement[start:idx]
+            lower = token.lower()
+
+            if command is None:
+                command = token
+                if lower == "with":
+                    with_clause = True
+                    continue
+                return token
+
+            if with_clause and paren_level == 0:
+                if lower == "recursive":
+                    continue
+                if lower in _KNOWN_COMMANDS:
+                    return token
+            continue
+
+        idx += 1
+
+    return command
+
+
+def _ensure_sql_command_allowed(statement: str, allowed: list[str]) -> None:
+    normalized_allowed = {command.lower() for command in allowed}
+    if not normalized_allowed:
+        raise PermissionError(
+            "No SQL commands are permitted by the current configuration.",
+        )
+
+    command = _extract_statement_command(statement)
+    if command is None:
+        return
+    if command.lower() not in normalized_allowed:
+        allowed_display = ", ".join(sorted(normalized_allowed))
+        raise PermissionError(
+            f"SQL command '{command.upper()}' is not permitted."
+            f" Allowed commands: {allowed_display}.",
+        )
+
+
+def _configure_read_only_engine(engine: AsyncEngine, read_only: bool) -> None:
+    if not read_only:
+        return
+
+    sync_engine = getattr(engine, "sync_engine", None)
+    if sync_engine is None:
+        return
+
+    dialect_name = getattr(sync_engine.dialect, "name", "")
+    statements_by_dialect: dict[str, tuple[str, ...]] = {
+        "sqlite": ("PRAGMA query_only = ON",),
+        "postgresql": (
+            "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+        ),
+        "mysql": ("SET SESSION TRANSACTION READ ONLY",),
+        "mariadb": ("SET SESSION TRANSACTION READ ONLY",),
+        "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
+    }
+
+    statements = statements_by_dialect.get(dialect_name)
+    if statements is None:
+        return
+
+    @event.listens_for(sync_engine, "connect")
+    def _set_read_only(dbapi_connection, _connection_record):  # type: ignore[arg-type]
+        cursor = dbapi_connection.cursor()
+        try:
+            for statement in statements:
+                cursor.execute(statement)
+        finally:
+            cursor.close()
 
 
 class IdentifierCaseNormalizer:
@@ -180,6 +469,27 @@ class DatabaseTool(Tool, ABC):
 
         result_parts.append(sql[last_end:])
         return "".join(result_parts)
+
+    def _normalize_sql(self, sql: str) -> str:
+        statements = [
+            statement.strip()
+            for statement in _split_sql_statements(sql)
+            if statement.strip()
+        ]
+        if len(statements) > 1:
+            raise PermissionError(
+                "Multiple SQL statements are not permitted in a single execution.",
+            )
+        if statements:
+            return statements[0]
+        return sql.strip()
+
+    def _prepare_sql_for_execution(self, sql: str) -> str:
+        normalized_sql = self._normalize_sql(sql)
+        if self._settings.allowed_commands is None:
+            return normalized_sql
+        _ensure_sql_command_allowed(normalized_sql, self._settings.allowed_commands)
+        return normalized_sql
 
     @staticmethod
     def _schemas(
@@ -450,7 +760,10 @@ class DatabaseRunTool(DatabaseTool):
             if self._settings.delay_secs:
                 await sleep(self._settings.delay_secs)
 
-            sql_to_run = await conn.run_sync(self._apply_identifier_case, sql)
+            normalized_sql = self._prepare_sql_for_execution(sql)
+            sql_to_run = await conn.run_sync(
+                self._apply_identifier_case, normalized_sql
+            )
             result = await conn.exec_driver_sql(sql_to_run)
 
             if result.returns_rows:
@@ -519,6 +832,7 @@ class DatabaseToolSet(ToolSet):
         self._engine = create_async_engine(
             self._settings.dsn, pool_pre_ping=True
         )
+        _configure_read_only_engine(self._engine, self._settings.read_only)
 
         normalizer = (
             IdentifierCaseNormalizer(settings.identifier_case)
