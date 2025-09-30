@@ -519,10 +519,15 @@ def _masked_spans(sql: str) -> list[tuple[int, int]]:
             continue
 
         if char == '"':
-            in_double = True
-            start = idx
-            idx += 1
-            continue
+            if not in_double:
+                prev = sql[idx - 1] if idx > 0 else ""
+                if prev.isalnum() or prev == "_":
+                    idx += 1
+                    continue
+                in_double = True
+                start = idx
+                idx += 1
+                continue
 
         if char == "`":
             in_backtick = True
