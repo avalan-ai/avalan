@@ -45,6 +45,7 @@ async def memory_document_index(
     namespace = args.namespace
     dsn = args.dsn
     identifier = args.identifier or None
+    title = args.title or None
     description = args.description or None
     display_partitions = (
         args.display_partitions if not args.no_display_partitions else None
@@ -69,10 +70,35 @@ async def memory_document_index(
             if is_url:
                 async with MemorySource() as memory_source:
                     document = await memory_source.fetch(source)
+                    title = title or document.title
                     description = description or document.description
                     contents = document.markdown
             else:
-                contents = Path(source).read_text(encoding=args.encoding)
+                path = Path(source)
+                content_type: str | None = None
+                suffix = path.suffix.lower()
+                if suffix == ".pdf":
+                    content_type = "application/pdf"
+                elif suffix in {".md", ".markdown"}:
+                    content_type = "text/markdown"
+                elif suffix in {".htm", ".html"}:
+                    content_type = "text/html"
+
+                if content_type:
+                    data = path.read_bytes()
+                    async with MemorySource() as memory_source:
+                        document = await memory_source.from_bytes(
+                            path.resolve().as_uri(),
+                            content_type,
+                            data,
+                        )
+                    title = title or document.title
+                    description = description or document.description
+                    contents = document.markdown
+                else:
+                    contents = path.read_text(encoding=args.encoding)
+                    if not title:
+                        title = path.name
 
             if not identifier:
                 identifier = source if is_url else str(Path(source).resolve())
@@ -85,6 +111,13 @@ async def memory_document_index(
                     if args.partitioner == "code"
                     else MemoryType.FILE
                 )
+
+            if not title:
+                if is_url:
+                    parsed = urlparse(source)
+                    title = parsed.netloc or source
+                else:
+                    title = Path(source).name
 
             if is_url or args.partitioner == "text":
                 partitioner = TextPartitioner(
@@ -128,6 +161,7 @@ async def memory_document_index(
                 partitions=partitions,
                 symbols={},
                 model_id=model_id,
+                title=title,
                 description=description,
             )
 

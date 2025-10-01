@@ -47,6 +47,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             participant="11111111-1111-1111-1111-111111111111",
             namespace="ns",
             identifier=None,
+            title="Knowledge Base",
             description="Knowledge base",
             display_partitions=1,
             no_display_partitions=False,
@@ -128,6 +129,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             partitions=[partition],
             symbols={},
             model_id=self.args.model,
+            title=self.args.title,
             description=self.args.description,
         )
         self.console.print.assert_called_once_with("panel")
@@ -151,7 +153,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
 
         tp_inst = AsyncMock(return_value=[partition])
         document = types.SimpleNamespace(
-            description="desc", markdown="content"
+            title="Fetched title",
+            description="desc",
+            markdown="content",
         )
         memory_source = MagicMock()
         memory_source.__aenter__ = AsyncMock(return_value=memory_source)
@@ -202,6 +206,7 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             partitions=[partition],
             symbols={},
             model_id=self.args.model,
+            title=self.args.title,
             description=self.args.description,
         )
         self.console.print.assert_called_once_with("panel")
@@ -254,6 +259,329 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         call = memory_store.append_with_partitions.await_args
         self.assertEqual(call.kwargs["description"], "Fetched description")
         self.console.print.assert_called_once()
+
+    async def test_index_pdf_discovers_metadata_without_cli_options(self):
+        self.args.source = "doc.pdf"
+        self.args.title = None
+        self.args.description = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title="PDF Title",
+            description="PDF Description",
+            markdown="pdf markdown",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.from_bytes = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_bytes", return_value=b"pdf")
+            as read_bytes,
+            patch.object(memory_cmds.Path, "read_text", MagicMock()) as read_text,
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source)
+            as ms_patch,
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        read_bytes.assert_called_once()
+        read_text.assert_not_called()
+        ms_patch.assert_called_once_with()
+        memory_source.from_bytes.assert_awaited_once_with(
+            memory_cmds.Path(self.args.source).resolve().as_uri(),
+            "application/pdf",
+            b"pdf",
+        )
+        tp_inst.assert_awaited_once_with("pdf markdown")
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "PDF Title")
+        self.assertEqual(call.kwargs["description"], "PDF Description")
+
+    async def test_index_pdf_metadata_missing_falls_back(self):
+        self.args.source = "doc.pdf"
+        self.args.title = None
+        self.args.description = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title=None,
+            description=None,
+            markdown="pdf markdown",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.from_bytes = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_bytes", return_value=b"pdf"),
+            patch.object(memory_cmds.Path, "read_text", MagicMock()),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "doc.pdf")
+        self.assertIsNone(call.kwargs["description"])
+
+    async def test_index_markdown_discovers_metadata_without_cli_options(self):
+        self.args.source = "doc.md"
+        self.args.title = None
+        self.args.description = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title="Markdown Title",
+            description="Markdown Description",
+            markdown="md markdown",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.from_bytes = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_bytes", return_value=b"md"),
+            patch.object(memory_cmds.Path, "read_text", MagicMock()),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "Markdown Title")
+        self.assertEqual(call.kwargs["description"], "Markdown Description")
+
+    async def test_index_markdown_metadata_missing_falls_back(self):
+        self.args.source = "doc.md"
+        self.args.title = None
+        self.args.description = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title=None,
+            description=None,
+            markdown="md markdown",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.from_bytes = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_bytes", return_value=b"md"),
+            patch.object(memory_cmds.Path, "read_text", MagicMock()),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "doc.md")
+        self.assertIsNone(call.kwargs["description"])
+
+    async def test_index_html_discovers_metadata_without_cli_options(self):
+        self.args.source = "doc.html"
+        self.args.title = None
+        self.args.description = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title="HTML Title",
+            description="HTML Description",
+            markdown="html markdown",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.from_bytes = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_bytes", return_value=b"html"),
+            patch.object(memory_cmds.Path, "read_text", MagicMock()),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "HTML Title")
+        self.assertEqual(call.kwargs["description"], "HTML Description")
+
+    async def test_index_html_metadata_missing_falls_back(self):
+        self.args.source = "doc.html"
+        self.args.title = None
+        self.args.description = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title=None,
+            description=None,
+            markdown="html markdown",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.from_bytes = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_bytes", return_value=b"html"),
+            patch.object(memory_cmds.Path, "read_text", MagicMock()),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "doc.html")
+        self.assertIsNone(call.kwargs["description"])
 
     async def test_index_code_partitioner(self):
         self.args.partitioner = "code"
