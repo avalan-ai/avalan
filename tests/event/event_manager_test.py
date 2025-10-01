@@ -99,7 +99,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
                 events.append(event)
 
         task = asyncio.create_task(iterate())
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(task, timeout=0.1)
         self.assertTrue(task.done())
         self.assertEqual(events, [])
 

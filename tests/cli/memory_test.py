@@ -150,26 +150,20 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         memory_store.append_with_partitions = AsyncMock()
 
         tp_inst = AsyncMock(return_value=[partition])
-        response = MagicMock(content=b"html")
-        response.raise_for_status = MagicMock()
-        client = MagicMock()
-        client.__aenter__.return_value = client
-        client.__aexit__.return_value = False
-        client.get = AsyncMock(return_value=response)
+        document = types.SimpleNamespace(
+            description="desc", markdown="content"
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.fetch = AsyncMock(return_value=document)
 
         with (
             patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(
-                memory_cmds, "AsyncClient", return_value=client
-            ) as ac_patch,
-            patch.object(
-                memory_cmds,
-                "to_thread",
-                AsyncMock(
-                    return_value=types.SimpleNamespace(text_content="content")
-                ),
-            ),
+                memory_cmds, "MemorySource", return_value=memory_source
+            ) as ms_patch,
             patch.object(
                 memory_cmds, "TextPartitioner", return_value=tp_inst
             ) as tp_patch,
@@ -186,8 +180,8 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             )
 
         read_patch.assert_not_called()
-        ac_patch.assert_called_once_with()
-        client.get.assert_awaited_once_with(self.args.source)
+        ms_patch.assert_called_once_with()
+        memory_source.fetch.assert_awaited_once_with(self.args.source)
         tp_patch.assert_called_once_with(
             model,
             self.logger,
@@ -230,29 +224,20 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         memory_store.append_with_partitions = AsyncMock()
 
         tp_inst = AsyncMock(return_value=[partition])
-        md_instance = MagicMock()
-        md_instance.convert_stream.return_value = types.SimpleNamespace(
-            text_content="html"
+        document = types.SimpleNamespace(
+            description="Fetched description", markdown="html"
         )
-
-        response = MagicMock(content=b"<html>")
-        response.raise_for_status = MagicMock()
-        client = MagicMock()
-        client.__aenter__.return_value = client
-        client.__aexit__.return_value = False
-        client.get = AsyncMock(return_value=response)
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.fetch = AsyncMock(return_value=document)
+        self.args.description = None
 
         with (
             patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "ModelManager", return_value=manager),
-            patch.object(memory_cmds, "AsyncClient", return_value=client),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
-            patch.object(
-                memory_cmds, "MarkItDown", return_value=md_instance
-            ) as md_patch,
-            patch.object(
-                memory_cmds, "to_thread", side_effect=lambda fn, html: fn(html)
-            ),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
                 "create_instance",
@@ -264,8 +249,10 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger
             )
 
-        md_patch.assert_called_once_with()
-        md_instance.convert_stream.assert_called_once()
+        memory_source.fetch.assert_awaited_once_with(self.args.source)
+        tp_inst.assert_awaited_once_with("html")
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["description"], "Fetched description")
         self.console.print.assert_called_once()
 
     async def test_index_code_partitioner(self):
