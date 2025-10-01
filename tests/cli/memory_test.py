@@ -3,7 +3,7 @@ from avalan.entities import DistanceType, Modality
 from avalan.memory.permanent import MemoryType, VectorFunction
 from avalan.memory.partitioner.text import TextPartition
 from argparse import Namespace
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 import numpy as np
@@ -260,6 +260,54 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(call.kwargs["description"], "Fetched description")
         self.console.print.assert_called_once()
 
+    async def test_index_url_missing_title_defaults_to_netloc(self):
+        self.args.source = "https://example.com/path"
+        self.args.title = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+        document = types.SimpleNamespace(
+            title=None,
+            description="desc",
+            markdown="content",
+        )
+        memory_source = MagicMock()
+        memory_source.__aenter__ = AsyncMock(return_value=memory_source)
+        memory_source.__aexit__ = AsyncMock(return_value=False)
+        memory_source.fetch = AsyncMock(return_value=document)
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "example.com")
+
     async def test_index_pdf_discovers_metadata_without_cli_options(self):
         self.args.source = "doc.pdf"
         self.args.title = None
@@ -478,6 +526,46 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         call = memory_store.append_with_partitions.await_args
         self.assertEqual(call.kwargs["title"], "doc.md")
         self.assertIsNone(call.kwargs["description"])
+
+    async def test_index_text_defaults_title_to_filename(self):
+        self.args.source = "doc.txt"
+        self.args.title = None
+        partition = TextPartition(
+            data="d", embeddings=np.array([1.0]), total_tokens=1
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = manager
+        manager.__exit__.return_value = False
+        model = MagicMock()
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = model
+        load_cm.__exit__.return_value = False
+        manager.load.return_value = load_cm
+
+        memory_store = MagicMock()
+        memory_store.append_with_partitions = AsyncMock()
+
+        tp_inst = AsyncMock(return_value=[partition])
+
+        with (
+            patch.object(memory_cmds, "get_model_settings", return_value={}),
+            patch.object(memory_cmds, "ModelManager", return_value=manager),
+            patch.object(memory_cmds.Path, "read_text", return_value="content"),
+            patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
+            patch.object(
+                memory_cmds.PgsqlRawMemory,
+                "create_instance",
+                AsyncMock(return_value=memory_store),
+            ),
+            patch.object(memory_cmds, "model_display"),
+        ):
+            await memory_cmds.memory_document_index(
+                self.args, self.console, self.theme, self.hub, self.logger
+            )
+
+        tp_inst.assert_awaited_once_with("content")
+        call = memory_store.append_with_partitions.await_args
+        self.assertEqual(call.kwargs["title"], "doc.txt")
 
     async def test_index_html_discovers_metadata_without_cli_options(self):
         self.args.source = "doc.html"
@@ -1013,3 +1101,21 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
         gi_patch.assert_called_once()
         mm_patch.assert_not_called()
         self.console.print.assert_not_called()
+
+
+class CliMemoryDocumentTransformTestCase(TestCase):
+    def test_transform_helper_converts_bytes(self) -> None:
+        transform_code = memory_cmds.memory_document_index.__code__.co_consts[3]
+        transform = types.FunctionType(
+            transform_code, memory_cmds.memory_document_index.__globals__
+        )
+        convert_stream = MagicMock(return_value="converted")
+        mark_it_down = MagicMock(convert_stream=convert_stream)
+
+        with patch.object(memory_cmds, "MarkItDown", return_value=mark_it_down):
+            result = transform(b"html")
+
+        self.assertEqual(result, "converted")
+        convert_stream.assert_called_once()
+        argument = convert_stream.call_args.args[0]
+        self.assertEqual(argument.getvalue(), b"html")
