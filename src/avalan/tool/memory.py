@@ -151,7 +151,8 @@ class MemoryStoresTool(Tool):
     """List memory stores available.
 
     Returns:
-        List of memory stores."""
+        List of memory stores.
+    """
 
     _memory_manager: MemoryManager
 

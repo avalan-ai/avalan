@@ -234,9 +234,7 @@ class OrchestratorLoader:
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
-            assert (
-                "tools" not in engine_config
-            ), (
+            assert "tools" not in engine_config, (
                 "tools option in [engine] is no longer supported; "
                 "configure tools under [tool.enable]"
             )
@@ -305,7 +303,9 @@ class OrchestratorLoader:
                 else None
             )
 
-            memory_permanent: dict[str, PermanentMemoryStoreSettings] | None = None
+            memory_permanent: (
+                dict[str, PermanentMemoryStoreSettings] | None
+            ) = None
             if memory_options and "permanent" in memory_options:
                 memory_permanent_option = memory_options["permanent"]
                 assert isinstance(

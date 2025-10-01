@@ -630,7 +630,9 @@ format = \"{value}\"
                         )
                         await loader.from_file(path, agent_id=uuid4())
 
-                        tool_format = from_settings.call_args.kwargs["tool_format"]
+                        tool_format = from_settings.call_args.kwargs[
+                            "tool_format"
+                        ]
                         self.assertEqual(tool_format, expected)
                     await stack.aclose()
 

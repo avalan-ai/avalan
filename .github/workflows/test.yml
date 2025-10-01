@@ -61,8 +61,8 @@ jobs:
       - name: Install mlx
         run: poetry run pip install "mlx[cpu]==0.28.0" "mlx-lm==0.26.3"
 
-      - name: Install a2a-sdk
-        run: poetry run pip install "a2a-sdk==0.3.6"
+      - name: Install sqlglot
+        run: poetry run pip install "sqlglot==27.20.0"
 
       - name: Install dependencies
         id: install-deps

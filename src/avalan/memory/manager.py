@@ -72,7 +72,9 @@ class MemoryManager:
         text_partitioner: TextPartitioner,
         logger: Logger,
         event_manager: EventManager | None = None,
-        permanent_memory_stores: dict[str, tuple[PermanentMemory, str | None]] | None = None,
+        permanent_memory_stores: (
+            dict[str, tuple[PermanentMemory, str | None]] | None
+        ) = None,
     ):
         assert agent_id and participant_id
         self._logger = logger
@@ -145,7 +147,10 @@ class MemoryManager:
     def list_permanent_memory_stores(self) -> list[PermanentMemoryStore]:
         return [
             PermanentMemoryStore(namespace=namespace, description=description)
-            for namespace, (_, description) in self._permanent_memory_stores.items()
+            for namespace, (
+                _,
+                description,
+            ) in self._permanent_memory_stores.items()
         ]
 
     async def append_message(self, engine_message: EngineMessage) -> None:

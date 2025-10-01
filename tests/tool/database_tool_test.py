@@ -62,6 +62,10 @@ def dummy_create_async_engine(dsn: str, **kwargs):
         def begin(self):
             return DummyConnCtx(self.engine)
 
+        @property
+        def sync_engine(self):
+            return self.engine
+
         async def dispose(self):
             self.engine.dispose()
             self.disposed = True
@@ -92,7 +96,8 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             )
             conn.execute(
                 text(
-                    'CREATE TABLE "CamelCase"(id INTEGER PRIMARY KEY, value TEXT)'
+                    'CREATE TABLE "CamelCase"(id INTEGER PRIMARY KEY, value'
+                    " TEXT)"
                 )
             )
             conn.execute(
@@ -119,14 +124,50 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(rows, [{"id": 1, "title": "Book"}])
         await engine.dispose()
 
-    async def test_run_tool_no_rows(self):
+    async def test_run_tool_disallows_insert_by_default(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseRunTool(engine, self.settings)
+        with self.assertRaises(PermissionError):
+            await tool(
+                "INSERT INTO authors(name) VALUES ('Other')",
+                context=ToolCallContext(),
+            )
+        await engine.dispose()
+
+    async def test_run_tool_disallows_multiple_statements(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseRunTool(engine, self.settings)
+        with self.assertRaises(PermissionError):
+            await tool(
+                "SELECT * FROM authors; SELECT * FROM books",
+                context=ToolCallContext(),
+            )
+        await engine.dispose()
+
+    async def test_run_tool_allows_insert_when_enabled(self):
+        settings = DatabaseToolSettings(
+            dsn=self.dsn,
+            read_only=False,
+            allowed_commands=["select", "insert"],
+        )
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseRunTool(engine, settings)
         rows = await tool(
             "INSERT INTO authors(name) VALUES ('Other')",
             context=ToolCallContext(),
         )
         self.assertEqual(rows, [])
+
+        authors = await tool(
+            "SELECT name FROM authors ORDER BY id",
+            context=ToolCallContext(),
+        )
+        self.assertEqual(
+            [row["name"] for row in authors],
+            ["Author", "Other"],
+        )
+        with engine.engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM authors WHERE name = 'Other'"))
         await engine.dispose()
 
     async def test_tables_tool_lists_tables(self):
@@ -250,6 +291,19 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             tables = await tables_tool(context=ToolCallContext())
             self.assertIn("books", tables["main"])
         self.assertTrue(toolset._engine.disposed)
+
+    async def test_toolset_read_only_blocks_writes(self):
+        settings = DatabaseToolSettings(
+            dsn=self.dsn,
+            allowed_commands=["insert"],
+        )
+        async with DatabaseToolSet(settings) as toolset:
+            _, _, run_tool, _ = toolset.tools
+            with self.assertRaises(OperationalError):
+                await run_tool(
+                    "INSERT INTO authors(name) VALUES ('Blocked')",
+                    context=ToolCallContext(),
+                )
 
 
 class DatabaseInspectCollectTestCase(TestCase):

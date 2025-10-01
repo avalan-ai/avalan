@@ -4,15 +4,16 @@ from ..entities import ToolCallContext
 from abc import ABC
 from asyncio import sleep
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from re import compile as regex_compile
-from typing import Literal
-from sqlalchemy import MetaData, func, inspect, select
+from typing import Any, Literal
+from sqlalchemy import MetaData, event, func, inspect, select
 from sqlalchemy import Table as SATable
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlglot import parse, parse_one, exp
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -32,8 +33,63 @@ class Table:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseToolSettings:
     dsn: str
-    delay_secs: int | None = None
+    delay_secs: float | None = None
     identifier_case: Literal["preserve", "lower", "upper"] = "preserve"
+    read_only: bool = True
+    allowed_commands: list[str] | None = field(
+        default_factory=lambda: ["select"],
+    )
+
+
+def _sqlglot_dialect_name(engine: AsyncEngine) -> str | None:
+    sync_engine = getattr(engine, "sync_engine", None)
+    if sync_engine is None:
+        return None
+    name = getattr(sync_engine.dialect, "name", None)
+    if name == "postgresql":
+        return "postgres"
+    if name == "mariadb":
+        return "mysql"
+    return name
+
+
+def _ensure_sql_command_allowed(
+    statement: str, allowed: list[str], dialect_name: str | None = None
+) -> None:
+    normalized_allowed = {command.lower() for command in allowed}
+    if not normalized_allowed:
+        raise PermissionError(
+            "No SQL commands are permitted by the current configuration.",
+        )
+
+    try:
+        expr = (
+            parse_one(statement, read=dialect_name)
+            if dialect_name
+            else parse_one(statement)
+        )
+    except Exception:
+        raise PermissionError(
+            "SQL could not be parsed to enforce allowed commands.",
+        )
+
+    if expr is None:
+        return
+
+    key = (expr.key or "").lower()
+    if key == "with":
+        inner = getattr(expr, "this", None)
+        if inner is not None and getattr(inner, "key", None):
+            key = inner.key.lower()
+
+    if not key:
+        return
+    if key not in normalized_allowed:
+        allowed_display = ", ".join(sorted(normalized_allowed))
+        raise PermissionError(
+            f"SQL command '{key.upper()}' is not permitted."
+            f" Allowed commands: {allowed_display}.",
+        )
 
 
 class IdentifierCaseNormalizer:
@@ -41,7 +97,9 @@ class IdentifierCaseNormalizer:
 
     def __init__(self, mode: Literal["preserve", "lower", "upper"]) -> None:
         self._mode = mode
-        self._token_pattern = regex_compile(r"[0-9A-Za-z_]+(?:\.[0-9A-Za-z_]+)?")
+        self._token_pattern = regex_compile(
+            r"[0-9A-Za-z_]+(?:\.[0-9A-Za-z_]+)?"
+        )
 
     def normalize(self, identifier: str) -> str:
         if self._mode == "lower":
@@ -114,7 +172,8 @@ class DatabaseTool(Tool, ABC):
             inspector = inspect(connection)
             actual_tables = inspector.get_table_names(schema=schema)
             cache = {
-                self._normalizer.normalize(name): name for name in actual_tables
+                self._normalizer.normalize(name): name
+                for name in actual_tables
             }
             self._table_cache[schema] = cache
 
@@ -125,9 +184,7 @@ class DatabaseTool(Tool, ABC):
             return table_name
         return self._normalizer.normalize(table_name)
 
-    def _apply_identifier_case(
-        self, connection: Connection, sql: str
-    ) -> str:
+    def _apply_identifier_case(self, connection: Connection, sql: str) -> str:
         if self._normalizer is None:
             return sql
 
@@ -145,41 +202,110 @@ class DatabaseTool(Tool, ABC):
             for normalized, actual in table_map.items():
                 replacements[normalized] = actual
                 if schema is not None:
-                    replacements[
-                        f"{schema}.{normalized}"
-                    ] = f"{schema}.{actual}"
+                    replacements[f"{schema}.{normalized}"] = (
+                        f"{schema}.{actual}"
+                    )
 
         if not replacements:
+            return sql
+
+        dialect = _sqlglot_dialect_name(self._engine)
+        try:
+            tree = parse_one(sql, read=dialect) if dialect else parse_one(sql)
+        except Exception:
+            return self._rewrite_sql_with_tokens(sql, replacements)
+
+        def normalize_table(node: exp.Expression) -> exp.Expression:
+            if isinstance(node, exp.Table):
+                ident = node.this
+                if isinstance(ident, exp.Identifier) and not ident.quoted:
+                    name = ident.this
+                    schema_ident = node.args.get("db")
+                    schema = (
+                        schema_ident.this
+                        if isinstance(schema_ident, exp.Identifier)
+                        else None
+                    )
+                    key = self._normalizer.normalize(name)
+                    lookup = f"{schema}.{key}" if schema else key
+                    actual = replacements.get(lookup) or replacements.get(key)
+                    if actual:
+                        if schema and "." in actual:
+                            _, actual_name = actual.split(".", 1)
+                        else:
+                            actual_name = actual
+                        node.set(
+                            "this",
+                            exp.Identifier(this=actual_name, quoted=False),
+                        )
+            return node
+
+        tree = tree.transform(normalize_table)
+        return tree.sql(dialect=dialect) if dialect else tree.sql()
+
+    def _rewrite_sql_with_tokens(
+        self, sql: str, replacements: dict[str, str]
+    ) -> str:
+        if self._normalizer is None:
             return sql
 
         tokens = self._normalizer.iter_tokens(sql)
         if not tokens:
             return sql
 
-        result_parts: list[str] = []
-        last_end = 0
-        sql_length = len(sql)
+        rewritten: list[str] = []
+        cursor = 0
+
         for token, start, end in tokens:
-            result_parts.append(sql[last_end:start])
-            if start > 0 and sql[start - 1] in {'"', "'", "`"}:
-                result_parts.append(token)
-                last_end = end
+            if start < cursor:
                 continue
-            if end < sql_length and sql[end:end + 1] in {'"', "'", "`"}:
-                result_parts.append(token)
-                last_end = end
-                continue
+            rewritten.append(sql[cursor:start])
 
-            normalized = self._normalizer.normalize_token(token)
-            replacement = replacements.get(normalized)
-            if replacement is None:
-                result_parts.append(token)
+            if self._token_is_quoted(sql, start, end):
+                rewritten.append(token)
             else:
-                result_parts.append(replacement)
-            last_end = end
+                lookup = self._normalizer.normalize_token(token)
+                replacement = replacements.get(lookup)
+                rewritten.append(replacement or token)
 
-        result_parts.append(sql[last_end:])
-        return "".join(result_parts)
+            cursor = end
+
+        rewritten.append(sql[cursor:])
+        return "".join(rewritten)
+
+    @staticmethod
+    def _token_is_quoted(sql: str, start: int, end: int) -> bool:
+        if start > 0 and sql[start - 1] in {'"', "'", "`"}:
+            return True
+        if end < len(sql) and sql[end] in {'"', "'", "`"}:
+            return True
+        return False
+
+    def _normalize_sql(self, sql: str) -> str:
+        dialect = _sqlglot_dialect_name(self._engine)
+        try:
+            trees = parse(sql, read=dialect) if dialect else parse(sql)
+            count = len([t for t in trees if t is not None])
+            if count > 1:
+                raise PermissionError(
+                    "Multiple SQL statements are not permitted in a single"
+                    " execution.",
+                )
+        except PermissionError:
+            raise
+        except Exception:
+            pass
+        return sql.strip()
+
+    def _prepare_sql_for_execution(self, sql: str) -> str:
+        normalized_sql = self._normalize_sql(sql)
+        if self._settings.allowed_commands is None:
+            return normalized_sql
+        dialect = _sqlglot_dialect_name(self._engine)
+        _ensure_sql_command_allowed(
+            normalized_sql, self._settings.allowed_commands, dialect
+        )
+        return normalized_sql
 
     @staticmethod
     def _schemas(
@@ -199,7 +325,6 @@ class DatabaseTool(Tool, ABC):
                 schemas.append(default_schema)
             return default_schema, schemas
 
-        # Non-PostgreSQL: try to enumerate all schemas, filter known schemas
         all_schemas = inspector.get_schema_names() or (
             [default_schema] if default_schema is not None else [None]
         )
@@ -219,7 +344,7 @@ class DatabaseTool(Tool, ABC):
             },
             "mssql": {"INFORMATION_SCHEMA", "sys"},
             "oracle": {"SYS", "SYSTEM"},
-            "sqlite": set(),  # typically "main"/"temp" only
+            "sqlite": set(),
         }
         sys = sys_filters.get(dialect, set())
         schemas = [s for s in all_schemas if s not in sys]
@@ -229,7 +354,6 @@ class DatabaseTool(Tool, ABC):
                 [default_schema] if default_schema is not None else [None]
             )
 
-        # De-duplicate while preserving order
         seen: set[str | None] = set()
         uniq: list[str | None] = []
         for s in schemas:
@@ -237,7 +361,6 @@ class DatabaseTool(Tool, ABC):
                 uniq.append(s)
                 seen.add(s)
 
-        # Ensure default schema is included
         if default_schema not in seen:
             uniq.append(default_schema)
 
@@ -251,6 +374,49 @@ class DatabaseTool(Tool, ABC):
         traceback: BaseException | None,
     ) -> bool:
         return await super().__aexit__(exc_type, exc_value, traceback)
+
+
+def _configure_read_only_engine(engine: AsyncEngine, read_only: bool) -> None:
+    if not read_only:
+        return
+
+    sync_engine = getattr(engine, "sync_engine", None)
+    if sync_engine is None:
+        return
+
+    sg_name = _sqlglot_dialect_name(engine)
+    statements_by_sqlglot: dict[str, tuple[str, ...]] = {
+        "sqlite": ("PRAGMA query_only = ON",),
+        "postgres": ("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",),
+        "mysql": ("SET SESSION TRANSACTION READ ONLY",),
+        "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
+    }
+    statements = statements_by_sqlglot.get(sg_name or "")
+
+    if statements is None:
+        dialect_name = getattr(sync_engine.dialect, "name", "")
+        statements_by_sa: dict[str, tuple[str, ...]] = {
+            "sqlite": ("PRAGMA query_only = ON",),
+            "postgresql": (
+                "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+            ),
+            "mysql": ("SET SESSION TRANSACTION READ ONLY",),
+            "mariadb": ("SET SESSION TRANSACTION READ ONLY",),
+            "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
+        }
+        statements = statements_by_sa.get(dialect_name)
+
+    if statements is None:
+        return
+
+    @event.listens_for(sync_engine, "connect")
+    def _set_read_only(dbapi_connection, _connection_record):  # type: ignore[arg-type]
+        cursor = dbapi_connection.cursor()
+        try:
+            for statement in statements:
+                cursor.execute(statement)
+        finally:
+            cursor.close()
 
 
 class DatabaseCountTool(DatabaseTool):
@@ -283,7 +449,6 @@ class DatabaseCountTool(DatabaseTool):
 
     @staticmethod
     def _split_schema_and_table(qualified: str) -> tuple[str | None, str]:
-        # Basic split; handles "schema.table". If no dot, schema is None.
         if "." in qualified:
             sch, tbl = qualified.split(".", 1)
             return (sch or None), tbl
@@ -372,7 +537,6 @@ class DatabaseInspectTool(DatabaseTool):
             actual_table = self._denormalize_table_name(
                 connection, sch, table_name
             )
-            # If the table doesn't exist, skip it (instead of failing all).
             try:
                 column_info = inspector.get_columns(actual_table, schema=sch)
             except NoSuchTableError:
@@ -445,12 +609,15 @@ class DatabaseRunTool(DatabaseTool):
 
     async def __call__(
         self, sql: str, *, context: ToolCallContext
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         async with self._engine.begin() as conn:
             if self._settings.delay_secs:
                 await sleep(self._settings.delay_secs)
 
-            sql_to_run = await conn.run_sync(self._apply_identifier_case, sql)
+            normalized_sql = self._prepare_sql_for_execution(sql)
+            sql_to_run = await conn.run_sync(
+                self._apply_identifier_case, normalized_sql
+            )
             result = await conn.exec_driver_sql(sql_to_run)
 
             if result.returns_rows:
@@ -498,7 +665,8 @@ class DatabaseTablesTool(DatabaseTool):
             actual_tables = inspector.get_table_names(schema=schema)
             self._register_table_names(schema, actual_tables)
             result[schema] = [
-                self._normalize_table_for_output(name) for name in actual_tables
+                self._normalize_table_for_output(name)
+                for name in actual_tables
             ]
         return result
 
@@ -519,6 +687,7 @@ class DatabaseToolSet(ToolSet):
         self._engine = create_async_engine(
             self._settings.dsn, pool_pre_ping=True
         )
+        _configure_read_only_engine(self._engine, self._settings.read_only)
 
         normalizer = (
             IdentifierCaseNormalizer(settings.identifier_case)
@@ -558,7 +727,12 @@ class DatabaseToolSet(ToolSet):
         )
 
     @override
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: BaseException | None,
+    ) -> bool:
         try:
             if self._engine is not None:
                 await self._engine.dispose()
