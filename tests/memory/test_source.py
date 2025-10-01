@@ -168,6 +168,31 @@ async def test_convert_bytes_pdf_metadata(
     assert document.description == "This is the abstract."
 
 
+@pytest.mark.anyio
+@pytest.mark.usefixtures("require_asyncio_backend")
+async def test_convert_bytes_uses_url_as_title_when_missing_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = MemorySource()
+
+    async def fake_run_sync(func, stream):
+        return SimpleNamespace(markdown="No headings here", title=None, text_content=None)
+
+    monkeypatch.setattr(
+        "avalan.memory.source.to_thread.run_sync",
+        fake_run_sync,
+    )
+    monkeypatch.setattr(source, "_is_html", lambda url, ctype: False)
+    monkeypatch.setattr(source, "_is_pdf", lambda url, ctype, data: False)
+
+    document = await source.from_bytes(
+        "https://example.com/files/document.txt", "text/plain", b"raw data"
+    )
+
+    assert document.title == "document.txt"
+    assert document.description is None
+
+
 def test_markdown_title() -> None:
     assert MemorySource._markdown_title("# Heading\nContent") == "Heading"
     assert MemorySource._markdown_title("No heading") is None
@@ -253,3 +278,15 @@ def test_html_metadata_sources() -> None:
     title, description = limited_source._html_metadata(html_with_p)
     assert title == "Page Title"
     assert description == "Paragraph"
+
+    twitter_only = b"""
+    <html>
+        <head>
+            <meta name=\"twitter:title\" content=\"Twitter Title\" />
+        </head>
+    </html>
+    """
+
+    title, description = source._html_metadata(twitter_only)
+    assert title == "Twitter Title"
+    assert description is None
