@@ -74,8 +74,9 @@ class MemorySource:
             BytesIO(data)
         )
         markdown: str = (
-            getattr(result, "text_content", getattr(result, "markdown", ""))
-                or ""
+            getattr(result, "markdown", None)
+            or getattr(result, "text_content", None)
+            or ""
         )
         title: str | None = getattr(result, "title", None)
         description: str | None = None
@@ -182,7 +183,7 @@ class MemorySource:
 
     def _markdown_description(self, md: str) -> str | None:
         m = search(
-            r"(?im)^#{0,6}\s*abstract\s*\n+(.+?)(?:\n#{1,6}\s|\n{2,}|\Z)",
+            r"(?im)^\s*(?:#{1,6}\s*)?abstract\s*(?:[:\-—]\s+|\n+)(.+?)(?=\n{2,}|\n\s*#{1,6}\s|\Z)",
             md,
             flags=DOTALL,
         )
