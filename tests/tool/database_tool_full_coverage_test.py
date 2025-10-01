@@ -144,9 +144,7 @@ def test_ensure_sql_command_allowed_special_cases(
         patch_ctx.setattr(parse_one_path, lambda *args, **kwargs: blank_key)
         _ensure_sql_command_allowed("SELECT 1", ["select"])
 
-    with_expr = SimpleNamespace(
-        key="with", this=SimpleNamespace(key="select")
-    )
+    with_expr = SimpleNamespace(key="with", this=SimpleNamespace(key="select"))
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(parse_one_path, lambda *args, **kwargs: with_expr)
         _ensure_sql_command_allowed("WITH ...", ["select"])
@@ -317,9 +315,9 @@ def test_prepare_sql_for_execution_respects_allowed_commands(
             called = True
 
         patch_ctx.setattr(ensure_path, permitted)
-        assert restrictive._prepare_sql_for_execution(
-            " SELECT 1 "
-        ) == "SELECT 1"
+        assert (
+            restrictive._prepare_sql_for_execution(" SELECT 1 ") == "SELECT 1"
+        )
         assert called is True
 
 
@@ -398,9 +396,7 @@ def test_configure_read_only_engine_falls_back_to_sqlalchemy_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pg_dialect = SimpleNamespace(name="postgresql")
-    engine = SimpleNamespace(
-        sync_engine=SimpleNamespace(dialect=pg_dialect)
-    )
+    engine = SimpleNamespace(sync_engine=SimpleNamespace(dialect=pg_dialect))
 
     captured: dict[str, Callable[[Any, Any], None]] = {}
 
@@ -467,13 +463,9 @@ def test_toolset_with_identifier_case_normalizer(
     engine = create_engine(file_dsn)
     with engine.begin() as conn:
         conn.execute(
-            text(
-                "CREATE TABLE example(" "id INTEGER PRIMARY KEY, name TEXT)"
-            )
+            text("CREATE TABLE example(id INTEGER PRIMARY KEY, name TEXT)")
         )
-        conn.execute(
-            text("INSERT INTO example(name) VALUES ('item')")
-        )
+        conn.execute(text("INSERT INTO example(name) VALUES ('item')"))
     engine.dispose()
 
     settings = DatabaseToolSettings(dsn=file_dsn, identifier_case="lower")

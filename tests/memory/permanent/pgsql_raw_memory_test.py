@@ -96,21 +96,21 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                             %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
-                        (
-                            str(mem_id),
-                            base_memory.model_id,
-                            str(base_memory.participant_id),
-                            str(base_memory.type),
-                            base_memory.namespace,
-                            base_memory.identifier,
-                            base_memory.data,
-                            len(partitions),
-                            dumps(base_memory.symbols),
-                            ANY,
-                            base_memory.title,
-                            base_memory.description,
-                        ),
-                    )
+            (
+                str(mem_id),
+                base_memory.model_id,
+                str(base_memory.participant_id),
+                str(base_memory.type),
+                base_memory.namespace,
+                base_memory.identifier,
+                base_memory.data,
+                len(partitions),
+                dumps(base_memory.symbols),
+                ANY,
+                base_memory.title,
+                base_memory.description,
+            ),
+        )
         cursor_mock.executemany.assert_awaited_once()
         self.assertTrue(
             cursor_mock.executemany.call_args[0][0]

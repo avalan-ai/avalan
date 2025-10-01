@@ -70,8 +70,7 @@ class MemorySource:
         self, url: str, content_type: str, data: bytes
     ) -> MemorySourceDocument:
         result = await to_thread.run_sync(
-            self._md.convert_stream,
-            BytesIO(data)
+            self._md.convert_stream, BytesIO(data)
         )
         markdown: str = (
             getattr(result, "markdown", None)
@@ -90,7 +89,8 @@ class MemorySource:
             metadata = PdfReader(BytesIO(data)).metadata
             metadata_title = (
                 metadata["/Title"]
-                if metadata and "/Title" in metadata else None
+                if metadata and "/Title" in metadata
+                else None
             )
             title = metadata_title or title or self._markdown_title(markdown)
             description = description or self._markdown_description(markdown)
@@ -101,8 +101,7 @@ class MemorySource:
 
         if description:
             description = self._clean_snippet(
-                description,
-                self._max_description_chars
+                description, self._max_description_chars
             )
 
         return MemorySourceDocument(
@@ -132,8 +131,7 @@ class MemorySource:
         )
 
     def _html_metadata(
-        self,
-        html_bytes: bytes
+        self, html_bytes: bytes
     ) -> tuple[str | None, str | None]:
         soup: BeautifulSoup = BeautifulSoup(html_bytes, "html.parser")
         title: str | None = None
@@ -142,10 +140,9 @@ class MemorySource:
             title = soup.title.string.strip()
 
         if not title:
-            og = (
-                soup.find("meta", attrs={"property": "og:title"}) or
-                soup.find("meta", attrs={"name": "og:title"})
-            )
+            og = soup.find(
+                "meta", attrs={"property": "og:title"}
+            ) or soup.find("meta", attrs={"name": "og:title"})
             if og and og.get("content"):
                 title = str(og["content"]).strip()
 
@@ -170,8 +167,7 @@ class MemorySource:
             p = soup.find("p")
             if p:
                 desc = self._clean_snippet(
-                    p.get_text(" ", strip=True),
-                    self._max_description_chars
+                    p.get_text(" ", strip=True), self._max_description_chars
                 )
 
         return (title, desc)
@@ -189,18 +185,16 @@ class MemorySource:
         )
 
         if m:
-            return self._clean_snippet(
-                m.group(1),
-                self._max_description_chars
-            )
+            return self._clean_snippet(m.group(1), self._max_description_chars)
 
         paras: list[str] = [
             p.strip() for p in split(r"\n{2,}", md) if len(p.strip()) > 80
         ]
-        return self._clean_snippet(
-            paras[0],
-            self._max_description_chars
-        ) if paras else None
+        return (
+            self._clean_snippet(paras[0], self._max_description_chars)
+            if paras
+            else None
+        )
 
     @staticmethod
     def _clean_snippet(text: str, limit: int | None) -> str:

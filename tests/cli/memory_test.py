@@ -241,7 +241,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "ModelManager", return_value=manager),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -292,7 +294,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "ModelManager", return_value=manager),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -341,11 +345,15 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "ModelManager", return_value=manager),
-            patch.object(memory_cmds.Path, "read_bytes", return_value=b"pdf")
-            as read_bytes,
-            patch.object(memory_cmds.Path, "read_text", MagicMock()) as read_text,
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source)
-            as ms_patch,
+            patch.object(
+                memory_cmds.Path, "read_bytes", return_value=b"pdf"
+            ) as read_bytes,
+            patch.object(
+                memory_cmds.Path, "read_text", MagicMock()
+            ) as read_text,
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ) as ms_patch,
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -406,7 +414,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(memory_cmds.Path, "read_bytes", return_value=b"pdf"),
             patch.object(memory_cmds.Path, "read_text", MagicMock()),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -458,7 +468,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(memory_cmds.Path, "read_bytes", return_value=b"md"),
             patch.object(memory_cmds.Path, "read_text", MagicMock()),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -510,7 +522,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(memory_cmds.Path, "read_bytes", return_value=b"md"),
             patch.object(memory_cmds.Path, "read_text", MagicMock()),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -550,7 +564,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(memory_cmds, "get_model_settings", return_value={}),
             patch.object(memory_cmds, "ModelManager", return_value=manager),
-            patch.object(memory_cmds.Path, "read_text", return_value="content"),
+            patch.object(
+                memory_cmds.Path, "read_text", return_value="content"
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -602,7 +618,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(memory_cmds.Path, "read_bytes", return_value=b"html"),
             patch.object(memory_cmds.Path, "read_text", MagicMock()),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -654,7 +672,9 @@ class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):
             patch.object(memory_cmds, "ModelManager", return_value=manager),
             patch.object(memory_cmds.Path, "read_bytes", return_value=b"html"),
             patch.object(memory_cmds.Path, "read_text", MagicMock()),
-            patch.object(memory_cmds, "MemorySource", return_value=memory_source),
+            patch.object(
+                memory_cmds, "MemorySource", return_value=memory_source
+            ),
             patch.object(memory_cmds, "TextPartitioner", return_value=tp_inst),
             patch.object(
                 memory_cmds.PgsqlRawMemory,
@@ -1105,14 +1125,18 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
 
 class CliMemoryDocumentTransformTestCase(TestCase):
     def test_transform_helper_converts_bytes(self) -> None:
-        transform_code = memory_cmds.memory_document_index.__code__.co_consts[3]
+        transform_code = memory_cmds.memory_document_index.__code__.co_consts[
+            3
+        ]
         transform = types.FunctionType(
             transform_code, memory_cmds.memory_document_index.__globals__
         )
         convert_stream = MagicMock(return_value="converted")
         mark_it_down = MagicMock(convert_stream=convert_stream)
 
-        with patch.object(memory_cmds, "MarkItDown", return_value=mark_it_down):
+        with patch.object(
+            memory_cmds, "MarkItDown", return_value=mark_it_down
+        ):
             result = transform(b"html")
 
         self.assertEqual(result, "converted")

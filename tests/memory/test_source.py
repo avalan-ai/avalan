@@ -6,7 +6,9 @@ from avalan.memory.source import MemorySource, MemorySourceDocument
 
 
 class DummyResponse:
-    def __init__(self, *, headers: dict[str, str] | None = None, content: bytes = b"") -> None:
+    def __init__(
+        self, *, headers: dict[str, str] | None = None, content: bytes = b""
+    ) -> None:
         self.headers = headers or {}
         self.content = content
         self.raise_calls = 0
@@ -49,7 +51,9 @@ async def test_fetch_uses_client(monkeypatch: pytest.MonkeyPatch) -> None:
         markdown="payload",
     )
 
-    async def fake_convert(url: str, content_type: str, data: bytes) -> MemorySourceDocument:
+    async def fake_convert(
+        url: str, content_type: str, data: bytes
+    ) -> MemorySourceDocument:
         assert url == "https://example.com"
         assert content_type == ""
         assert data == b"payload"
@@ -66,7 +70,9 @@ async def test_fetch_uses_client(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("require_asyncio_backend")
-async def test_aclose_only_closes_owned_client(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_aclose_only_closes_owned_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = MemorySource()
 
     closed = False
@@ -89,18 +95,32 @@ async def test_aclose_only_closes_owned_client(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("require_asyncio_backend")
-async def test_convert_bytes_prefers_html_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_convert_bytes_prefers_html_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = MemorySource(max_description_chars=4)
 
     async def fake_run_sync(func, stream):
-        return SimpleNamespace(markdown="# Heading\n\nParagraph", title=None, text_content="Fallback")
+        return SimpleNamespace(
+            markdown="# Heading\n\nParagraph",
+            title=None,
+            text_content="Fallback",
+        )
 
-    monkeypatch.setattr("avalan.memory.source.to_thread.run_sync", fake_run_sync)
+    monkeypatch.setattr(
+        "avalan.memory.source.to_thread.run_sync", fake_run_sync
+    )
     monkeypatch.setattr(source, "_is_html", lambda url, ctype: True)
-    monkeypatch.setattr(source, "_html_metadata", lambda data: ("Html Title", "  spaced   text  "))
+    monkeypatch.setattr(
+        source,
+        "_html_metadata",
+        lambda data: ("Html Title", "  spaced   text  "),
+    )
     monkeypatch.setattr(source, "_is_pdf", lambda url, ctype, data: False)
 
-    document = await source.from_bytes("https://example.com/index.html", "", b"<html></html>")
+    document = await source.from_bytes(
+        "https://example.com/index.html", "", b"<html></html>"
+    )
 
     assert document.title == "Html Title"
     assert document.description == "spac"
@@ -110,7 +130,9 @@ async def test_convert_bytes_prefers_html_metadata(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("require_asyncio_backend")
-async def test_convert_bytes_pdf_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_convert_bytes_pdf_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = MemorySource()
 
     async def fake_run_sync(func, stream):
@@ -120,7 +142,9 @@ async def test_convert_bytes_pdf_metadata(monkeypatch: pytest.MonkeyPatch) -> No
             text_content=None,
         )
 
-    monkeypatch.setattr("avalan.memory.source.to_thread.run_sync", fake_run_sync)
+    monkeypatch.setattr(
+        "avalan.memory.source.to_thread.run_sync", fake_run_sync
+    )
     monkeypatch.setattr(source, "_is_html", lambda url, ctype: False)
     monkeypatch.setattr(source, "_is_pdf", lambda url, ctype, data: True)
 
@@ -132,9 +156,13 @@ async def test_convert_bytes_pdf_metadata(monkeypatch: pytest.MonkeyPatch) -> No
         def metadata(self) -> dict[str, str]:
             return {"/Title": "PDF Title"}
 
-    monkeypatch.setattr("avalan.memory.source.PdfReader", lambda stream: DummyReader(stream))
+    monkeypatch.setattr(
+        "avalan.memory.source.PdfReader", lambda stream: DummyReader(stream)
+    )
 
-    document = await source.from_bytes("https://example.com/doc.pdf", "application/pdf", b"%PDF-1.4 data")
+    document = await source.from_bytes(
+        "https://example.com/doc.pdf", "application/pdf", b"%PDF-1.4 data"
+    )
 
     assert document.title == "PDF Title"
     assert document.description == "This is the abstract."
@@ -147,19 +175,25 @@ def test_markdown_title() -> None:
 
 def test_markdown_description_paths() -> None:
     default_source = MemorySource()
-    abstract = default_source._markdown_description("# Abstract\nAn abstract with details.")
+    abstract = default_source._markdown_description(
+        "# Abstract\nAn abstract with details."
+    )
     assert abstract == "An abstract with details."
 
     long_para = "A" * 120
     limited_source = MemorySource(max_description_chars=20)
-    fallback = limited_source._markdown_description(f"Intro\n\n{long_para}\n\nOther")
+    fallback = limited_source._markdown_description(
+        f"Intro\n\n{long_para}\n\nOther"
+    )
     assert fallback == "A" * 20
 
     assert default_source._markdown_description("Too short") is None
 
 
 def test_clean_snippet() -> None:
-    assert MemorySource._clean_snippet("  spaced   text  ", None) == "spaced text"
+    assert (
+        MemorySource._clean_snippet("  spaced   text  ", None) == "spaced text"
+    )
     assert MemorySource._clean_snippet("  spaced   text  ", 6) == "spaced"
 
 
@@ -172,7 +206,9 @@ def test_clean_snippet() -> None:
         ("https://example.com/file", "text/plain", b"data", False),
     ],
 )
-def test_is_pdf(url: str, content_type: str, data: bytes, expected: bool) -> None:
+def test_is_pdf(
+    url: str, content_type: str, data: bytes, expected: bool
+) -> None:
     assert MemorySource._is_pdf(url, content_type, data) is expected
 
 
@@ -208,7 +244,9 @@ def test_html_metadata_sources() -> None:
     html_with_p = b"""
     <html>
         <head><title>Page Title</title></head>
-        <body><p>Paragraph content that is quite long to trigger cleaning.</p></body>
+        <body>
+        <p>Paragraph content that is quite long to trigger cleaning.</p>
+        </body>
     </html>
     """
 
