@@ -1,5 +1,3 @@
-from argparse import Namespace
-from asyncio import to_thread
 from ...cli import get_input
 from ...cli.commands import get_model_settings
 from ...entities import DistanceType, Modality, SearchMatch, Similarity
@@ -8,11 +6,12 @@ from ...memory.partitioner.text import TextPartitioner, TextPartition
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.permanent import MemoryType
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
-from uuid import UUID
+from ...memory.source import MemorySource
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
+from argparse import Namespace
+from asyncio import to_thread
 from faiss import IndexFlatL2
-from httpx import AsyncClient, Response
 from pathlib import Path
 from urllib.parse import urlparse
 from io import BytesIO
@@ -22,6 +21,7 @@ from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
 from rich.theme import Theme
+from uuid import UUID
 
 
 async def memory_document_index(
@@ -67,11 +67,10 @@ async def memory_document_index(
 
             is_url = urlparse(source).scheme in ("http", "https")
             if is_url:
-                async with AsyncClient() as client:
-                    response: Response = await client.get(source)
-                    response.raise_for_status()
-                    result = await to_thread(transform, response.content)
-                    contents = result.text_content
+                async with MemorySource() as memory_source:
+                    document = await memory_source.fetch(source)
+                    description = description or document.description
+                    contents = document.markdown
             else:
                 contents = Path(source).read_text(encoding=args.encoding)
 
