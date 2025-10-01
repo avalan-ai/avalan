@@ -81,12 +81,14 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                 partitions=[part1, part2],
                 symbols={},
                 model_id="m",
+                title="title",
                 description="desc",
             )
         self.assertTrue(memory._client.index.called)
         self.assertEqual(memory._client.index_vector.call_count, 2)
         document = memory._client.index.await_args.kwargs["document"]
         self.assertEqual(document["description"], "desc")
+        self.assertEqual(document["title"], "title")
 
     async def test_search_memories(self):
         mem_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -187,6 +189,7 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
                             "partitions": 1,
                             "symbols": {"a": 1},
                             "created_at": created_at.isoformat(),
+                            "title": "title",
                             "description": "desc",
                         }
                     },
@@ -215,6 +218,7 @@ class ElasticsearchRawMemoryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(memories), 1)
         memory_entry = memories[0]
         self.assertEqual(memory_entry.description, "desc")
+        self.assertEqual(memory_entry.title, "title")
         self.assertEqual(memory_entry.type, MemoryType.RAW)
         self.assertEqual(memory_entry.partitions, 1)
 

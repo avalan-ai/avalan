@@ -69,6 +69,7 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
                 partitions=[part1, part2],
                 symbols={},
                 model_id="m",
+                title="title",
                 description="desc",
             )
         self.assertTrue(memory._client.put_object.called)
@@ -76,6 +77,7 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         body = memory._client.put_object.await_args.kwargs["Body"]
         payload = json.loads(body.decode())
         self.assertEqual(payload["description"], "desc")
+        self.assertEqual(payload["title"], "title")
 
     async def test_search_memories(self):
         mem_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -169,6 +171,7 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
             "partitions": 1,
             "symbols": {"a": 1},
             "created_at": created_at.isoformat(),
+            "title": "title",
             "description": "desc",
         }
         body = MagicMock()
@@ -224,6 +227,7 @@ class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(memories), 1)
         memory_entry = memories[0]
         self.assertEqual(memory_entry.description, "desc")
+        self.assertEqual(memory_entry.title, "title")
         self.assertEqual(memory_entry.type, MemoryType.RAW)
         self.assertEqual(memory_entry.partitions, 1)
 

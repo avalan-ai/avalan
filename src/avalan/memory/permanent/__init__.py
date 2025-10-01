@@ -66,6 +66,7 @@ class Memory:
     partitions: int
     symbols: dict | None
     created_at: datetime
+    title: str | None = None
     description: str | None = None
 
 
@@ -340,6 +341,7 @@ class PermanentMemory(MemoryStoreBase[Memory]):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        title: str | None = None,
         description: str | None = None,
     ) -> None:
         raise NotImplementedError()
@@ -378,6 +380,7 @@ class PermanentMemory(MemoryStoreBase[Memory]):
         symbols: dict | None = None,
         model_id: str | None = None,
         memory_id: UUID | None = None,
+        title: str | None = None,
         description: str | None = None,
     ) -> tuple[Memory, list[PermanentMemoryPartition]]:
         if memory_id is None:
@@ -393,6 +396,7 @@ class PermanentMemory(MemoryStoreBase[Memory]):
             partitions=len(partitions),
             symbols=symbols,
             created_at=created_at,
+            title=title,
             description=description,
         )
         partition_rows = [

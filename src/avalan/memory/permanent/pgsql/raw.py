@@ -51,6 +51,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        title: str | None = None,
         description: str | None = None,
     ) -> None:
         assert (
@@ -68,6 +69,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
             symbols=symbols,
             model_id=model_id,
             memory_id=uuid4(),
+            title=title,
             description=description,
         )
 
@@ -87,10 +89,11 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             "partitions",
                             "symbols",
                             "created_at",
+                            "title",
                             "description"
                         ) VALUES (
                             %s, %s, %s, %s::memory_types,
-                            %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
                         (
@@ -108,6 +111,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                                 else None
                             ),
                             entry.created_at,
+                            entry.title,
                             entry.description,
                         ),
                     )
@@ -150,6 +154,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         partitions: int
         symbols: dict | None
         created_at: datetime
+        title: str | None
         description: str | None
 
     async def list_memories(
@@ -172,6 +177,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                 "partitions",
                 "symbols",
                 "created_at",
+                "title",
                 "description"
             FROM "memories"
             WHERE "participant_id" = %s
@@ -200,6 +206,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                     partitions=record.partitions,
                     symbols=record.symbols,
                     created_at=record.created_at,
+                    title=record.title,
                     description=record.description,
                 )
             )

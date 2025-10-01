@@ -963,6 +963,11 @@ class CLI:
             help="Identifier for the memory entry (defaults to the source)",
         )
         memory_doc_index_parser.add_argument(
+            "--title",
+            type=str,
+            help="Title for the memory entry",
+        )
+        memory_doc_index_parser.add_argument(
             "--description",
             type=str,
             help="Description for the memory entry",
