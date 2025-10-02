@@ -52,9 +52,8 @@ class CliModelReasoningTagTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
-        async def manager_call(
-            self, _engine_uri, _model, operation, tool=None
-        ):
+        async def manager_call(self, model_task):
+            operation = model_task.operation
             async def gen():
                 yield "t"
 
