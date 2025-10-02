@@ -72,6 +72,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        title: str | None = None,
         description: str | None = None,
     ) -> None:
         assert (
@@ -89,6 +90,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             symbols=symbols,
             model_id=model_id,
             memory_id=uuid4(),
+            title=title,
             description=description,
         )
         await self._put_object(
@@ -106,6 +108,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
                     "partitions": entry.partitions,
                     "symbols": entry.symbols,
                     "created_at": entry.created_at.isoformat(),
+                    "title": entry.title,
                     "description": entry.description,
                 }
             ).encode(),
@@ -220,6 +223,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
                     partitions=metadata["partitions"],
                     symbols=metadata.get("symbols"),
                     created_at=datetime.fromisoformat(metadata["created_at"]),
+                    title=metadata.get("title"),
                     description=metadata.get("description"),
                 )
             )

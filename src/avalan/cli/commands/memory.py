@@ -1,5 +1,3 @@
-from argparse import Namespace
-from asyncio import to_thread
 from ...cli import get_input
 from ...cli.commands import get_model_settings
 from ...entities import DistanceType, Modality, SearchMatch, Similarity
@@ -8,11 +6,12 @@ from ...memory.partitioner.text import TextPartitioner, TextPartition
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.permanent import MemoryType
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
-from uuid import UUID
+from ...memory.source import MemorySource
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
+from argparse import Namespace
+from asyncio import to_thread
 from faiss import IndexFlatL2
-from httpx import AsyncClient, Response
 from pathlib import Path
 from urllib.parse import urlparse
 from io import BytesIO
@@ -22,6 +21,7 @@ from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
 from rich.theme import Theme
+from uuid import UUID
 
 
 async def memory_document_index(
@@ -45,6 +45,7 @@ async def memory_document_index(
     namespace = args.namespace
     dsn = args.dsn
     identifier = args.identifier or None
+    title = args.title or None
     description = args.description or None
     display_partitions = (
         args.display_partitions if not args.no_display_partitions else None
@@ -67,13 +68,37 @@ async def memory_document_index(
 
             is_url = urlparse(source).scheme in ("http", "https")
             if is_url:
-                async with AsyncClient() as client:
-                    response: Response = await client.get(source)
-                    response.raise_for_status()
-                    result = await to_thread(transform, response.content)
-                    contents = result.text_content
+                async with MemorySource() as memory_source:
+                    document = await memory_source.fetch(source)
+                    title = title or document.title
+                    description = description or document.description
+                    contents = document.markdown
             else:
-                contents = Path(source).read_text(encoding=args.encoding)
+                path = Path(source)
+                content_type: str | None = None
+                suffix = path.suffix.lower()
+                if suffix == ".pdf":
+                    content_type = "application/pdf"
+                elif suffix in {".md", ".markdown"}:
+                    content_type = "text/markdown"
+                elif suffix in {".htm", ".html"}:
+                    content_type = "text/html"
+
+                if content_type:
+                    data = path.read_bytes()
+                    async with MemorySource() as memory_source:
+                        document = await memory_source.from_bytes(
+                            path.resolve().as_uri(),
+                            content_type,
+                            data,
+                        )
+                    title = title or document.title
+                    description = description or document.description
+                    contents = document.markdown
+                else:
+                    contents = path.read_text(encoding=args.encoding)
+                    if not title:
+                        title = path.name
 
             if not identifier:
                 identifier = source if is_url else str(Path(source).resolve())
@@ -86,6 +111,13 @@ async def memory_document_index(
                     if args.partitioner == "code"
                     else MemoryType.FILE
                 )
+
+            if not title:
+                if is_url:
+                    parsed = urlparse(source)
+                    title = parsed.netloc or source
+                else:
+                    title = Path(source).name
 
             if is_url or args.partitioner == "text":
                 partitioner = TextPartitioner(
@@ -129,6 +161,7 @@ async def memory_document_index(
                 partitions=partitions,
                 symbols={},
                 model_id=model_id,
+                title=title,
                 description=description,
             )
 

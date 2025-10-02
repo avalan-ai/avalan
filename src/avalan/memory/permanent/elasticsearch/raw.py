@@ -58,6 +58,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
         partitions: list[TextPartition],
         symbols: dict | None = None,
         model_id: str | None = None,
+        title: str | None = None,
         description: str | None = None,
     ) -> None:
         assert (
@@ -75,6 +76,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
             symbols=symbols,
             model_id=model_id,
             memory_id=uuid4(),
+            title=title,
             description=description,
         )
         await self._index_document(
@@ -91,6 +93,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                 "partitions": entry.partitions,
                 "symbols": entry.symbols,
                 "created_at": entry.created_at.isoformat(),
+                "title": entry.title,
                 "description": entry.description,
             },
         )
@@ -203,6 +206,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                     partitions=source["partitions"],
                     symbols=source.get("symbols"),
                     created_at=datetime.fromisoformat(source["created_at"]),
+                    title=source.get("title"),
                     description=source.get("description"),
                 )
             )

@@ -46,6 +46,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
             partitions=0,
             symbols={},
             created_at=datetime.now(timezone.utc),
+            title="title",
             description="desc",
         )
         partitions = [
@@ -70,6 +71,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 partitions=partitions,
                 symbols=base_memory.symbols,
                 model_id=base_memory.model_id,
+                title=base_memory.title,
                 description=base_memory.description,
             )
 
@@ -87,10 +89,11 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                             "partitions",
                             "symbols",
                             "created_at",
+                            "title",
                             "description"
                         ) VALUES (
                             %s, %s, %s, %s::memory_types,
-                            %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
             (
@@ -104,6 +107,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 len(partitions),
                 dumps(base_memory.symbols),
                 ANY,
+                base_memory.title,
                 base_memory.description,
             ),
         )
@@ -170,6 +174,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 "partitions": 2,
                 "symbols": {"a": 1},
                 "created_at": created_at,
+                "title": "title",
                 "description": "desc",
             }
         ]
@@ -197,6 +202,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
                 "partitions",
                 "symbols",
                 "created_at",
+                "title",
                 "description"
             FROM "memories"
             WHERE "participant_id" = %s
@@ -214,6 +220,7 @@ class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(memories), 1)
         memory = memories[0]
         self.assertEqual(memory.description, "desc")
+        self.assertEqual(memory.title, "title")
         self.assertEqual(memory.type, MemoryType.RAW)
         self.assertEqual(memory.partitions, 2)
         self.assertEqual(memory.created_at, created_at)
