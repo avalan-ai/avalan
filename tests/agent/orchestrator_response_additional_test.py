@@ -320,6 +320,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         model_event = await resp.__anext__()
         self.assertEqual(model_event.type, EventType.TOOL_MODEL_RESPONSE)
 
-        args, kwargs = agent.await_args_list[0]
-        messages = args[1]
-        self.assertEqual(messages[2].tool_call_error.message, "boom")
+        context = agent.await_args_list[0].args[0]
+        assert isinstance(context.input, list)
+        self.assertEqual(
+            context.input[2].tool_call_error.message,
+            "boom",
+        )
