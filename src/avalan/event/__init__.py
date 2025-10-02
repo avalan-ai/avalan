@@ -7,6 +7,8 @@ class EventType(StrEnum):
     CALL_PREPARE_BEFORE = "call_prepare_before"
     CALL_PREPARE_AFTER = "call_prepare_after"
     END = "end"
+    ENGINE_AGENT_CALL_BEFORE = "engine_agent_call_before"
+    ENGINE_AGENT_CALL_AFTER = "engine_agent_call_after"
     ENGINE_RUN_BEFORE = "engine_run_before"
     ENGINE_RUN_AFTER = "engine_run_after"
     INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"

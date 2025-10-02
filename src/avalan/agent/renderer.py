@@ -1,11 +1,12 @@
 from ..agent import Role, Specification
 from ..agent.engine import EngineAgent
+from ..entities import EngineUri
+from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..model.engine import Engine
 from ..model.manager import ModelManager
+from ..model.task import ModelTaskContext
 from ..tool.manager import ToolManager
-from ..entities import EngineUri
-from ..event.manager import EventManager
 from jinja2 import (
     Environment as TemplateEnvironment,
     FileSystemLoader,
@@ -88,9 +89,9 @@ class TemplateEngineAgent(EngineAgent):
         )
         self._renderer = renderer
 
-    def _prepare_call(
-        self, specification: Specification, input: str, **kwargs: Any
-    ) -> Any:
+    def _prepare_call(self, context: ModelTaskContext) -> Any:
+        specification = context.specification
+        kwargs = dict(context.engine_args)
         if specification.system_prompt is not None:
             kwargs.setdefault("settings", specification.settings)
             kwargs.setdefault("system_prompt", specification.system_prompt)

@@ -1,4 +1,5 @@
 from .modalities import ModalityRegistry
+from .task import ModelTask
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -39,7 +40,6 @@ from ..model.vision.diffusion import (
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
-from ..tool.manager import ToolManager
 import asyncio
 from argparse import Namespace
 from contextlib import AsyncExitStack, ContextDecorator
@@ -120,14 +120,8 @@ class ModelManager(ContextDecorator):
     ) -> bool:
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
-    async def __call__(
-        self,
-        engine_uri: EngineUri,
-        model: ModelType,
-        operation: Operation,
-        tool: ToolManager | None = None,
-    ):
-        modality = operation.modality
+    async def __call__(self, task: ModelTask):
+        modality = task.operation.modality
 
         self._logger.info("ModelManager call process started for %s", modality)
 
@@ -137,16 +131,20 @@ class ModelManager(ContextDecorator):
                 Event(
                     type=EventType.MODEL_MANAGER_CALL_BEFORE,
                     payload={
-                        "engine_uri": engine_uri,
+                        "engine_uri": task.engine_uri,
                         "modality": modality,
-                        "operation": operation,
+                        "operation": task.operation,
+                        "context": task.context,
+                        "task": task,
                     },
                     started=start,
                 )
             )
 
         handler = ModalityRegistry.get(modality)
-        result = await handler(engine_uri, model, operation, tool)
+        result = await handler(
+            task.engine_uri, task.model, task.operation, task.tool
+        )
 
         end = perf_counter()
         if self._event_manager:
@@ -154,9 +152,11 @@ class ModelManager(ContextDecorator):
                 Event(
                     type=EventType.MODEL_MANAGER_CALL_AFTER,
                     payload={
-                        "engine_uri": engine_uri,
+                        "engine_uri": task.engine_uri,
                         "modality": modality,
-                        "operation": operation,
+                        "operation": task.operation,
+                        "context": task.context,
+                        "task": task,
                         "result": result,
                     },
                     started=start,

@@ -22,6 +22,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.task import ModelTask, ModelTaskContext
 from logging import getLogger
 from avalan.tool.math import MathToolSet
 from avalan.tool.manager import ToolManager, ToolManagerSettings
@@ -68,16 +69,16 @@ class DummyModelManager:
     def __init__(self) -> None:
         self.passed_tool = None
 
-    async def __call__(self, engine_uri, model, operation, tool):
-        self.passed_tool = tool
-        return await model(operation.input, tool=tool)
+    async def __call__(self, task: ModelTask):
+        self.passed_tool = task.tool
+        return await task.model(task.operation.input, tool=task.tool)
 
 
 class DummyAgent(EngineAgent):
-    def _prepare_call(self, specification, input, **kwargs):
+    def _prepare_call(self, context: ModelTaskContext):
         return {}
 
-    async def _run(self, input, **_kwargs):
+    async def _run(self, context: ModelTaskContext, input, **_kwargs):
         operation = EntitiesOperation(
             generation_settings=GenerationSettings(),
             input=input,
@@ -87,10 +88,13 @@ class DummyAgent(EngineAgent):
         )
         self._last_operation = operation
         return await self._model_manager(
-            self._engine_uri,
-            self._model,
-            operation,
-            self._tool,
+            ModelTask(
+                engine_uri=self._engine_uri,
+                model=self._model,
+                operation=operation,
+                tool=self._tool,
+                context=context,
+            )
         )
 
 
@@ -144,10 +148,11 @@ class DummyOrchestrator:
 
     async def __call__(self, input_str, **_kwargs):
         message = Message(role=MessageRole.USER, content=input_str)
-        response = await self.agent(
-            self._operation.specification,
-            message,
+        context = ModelTaskContext(
+            specification=self._operation.specification,
+            input=message,
         )
+        response = await self.agent(context)
         return agent_cmds.OrchestratorResponse(
             message,
             response,
