@@ -6,6 +6,7 @@ from avalan.agent.orchestrator.orchestrators.json import (
 from avalan.agent.renderer import TemplateEngineAgent
 from avalan.entities import (
     EngineUri,
+    Message,
     MessageRole,
     TransformerEngineSettings,
 )
@@ -180,10 +181,11 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             result = await orch("hi")
 
         agent_mock.assert_awaited_once()
-        spec_arg, msg_arg = agent_mock.await_args.args
-        self.assertEqual(msg_arg.content, "hi")
-        self.assertEqual(msg_arg.role, MessageRole.USER)
-        self.assertEqual(spec_arg.role, Role(persona=["assistant"]))
+        context = agent_mock.await_args.args[0]
+        self.assertIsInstance(context.input, Message)
+        self.assertEqual(context.input.content, "hi")
+        self.assertEqual(context.input.role, MessageRole.USER)
+        self.assertEqual(context.specification.role, Role(persona=["assistant"]))
 
         self.assertEqual(result, '{"value": "ok"}')
         self.assertTrue(

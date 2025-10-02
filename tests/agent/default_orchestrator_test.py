@@ -5,6 +5,7 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.entities import (
     EngineUri,
+    Message,
     MessageRole,
     Modality,
     TransformerEngineSettings,
@@ -194,13 +195,15 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
                 tokens.append(t)
 
         agent_mock.assert_awaited_once()
-        spec_arg, msg_arg = agent_mock.await_args.args
-        self.assertEqual(msg_arg.content, "hi")
-        self.assertEqual(msg_arg.role, MessageRole.USER)
-        self.assertIsNone(msg_arg.name)
-        self.assertIsNone(msg_arg.arguments)
+        context = agent_mock.await_args.args[0]
+        self.assertIsInstance(context.input, Message)
+        message = context.input
+        self.assertEqual(message.content, "hi")
+        self.assertEqual(message.role, MessageRole.USER)
+        self.assertIsNone(message.name)
+        self.assertIsNone(message.arguments)
         self.assertEqual(
-            spec_arg,
+            context.specification,
             Specification(
                 role="assistant",
                 goal=Goal(task="do", instructions=["something"]),
@@ -303,8 +306,9 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         orch._engine_agents = {environment_hash: agent_mock}
         await orch("world")
 
-        spec_arg, msg_arg = agent_mock.await_args.args
-        self.assertEqual(msg_arg.content, b"hello world Bob")
+        context = agent_mock.await_args.args[0]
+        self.assertIsInstance(context.input, Message)
+        self.assertEqual(context.input.content, b"hello world Bob")
 
     async def test_user_template_rendering(self):
         with TemporaryDirectory() as tmp:
@@ -367,5 +371,6 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             orch._engine_agents = {environment_hash: agent_mock}
             await orch("earth")
 
-        spec_arg, msg_arg = agent_mock.await_args.args
-        self.assertEqual(msg_arg.content, "hi earth Ann")
+        context = agent_mock.await_args.args[0]
+        self.assertIsInstance(context.input, Message)
+        self.assertEqual(context.input.content, "hi earth Ann")

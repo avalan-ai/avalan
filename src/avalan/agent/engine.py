@@ -1,4 +1,3 @@
-from ..agent import Specification
 from ..entities import (
     EngineMessage,
     EngineUri,
@@ -115,10 +114,13 @@ class EngineAgent(ABC):
         self._model_manager = model_manager
         self._engine_uri = engine_uri
 
-    async def __call__(self, context: ModelTaskContext) -> TextGenerationResponse | str:
+    async def __call__(
+        self,
+        context: ModelTaskContext,
+    ) -> TextGenerationResponse | str:
         if context.parent and context.root_parent is None:
-            root_parent = context.parent.root_parent or context.parent
-            context = replace(context, root_parent=root_parent)
+            root_parent_context = context.parent.root_parent or context.parent
+            context = replace(context, root_parent=root_parent_context)
 
         await self._event_manager.trigger(
             Event(

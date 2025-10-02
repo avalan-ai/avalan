@@ -16,6 +16,7 @@ from ....entities import (
 from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model.response.text import TextGenerationResponse
+from ....model.task import ModelTaskContext
 from ....tool.manager import ToolManager
 from ....model.response.parsers.tool import ToolCallResponseParser
 from ....cli import CommandAbortException
@@ -304,11 +305,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
             await self._event_manager.trigger(event_tool_model_run)
 
-            inner_response = await self._engine_agent(
-                self._operation.specification,
-                messages,
-                **self._engine_args,
+            context = ModelTaskContext(
+                specification=self._operation.specification,
+                input=messages,
+                engine_args=dict(self._engine_args),
             )
+            inner_response = await self._engine_agent(context)
             assert inner_response
 
             self._response = inner_response
@@ -501,11 +503,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         )
         await self._event_manager.trigger(event_tool_model_run)
 
-        response = await self._engine_agent(
-            self._operation.specification,
-            messages,
-            **self._engine_args,
+        context = ModelTaskContext(
+            specification=self._operation.specification,
+            input=messages,
+            engine_args=dict(self._engine_args),
         )
+        response = await self._engine_agent(context)
         assert response
         return response
 
