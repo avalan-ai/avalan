@@ -46,8 +46,13 @@ from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
 from os import environ
 from time import perf_counter
-from typing import Any, TypeAlias, get_args
+from typing import Any, TYPE_CHECKING, TypeAlias, get_args
 from urllib.parse import parse_qsl, urlparse
+
+if TYPE_CHECKING:
+    from .engine import Engine
+else:  # pragma: no cover - runtime type placeholder
+    Engine = Any
 
 ModelType: TypeAlias = (
     AudioClassificationModel
@@ -120,8 +125,11 @@ class ModelManager(ContextDecorator):
     ) -> bool:
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
-    async def __call__(self, task: ModelTask):
-        modality = task.operation.modality
+    async def __call__(
+        self,
+        model_task: ModelTask,
+    ):
+        modality = model_task.operation.modality
 
         self._logger.info("ModelManager call process started for %s", modality)
 
@@ -131,11 +139,11 @@ class ModelManager(ContextDecorator):
                 Event(
                     type=EventType.MODEL_MANAGER_CALL_BEFORE,
                     payload={
-                        "engine_uri": task.engine_uri,
+                        "engine_uri": model_task.engine_uri,
                         "modality": modality,
-                        "operation": task.operation,
-                        "context": task.context,
-                        "task": task,
+                        "operation": model_task.operation,
+                        "context": model_task.context,
+                        "task": model_task,
                     },
                     started=start,
                 )
@@ -143,7 +151,10 @@ class ModelManager(ContextDecorator):
 
         handler = ModalityRegistry.get(modality)
         result = await handler(
-            task.engine_uri, task.model, task.operation, task.tool
+            model_task.engine_uri,
+            model_task.model,
+            model_task.operation,
+            model_task.tool,
         )
 
         end = perf_counter()
@@ -152,11 +163,11 @@ class ModelManager(ContextDecorator):
                 Event(
                     type=EventType.MODEL_MANAGER_CALL_AFTER,
                     payload={
-                        "engine_uri": task.engine_uri,
+                        "engine_uri": model_task.engine_uri,
                         "modality": modality,
-                        "operation": task.operation,
-                        "context": task.context,
-                        "task": task,
+                        "operation": model_task.operation,
+                        "context": model_task.context,
+                        "task": model_task,
                         "result": result,
                     },
                     started=start,
