@@ -260,3 +260,66 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             manager.await_args.args[0].operation.generation_settings
         )
         self.assertEqual(used_settings.top_p, 0.5)
+
+
+class EngineAgentCallTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.memory = MagicMock()
+        self.engine = DummyEngine()
+        self.tool = MagicMock(spec=ToolManager)
+        self.event_manager = MagicMock(spec=EventManager)
+        self.event_manager.trigger = AsyncMock()
+        self.model_manager = AsyncMock(spec=ModelManager)
+        self.engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        self.agent = DummyAgent(
+            self.engine,
+            self.memory,
+            self.tool,
+            self.event_manager,
+            self.model_manager,
+            self.engine_uri,
+        )
+
+    async def test_call_sets_root_parent_when_missing(self):
+        specification = Specification(role=None, goal=None)
+        root_parent = ModelTaskContext(
+            specification=specification,
+            input="root",
+        )
+        parent_context = ModelTaskContext(
+            specification=specification,
+            input="parent",
+            root_parent=root_parent,
+        )
+        child_context = ModelTaskContext(
+            specification=specification,
+            input="child",
+            parent=parent_context,
+        )
+
+        run_args = {"temperature": 0.25}
+        self.agent._prepare_call = MagicMock(return_value=run_args)
+        self.agent._run = AsyncMock(return_value="call-result")
+
+        result = await self.agent(child_context)
+
+        self.assertEqual(result, "call-result")
+        self.agent._prepare_call.assert_called_once()
+        prepared_context = self.agent._prepare_call.call_args.args[0]
+        self.assertIs(prepared_context.root_parent, root_parent)
+
+        self.agent._run.assert_awaited_once()
+        run_context = self.agent._run.await_args.args[0]
+        self.assertIs(run_context.root_parent, root_parent)
+        self.assertIs(run_context.parent, parent_context)
+        self.assertEqual(self.agent._run.await_args.kwargs, run_args)
+        self.assertIsNone(child_context.root_parent)
+        self.assertEqual(self.event_manager.trigger.await_count, 4)
