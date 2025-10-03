@@ -1,26 +1,27 @@
-from . import Specification
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from ..agent import Specification
 from ..entities import EngineUri, Input, Operation
 from ..tool.manager import ToolManager
-from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..model.engine import Engine
+    from .engine import Engine
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class ModelTaskContext:
+class ModelCallContext:
     specification: Specification
     input: Input | None
     engine_args: dict[str, Any] = field(default_factory=dict)
-    parent: "ModelTaskContext | None" = None
-    root_parent: "ModelTaskContext | None" = None
+    parent: "ModelCallContext | None" = None
+    root_parent: "ModelCallContext | None" = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class ModelTask:
+class ModelCall:
     engine_uri: EngineUri
     model: "Engine"
     operation: Operation
     tool: ToolManager | None = None
-    context: ModelTaskContext
+    context: ModelCallContext

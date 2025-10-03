@@ -22,7 +22,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.response.text import TextGenerationResponse
-from avalan.model.task import ModelTask, ModelTaskContext
+from avalan.model.call import ModelCall, ModelCallContext
 from logging import getLogger
 from avalan.tool.math import MathToolSet
 from avalan.tool.manager import ToolManager, ToolManagerSettings
@@ -69,16 +69,16 @@ class DummyModelManager:
     def __init__(self) -> None:
         self.passed_tool = None
 
-    async def __call__(self, task: ModelTask):
+    async def __call__(self, task: ModelCall):
         self.passed_tool = task.tool
         return await task.model(task.operation.input, tool=task.tool)
 
 
 class DummyAgent(EngineAgent):
-    def _prepare_call(self, context: ModelTaskContext):
+    def _prepare_call(self, context: ModelCallContext):
         return {}
 
-    async def _run(self, context: ModelTaskContext, input, **_kwargs):
+    async def _run(self, context: ModelCallContext, input, **_kwargs):
         operation = EntitiesOperation(
             generation_settings=GenerationSettings(),
             input=input,
@@ -88,7 +88,7 @@ class DummyAgent(EngineAgent):
         )
         self._last_operation = operation
         return await self._model_manager(
-            ModelTask(
+            ModelCall(
                 engine_uri=self._engine_uri,
                 model=self._model,
                 operation=operation,
@@ -148,7 +148,7 @@ class DummyOrchestrator:
 
     async def __call__(self, input_str, **_kwargs):
         message = Message(role=MessageRole.USER, content=input_str)
-        context = ModelTaskContext(
+        context = ModelCallContext(
             specification=self._operation.specification,
             input=message,
         )
@@ -159,6 +159,7 @@ class DummyOrchestrator:
             self.agent,
             self._operation,
             {},
+            context,
             event_manager=self.event_manager,
             tool=self.tool,
         )

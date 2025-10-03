@@ -14,7 +14,7 @@ from avalan.entities import (
 )
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
-from avalan.model.task import ModelTask, ModelTaskContext
+from avalan.model.call import ModelCall, ModelCallContext
 
 
 class DummyModel:
@@ -473,12 +473,12 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
         for modality, operation, expected in cases:
             with self.subTest(modality=modality):
                 model.called_with = None
-                task = ModelTask(
+                task = ModelCall(
                     engine_uri=self.engine_uri,
                     model=model,
                     operation=operation,
                     tool=None,
-                    context=ModelTaskContext(
+                    context=ModelCallContext(
                         specification=Specification(role=None, goal=None),
                         input=operation.input,
                         engine_args={},
@@ -498,12 +498,12 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(NotImplementedError):
             await self.manager(
-                ModelTask(
+                ModelCall(
                     engine_uri=self.engine_uri,
                     model=model,
                     operation=operation,
                     tool=None,
-                    context=ModelTaskContext(
+                    context=ModelCallContext(
                         specification=Specification(role=None, goal=None),
                         input=None,
                         engine_args={},

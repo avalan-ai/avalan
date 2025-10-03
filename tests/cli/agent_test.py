@@ -31,7 +31,7 @@ from avalan.event import Event, EventType
 from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.model.task import ModelTask, ModelTaskContext
+from avalan.model.call import ModelCall, ModelCallContext
 from logging import getLogger
 from avalan.entities import (
     GenerationCacheStrategy,
@@ -1796,7 +1796,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.passed_tool = None
 
-            async def __call__(self, task: ModelTask):
+            async def __call__(self, task: ModelCall):
                 self.passed_tool = task.tool
                 return await task.model(None, tool=task.tool)
 
@@ -1824,11 +1824,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
 
         class DummyAgent(EngineAgent):
-            def _prepare_call(self, context: ModelTaskContext):
+            def _prepare_call(self, context: ModelCallContext):
                 return {}
 
             async def _run(
-                self, context: ModelTaskContext, input, **_kwargs
+                self, context: ModelCallContext, input, **_kwargs
             ):
                 operation = Operation(
                     generation_settings=GenerationSettings(),
@@ -1840,7 +1840,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                     requires_input=True,
                 )
                 return await self._model_manager(
-                    ModelTask(
+                    ModelCall(
                         engine_uri=engine_uri,
                         model=engine,
                         operation=operation,
@@ -1860,7 +1860,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         async def orch_call(*_a, **_k):
-            context = ModelTaskContext(
+            context = ModelCallContext(
                 specification=Specification(role="assistant", goal=None),
                 input=Message(role=MessageRole.USER, content="hi"),
             )

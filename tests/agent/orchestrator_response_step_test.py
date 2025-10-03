@@ -5,13 +5,15 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
 from avalan.agent import EngineEnvironment, AgentOperation, Specification
 from avalan.entities import (
     EngineUri,
+    GenerationSettings,
+    Input,
     Message,
     MessageRole,
     Token,
     TransformerEngineSettings,
-    GenerationSettings,
 )
 from avalan.model import TextGenerationResponse
+from avalan.model.call import ModelCallContext
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
@@ -55,13 +57,37 @@ def _dummy_response() -> TextGenerationResponse:
     )
 
 
+def _make_response(
+    input_value: Input,
+    response: TextGenerationResponse,
+    agent: EngineAgent,
+    operation: AgentOperation,
+    engine_args: dict,
+    **kwargs,
+) -> OrchestratorResponse:
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_value,
+        engine_args=dict(engine_args),
+    )
+    return OrchestratorResponse(
+        input_value,
+        response,
+        agent,
+        operation,
+        engine_args,
+        context,
+        **kwargs,
+    )
+
+
 class OrchestratorResponseStepTestCase(IsolatedAsyncioTestCase):
     async def test_step_counter(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
         operation = _dummy_operation()
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,

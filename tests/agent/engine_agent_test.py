@@ -13,7 +13,7 @@ from avalan.tool.manager import ToolManager
 from avalan.model import TextGenerationResponse
 from logging import getLogger
 from avalan.model.manager import ModelManager
-from avalan.model.task import ModelTaskContext
+from avalan.model.call import ModelCallContext
 from dataclasses import replace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -32,7 +32,7 @@ class DummyEngine:
 
 
 class DummyAgent(EngineAgent):
-    def _prepare_call(self, context: ModelTaskContext):
+    def _prepare_call(self, context: ModelCallContext):
         return {}
 
 
@@ -128,7 +128,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         return agent, engine, memory, model_manager
 
     def _make_context(self, input_value: Message | str):
-        return ModelTaskContext(
+        return ModelCallContext(
             specification=Specification(role=None, goal=None),
             input=input_value,
         )
@@ -290,16 +290,16 @@ class EngineAgentCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_sets_root_parent_when_missing(self):
         specification = Specification(role=None, goal=None)
-        root_parent = ModelTaskContext(
+        root_parent = ModelCallContext(
             specification=specification,
             input="root",
         )
-        parent_context = ModelTaskContext(
+        parent_context = ModelCallContext(
             specification=specification,
             input="parent",
             root_parent=root_parent,
         )
-        child_context = ModelTaskContext(
+        child_context = ModelCallContext(
             specification=specification,
             input="child",
             parent=parent_context,

@@ -19,7 +19,7 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
-from avalan.model.task import ModelTask, ModelTaskContext
+from avalan.model.call import ModelCall, ModelCallContext
 
 
 class ModelManagerExtraTestCase(TestCase):
@@ -218,11 +218,11 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             return expected
 
         model = object()
-        context = ModelTaskContext(
+        context = ModelCallContext(
             specification=Specification(role=None, goal=None),
             input=operation.input,
         )
-        task = ModelTask(
+        task = ModelCall(
             engine_uri=engine_uri,
             model=model,
             operation=operation,

@@ -1,5 +1,5 @@
 from .response.text import TextGenerationResponse
-from .task import ModelTask, ModelTaskContext
+from .call import ModelCall, ModelCallContext
 from .vendor import TextGenerationVendorStream
 from ..entities import (
     ImageEntity,

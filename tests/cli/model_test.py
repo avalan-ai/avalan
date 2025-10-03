@@ -5,6 +5,7 @@ from avalan.cli.commands import (
 )
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator import OrchestratorResponse
+from avalan.model.call import ModelCallContext
 from avalan.entities import (
     ImageEntity,
     Message,
@@ -4910,12 +4911,19 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
         operation = MagicMock()
+        input_message = Message(role=MessageRole.USER, content="hi")
+        context = ModelCallContext(
+            specification=operation.specification,
+            input=input_message,
+            engine_args={},
+        )
         orch_response = OrchestratorResponse(
-            Message(role=MessageRole.USER, content="hi"),
+            input_message,
             response,
             agent,
             operation,
             {},
+            context,
         )
 
         orchestrator = SimpleNamespace(event_manager=None, input_token_count=1)
