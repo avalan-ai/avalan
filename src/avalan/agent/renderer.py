@@ -5,7 +5,7 @@ from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..model.engine import Engine
 from ..model.manager import ModelManager
-from ..model.task import ModelTaskContext
+from ..model.call import ModelCallContext
 from ..tool.manager import ToolManager
 from jinja2 import (
     Environment as TemplateEnvironment,
@@ -89,7 +89,7 @@ class TemplateEngineAgent(EngineAgent):
         )
         self._renderer = renderer
 
-    def _prepare_call(self, context: ModelTaskContext) -> Any:
+    def _prepare_call(self, context: ModelCallContext) -> Any:
         specification = context.specification
         kwargs = dict(context.engine_args)
         if specification.system_prompt is not None:

@@ -16,7 +16,7 @@ from logging import getLogger
 from uuid import UUID, uuid4
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock
-from avalan.model.task import ModelTaskContext
+from avalan.model.call import ModelCallContext
 
 
 class TemplateEngineAgentPropertyTestCase(TestCase):
@@ -82,7 +82,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             goal=Goal(task="do", instructions=["instr"]),
             rules=["rule"],
         )
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
@@ -102,7 +102,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=["rule {{verb}}"],
             template_vars={"verb": "run"},
         )
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
@@ -121,7 +121,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=["rule {{verb}}"],
             settings=GenerationSettings(template_vars={"verb": "run"}),
         )
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
@@ -140,7 +140,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=[],
             template_vars={"verb": "x"},
         )
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
@@ -154,7 +154,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
 
     def test_prepare_call_system_prompt(self):
         spec = Specification(role=None, goal=None, system_prompt="sys")
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
         self.assertEqual(result["system_prompt"], "sys")
 
@@ -166,7 +166,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             developer_prompt="dev",
         )
 
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
 
         self.assertEqual(result["system_prompt"], "sys")
@@ -180,7 +180,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=[],
         )
 
-        context = ModelTaskContext(specification=spec, input="hi")
+        context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
 
         self.assertEqual(result["developer_prompt"], "dev")
@@ -234,7 +234,7 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
 
         agent._run = AsyncMock(return_value="out")
 
-        context = ModelTaskContext(specification=spec, input="hello")
+        context = ModelCallContext(specification=spec, input="hello")
         result = await agent(context)
 
         agent._run.assert_awaited_once()

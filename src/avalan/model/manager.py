@@ -1,5 +1,5 @@
 from .modalities import ModalityRegistry
-from .task import ModelTask
+from .call import ModelCall
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -127,7 +127,7 @@ class ModelManager(ContextDecorator):
 
     async def __call__(
         self,
-        model_task: ModelTask,
+        model_task: ModelCall,
     ):
         modality = model_task.operation.modality
 

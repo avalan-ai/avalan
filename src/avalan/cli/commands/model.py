@@ -17,7 +17,7 @@ from ...model.manager import ModelManager
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
-from ...model.task import ModelTask, ModelTaskContext
+from ...model.call import ModelCall, ModelCallContext
 from ...secrets import KeyringSecrets
 from . import get_model_settings
 from dataclasses import replace
@@ -193,12 +193,12 @@ async def model_run(
 
                 operation = replace(operation, input=input_string)
 
-            context = ModelTaskContext(
+            context = ModelCallContext(
                 specification=Specification(role=None, goal=None),
                 input=operation.input,
                 engine_args={},
             )
-            task = ModelTask(
+            task = ModelCall(
                 engine_uri=engine_uri,
                 model=model,
                 operation=operation,

@@ -1,11 +1,12 @@
-from . import Specification
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from ..agent import Specification
 from ..entities import EngineUri, Input, Operation
 from ..tool.manager import ToolManager
-from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..model.engine import Engine
+    from .engine import Engine
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

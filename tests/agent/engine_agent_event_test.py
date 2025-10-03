@@ -11,7 +11,7 @@ from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
 from avalan.model.manager import ModelManager
-from avalan.model.task import ModelTaskContext
+from avalan.model.call import ModelCallContext
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -29,7 +29,7 @@ class DummyEngine:
 
 
 class DummyAgent(EngineAgent):
-    def _prepare_call(self, context: ModelTaskContext):
+    def _prepare_call(self, context: ModelCallContext):
         return {"settings": GenerationSettings()}
 
 
@@ -66,7 +66,7 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
             model_manager,
             engine_uri,
         )
-        context = ModelTaskContext(
+        context = ModelCallContext(
             specification=Specification(role=None, goal=None),
             input=Message(role=MessageRole.USER, content="hi"),
         )

@@ -20,7 +20,7 @@ from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
 from ...model.engine import Engine
 from ...model.manager import ModelManager
-from ...model.task import ModelTaskContext
+from ...model.call import ModelCallContext
 from ...entities import Modality as Modality
 from ...tool.manager import ToolManager
 from contextlib import ExitStack
@@ -200,7 +200,7 @@ class Orchestrator:
         self._logger.info(
             "Orchestrator calling engine agent %s", str(engine_agent)
         )
-        context = ModelTaskContext(
+        context = ModelCallContext(
             specification=operation.specification,
             input=messages,
             engine_args=dict(engine_args),
@@ -234,6 +234,7 @@ class Orchestrator:
             engine_agent,
             operation,
             engine_args,
+            context,
             event_manager=self._event_manager,
             tool=self._tool,
             tool_confirm=tool_confirm,

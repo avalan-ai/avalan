@@ -16,7 +16,7 @@ from ..memory.manager import MemoryManager
 from ..model.engine import Engine
 from ..model.manager import ModelManager
 from ..model.response.text import TextGenerationResponse
-from ..model.task import ModelTask, ModelTaskContext
+from ..model.call import ModelCall, ModelCallContext
 from ..tool.manager import ToolManager
 
 from abc import ABC, abstractmethod
@@ -41,7 +41,7 @@ class EngineAgent(ABC):
     _last_prompt: tuple[Input, str | None, str | None] | None = None
 
     @abstractmethod
-    def _prepare_call(self, context: ModelTaskContext) -> Any:
+    def _prepare_call(self, context: ModelCallContext) -> Any:
         raise NotImplementedError()
 
     @property
@@ -116,7 +116,7 @@ class EngineAgent(ABC):
 
     async def __call__(
         self,
-        context: ModelTaskContext,
+        context: ModelCallContext,
     ) -> TextGenerationResponse | str:
         if context.parent and context.root_parent is None:
             root_parent_context = context.parent.root_parent or context.parent
@@ -174,7 +174,7 @@ class EngineAgent(ABC):
 
     async def _run(
         self,
-        context: ModelTaskContext,
+        context: ModelCallContext,
         input: Input,
         *args,
         settings: GenerationSettings | None = None,
@@ -282,7 +282,7 @@ class EngineAgent(ABC):
                 },
             )
         )
-        model_task = ModelTask(
+        model_task = ModelCall(
             engine_uri=self._engine_uri,
             model=self._model,
             operation=operation,
