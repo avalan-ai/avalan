@@ -16,6 +16,7 @@ from ....entities import (
 from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....model.response.text import TextGenerationResponse
+from ....model.call import ModelCallContext
 from ....tool.manager import ToolManager
 from ....model.response.parsers.tool import ToolCallResponseParser
 from ....cli import CommandAbortException
@@ -44,6 +45,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _tool_process_events: Queue[Event]
     _tool_result_events: Queue[Event]
     _input: Input
+    _context: ModelCallContext
     _tool_context: ToolCallContext | None
     _call_history: list[ToolCall]
     _agent_id: UUID | None
@@ -59,6 +61,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         engine_agent: EngineAgent,
         operation: AgentOperation,
         engine_args: dict,
+        context: ModelCallContext,
         event_manager: EventManager | None = None,
         tool: ToolManager | None = None,
         *,
@@ -76,6 +79,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._engine_args = engine_args
         self._event_manager = event_manager
         self._tool_manager = None if tool and tool.is_empty else tool
+        self._context = context
         self._finished = False
         self._step = 0
         self._tool_context = None
@@ -304,11 +308,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
             await self._event_manager.trigger(event_tool_model_run)
 
-            inner_response = await self._engine_agent(
-                self._operation.specification,
-                messages,
-                **self._engine_args,
-            )
+            context = self._make_child_context(messages)
+            inner_response = await self._engine_agent(context)
             assert inner_response
 
             self._response = inner_response
@@ -501,11 +502,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         )
         await self._event_manager.trigger(event_tool_model_run)
 
-        response = await self._engine_agent(
-            self._operation.specification,
-            messages,
-            **self._engine_args,
-        )
+        context = self._make_child_context(messages)
+        response = await self._engine_agent(context)
         assert response
         return response
 
@@ -566,3 +564,18 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     async def _on_consumed(self) -> None:
         assert self._event_manager
         await self._event_manager.trigger(Event(type=EventType.STREAM_END))
+    def _make_child_context(self, messages: Input) -> ModelCallContext:
+        parent_context = self._context
+        root_parent = (
+            parent_context.root_parent or parent_context if parent_context else None
+        )
+        context = ModelCallContext(
+            specification=self._operation.specification,
+            input=messages,
+            engine_args=dict(self._engine_args),
+            parent=parent_context,
+            root_parent=root_parent,
+        )
+        self._context = context
+        return context
+

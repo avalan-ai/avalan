@@ -1054,21 +1054,19 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
       --display-tools
 ```
 
-When your agent needs live access to relational data, configure the database toolset. In the example below we point the agent to a local SQLite database using SQLAlchemy's DSN format and allow it to inspect the schema with `database.tables` before running SQL with `database.run`:
+When your agent needs live access to data, configure the database toolset. In the example below we point the agent to a Supabase database, and after prompting for sales data we'll see the agent executing `database.tables` and `database.inspect` to understand the schema, before running SQL with `database.run`:
 
 ```bash
-echo "List the five most recent orders with their total amount" | \
+echo "Get me revenue per product, sorting by highest selling" | \
     avalan agent run \
-      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-      --tool "database.tables" \
-      --tool "database.run" \
-      --tool-database-dsn "sqlite+aiosqlite:///Users/you/datasets/sales.db" \
-      --memory-recent \
+      --engine-uri "ai://local/openai/gpt-oss-20b" \
+      --backend mlx \
       --tool-format harmony \
-      --name "Tool" \
-      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --tool "database" \
+      --tool-database-dsn "postgresql+asyncpg://postgres.project_id:password@aws-1-us-east-1.pooler.supabase.com:5432/postgres" \
+      --system "Reasoning: high" \
+      --developer "You are a helpful assistant that can resolve user data requests using database tools." \
       --stats \
-      --display-events \
       --display-tools
 ```
 

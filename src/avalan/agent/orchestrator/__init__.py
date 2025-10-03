@@ -20,6 +20,7 @@ from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
 from ...model.engine import Engine
 from ...model.manager import ModelManager
+from ...model.call import ModelCallContext
 from ...entities import Modality as Modality
 from ...tool.manager import ToolManager
 from contextlib import ExitStack
@@ -199,9 +200,12 @@ class Orchestrator:
         self._logger.info(
             "Orchestrator calling engine agent %s", str(engine_agent)
         )
-        result = await engine_agent(
-            operation.specification, messages, **engine_args
+        context = ModelCallContext(
+            specification=operation.specification,
+            input=messages,
+            engine_args=dict(engine_args),
         )
+        result = await engine_agent(context)
         self._logger.info(
             "Engine agent %s responded to orchestrator", str(engine_agent)
         )
@@ -214,6 +218,7 @@ class Orchestrator:
                     "result": result,
                     "input": messages,
                     "specification": operation.specification,
+                    "context": context,
                 },
                 started=start,
                 finished=end,
@@ -229,6 +234,7 @@ class Orchestrator:
             engine_agent,
             operation,
             engine_args,
+            context,
             event_manager=self._event_manager,
             tool=self._tool,
             tool_confirm=tool_confirm,

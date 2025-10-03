@@ -4,6 +4,7 @@ from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from avalan.agent import Specification
 from avalan.entities import (
     Backend,
     EngineUri,
@@ -18,6 +19,7 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
+from avalan.model.call import ModelCall, ModelCallContext
 
 
 class ModelManagerExtraTestCase(TestCase):
@@ -215,11 +217,23 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             self.assertIsNone(tool_arg)
             return expected
 
+        model = object()
+        context = ModelCallContext(
+            specification=Specification(role=None, goal=None),
+            input=operation.input,
+        )
+        task = ModelCall(
+            engine_uri=engine_uri,
+            model=model,
+            operation=operation,
+            tool=None,
+            context=context,
+        )
         with patch(
             "avalan.model.manager.ModalityRegistry.get",
             return_value=handler,
         ):
-            result = await manager(engine_uri, object(), operation)
+            result = await manager(task)
 
         self.assertIs(result, expected)
         self.assertEqual(event_manager.trigger.await_count, 2)
@@ -230,9 +244,13 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             before_event.payload["modality"], Modality.TEXT_GENERATION
         )
+        self.assertIs(before_event.payload["task"], task)
+        self.assertIs(before_event.payload["context"], context)
         after_event = event_manager.trigger.await_args_list[1].args[0]
         self.assertEqual(after_event.type, EventType.MODEL_MANAGER_CALL_AFTER)
         self.assertIs(after_event.payload["result"], expected)
+        self.assertIs(after_event.payload["task"], task)
+        self.assertIs(after_event.payload["context"], context)
         self.assertIsNotNone(after_event.started)
         self.assertIsNotNone(after_event.finished)
         self.assertIsNotNone(after_event.elapsed)

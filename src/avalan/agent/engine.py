@@ -1,4 +1,3 @@
-from ..agent import Specification
 from ..entities import (
     EngineMessage,
     EngineUri,
@@ -17,10 +16,11 @@ from ..memory.manager import MemoryManager
 from ..model.engine import Engine
 from ..model.manager import ModelManager
 from ..model.response.text import TextGenerationResponse
+from ..model.call import ModelCall, ModelCallContext
 from ..tool.manager import ToolManager
 
 from abc import ABC, abstractmethod
-from dataclasses import Field, fields
+from dataclasses import Field, fields, replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -41,9 +41,7 @@ class EngineAgent(ABC):
     _last_prompt: tuple[Input, str | None, str | None] | None = None
 
     @abstractmethod
-    def _prepare_call(
-        self, specification: Specification, input: str, **kwargs: Any
-    ) -> Any:
+    def _prepare_call(self, context: ModelCallContext) -> Any:
         raise NotImplementedError()
 
     @property
@@ -117,36 +115,67 @@ class EngineAgent(ABC):
         self._engine_uri = engine_uri
 
     async def __call__(
-        self, specification: Specification, input: str, **kwargs
+        self,
+        context: ModelCallContext,
     ) -> TextGenerationResponse | str:
+        if context.parent and context.root_parent is None:
+            root_parent_context = context.parent.root_parent or context.parent
+            context = replace(context, root_parent=root_parent_context)
+
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.ENGINE_AGENT_CALL_BEFORE,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "context": context,
+                },
+            )
+        )
+
         await self._event_manager.trigger(
             Event(
                 type=EventType.CALL_PREPARE_BEFORE,
                 payload={
                     "model_type": self._model.model_type,
                     "model_id": self._model.model_id,
-                    "specification": specification,
-                    "input": input,
+                    "specification": context.specification,
+                    "input": context.input,
+                    "context": context,
                 },
             )
         )
-        run_args = self._prepare_call(specification, input, **kwargs)
+        run_args = self._prepare_call(context)
         await self._event_manager.trigger(
             Event(
                 type=EventType.CALL_PREPARE_AFTER,
                 payload={
                     "model_type": self._model.model_type,
                     "model_id": self._model.model_id,
-                    "specification": specification,
-                    "input": input,
+                    "specification": context.specification,
+                    "input": context.input,
+                    "context": context,
                 },
             )
         )
-        return await self._run(input, **run_args)
+        output = await self._run(context, context.input, **run_args)
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.ENGINE_AGENT_CALL_AFTER,
+                payload={
+                    "model_type": self._model.model_type,
+                    "model_id": self._model.model_id,
+                    "context": context,
+                    "result": output,
+                },
+            )
+        )
+        return output
 
     async def _run(
         self,
-        input: str,
+        context: ModelCallContext,
+        input: Input,
         *args,
         settings: GenerationSettings | None = None,
         system_prompt: str | None = None,
@@ -154,6 +183,7 @@ class EngineAgent(ABC):
         skip_special_tokens=True,
         **kwargs,
     ) -> TextGenerationResponse:
+        input_value = input
         generation_fields = self._GENERATION_FIELDS
         uri_defaults = {
             k: v
@@ -189,16 +219,16 @@ class EngineAgent(ABC):
         )
 
         # Should always be stored, with or without memory
-        self._last_prompt = (input, system_prompt, developer_prompt)
+        self._last_prompt = (input_value, system_prompt, developer_prompt)
 
-        if isinstance(input, Message):
-            input = [input]
+        if isinstance(input_value, Message):
+            input_value = [input_value]
 
         # Transform input (by adding memory, if necessary)
         if (
             self._memory.has_permanent_message
             or self._memory.has_recent_message
-        ) and isinstance(input, list):
+        ) and isinstance(input_value, list):
             # Handle last message if not already consumed
 
             previous_message: Message | None = None
@@ -216,17 +246,17 @@ class EngineAgent(ABC):
                 if previous_message:
                     await self.sync_message(previous_message)
 
-            for current_message in input:
+            for current_message in input_value:
                 await self.sync_message(current_message)
 
             # Make recent memory the new model input
-            input = [rm.message for rm in self._memory.recent_messages]
+            input_value = [rm.message for rm in self._memory.recent_messages]
 
         # Have model generate output from input
 
         operation = Operation(
             generation_settings=settings,
-            input=input,
+            input=input_value,
             modality=Modality.TEXT_GENERATION,
             parameters=OperationParameters(
                 text=OperationTextParameters(
@@ -244,29 +274,33 @@ class EngineAgent(ABC):
                 payload={
                     "model_type": self._model.model_type,
                     "model_id": self._model.model_id,
-                    "input": input,
+                    "input": input_value,
                     "system_prompt": system_prompt,
                     "developer_prompt": developer_prompt,
                     "settings": settings,
+                    "context": context,
                 },
             )
         )
-        output = await self._model_manager(
-            self._engine_uri,
-            self._model,
-            operation,
-            self._tool,
+        model_task = ModelCall(
+            engine_uri=self._engine_uri,
+            model=self._model,
+            operation=operation,
+            tool=self._tool,
+            context=context,
         )
+        output = await self._model_manager(model_task)
         await self._event_manager.trigger(
             Event(
                 type=EventType.MODEL_EXECUTE_AFTER,
                 payload={
                     "model_type": self._model.model_type,
                     "model_id": self._model.model_id,
-                    "input": input,
+                    "input": input_value,
                     "system_prompt": system_prompt,
                     "developer_prompt": developer_prompt,
                     "settings": settings,
+                    "context": context,
                 },
             )
         )

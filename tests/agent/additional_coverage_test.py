@@ -18,6 +18,7 @@ from avalan.agent import (
 from avalan.entities import EngineUri, TransformerEngineSettings
 from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
+from avalan.model.call import ModelCallContext
 from avalan.tool.manager import ToolManager
 from avalan.event.manager import EventManager
 
@@ -35,8 +36,8 @@ class DummyEngine:
 
 
 class _MissingPrepareAgent(EngineAgent):
-    def _prepare_call(self, specification, input, **kwargs):
-        return super()._prepare_call(specification, input, **kwargs)
+    def _prepare_call(self, context: ModelCallContext):
+        return super()._prepare_call(context)
 
 
 class EngineAgentCoverageTestCase(unittest.IsolatedAsyncioTestCase):
@@ -65,7 +66,12 @@ class EngineAgentCoverageTestCase(unittest.IsolatedAsyncioTestCase):
             ),
         )
         with self.assertRaises(NotImplementedError):
-            agent._prepare_call(Specification(role=None, goal=None), "hi")
+            agent._prepare_call(
+                ModelCallContext(
+                    specification=Specification(role=None, goal=None),
+                    input="hi",
+                )
+            )
 
     async def test_output_property(self):
         agent = _MissingPrepareAgent(

@@ -4,6 +4,7 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
 from avalan.agent import EngineEnvironment, AgentOperation, Specification
 from avalan.entities import (
     EngineUri,
+    Input,
     Message,
     MessageRole,
     Token,
@@ -11,6 +12,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.tool.manager import ToolManager
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.call import ModelCallContext
 from logging import getLogger
 from avalan.agent.engine import EngineAgent
 from unittest import IsolatedAsyncioTestCase
@@ -50,13 +52,37 @@ def _empty_response() -> TextGenerationResponse:
     )
 
 
+def _make_response(
+    input_value: Input,
+    response: TextGenerationResponse,
+    agent: EngineAgent,
+    operation: AgentOperation,
+    engine_args: dict,
+    **kwargs,
+) -> OrchestratorResponse:
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_value,
+        engine_args=dict(engine_args),
+    )
+    return OrchestratorResponse(
+        input_value,
+        response,
+        agent,
+        operation,
+        engine_args,
+        context,
+        **kwargs,
+    )
+
+
 class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_parser_queue_precedence(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
         operation = _dummy_operation()
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _empty_response(),
             agent,
@@ -74,7 +100,7 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         tool = MagicMock(spec=ToolManager)
         tool.is_empty = False
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _empty_response(),
             agent,
@@ -96,7 +122,7 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         tool = MagicMock(spec=ToolManager)
         tool.is_empty = False
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _empty_response(),
             agent,
@@ -117,7 +143,7 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         tool = MagicMock(spec=ToolManager)
         tool.is_empty = False
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _empty_response(),
             agent,

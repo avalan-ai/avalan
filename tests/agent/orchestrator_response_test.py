@@ -8,6 +8,7 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
 from avalan.entities import (
     EngineUri,
     GenerationSettings,
+    Input,
     Message,
     MessageRole,
     ReasoningSettings,
@@ -24,6 +25,7 @@ from avalan.entities import (
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
+from avalan.model.call import ModelCallContext
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.tool.manager import ToolManager
@@ -74,6 +76,30 @@ def _dummy_response(async_gen=True):
         use_async_generator=async_gen,
         generation_settings=settings,
         settings=settings,
+    )
+
+
+def _make_response(
+    input_value: Input,
+    response: TextGenerationResponse,
+    agent: EngineAgent,
+    operation: AgentOperation,
+    engine_args: dict,
+    **kwargs,
+) -> OrchestratorResponse:
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_value,
+        engine_args=dict(engine_args),
+    )
+    return OrchestratorResponse(
+        input_value,
+        response,
+        agent,
+        operation,
+        engine_args,
+        context,
+        **kwargs,
     )
 
 
@@ -147,7 +173,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -226,7 +252,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         tool_manager.get_calls.side_effect = base_parser
         tool_manager.is_empty = False
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             response,
             agent,
@@ -276,7 +302,7 @@ class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _string_response('{"value": "ok"}', async_gen=False),
             agent,
@@ -308,7 +334,7 @@ class OrchestratorResponseEventTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _string_response("hi", async_gen=False),
             agent,
@@ -344,7 +370,7 @@ class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             response,
             agent,
@@ -381,7 +407,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         TextGenerationResponse._buffer = StringIO()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             response,
             agent,
@@ -449,7 +475,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         TextGenerationResponse._buffer = StringIO()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             outer_response,
             agent,
@@ -482,7 +508,7 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         pid = uuid4()
         sid = uuid4()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _string_response("hi", async_gen=False),
             agent,
@@ -509,7 +535,7 @@ class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _complex_response(),
             agent,

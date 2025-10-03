@@ -1,4 +1,5 @@
 from .modalities import ModalityRegistry
+from .call import ModelCall
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -39,15 +40,19 @@ from ..model.vision.diffusion import (
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
-from ..tool.manager import ToolManager
 import asyncio
 from argparse import Namespace
 from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
 from os import environ
 from time import perf_counter
-from typing import Any, TypeAlias, get_args
+from typing import Any, TYPE_CHECKING, TypeAlias, get_args
 from urllib.parse import parse_qsl, urlparse
+
+if TYPE_CHECKING:
+    from .engine import Engine
+else:  # pragma: no cover - runtime type placeholder
+    Engine = Any
 
 ModelType: TypeAlias = (
     AudioClassificationModel
@@ -122,12 +127,9 @@ class ModelManager(ContextDecorator):
 
     async def __call__(
         self,
-        engine_uri: EngineUri,
-        model: ModelType,
-        operation: Operation,
-        tool: ToolManager | None = None,
+        model_task: ModelCall,
     ):
-        modality = operation.modality
+        modality = model_task.operation.modality
 
         self._logger.info("ModelManager call process started for %s", modality)
 
@@ -137,16 +139,23 @@ class ModelManager(ContextDecorator):
                 Event(
                     type=EventType.MODEL_MANAGER_CALL_BEFORE,
                     payload={
-                        "engine_uri": engine_uri,
+                        "engine_uri": model_task.engine_uri,
                         "modality": modality,
-                        "operation": operation,
+                        "operation": model_task.operation,
+                        "context": model_task.context,
+                        "task": model_task,
                     },
                     started=start,
                 )
             )
 
         handler = ModalityRegistry.get(modality)
-        result = await handler(engine_uri, model, operation, tool)
+        result = await handler(
+            model_task.engine_uri,
+            model_task.model,
+            model_task.operation,
+            model_task.tool,
+        )
 
         end = perf_counter()
         if self._event_manager:
@@ -154,9 +163,11 @@ class ModelManager(ContextDecorator):
                 Event(
                     type=EventType.MODEL_MANAGER_CALL_AFTER,
                     payload={
-                        "engine_uri": engine_uri,
+                        "engine_uri": model_task.engine_uri,
                         "modality": modality,
-                        "operation": operation,
+                        "operation": model_task.operation,
+                        "context": model_task.context,
+                        "task": model_task,
                         "result": result,
                     },
                     started=start,

@@ -1,3 +1,4 @@
+from ...agent import Specification
 from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
@@ -16,6 +17,7 @@ from ...model.manager import ModelManager
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
+from ...model.call import ModelCall, ModelCallContext
 from ...secrets import KeyringSecrets
 from . import get_model_settings
 from dataclasses import replace
@@ -191,7 +193,19 @@ async def model_run(
 
                 operation = replace(operation, input=input_string)
 
-            output = await manager(engine_uri, model, operation)
+            context = ModelCallContext(
+                specification=Specification(role=None, goal=None),
+                input=operation.input,
+                engine_args={},
+            )
+            task = ModelCall(
+                engine_uri=engine_uri,
+                model=model,
+                operation=operation,
+                tool=None,
+                context=context,
+            )
+            output = await manager(task)
 
             if operation.modality in {
                 Modality.AUDIO_SPEECH_RECOGNITION,

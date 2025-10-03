@@ -1,15 +1,17 @@
+from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
+    EngineUri,
+    GenerationSettings,
     Message,
     MessageRole,
-    GenerationSettings,
-    EngineUri,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.tool.manager import ToolManager
 from avalan.model.manager import ModelManager
+from avalan.model.call import ModelCallContext
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -27,7 +29,7 @@ class DummyEngine:
 
 
 class DummyAgent(EngineAgent):
-    def _prepare_call(self, specification, input, **kwargs):
+    def _prepare_call(self, context: ModelCallContext):
         return {"settings": GenerationSettings()}
 
 
@@ -64,7 +66,11 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
             model_manager,
             engine_uri,
         )
-        await agent(MagicMock(), Message(role=MessageRole.USER, content="hi"))
+        context = ModelCallContext(
+            specification=Specification(role=None, goal=None),
+            input=Message(role=MessageRole.USER, content="hi"),
+        )
+        await agent(context)
 
         await agent.input_token_count()
 
@@ -72,12 +78,14 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
             c.args[0].type for c in event_manager.trigger.await_args_list
         ]
         for t in [
+            EventType.ENGINE_AGENT_CALL_BEFORE,
             EventType.CALL_PREPARE_BEFORE,
             EventType.CALL_PREPARE_AFTER,
             EventType.MEMORY_APPEND_BEFORE,
             EventType.MEMORY_APPEND_AFTER,
             EventType.MODEL_EXECUTE_BEFORE,
             EventType.MODEL_EXECUTE_AFTER,
+            EventType.ENGINE_AGENT_CALL_AFTER,
             EventType.INPUT_TOKEN_COUNT_BEFORE,
             EventType.INPUT_TOKEN_COUNT_AFTER,
         ]:

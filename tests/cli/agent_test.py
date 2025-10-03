@@ -31,6 +31,7 @@ from avalan.event import Event, EventType
 from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.call import ModelCall, ModelCallContext
 from logging import getLogger
 from avalan.entities import (
     GenerationCacheStrategy,
@@ -1795,9 +1796,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.passed_tool = None
 
-            async def __call__(self, engine_uri, model, operation, tool):
-                self.passed_tool = tool
-                return await model(None, tool=tool)
+            async def __call__(self, task: ModelCall):
+                self.passed_tool = task.tool
+                return await task.model(None, tool=task.tool)
 
         engine_uri = EngineUri(
             host=None,
@@ -1823,10 +1824,12 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
 
         class DummyAgent(EngineAgent):
-            def _prepare_call(self, specification, input, **kwargs):
+            def _prepare_call(self, context: ModelCallContext):
                 return {}
 
-            async def _run(self, input, **_kwargs):
+            async def _run(
+                self, context: ModelCallContext, input, **_kwargs
+            ):
                 operation = Operation(
                     generation_settings=GenerationSettings(),
                     input=input,
@@ -1837,10 +1840,13 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                     requires_input=True,
                 )
                 return await self._model_manager(
-                    engine_uri,
-                    engine,
-                    operation,
-                    self._tool,
+                    ModelCall(
+                        engine_uri=engine_uri,
+                        model=engine,
+                        operation=operation,
+                        tool=self._tool,
+                        context=context,
+                    )
                 )
 
         engine = DummyEngine()
@@ -1854,10 +1860,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         async def orch_call(*_a, **_k):
-            await agent(
-                Specification(role="assistant", goal=None),
-                Message(role=MessageRole.USER, content="hi"),
+            context = ModelCallContext(
+                specification=Specification(role="assistant", goal=None),
+                input=Message(role=MessageRole.USER, content="hi"),
             )
+            await agent(context)
             return DummyOrchestratorResponse()
 
         class DummyOrchestratorResponse:

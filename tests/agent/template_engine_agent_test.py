@@ -3,8 +3,8 @@ from avalan.agent.renderer import Renderer, TemplateEngineAgent
 from avalan.entities import (
     EngineMessage,
     EngineUri,
-    MessageRole,
     GenerationSettings,
+    MessageRole,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
@@ -16,6 +16,7 @@ from logging import getLogger
 from uuid import UUID, uuid4
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock
+from avalan.model.call import ModelCallContext
 
 
 class TemplateEngineAgentPropertyTestCase(TestCase):
@@ -81,7 +82,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             goal=Goal(task="do", instructions=["instr"]),
             rules=["rule"],
         )
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
             name="Bob",
@@ -100,7 +102,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=["rule {{verb}}"],
             template_vars={"verb": "run"},
         )
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
             name="Bob",
@@ -118,7 +121,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=["rule {{verb}}"],
             settings=GenerationSettings(template_vars={"verb": "run"}),
         )
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
             name="Bob",
@@ -136,7 +140,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=[],
             template_vars={"verb": "x"},
         )
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
         expected_prompt = self.renderer(
             "agent.md",
             name="Bob",
@@ -149,7 +154,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
 
     def test_prepare_call_system_prompt(self):
         spec = Specification(role=None, goal=None, system_prompt="sys")
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
         self.assertEqual(result["system_prompt"], "sys")
 
     def test_prepare_call_system_prompt_with_developer_prompt(self) -> None:
@@ -160,7 +166,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             developer_prompt="dev",
         )
 
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
 
         self.assertEqual(result["system_prompt"], "sys")
         self.assertEqual(result["developer_prompt"], "dev")
@@ -173,7 +180,8 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             rules=[],
         )
 
-        result = self.agent._prepare_call(spec, "hi")
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
 
         self.assertEqual(result["developer_prompt"], "dev")
 
@@ -226,20 +234,31 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
 
         agent._run = AsyncMock(return_value="out")
 
-        result = await agent(spec, "hello")
+        context = ModelCallContext(specification=spec, input="hello")
+        result = await agent(context)
 
         agent._run.assert_awaited_once()
+        self.assertIs(agent._run.await_args.args[0], context)
         self.assertEqual(result, "out")
         self.assertEqual(
             agent._run.await_args.kwargs["system_prompt"],
             expected_prompt,
         )
+        self.assertEqual(len(event_manager.trigger.await_args_list), 4)
         event_types = [
-            c.args[0].type for c in event_manager.trigger.await_args_list[:2]
+            c.args[0].type for c in event_manager.trigger.await_args_list[:3]
         ]
         self.assertEqual(
             event_types,
-            [EventType.CALL_PREPARE_BEFORE, EventType.CALL_PREPARE_AFTER],
+            [
+                EventType.ENGINE_AGENT_CALL_BEFORE,
+                EventType.CALL_PREPARE_BEFORE,
+                EventType.CALL_PREPARE_AFTER,
+            ],
+        )
+        self.assertEqual(
+            event_manager.trigger.await_args_list[3].args[0].type,
+            EventType.ENGINE_AGENT_CALL_AFTER,
         )
 
 

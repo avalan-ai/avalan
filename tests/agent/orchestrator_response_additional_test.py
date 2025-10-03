@@ -5,6 +5,7 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
 from avalan.agent import EngineEnvironment, AgentOperation, Specification
 from avalan.entities import (
     EngineUri,
+    Input,
     Message,
     MessageRole,
     ToolCall,
@@ -19,6 +20,7 @@ from avalan.event.manager import EventManager
 from avalan.tool.manager import ToolManager
 from avalan.cli import CommandAbortException
 from avalan.model import TextGenerationResponse
+from avalan.model.call import ModelCallContext
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -61,13 +63,37 @@ def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
     )
 
 
+def _make_response(
+    input_value: Input,
+    response: TextGenerationResponse,
+    agent: EngineAgent,
+    operation: AgentOperation,
+    engine_args: dict,
+    **kwargs,
+) -> OrchestratorResponse:
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_value,
+        engine_args=dict(engine_args),
+    )
+    return OrchestratorResponse(
+        input_value,
+        response,
+        agent,
+        operation,
+        engine_args,
+        context,
+        **kwargs,
+    )
+
+
 class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_tool_process_queue(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
         operation = _dummy_operation()
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -98,7 +124,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             response,
             agent,
@@ -142,7 +168,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         tool.side_effect = tool_exec
 
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -184,7 +210,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         async def confirm(call):
             return "y"
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -205,7 +231,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -228,7 +254,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -236,6 +262,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
         )
+        initial_context = resp._context
         resp.__aiter__()
         result = ToolCallResult(
             id=uuid4(),
@@ -250,6 +277,10 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         event = await resp.__anext__()
         self.assertEqual(event.type, EventType.TOOL_MODEL_RESPONSE)
         agent.assert_awaited_once()
+        child_context = agent.await_args_list[0].args[0]
+        self.assertIs(child_context.parent, initial_context)
+        self.assertIs(child_context.root_parent, initial_context)
+        self.assertIs(resp._context, child_context)
 
     async def test_emit_token_and_process(self):
         engine = _DummyEngine()
@@ -259,7 +290,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -299,7 +330,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        resp = OrchestratorResponse(
+        resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
             agent,
@@ -320,6 +351,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         model_event = await resp.__anext__()
         self.assertEqual(model_event.type, EventType.TOOL_MODEL_RESPONSE)
 
-        args, kwargs = agent.await_args_list[0]
-        messages = args[1]
-        self.assertEqual(messages[2].tool_call_error.message, "boom")
+        context = agent.await_args_list[0].args[0]
+        assert isinstance(context.input, list)
+        self.assertEqual(
+            context.input[2].tool_call_error.message,
+            "boom",
+        )

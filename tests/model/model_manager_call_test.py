@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 
+from avalan.agent import Specification
 from avalan.entities import (
     EngineUri,
     GenerationSettings,
@@ -13,6 +14,7 @@ from avalan.entities import (
 )
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
+from avalan.model.call import ModelCall, ModelCallContext
 
 
 class DummyModel:
@@ -471,11 +473,18 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
         for modality, operation, expected in cases:
             with self.subTest(modality=modality):
                 model.called_with = None
-                result = await self.manager(
-                    self.engine_uri,
-                    model,
-                    operation,
+                task = ModelCall(
+                    engine_uri=self.engine_uri,
+                    model=model,
+                    operation=operation,
+                    tool=None,
+                    context=ModelCallContext(
+                        specification=Specification(role=None, goal=None),
+                        input=operation.input,
+                        engine_args={},
+                    ),
                 )
+                result = await self.manager(task)
                 self.assertEqual(result, "ok")
                 self.assertEqual(model.called_with, expected)
 
@@ -489,7 +498,15 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(NotImplementedError):
             await self.manager(
-                self.engine_uri,
-                model,
-                operation,
+                ModelCall(
+                    engine_uri=self.engine_uri,
+                    model=model,
+                    operation=operation,
+                    tool=None,
+                    context=ModelCallContext(
+                        specification=Specification(role=None, goal=None),
+                        input=None,
+                        engine_args={},
+                    ),
+                )
             )
