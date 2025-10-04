@@ -183,6 +183,13 @@ class Orchestrator:
 
         messages = self._input_messages(operation.specification, input)
 
+        participant_id = getattr(self._memory, "participant_id", None)
+        session_id = (
+            self._memory.permanent_message.session_id
+            if self._memory.permanent_message
+            else None
+        )
+
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}
         start = perf_counter()
@@ -204,6 +211,9 @@ class Orchestrator:
             specification=operation.specification,
             input=messages,
             engine_args=dict(engine_args),
+            agent_id=self._id,
+            participant_id=participant_id,
+            session_id=session_id,
         )
         result = await engine_agent(context)
         self._logger.info(
@@ -239,12 +249,8 @@ class Orchestrator:
             tool=self._tool,
             tool_confirm=tool_confirm,
             agent_id=self._id,
-            participant_id=self._memory.participant_id,
-            session_id=(
-                self._memory.permanent_message.session_id
-                if self._memory.permanent_message
-                else None
-            ),
+            participant_id=participant_id,
+            session_id=session_id,
         )
 
     async def __aenter__(self):

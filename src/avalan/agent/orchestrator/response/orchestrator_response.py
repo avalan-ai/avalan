@@ -575,6 +575,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             engine_args=dict(self._engine_args),
             parent=parent_context,
             root_parent=root_parent,
+            agent_id=(
+                parent_context.agent_id
+                if parent_context
+                else self._agent_id
+            ),
+            participant_id=(
+                parent_context.participant_id
+                if parent_context
+                else self._participant_id
+            ),
+            session_id=(
+                parent_context.session_id
+                if parent_context
+                else self._session_id
+            ),
         )
         self._context = context
         return context
