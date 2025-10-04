@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from ..agent import Specification
 from ..entities import EngineUri, Input, Operation
@@ -16,6 +17,9 @@ class ModelCallContext:
     engine_args: dict[str, Any] = field(default_factory=dict)
     parent: "ModelCallContext | None" = None
     root_parent: "ModelCallContext | None" = None
+    agent_id: UUID | None = None
+    participant_id: UUID | None = None
+    session_id: UUID | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

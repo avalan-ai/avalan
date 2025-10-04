@@ -87,10 +87,16 @@ def _make_response(
     engine_args: dict,
     **kwargs,
 ) -> OrchestratorResponse:
+    agent_id = kwargs.get("agent_id")
+    participant_id = kwargs.get("participant_id")
+    session_id = kwargs.get("session_id")
     context = ModelCallContext(
         specification=operation.specification,
         input=input_value,
         engine_args=dict(engine_args),
+        agent_id=agent_id,
+        participant_id=participant_id,
+        session_id=session_id,
     )
     return OrchestratorResponse(
         input_value,
@@ -526,6 +532,39 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resp._tool_context.participant_id, pid)
         self.assertEqual(resp._tool_context.session_id, sid)
         self.assertEqual(resp._tool_context.calls, [])
+
+        self.assertEqual(resp._context.agent_id, aid)
+        self.assertEqual(resp._context.participant_id, pid)
+        self.assertEqual(resp._context.session_id, sid)
+
+    async def test_child_context_inherits_identifiers(self):
+        agent = MagicMock(spec=EngineAgent)
+        operation = _dummy_operation()
+
+        aid = uuid4()
+        pid = uuid4()
+        sid = uuid4()
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+            agent_id=aid,
+            participant_id=pid,
+            session_id=sid,
+        )
+
+        parent = resp._context
+        child = resp._make_child_context(
+            Message(role=MessageRole.USER, content="hello")
+        )
+
+        self.assertEqual(child.agent_id, aid)
+        self.assertEqual(child.participant_id, pid)
+        self.assertEqual(child.session_id, sid)
+        self.assertIs(child.parent, parent)
 
 
 class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):
