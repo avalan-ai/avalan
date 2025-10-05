@@ -798,7 +798,9 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     )
 
     env = Environment(
-        loader=FileSystemLoader(join(dirname(__file__), "..", "..", "agent")),
+        loader=FileSystemLoader(
+            join(dirname(__file__), "..", "..", "agent", "templates")
+        ),
         trim_blocks=True,
         lstrip_blocks=True,
     )
