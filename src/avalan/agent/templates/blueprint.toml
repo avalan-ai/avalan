@@ -54,6 +54,42 @@ uri = "{{ orchestrator.uri }}"
 [run]
 max_new_tokens = {{ orchestrator.call_options['max_new_tokens'] }}
 skip_special_tokens = {{ orchestrator.call_options['skip_special_tokens'] | lower }}
+{% if orchestrator.call_options.get('temperature') is not none %}
+temperature = {{ orchestrator.call_options['temperature'] }}
+{% endif %}
+{% if orchestrator.call_options.get('top_k') is not none %}
+top_k = {{ orchestrator.call_options['top_k'] }}
+{% endif %}
+{% if orchestrator.call_options.get('top_p') is not none %}
+top_p = {{ orchestrator.call_options['top_p'] }}
+{% endif %}
+{% if orchestrator.call_options.get('use_cache') is not none %}
+use_cache = {{ orchestrator.call_options['use_cache'] | lower }}
+{% endif %}
+{% if orchestrator.call_options.get('cache_strategy') %}
+cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
+{% endif %}
+{% if orchestrator.call_options.get('chat_settings') %}
+
+[run.chat]
+{% for key, value in orchestrator.call_options['chat_settings'].items() %}
+{% if value is boolean %}{{ key }} = {{ value | lower }}
+{% elif value is number %}{{ key }} = {{ value }}
+{% else %}{{ key }} = "{{ value }}"
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if orchestrator.tools or tool_format %}
+[tool]
+{% if tool_format %}format = "{{ tool_format }}"
+{% endif %}
+{% if orchestrator.tools %}enable = [
+{% for tool in orchestrator.tools %}    "{{ tool }}"{% if not loop.last %},{% endif %}
+{% endfor %}
+]
+{% endif %}
+{% endif %}
 
 {% if browser_tool %}
 [tool.browser.open]

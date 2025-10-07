@@ -582,6 +582,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             engine_uri=None,
             run_max_new_tokens=None,
             run_skip_special_tokens=True,
+            run_temperature=0.55,
+            run_top_k=10,
+            run_top_p=0.9,
+            run_use_cache=False,
+            run_cache_strategy="dynamic",
             tool=None,
             backend="transformers",
             no_repl=False,
@@ -609,6 +614,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         settings = template.render.call_args.kwargs["orchestrator"]
         self.assertTrue(settings.call_options["skip_special_tokens"])
         self.assertEqual(settings.call_options["max_new_tokens"], 1024)
+        self.assertEqual(settings.call_options["temperature"], 0.55)
+        self.assertEqual(settings.call_options["top_k"], 10)
+        self.assertEqual(settings.call_options["top_p"], 0.9)
+        self.assertFalse(settings.call_options["use_cache"])
+        self.assertEqual(settings.call_options["cache_strategy"], "dynamic")
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
 
@@ -628,6 +638,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             engine_uri="uri",
             run_max_new_tokens=10,
             run_skip_special_tokens=True,
+            run_temperature=None,
+            run_top_k=None,
+            run_top_p=None,
+            run_use_cache=None,
+            run_cache_strategy=None,
             tool=None,
             tool_browser_engine=None,
             tool_browser_search=None,
@@ -677,6 +692,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             engine_uri="uri",
             run_max_new_tokens=10,
             run_skip_special_tokens=True,
+            run_temperature=None,
+            run_top_k=None,
+            run_top_p=None,
+            run_use_cache=None,
+            run_cache_strategy=None,
             tool=None,
             tool_browser_engine="chromium",
             tool_browser_search=True,
@@ -727,6 +747,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             engine_uri="uri",
             run_max_new_tokens=10,
             run_skip_special_tokens=True,
+            run_temperature=None,
+            run_top_k=None,
+            run_top_p=None,
+            run_use_cache=None,
+            run_cache_strategy=None,
             tool=None,
             tool_database_dsn="sqlite:///db.sqlite",
             backend="transformers",
@@ -757,6 +782,64 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         output = console.print.call_args.args[0].code
         self.assertIn("[tool.database]", output)
         self.assertIn('dsn = "sqlite:///db.sqlite"', output)
+
+    async def test_agent_init_run_options_output(self):
+        args = Namespace(
+            name="N",
+            role="R",
+            task="T",
+            instructions="I",
+            memory_recent=True,
+            memory_permanent_message="",
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            run_temperature=0.75,
+            run_top_k=13,
+            run_top_p=0.82,
+            run_use_cache=True,
+            run_cache_strategy="hybrid",
+            run_chat_add_generation_prompt=False,
+            run_chat_enable_thinking=True,
+            tool=["math.calculator"],
+            tool_format="json",
+            tool_browser_engine=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+            backend="transformers",
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
+            patch.object(
+                agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("temperature = 0.75", output)
+        self.assertIn("top_k = 13", output)
+        self.assertIn("top_p = 0.82", output)
+        self.assertIn("use_cache = true", output)
+        self.assertIn('cache_strategy = "hybrid"', output)
+        self.assertIn("[run.chat]", output)
+        self.assertIn("add_generation_prompt = false", output)
+        self.assertIn("enable_thinking = true", output)
+        self.assertIn("[tool]", output)
+        self.assertIn('format = "json"', output)
+        self.assertIn('"math.calculator"', output)
 
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):

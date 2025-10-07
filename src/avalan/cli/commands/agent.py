@@ -780,8 +780,17 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         engine_uri=engine_uri,
         memory_recent=memory_recent,
         memory_permanent_message=memory_permanent_message,
-        max_new_tokens=args.run_max_new_tokens or 1024,
+        max_new_tokens=(
+            args.run_max_new_tokens
+            if args.run_max_new_tokens is not None
+            else 1024
+        ),
         tools=(args.tool or []) + (getattr(args, "tools", None) or []),
+        temperature=getattr(args, "run_temperature", None),
+        top_k=getattr(args, "run_top_k", None),
+        top_p=getattr(args, "run_top_p", None),
+        use_cache=getattr(args, "run_use_cache", None),
+        cache_strategy=getattr(args, "run_cache_strategy", None),
     )
 
     browser_tool = get_tool_settings(
@@ -805,9 +814,11 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         lstrip_blocks=True,
     )
     template = env.get_template("blueprint.toml")
+    tool_format = getattr(args, "tool_format", None)
     rendered = template.render(
         orchestrator=settings,
         browser_tool=browser_tool,
         database_tool=database_tool,
+        tool_format=tool_format,
     )
     console.print(Syntax(rendered, "toml"))
