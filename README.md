@@ -1485,6 +1485,38 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 > [!TIP]
 > Use `--protocol openai:responses,completion` to enable both OpenAI Responses and Completions endpoints, or narrow the surface by specifying just `responses` or `completion` after the colon.
 
+##### Embedding in existing FastAPI apps
+
+If you already run a FastAPI service, reuse the same OpenAI, MCP, or A2A endpoints without spawning a standalone server. Call `avalan.server.register_agent_endpoints` during startup to attach the routers and lifecycle management to your application:
+
+```python
+from fastapi import FastAPI
+from logging import getLogger
+
+from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.server import register_agent_endpoints
+
+
+app = FastAPI()
+logger = getLogger("my-app")
+hub = HuggingfaceHub()
+
+register_agent_endpoints(
+    app,
+    hub=hub,
+    logger=logger,
+    specs_path="docs/examples/agent_tool.toml",
+    settings=None,
+    tool_settings=None,
+    mcp_prefix="/mcp",
+    openai_prefix="/v1",
+    mcp_name="run",
+    protocols={"openai": {"responses"}},
+)
+```
+
+The helper composes with any existing FastAPI lifespan logic, setting up the orchestrator loader only once and wiring the same streaming endpoints that `avalan agent serve` exposes.
+
 #### MCP server
 
 Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
