@@ -48,6 +48,10 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
+        sys.modules.pop("avalan.server.routers.responses", None)
+        sys.modules.pop("avalan.server.routers", None)
+        sys.modules.pop("avalan.server", None)
+
         self.FastAPI = FastAPI
         self.TestClient = TestClient
 
