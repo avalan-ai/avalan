@@ -248,6 +248,7 @@ select = [
   "W",       # PEP 8 warnings
   "F",       # Flake8 (pyflakes) errors
   "D",       # pydocstyle (PEP 257) docstring checks
+  "I",       # isort import sorting
   "UP006",   # non-PEP585 — migrate typing.List → list etc.
   "UP007",   # non-PEP604-union — migrate Union[X, Y] → X | Y
   "UP045",   # non-PEP604-optional — migrate Optional[X] → X | None
@@ -263,23 +264,21 @@ ignore = [
   "D400",  # First line should end with a period
 ]
 
+[tool.ruff.lint.isort]
+section-order = ["local-folder", "future", "standard-library", "third-party", "first-party"]
+known-first-party = ["avalan"]
+
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = false
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
 
-[tool.isort]
-profile = "black"
-known_first_party = ["avalan"]
-src_paths = ["src"]
-
 [tool.poetry]
 version = "1.3.8"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
-isort = "^6.0.1"
 black = "^25.1.0"
 
 [tool.poetry-dynamic-versioning]

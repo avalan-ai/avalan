@@ -2432,22 +2432,6 @@ files = [
 ]
 
 [[package]]
-name = "isort"
-version = "6.0.1"
-description = "A Python utility / library to sort Python imports."
-optional = false
-python-versions = ">=3.9.0"
-groups = ["dev"]
-files = [
-    {file = "isort-6.0.1-py3-none-any.whl", hash = "sha256:2dc5d7f65c9678d94c88dfc29161a320eec67328bc97aad576874cb4be1e9615"},
-    {file = "isort-6.0.1.tar.gz", hash = "sha256:1cb5df28dfbc742e490c5e41bad6da41b805b0a8be7bc93cd0fb2a8a890ac450"},
-]
-
-[package.extras]
-colors = ["colorama"]
-plugins = ["setuptools"]
-
-[[package]]
 name = "jaraco-classes"
 version = "3.4.0"
 description = "Utility functions for Python class constructs"
