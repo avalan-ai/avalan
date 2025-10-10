@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from re import compile as regex_compile
 from typing import Any, Literal
-from sqlalchemy import MetaData, event, func, inspect, select
+from sqlalchemy import MetaData, event, func, inspect, select, text
 from sqlalchemy import Table as SATable
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
@@ -28,6 +28,14 @@ class Table:
     name: str
     columns: dict[str, str]
     foreign_keys: list[ForeignKey]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DatabaseTask:
+    id: str
+    user: str | None
+    state: str | None
+    query: str | None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -420,16 +428,14 @@ def _configure_read_only_engine(engine: AsyncEngine, read_only: bool) -> None:
 
 
 class DatabaseCountTool(DatabaseTool):
-    """
-    Count rows in the given table.
+    """Count rows in the given table.
 
     Args:
-        table_name: Table to count rows from (optionally schema-qualified,
-                    e.g. "public.users").
+        table_name: Table to count rows from (optionally schema-qualified, e.g. 'public.users').
 
     Returns:
         Number of rows in the table.
-    """
+"""
 
     def __init__(
         self,
@@ -458,10 +464,10 @@ class DatabaseCountTool(DatabaseTool):
         self, table_name: str, *, context: ToolCallContext
     ) -> int:
         assert table_name, "table_name must not be empty"
-        async with self._engine.connect() as conn:
-            if self._settings.delay_secs:
-                await sleep(self._settings.delay_secs)
+        if self._settings.delay_secs:
+            await sleep(self._settings.delay_secs)
 
+        async with self._engine.connect() as conn:
             schema, tbl_name = self._split_schema_and_table(table_name)
             actual_name = await conn.run_sync(
                 self._denormalize_table_name, schema, tbl_name
@@ -474,18 +480,15 @@ class DatabaseCountTool(DatabaseTool):
 
 
 class DatabaseInspectTool(DatabaseTool):
-    """
-    Gets the schema for the given tables using introspection.
-
-    It returns the table column names, types, and foreign keys.
+    """Inspect tables to retrieve column schemas and foreign keys.
 
     Args:
-        table_names: tables to get schemas from.
-        schema: optional schema the tables belong to, default schema if none.
+        table_names: Tables to inspect.
+        schema: Optional schema the tables belong to; defaults to the current schema.
 
     Returns:
-        The list of table schemas.
-    """
+        Schemas describing the requested tables.
+"""
 
     def __init__(
         self,
@@ -511,15 +514,16 @@ class DatabaseInspectTool(DatabaseTool):
         context: ToolCallContext,
     ) -> list[Table]:
         assert table_names, "table_names must not be empty"
+        if self._settings.delay_secs:
+            await sleep(self._settings.delay_secs)
+
         async with self._engine.connect() as conn:
-            if self._settings.delay_secs:
-                await sleep(self._settings.delay_secs)
             result = await conn.run_sync(
                 self._collect,
                 schema=schema,
                 table_names=table_names,
             )
-            return result
+        return result
 
     def _collect(
         self,
@@ -581,15 +585,14 @@ class DatabaseInspectTool(DatabaseTool):
 
 
 class DatabaseRunTool(DatabaseTool):
-    """
-    Runs the given SQL statement on the database and gets results.
+    """Run the given SQL statement on the database and return result rows.
 
     Args:
-        sql: Valid SQL statement to run.
+        sql: SQL statement to execute.
 
     Returns:
-        The SQL execution results.
-    """
+        Rows returned by the SQL statement, if any.
+"""
 
     def __init__(
         self,
@@ -610,10 +613,10 @@ class DatabaseRunTool(DatabaseTool):
     async def __call__(
         self, sql: str, *, context: ToolCallContext
     ) -> list[dict[str, Any]]:
-        async with self._engine.begin() as conn:
-            if self._settings.delay_secs:
-                await sleep(self._settings.delay_secs)
+        if self._settings.delay_secs:
+            await sleep(self._settings.delay_secs)
 
+        async with self._engine.begin() as conn:
             normalized_sql = self._prepare_sql_for_execution(sql)
             sql_to_run = await conn.run_sync(
                 self._apply_identifier_case, normalized_sql
@@ -622,16 +625,18 @@ class DatabaseRunTool(DatabaseTool):
 
             if result.returns_rows:
                 return [dict(row) for row in result.mappings().all()]
-            return []
+        return []
 
 
 class DatabaseTablesTool(DatabaseTool):
-    """
-    Gets the list of table names on the database for all schemas.
+    """List table names available in the database grouped by schema.
+
+    Args:
+        None.
 
     Returns:
-        A list of table names indexed by schema.
-    """
+        Mapping of schema names to the tables they contain.
+"""
 
     def __init__(
         self,
@@ -652,10 +657,12 @@ class DatabaseTablesTool(DatabaseTool):
     async def __call__(
         self, *, context: ToolCallContext
     ) -> dict[str | None, list[str]]:
+        if self._settings.delay_secs:
+            await sleep(self._settings.delay_secs)
+
         async with self._engine.connect() as conn:
-            if self._settings.delay_secs:
-                await sleep(self._settings.delay_secs)
-            return await conn.run_sync(self._collect)
+            result = await conn.run_sync(self._collect)
+        return result
 
     def _collect(self, connection: Connection) -> dict[str | None, list[str]]:
         inspector = inspect(connection)
@@ -669,6 +676,192 @@ class DatabaseTablesTool(DatabaseTool):
                 for name in actual_tables
             ]
         return result
+
+
+class DatabaseTasksTool(DatabaseTool):
+    """List killable database tasks from supported engines.
+
+    Args:
+        None.
+
+    Returns:
+        Tasks that are currently running on PostgreSQL or MySQL connections.
+"""
+
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        settings: DatabaseToolSettings,
+        *,
+        normalizer: IdentifierCaseNormalizer | None = None,
+        table_cache: dict[str | None, dict[str, str]] | None = None,
+    ) -> None:
+        super().__init__(
+            engine,
+            settings,
+            normalizer=normalizer,
+            table_cache=table_cache,
+        )
+        self.__name__ = "tasks"
+
+    async def __call__(
+        self,
+        *,
+        context: ToolCallContext,
+    ) -> list[DatabaseTask]:
+        if self._settings.delay_secs:
+            await sleep(self._settings.delay_secs)
+
+        async with self._engine.connect() as conn:
+            result = await conn.run_sync(self._collect)
+        return result
+
+    def _collect(self, connection: Connection) -> list[DatabaseTask]:
+        dialect_name = getattr(connection.dialect, "name", None)
+
+        if dialect_name == "postgresql":
+            return self._collect_postgresql(connection)
+        if dialect_name in {"mysql", "mariadb"}:
+            return self._collect_mysql(connection)
+        return []
+
+    def _collect_postgresql(self, connection: Connection) -> list[DatabaseTask]:
+        statement = text(
+            """
+            select pid::text as id,
+                   usename as user_name,
+                   state,
+                   query
+            from pg_stat_activity
+            where pid <> pg_backend_pid()
+              and query is not null
+              and state is not null
+            """
+        )
+        result = connection.execute(statement)
+        tasks: list[DatabaseTask] = []
+        for row in result.mappings().all():
+            query = (row.get("query") or "").strip()
+            if not query:
+                continue
+            tasks.append(
+                DatabaseTask(
+                    id=str(row.get("id")),
+                    user=row.get("user_name"),
+                    state=row.get("state"),
+                    query=query,
+                )
+            )
+        return tasks
+
+    def _collect_mysql(self, connection: Connection) -> list[DatabaseTask]:
+        current_id = connection.scalar(text("SELECT CONNECTION_ID()"))
+        result = connection.execute(text("SHOW FULL PROCESSLIST"))
+        tasks: list[DatabaseTask] = []
+
+        for row in result.mappings().all():
+            identifier = row.get("Id")
+            if identifier is None:
+                continue
+            if current_id is not None and identifier == current_id:
+                continue
+
+            command = (row.get("Command") or "").strip().lower()
+            if command == "sleep":
+                continue
+
+            info = row.get("Info")
+            query = (str(info).strip() if info is not None else "")
+            if not query:
+                continue
+
+            tasks.append(
+                DatabaseTask(
+                    id=str(identifier),
+                    user=row.get("User"),
+                    state=row.get("State") or row.get("Command"),
+                    query=query,
+                )
+            )
+        return tasks
+
+
+class DatabaseKillTool(DatabaseTool):
+    """Cancel a running database task by identifier.
+
+    Args:
+        task_id: Identifier of the task to cancel.
+
+    Returns:
+        True when cancellation succeeds on supported engines; otherwise False.
+"""
+
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        settings: DatabaseToolSettings,
+        *,
+        normalizer: IdentifierCaseNormalizer | None = None,
+        table_cache: dict[str | None, dict[str, str]] | None = None,
+    ) -> None:
+        super().__init__(
+            engine,
+            settings,
+            normalizer=normalizer,
+            table_cache=table_cache,
+        )
+        self.__name__ = "kill"
+
+    async def __call__(
+        self,
+        task_id: str,
+        *,
+        context: ToolCallContext,
+    ) -> bool:
+        assert task_id, "task_id must not be empty"
+        if self._settings.delay_secs:
+            await sleep(self._settings.delay_secs)
+
+        async with self._engine.begin() as conn:
+            return await conn.run_sync(self._kill, task_id=task_id)
+
+    def _kill(self, connection: Connection, *, task_id: str) -> bool:
+        dialect_name = getattr(connection.dialect, "name", None)
+
+        if dialect_name == "postgresql":
+            return self._kill_postgresql(connection, task_id)
+        if dialect_name in {"mysql", "mariadb"}:
+            return self._kill_mysql(connection, task_id)
+
+        raise RuntimeError(
+            "Killing tasks is not supported for "
+            f"{dialect_name or 'unknown'} databases."
+        )
+
+    def _kill_postgresql(self, connection: Connection, task_id: str) -> bool:
+        pid = self._parse_integer_task_id(task_id)
+        statement = text(
+            "SELECT pg_cancel_backend(:pid) AS cancelled"
+        )
+        result = connection.execute(statement, {"pid": pid})
+        cancelled = result.scalar()
+        return bool(cancelled)
+
+    def _kill_mysql(self, connection: Connection, task_id: str) -> bool:
+        pid = self._parse_integer_task_id(task_id)
+        connection.execute(text("KILL :pid"), {"pid": pid})
+        return True
+
+    @staticmethod
+    def _parse_integer_task_id(task_id: str) -> int:
+        try:
+            value = int(task_id)
+        except ValueError as error:
+            raise RuntimeError("Task identifier must be an integer value.") from error
+
+        if value < 0:
+            raise RuntimeError("Task identifier must be a positive integer.")
+        return value
 
 
 class DatabaseToolSet(ToolSet):
@@ -716,6 +909,18 @@ class DatabaseToolSet(ToolSet):
                 table_cache=table_cache,
             ),
             DatabaseTablesTool(
+                self._engine,
+                settings,
+                normalizer=normalizer,
+                table_cache=table_cache,
+            ),
+            DatabaseTasksTool(
+                self._engine,
+                settings,
+                normalizer=normalizer,
+                table_cache=table_cache,
+            ),
+            DatabaseKillTool(
                 self._engine,
                 settings,
                 normalizer=normalizer,

@@ -2,8 +2,10 @@ from avalan.entities import ToolCallContext
 from avalan.tool.database import (
     DatabaseCountTool,
     DatabaseInspectTool,
+    DatabaseKillTool,
     DatabaseRunTool,
     DatabaseTablesTool,
+    DatabaseTasksTool,
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
@@ -179,6 +181,20 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertIn("books", tables["main"])
         await engine.dispose()
 
+    async def test_tasks_tool_returns_empty_for_sqlite(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseTasksTool(engine, self.settings)
+        tasks = await tool(context=ToolCallContext())
+        self.assertEqual(tasks, [])
+        await engine.dispose()
+
+    async def test_kill_tool_not_supported_for_sqlite(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseKillTool(engine, self.settings)
+        with self.assertRaises(RuntimeError):
+            await tool("1", context=ToolCallContext())
+        await engine.dispose()
+
     async def test_inspect_tool_returns_schemas(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseInspectTool(engine, self.settings)
@@ -238,7 +254,14 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             tables = DatabaseTablesTool(engine, settings)
             await tables(context=ToolCallContext())
 
-            self.assertEqual(mocked_sleep.await_count, 4)
+            tasks_tool = DatabaseTasksTool(engine, settings)
+            await tasks_tool(context=ToolCallContext())
+
+            kill_tool = DatabaseKillTool(engine, settings)
+            with self.assertRaises(RuntimeError):
+                await kill_tool("1", context=ToolCallContext())
+
+            self.assertEqual(mocked_sleep.await_count, 6)
         await engine.dispose()
 
     async def test_tables_tool_respects_identifier_case(self):
@@ -279,7 +302,14 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
 
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
-            count_tool, inspect_tool, run_tool, tables_tool = toolset.tools
+            (
+                count_tool,
+                inspect_tool,
+                run_tool,
+                tables_tool,
+                tasks_tool,
+                kill_tool,
+            ) = toolset.tools
             count = await count_tool("authors", context=ToolCallContext())
             self.assertEqual(count, 1)
             rows = await run_tool(
@@ -290,6 +320,9 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(table[0].name, "books")
             tables = await tables_tool(context=ToolCallContext())
             self.assertIn("books", tables["main"])
+            self.assertEqual(await tasks_tool(context=ToolCallContext()), [])
+            with self.assertRaises(RuntimeError):
+                await kill_tool("1", context=ToolCallContext())
         self.assertTrue(toolset._engine.disposed)
 
     async def test_toolset_read_only_blocks_writes(self):
@@ -298,7 +331,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             allowed_commands=["insert"],
         )
         async with DatabaseToolSet(settings) as toolset:
-            _, _, run_tool, _ = toolset.tools
+            _, _, run_tool, *_ = toolset.tools
             with self.assertRaises(OperationalError):
                 await run_tool(
                     "INSERT INTO authors(name) VALUES ('Blocked')",

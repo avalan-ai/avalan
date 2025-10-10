@@ -2,8 +2,13 @@ from asyncio import run
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from avalan.tool.database import (
     DatabaseCountTool,
+    DatabaseKillTool,
+    DatabaseTask,
+    DatabaseTasksTool,
     DatabaseTool,
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
@@ -33,6 +38,10 @@ def _inspector(
         get_schema_names=lambda: list(schemas),
         get_table_names=lambda schema=None: list(table_names.get(schema, [])),
     )
+
+
+def _result(rows):
+    return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: list(rows)))
 
 
 def test_identifier_case_normalizer_behaviour() -> None:
@@ -162,6 +171,147 @@ def test_split_schema_and_table_without_schema() -> None:
     schema, table = DatabaseCountTool._split_schema_and_table("authors")
     assert schema is None
     assert table == "authors"
+
+
+def test_database_tasks_tool_collects_postgresql_rows() -> None:
+    rows = [
+        {
+            "id": "15",
+            "user_name": "alice",
+            "state": "active",
+            "query": "SELECT 1",
+        },
+        {
+            "id": "16",
+            "user_name": "bob",
+            "state": "idle",
+            "query": None,
+        },
+    ]
+
+    calls = []
+
+    def execute(statement, params=None):
+        calls.append((statement.text, params))
+        return _result(rows)
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="postgresql"), execute=execute
+    )
+    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+
+    tasks = tool._collect(connection)
+
+    assert len(tasks) == 1
+    assert isinstance(tasks[0], DatabaseTask)
+    assert tasks[0].id == "15"
+    assert tasks[0].user == "alice"
+    assert tasks[0].query == "SELECT 1"
+    assert calls[0][0].startswith("\n            select pid::text as id")
+
+
+def test_database_tasks_tool_collects_mysql_rows() -> None:
+    calls = []
+
+    def scalar(statement):
+        calls.append(("scalar", statement.text))
+        return 2
+
+    def execute(statement, params=None):
+        calls.append(("execute", statement.text))
+        if statement.text == "SHOW FULL PROCESSLIST":
+            rows = [
+                {"Id": 2, "Command": "Sleep", "Info": ""},
+                {
+                    "Id": 3,
+                    "Command": "Query",
+                    "State": "executing",
+                    "Info": "SELECT 1",
+                    "User": "carol",
+                },
+            ]
+            return _result(rows)
+        raise AssertionError("Unexpected statement")
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"),
+        scalar=scalar,
+        execute=execute,
+    )
+
+    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tasks = tool._collect(connection)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.id == "3"
+    assert task.query == "SELECT 1"
+    assert task.user == "carol"
+    assert ("scalar", "SELECT CONNECTION_ID()") in calls
+    assert ("execute", "SHOW FULL PROCESSLIST") in calls
+
+
+def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
+    connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    assert tool._collect(connection) == []
+
+
+def test_database_kill_tool_postgresql_executes_cancel() -> None:
+    captured = {}
+
+    def execute(statement, params=None):
+        captured["statement"] = statement.text
+        captured["params"] = params
+        return SimpleNamespace(scalar=lambda: True)
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="postgresql"), execute=execute
+    )
+
+    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    assert tool._kill(connection, task_id="7") is True
+    assert captured["statement"] == "SELECT pg_cancel_backend(:pid) AS cancelled"
+    assert captured["params"] == {"pid": 7}
+
+
+def test_database_kill_tool_mysql_executes_kill() -> None:
+    captured = {}
+
+    def execute(statement, params=None):
+        captured["statement"] = statement.text
+        captured["params"] = params
+        return SimpleNamespace()
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"), execute=execute
+    )
+
+    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    assert tool._kill(connection, task_id="12") is True
+    assert captured["statement"] == "KILL :pid"
+    assert captured["params"] == {"pid": 12}
+
+
+def test_database_kill_tool_rejects_non_integer_identifier() -> None:
+    connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    with pytest.raises(RuntimeError):
+        tool._kill(connection, task_id="abc")
+
+
+def test_database_kill_tool_rejects_negative_identifier() -> None:
+    connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    with pytest.raises(RuntimeError):
+        tool._kill(connection, task_id="-1")
+
+
+def test_database_kill_tool_unsupported_dialect() -> None:
+    connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    with pytest.raises(RuntimeError):
+        tool._kill(connection, task_id="1")
 
 
 def test_database_tool_aexit_delegates_to_parent() -> None:

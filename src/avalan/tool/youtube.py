@@ -11,7 +11,15 @@ from importlib import import_module
 
 
 class YouTubeTranscriptTool(Tool):
-    """Return the transcript of a YouTube video."""
+    """Return the transcript of a YouTube video.
+
+    Args:
+        video_id: Identifier of the video to fetch.
+        languages: Preferred transcript languages in priority order.
+
+    Returns:
+        Transcript text chunks for the requested video.
+"""
 
     _proxy: GenericProxyConfig | WebshareProxyConfig | None
 

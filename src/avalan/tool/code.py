@@ -12,18 +12,16 @@ from RestrictedPython import (
 
 
 class CodeTool(Tool):
-    """Execute Python function code in a restricted environment.
+    """Execute Python code in a restricted environment.
 
     Args:
-        code: Python code to execute, which should define a function named
-        `run`, with whatever arguments needed, and returning its result on
-        a string.
-        args: Positional arguments to send the `run` function.
-        kwargs: Keyword arguments to send the `run` function.
+        code: Python source that defines a callable named `run`.
+        args: Positional arguments forwarded to `run`.
+        kwargs: Keyword arguments forwarded to `run`.
 
     Returns:
-        A string, which is the value returned by the `run` function.
-    """
+        Text representation of the value returned by `run`.
+"""
 
     def __init__(self) -> None:
         super().__init__()
@@ -70,15 +68,13 @@ class AstGrepTool(Tool):
 
     Args:
         pattern: Code pattern to search for.
-        context: Tool call context.
         lang: Programming language of the files.
         rewrite: Template used to rewrite matches.
-        paths: Files or directories to search. Defaults to the current
-            directory.
+        paths: Files or directories to search.
 
     Returns:
-        Output from ast-grep.
-    """
+        Output produced by ast-grep.
+"""
 
     def __init__(self) -> None:
         super().__init__()

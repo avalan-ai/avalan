@@ -57,15 +57,14 @@ class BrowserToolSettings(dict):
 
 
 class BrowserTool(Tool):
-    """
-    Uses a web browser to access the internet and get the contents of a URL.
+    """Use a web browser to access the internet and get the contents of a URL.
 
     Args:
         url: URL of a page to open.
 
     Returns:
-        Contents of the given URL page.
-    """
+        Contents of the requested page in Markdown format.
+"""
 
     _client: PlaywrightContextManager
     _settings: BrowserToolSettings
