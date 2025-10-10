@@ -180,6 +180,7 @@ def test_database_tasks_tool_collects_postgresql_rows() -> None:
             "user_name": "alice",
             "state": "active",
             "query": "SELECT 1",
+            "duration": 120,
         },
         {
             "id": "16",
@@ -207,7 +208,8 @@ def test_database_tasks_tool_collects_postgresql_rows() -> None:
     assert tasks[0].id == "15"
     assert tasks[0].user == "alice"
     assert tasks[0].query == "SELECT 1"
-    assert calls[0][0].startswith("\n            select pid::text as id")
+    assert tasks[0].duration == 120
+    assert "CAST(EXTRACT(EPOCH FROM clock_timestamp() - query_start) AS BIGINT)" in calls[0][0]
 
 
 def test_database_tasks_tool_collects_mysql_rows() -> None:
@@ -221,13 +223,14 @@ def test_database_tasks_tool_collects_mysql_rows() -> None:
         calls.append(("execute", statement.text))
         if statement.text == "SHOW FULL PROCESSLIST":
             rows = [
-                {"Id": 2, "Command": "Sleep", "Info": ""},
+                {"Id": 2, "Command": "Sleep", "Info": "", "Time": 3},
                 {
                     "Id": 3,
                     "Command": "Query",
                     "State": "executing",
                     "Info": "SELECT 1",
                     "User": "carol",
+                    "Time": 42,
                 },
             ]
             return _result(rows)
@@ -247,6 +250,7 @@ def test_database_tasks_tool_collects_mysql_rows() -> None:
     assert task.id == "3"
     assert task.query == "SELECT 1"
     assert task.user == "carol"
+    assert task.duration == 42
     assert ("scalar", "SELECT CONNECTION_ID()") in calls
     assert ("execute", "SHOW FULL PROCESSLIST") in calls
 
@@ -294,6 +298,79 @@ def test_database_tasks_tool_skips_mysql_rows_without_queries() -> None:
     assert task.user == "dave"
     assert calls.count(("scalar", "SELECT CONNECTION_ID()")) == 1
     assert calls.count(("execute", "SHOW FULL PROCESSLIST")) == 1
+
+
+def test_database_tasks_tool_filters_postgresql_rows_by_running_for() -> None:
+    rows = [
+        {
+            "id": "15",
+            "user_name": "alice",
+            "state": "active",
+            "query": "SELECT 1",
+            "duration": 120,
+        },
+        {
+            "id": "16",
+            "user_name": "bob",
+            "state": "active",
+            "query": "SELECT 2",
+            "duration": 30,
+        },
+    ]
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="postgresql"),
+        execute=lambda statement, params=None: _result(rows),
+    )
+
+    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tasks = tool._collect_postgresql(connection, running_for=60)
+
+    assert len(tasks) == 1
+    assert tasks[0].id == "15"
+    assert tasks[0].duration == 120
+
+
+def test_database_tasks_tool_filters_mysql_rows_by_running_for() -> None:
+    def scalar(statement):
+        return None
+
+    rows = [
+        {
+            "Id": 2,
+            "Command": "Query",
+            "State": "executing",
+            "Info": "SELECT 1",
+            "User": "carol",
+            "Time": 120,
+        },
+        {
+            "Id": 3,
+            "Command": "Query",
+            "State": "executing",
+            "Info": "SELECT 2",
+            "User": "dave",
+            "Time": 15,
+        },
+    ]
+
+    def execute(statement, params=None):
+        if statement.text == "SHOW FULL PROCESSLIST":
+            return _result(rows)
+        raise AssertionError("Unexpected statement")
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"),
+        scalar=scalar,
+        execute=execute,
+    )
+
+    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tasks = tool._collect_mysql(connection, running_for=60)
+
+    assert len(tasks) == 1
+    assert tasks[0].id == "2"
+    assert tasks[0].duration == 120
 
 
 def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
