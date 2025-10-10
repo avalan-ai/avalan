@@ -251,6 +251,51 @@ def test_database_tasks_tool_collects_mysql_rows() -> None:
     assert ("execute", "SHOW FULL PROCESSLIST") in calls
 
 
+def test_database_tasks_tool_skips_mysql_rows_without_queries() -> None:
+    calls = []
+
+    def scalar(statement):
+        calls.append(("scalar", statement.text))
+        return None
+
+    rows = [
+        {"Id": None, "Command": "Query", "Info": "SELECT 1"},
+        {"Id": 7, "Command": "Sleep", "Info": "SELECT 1"},
+        {"Id": 8, "Command": "Query", "Info": "   "},
+        {
+            "Id": 9,
+            "Command": "Query",
+            "State": "running",
+            "Info": "SELECT 2",
+            "User": "dave",
+        },
+    ]
+
+    def execute(statement, params=None):
+        calls.append(("execute", statement.text))
+        if statement.text == "SHOW FULL PROCESSLIST":
+            return _result(rows)
+        raise AssertionError("Unexpected statement")
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"),
+        scalar=scalar,
+        execute=execute,
+    )
+
+    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tasks = tool._collect(connection)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.id == "9"
+    assert task.state == "running"
+    assert task.query == "SELECT 2"
+    assert task.user == "dave"
+    assert calls.count(("scalar", "SELECT CONNECTION_ID()")) == 1
+    assert calls.count(("execute", "SHOW FULL PROCESSLIST")) == 1
+
+
 def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
     tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
