@@ -16,15 +16,11 @@ class MessageReadTool(Tool):
     """Fetch user information and preferences from previous messages.
 
     Args:
-        search: What information to fetch. For example: "user's name".
+        search: Information to retrieve from past conversations.
 
     Returns:
-        The search results, if any. This might be part of a message,
-        so extract the information from it. For example, you may be
-        getting "my name is Leo", not simply "Leo" as the user's name.
-        If no result returned (indicated by the string "NOT_FOUND"), the
-        information could not be found, so you should ask for it.
-    """
+        Retrieved message content or 'NOT_FOUND' when no match exists.
+"""
 
     _memory_manager: MemoryManager
     _NOT_FOUND = "NOT_FOUND"
@@ -62,12 +58,12 @@ class MemoryReadTool(Tool):
 
     Args:
         namespace: Namespace to fetch information from.
-        search: What information to fetch.
-        limit: Maximum number of matches to fetch (optional).
+        search: Information to locate within the namespace.
+        limit: Maximum number of matches to fetch.
 
     Returns:
-        The search results, if any.
-    """
+        Matching permanent memory partitions.
+"""
 
     _memory_manager: MemoryManager
     _function: VectorFunction
@@ -117,11 +113,11 @@ class MemoryListTool(Tool):
     """List permanent memories available for a namespace.
 
     Args:
-        namespace: Namespace to fetch information from.
+        namespace: Namespace to list memories from.
 
     Returns:
-        List of memories on the given namespace.
-    """
+        Memories stored in the requested namespace.
+"""
 
     _memory_manager: MemoryManager
 
@@ -150,9 +146,12 @@ class MemoryListTool(Tool):
 class MemoryStoresTool(Tool):
     """List memory stores available.
 
+    Args:
+        None.
+
     Returns:
-        List of memory stores.
-    """
+        Available permanent memory stores.
+"""
 
     _memory_manager: MemoryManager
 

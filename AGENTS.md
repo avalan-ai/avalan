@@ -53,6 +53,15 @@ fixes with [black](https://black.readthedocs.io/en/stable/) and
 make lint
 ```
 
+## Tool Docstrings
+
+All subclasses of `Tool` must include descriptive docstrings in a consistent format:
+
+- Start with a summary sentence written in the imperative mood and ending with a period.
+- Follow the summary with a blank line, then `Args:` and `Returns:` sections documenting every user-provided parameter and the return value. Do **not** document the implicit `context` parameter.
+- Keep the docstring informative; agents rely on these descriptions when selecting tools.
+- Update the docstring format test in `tests/tool/tool_docstring_format_test.py` whenever new tools are introduced, including validations that ensure `context` is omitted.
+
 ## Testing and coverage
 
 When adding or modifying code make sure you add unit tests for it, aiming to maintain **100% test coverage**, so test varying parameter values, and include negative testing.

@@ -11,7 +11,10 @@ class McpCallTool(Tool):
         uri: Base URI of the MCP server.
         name: Name of the tool to invoke.
         arguments: Arguments to send to the tool.
-    """
+
+    Returns:
+        Responses returned by the MCP tool invocation.
+"""
 
     _client_params: dict[str, object]
     _call_params: dict[str, object]

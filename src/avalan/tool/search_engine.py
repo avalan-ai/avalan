@@ -2,16 +2,15 @@ from . import Tool
 
 
 class SearchEngineTool(Tool):
-    """
-    Can search Internet search engines for real time information.
+    """Search internet engines for real-time information.
 
     Args:
-        query: Term to search for. Example: "weather today in Buenos Aires"
-        engine: Search engine to use. Example: "google"
+        query: Term to search for.
+        engine: Search engine to use.
 
     Returns:
-        Result of searching Google for the given term.
-    """
+        Result of executing the query against the chosen engine.
+"""
 
     def __init__(self) -> None:
         self.__name__ = "search"

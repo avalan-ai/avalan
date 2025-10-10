@@ -6,15 +6,14 @@ from sympy import sympify
 
 
 class CalculatorTool(Tool):
-    """
-    Calculate the result of the arithmetic expression.
+    """Calculate the result of an arithmetic expression.
 
     Args:
-        expression: Expression to calculate.
+        expression: Arithmetic expression to evaluate.
 
     Returns:
-        Result of the calculated expression
-    """
+        Result of the expression formatted as a string.
+"""
 
     def __init__(self) -> None:
         super().__init__()
