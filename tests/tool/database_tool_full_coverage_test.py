@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from avalan.tool.database import (
+    DatabaseInspectTool,
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
@@ -258,6 +259,36 @@ def test_apply_identifier_case_handles_schema_replacements(
         )
 
     assert "main.CamelCase" in rewritten
+
+
+def test_apply_identifier_case_parses_sql_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = SimpleNamespace(
+        sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    )
+    settings = DatabaseToolSettings(dsn="sqlite://", identifier_case="lower")
+    tool = DummyDatabaseTool(engine, settings)
+    tool._table_cache = {"main": {"camelcase": "CamelCase"}}
+
+    inspector = _inspector(
+        default_schema="main",
+        schemas=["main"],
+        table_names={"main": ["CamelCase"]},
+    )
+
+    def fail_rewrite(*_: Any, **__: Any) -> None:
+        raise AssertionError("Token-based rewrite should not be used")
+
+    inspect_path = "avalan.tool.database.inspect"
+    with monkeypatch.context() as patch_ctx:
+        patch_ctx.setattr(inspect_path, lambda _: inspector)
+        patch_ctx.setattr(tool, "_rewrite_sql_with_tokens", fail_rewrite)
+        rewritten = tool._apply_identifier_case(
+            _connection(),
+            "SELECT * FROM main.camelcase",
+        )
+
+    assert "main.CamelCase" in rewritten
+    assert "main.camelcase" not in rewritten
 
 
 def test_normalize_sql_handles_parse_errors(

@@ -3,12 +3,14 @@ from avalan.tool.database import (
     DatabaseCountTool,
     DatabaseInspectTool,
     DatabaseKillTool,
+    DatabasePlanTool,
     DatabaseRunTool,
     DatabaseTablesTool,
     DatabaseTasksTool,
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
+    QueryPlan,
 )
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import NoSuchTableError, OperationalError
@@ -172,6 +174,44 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             cleanup.execute(text("DELETE FROM authors WHERE name = 'Other'"))
         await engine.dispose()
 
+    async def test_plan_tool_returns_query_plan(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabasePlanTool(engine, self.settings)
+        plan = await tool(
+            "SELECT id, title FROM books", context=ToolCallContext()
+        )
+        self.assertIsInstance(plan, QueryPlan)
+        self.assertEqual(plan.dialect, "sqlite")
+        self.assertTrue(plan.steps)
+        self.assertIn("detail", plan.steps[0])
+        await engine.dispose()
+
+    async def test_plan_tool_disallows_insert_by_default(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabasePlanTool(engine, self.settings)
+        with self.assertRaises(PermissionError):
+            await tool(
+                "INSERT INTO authors(name) VALUES ('Other')",
+                context=ToolCallContext(),
+            )
+        await engine.dispose()
+
+    async def test_plan_tool_respects_configured_delay(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, delay_secs=0.01)
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabasePlanTool(engine, settings)
+
+        calls: list[float] = []
+
+        async def fake_sleep(delay: float) -> None:
+            calls.append(delay)
+
+        with patch("avalan.tool.database.sleep", new=fake_sleep):
+            await tool("SELECT id FROM books", context=ToolCallContext())
+
+        self.assertEqual(calls, [0.01])
+        await engine.dispose()
+
     async def test_tables_tool_lists_tables(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseTablesTool(engine, self.settings)
@@ -185,6 +225,13 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseTasksTool(engine, self.settings)
         tasks = await tool(context=ToolCallContext())
+        self.assertEqual(tasks, [])
+        await engine.dispose()
+
+    async def test_tasks_tool_accepts_zero_running_for(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseTasksTool(engine, self.settings)
+        tasks = await tool(running_for=0, context=ToolCallContext())
         self.assertEqual(tasks, [])
         await engine.dispose()
 
@@ -302,16 +349,24 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
 
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
-            (
-                count_tool,
-                inspect_tool,
-                run_tool,
-                tables_tool,
-                tasks_tool,
-                kill_tool,
-            ) = toolset.tools
+            tools_by_name = {
+                tool.__name__: tool
+                for tool in toolset.tools
+                if hasattr(tool, "__name__")
+            }
+            count_tool = tools_by_name["count"]
+            inspect_tool = tools_by_name["inspect"]
+            plan_tool = tools_by_name["plan"]
+            run_tool = tools_by_name["run"]
+            tables_tool = tools_by_name["tables"]
+            tasks_tool = tools_by_name["tasks"]
+            kill_tool = tools_by_name["kill"]
             count = await count_tool("authors", context=ToolCallContext())
             self.assertEqual(count, 1)
+            plan = await plan_tool(
+                "SELECT id FROM authors", context=ToolCallContext()
+            )
+            self.assertIsInstance(plan, QueryPlan)
             rows = await run_tool(
                 "SELECT id FROM authors", context=ToolCallContext()
             )
@@ -331,7 +386,12 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             allowed_commands=["insert"],
         )
         async with DatabaseToolSet(settings) as toolset:
-            _, _, run_tool, *_ = toolset.tools
+            tools_by_name = {
+                tool.__name__: tool
+                for tool in toolset.tools
+                if hasattr(tool, "__name__")
+            }
+            run_tool = tools_by_name["run"]
             with self.assertRaises(OperationalError):
                 await run_tool(
                     "INSERT INTO authors(name) VALUES ('Blocked')",
