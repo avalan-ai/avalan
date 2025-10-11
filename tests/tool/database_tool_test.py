@@ -196,6 +196,22 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             )
         await engine.dispose()
 
+    async def test_plan_tool_respects_configured_delay(self):
+        settings = DatabaseToolSettings(dsn=self.dsn, delay_secs=0.01)
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabasePlanTool(engine, settings)
+
+        calls: list[float] = []
+
+        async def fake_sleep(delay: float) -> None:
+            calls.append(delay)
+
+        with patch("avalan.tool.database.sleep", new=fake_sleep):
+            await tool("SELECT id FROM books", context=ToolCallContext())
+
+        self.assertEqual(calls, [0.01])
+        await engine.dispose()
+
     async def test_tables_tool_lists_tables(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseTablesTool(engine, self.settings)
@@ -209,6 +225,13 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseTasksTool(engine, self.settings)
         tasks = await tool(context=ToolCallContext())
+        self.assertEqual(tasks, [])
+        await engine.dispose()
+
+    async def test_tasks_tool_accepts_zero_running_for(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseTasksTool(engine, self.settings)
+        tasks = await tool(running_for=0, context=ToolCallContext())
         self.assertEqual(tasks, [])
         await engine.dispose()
 
