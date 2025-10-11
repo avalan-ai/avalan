@@ -6,6 +6,7 @@ import pytest
 
 from avalan.tool.database import (
     DatabaseCountTool,
+    DatabaseInspectTool,
     DatabaseKillTool,
     DatabasePlanTool,
     DatabaseTask,
@@ -381,6 +382,50 @@ def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
     assert tool._collect(connection) == []
 
 
+def test_database_inspect_tool_collects_with_custom_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = DatabaseInspectTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
+
+    inspector = SimpleNamespace(
+        default_schema_name="public",
+        get_columns=lambda table_name, schema=None: [
+            {"name": "id", "type": "INTEGER"},
+            {"name": "user_id", "type": "INTEGER"},
+        ],
+        get_foreign_keys=lambda table_name, schema=None: [
+            {
+                "constrained_columns": ["user_id"],
+                "referred_schema": None,
+                "referred_table": "users",
+                "referred_columns": ["id"],
+            }
+        ],
+    )
+
+    with monkeypatch.context() as patch_ctx:
+        patch_ctx.setattr("avalan.tool.database.inspect", lambda _: inspector)
+        patch_ctx.setattr(
+            "avalan.tool.database.DatabaseTool._schemas",
+            lambda _self, connection, _inspector: ("public", ["public"]),
+        )
+        tables = tool._collect(
+            SimpleNamespace(),
+            schema="analytics",
+            table_names=["events"],
+        )
+
+    assert len(tables) == 1
+    table = tables[0]
+    assert table.name == "analytics.events"
+    assert table.columns == {"id": "INTEGER", "user_id": "INTEGER"}
+    assert len(table.foreign_keys) == 1
+    fk = table.foreign_keys[0]
+    assert fk.ref_table == "users"
+
+
 def test_database_plan_tool_builds_postgresql_statement() -> None:
     tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
     statement, dialect = tool._statement_for_plan(
@@ -412,6 +457,17 @@ def test_database_plan_tool_builds_sqlite_statement() -> None:
 
     assert statement.text == "EXPLAIN QUERY PLAN SELECT 1"
     assert dialect == "sqlite"
+
+
+def test_database_plan_tool_builds_generic_statement() -> None:
+    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    statement, dialect = tool._statement_for_plan(
+        SimpleNamespace(dialect=SimpleNamespace(name="custom")),
+        "SELECT 1",
+    )
+
+    assert statement.text == "EXPLAIN SELECT 1"
+    assert dialect == "custom"
 
 
 def test_database_plan_tool_handles_statements_without_rows() -> None:
@@ -528,3 +584,9 @@ def test_database_tool_aexit_delegates_to_parent() -> None:
         stack_mock.__aexit__.assert_called_once()
 
     run(run_test())
+
+
+def test_database_tasks_tool_normalize_duration_edge_cases() -> None:
+    assert DatabaseTasksTool._normalize_duration(None) is None
+    assert DatabaseTasksTool._normalize_duration("abc") is None
+    assert DatabaseTasksTool._normalize_duration(-5) == 0
