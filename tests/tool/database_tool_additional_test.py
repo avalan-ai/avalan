@@ -7,11 +7,13 @@ import pytest
 from avalan.tool.database import (
     DatabaseCountTool,
     DatabaseKillTool,
+    DatabasePlanTool,
     DatabaseTask,
     DatabaseTasksTool,
     DatabaseTool,
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
+    QueryPlan,
 )
 
 
@@ -377,6 +379,84 @@ def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
     tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
     assert tool._collect(connection) == []
+
+
+def test_database_plan_tool_builds_postgresql_statement() -> None:
+    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    statement, dialect = tool._statement_for_plan(
+        SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
+        "SELECT 1",
+    )
+
+    assert statement.text == "EXPLAIN (FORMAT TEXT) SELECT 1"
+    assert dialect == "postgresql"
+
+
+def test_database_plan_tool_builds_mysql_statement() -> None:
+    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    statement, dialect = tool._statement_for_plan(
+        SimpleNamespace(dialect=SimpleNamespace(name="mysql")),
+        "SELECT 1",
+    )
+
+    assert statement.text == "EXPLAIN FORMAT=JSON SELECT 1"
+    assert dialect == "mysql"
+
+
+def test_database_plan_tool_builds_sqlite_statement() -> None:
+    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    statement, dialect = tool._statement_for_plan(
+        SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
+        "SELECT 1",
+    )
+
+    assert statement.text == "EXPLAIN QUERY PLAN SELECT 1"
+    assert dialect == "sqlite"
+
+
+def test_database_plan_tool_handles_statements_without_rows() -> None:
+    class _AsyncConnection:
+        def __init__(self, sync_conn: SimpleNamespace) -> None:
+            self._sync_conn = sync_conn
+
+        async def run_sync(self, fn, *args, **kwargs):
+            return fn(self._sync_conn, *args, **kwargs)
+
+        async def execute(self, statement):
+            return SimpleNamespace(returns_rows=False)
+
+    class _ConnectionContext:
+        def __init__(self, sync_conn: SimpleNamespace) -> None:
+            self._sync_conn = sync_conn
+
+        async def __aenter__(self):
+            return _AsyncConnection(self._sync_conn)
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _Engine:
+        def __init__(self) -> None:
+            self.sync_engine = SimpleNamespace(
+                dialect=SimpleNamespace(name="sqlite")
+            )
+            self._sync_conn = SimpleNamespace(
+                dialect=SimpleNamespace(name="sqlite")
+            )
+
+        def connect(self):
+            return _ConnectionContext(self._sync_conn)
+
+        async def dispose(self):
+            return None
+
+    async def run_test() -> None:
+        engine = _Engine()
+        tool = DatabasePlanTool(engine, DatabaseToolSettings(dsn="sqlite://"))
+        plan = await tool("SELECT 1", context=SimpleNamespace())
+        assert plan == QueryPlan(dialect="sqlite", steps=[])
+
+    run(run_test())
 
 
 def test_database_kill_tool_postgresql_executes_cancel() -> None:
