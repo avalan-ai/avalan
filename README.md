@@ -1003,11 +1003,11 @@ Avalan makes it simple to launch a chat-based agent that can call external tools
 
 ### Math toolset (`math.*`)
 
-Use the math toolset whenever your agent needs deterministic arithmetic or algebraic answers. The calculator tool delegates evaluation to SymPy, making it ideal for verifying multi-step computations instead of relying on approximate language model reasoning.【F:src/avalan/tool/math.py†L8-L37】
+Use the math toolset whenever your agent needs deterministic arithmetic or algebraic answers. The calculator tool delegates evaluation to SymPy, making it ideal for verifying multi-step computations instead of relying on approximate language model reasoning.
 
 **Available tools**
 
-- `math.calculator(expression: str) -> str`: Evaluate an arithmetic expression (including parentheses and operator precedence) and return the numeric result as a string.【F:src/avalan/tool/math.py†L8-L37】
+- `math.calculator(expression: str) -> str`: Evaluate an arithmetic expression (including parentheses and operator precedence) and return the numeric result as a string.
 
 #### Example: `math.calculator`
 
@@ -1051,12 +1051,12 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
 
 ### Code toolset (`code.*`)
 
-Reach for the code toolset when the agent should write, execute, or refactor source code in a controlled environment. Execution happens inside a RestrictedPython sandbox and pattern searches are backed by the `ast-grep` CLI, enabling agents to safely prototype logic, manipulate files, or build refactoring plans.【F:src/avalan/tool/code.py†L14-L123】
+Reach for the code toolset when the agent should write, execute, or refactor source code in a controlled environment. Execution happens inside a RestrictedPython sandbox and pattern searches are backed by the `ast-grep` CLI, enabling agents to safely prototype logic, manipulate files, or build refactoring plans.
 
 **Available tools**
 
-- `code.run(code: str, *args, **kwargs) -> str`: Execute a snippet that defines a `run` function and return the function result as text, which is useful for testing generated utilities or validating calculations programmatically.【F:src/avalan/tool/code.py†L14-L63】
-- `code.search.ast.grep(pattern: str, lang: str, rewrite: str | None = None, paths: list[str] | None = None) -> str`: Search or rewrite codebases using structural patterns, helping agents answer "where is this API used?" or propose targeted edits.【F:src/avalan/tool/code.py†L66-L110】
+- `code.run(code: str, *args, **kwargs) -> str`: Execute a snippet that defines a `run` function and return the function result as text, which is useful for testing generated utilities or validating calculations programmatically.
+- `code.search.ast.grep(pattern: str, lang: str, rewrite: str | None = None, paths: list[str] | None = None) -> str`: Search or rewrite codebases using structural patterns, helping agents answer "where is this API used?" or propose targeted edits.
 
 #### Example: `code.run`
 
@@ -1080,17 +1080,7 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
 
 ### Database toolset (`database.*`)
 
-Connect the database toolset when an agent must inspect schemas, understand query plans, or run SQL against an external data source. Tools share a pooled SQLAlchemy engine, enforce optional read-only policies, and normalize identifier casing so that agents can explore data safely.【F:src/avalan/tool/database.py†L438-L1062】
-
-**Available tools**
-
-- `database.count(table_name: str) -> int`: Return the number of rows in a table—handy for quick health checks or progress reporting.【F:src/avalan/tool/database.py†L438-L487】
-- `database.inspect(table_names: list[str], schema: str | None = None) -> list[Table]`: Describe table columns and foreign keys so the agent can reason about relationships before writing SQL.【F:src/avalan/tool/database.py†L490-L559】
-- `database.plan(sql: str) -> QueryPlan`: Request an `EXPLAIN` plan to validate or optimize a generated query.【F:src/avalan/tool/database.py†L595-L659】
-- `database.run(sql: str) -> list[dict[str, Any]]`: Execute read or write statements (subject to policy) and return result rows for downstream reasoning.【F:src/avalan/tool/database.py†L560-L659】
-- `database.tables() -> dict[str | None, list[str]]`: List tables grouped by schema—useful for schema discovery in unknown databases.【F:src/avalan/tool/database.py†L662-L711】
-- `database.tasks(running_for: int | None = None) -> list[DatabaseTask]`: Surface long-running queries on PostgreSQL or MySQL so humans can monitor or intervene.【F:src/avalan/tool/database.py†L712-L885】
-- `database.kill(task_id: str) -> bool`: Cancel a runaway query when safeguards permit it.【F:src/avalan/tool/database.py†L886-L975】
+Connect the database toolset when an agent must inspect schemas, understand query plans, or run SQL against an external data source. Tools share a pooled SQLAlchemy engine, enforce optional read-only policies, and normalize identifier casing so that agents can explore data safely.
 
 When your agent needs live access to data, configure the database toolset. In the example below we point the agent to a Supabase database, and after prompting for sales data we'll see the agent executing `database.tables` and `database.inspect` to understand the schema, before running SQL with `database.run`:
 
@@ -1111,13 +1101,23 @@ echo "Get me revenue per product, sorting by highest selling" | \
       --display-tools
 ```
 
+**Available tools**
+
+- `database.count(table_name: str) -> int`: Return the number of rows in a table—handy for quick health checks or progress reporting.
+- `database.inspect(table_names: list[str], schema: str | None = None) -> list[Table]`: Describe table columns and foreign keys so the agent can reason about relationships before writing SQL.
+- `database.plan(sql: str) -> QueryPlan`: Request an `EXPLAIN` plan to validate or optimize a generated query.
+- `database.run(sql: str) -> list[dict[str, Any]]`: Execute read or write statements (subject to policy) and return result rows for downstream reasoning.
+- `database.tables() -> dict[str | None, list[str]]`: List tables grouped by schema—useful for schema discovery in unknown databases.
+- `database.tasks(running_for: int | None = None) -> list[DatabaseTask]`: Surface long-running queries on PostgreSQL or MySQL so humans can monitor or intervene.
+- `database.kill(task_id: str) -> bool`: Cancel a runaway query when safeguards permit it.
+
 ### Browser toolset (`browser.*`)
 
-Use the browser toolset to capture live information from the web or intranet sites. The Playwright-backed browser renders pages, converts them to Markdown, and can optionally search the captured content to keep only the most relevant snippets for the agent.【F:src/avalan/tool/browser.py†L59-L159】
+Use the browser toolset to capture live information from the web or intranet sites. The Playwright-backed browser renders pages, converts them to Markdown, and can optionally search the captured content to keep only the most relevant snippets for the agent.
 
 **Available tools**
 
-- `browser.open(url: str) -> str`: Navigate to a URL and return the rendered page in Markdown, optionally narrowed to search results derived from the user prompt.【F:src/avalan/tool/browser.py†L59-L159】
+- `browser.open(url: str) -> str`: Navigate to a URL and return the rendered page in Markdown, optionally narrowed to search results derived from the user prompt.
 
 Tools give agents real-time knowledge. This example uses an 8B model and a browser tool to find avalan's latest release:
 
@@ -1155,34 +1155,34 @@ echo "What's avalan's latest release on https://github.com/avalan-ai/avalan/rele
 
 ### Memory toolset (`memory.*`)
 
-Add the memory toolset when agents should consult past conversations or long-lived knowledge bases. The tools can retrieve prior user messages, search permanent vector memories, list stored entries, or enumerate available stores so the agent knows where to look.【F:src/avalan/tool/memory.py†L15-L188】
+Add the memory toolset when agents should consult past conversations or long-lived knowledge bases. The tools can retrieve prior user messages, search permanent vector memories, list stored entries, or enumerate available stores so the agent knows where to look.
 
 **Available tools**
 
-- `memory.message.read(search: str) -> str`: Retrieve user-specific context from prior sessions, returning `NOT_FOUND` when no match exists.【F:src/avalan/tool/memory.py†L15-L53】
-- `memory.read(namespace: str, search: str) -> list[PermanentMemoryPartition]`: Fetch chunks of long-term knowledge inside a namespace for grounding responses.【F:src/avalan/tool/memory.py†L56-L110】
-- `memory.list(namespace: str) -> list[Memory]`: Enumerate stored memories in a namespace so the agent can decide which entries to reuse.【F:src/avalan/tool/memory.py†L112-L144】
-- `memory.stores() -> list[PermanentMemoryStore]`: List permanent memory stores available to the agent for broader exploration.【F:src/avalan/tool/memory.py†L146-L188】
+- `memory.message.read(search: str) -> str`: Retrieve user-specific context from prior sessions, returning `NOT_FOUND` when no match exists.
+- `memory.read(namespace: str, search: str) -> list[PermanentMemoryPartition]`: Fetch chunks of long-term knowledge inside a namespace for grounding responses.
+- `memory.list(namespace: str) -> list[Memory]`: Enumerate stored memories in a namespace so the agent can decide which entries to reuse.
+- `memory.stores() -> list[PermanentMemoryStore]`: List permanent memory stores available to the agent for broader exploration.
 
 ### YouTube toolset (`youtube.*`)
 
-Use the YouTube toolset to ground responses in video transcripts—great for summarizing talks or extracting key quotes without manual downloads. Proxy support keeps the integration flexible for restricted networks.【F:src/avalan/tool/youtube.py†L13-L73】
+Use the YouTube toolset to ground responses in video transcripts—great for summarizing talks or extracting key quotes without manual downloads. Proxy support keeps the integration flexible for restricted networks.
 
 **Available tools**
 
-- `youtube.transcript(video_id: str, languages: Iterable[str] | None = None) -> list[str]`: Fetch ordered transcript snippets for a given video, optionally prioritizing specific languages.【F:src/avalan/tool/youtube.py†L13-L58】
+- `youtube.transcript(video_id: str, languages: Iterable[str] | None = None) -> list[str]`: Fetch ordered transcript snippets for a given video, optionally prioritizing specific languages.
 
 ### MCP toolset (`mcp.*`)
 
-Integrate Model Context Protocol (MCP) servers to orchestrate specialized remote tools. The MCP toolset lets avalan agents proxy any MCP-compatible capability via a single tool call.【F:src/avalan/tool/mcp.py†L7-L65】
+Integrate Model Context Protocol (MCP) servers to orchestrate specialized remote tools. The MCP toolset lets avalan agents proxy any MCP-compatible capability via a single tool call.
 
 **Available tools**
 
-- `mcp.call(uri: str, name: str, arguments: dict[str, object] | None) -> list[object]`: Connect to an MCP server and invoke one of its tools with structured arguments, returning the raw MCP responses.【F:src/avalan/tool/mcp.py†L7-L48】
+- `mcp.call(uri: str, name: str, arguments: dict[str, object] | None) -> list[object]`: Connect to an MCP server and invoke one of its tools with structured arguments, returning the raw MCP responses.
 
 ### Search tool (`search_engine.search`)
 
-For quick demos or testing, Avalan also provides a stubbed search tool that illustrates how to wire internet lookups into an agent. Replace its implementation with a real provider to give agents access to live search APIs.【F:src/avalan/tool/search_engine.py†L4-L22】
+For quick demos or testing, Avalan also provides a stubbed search tool that illustrates how to wire internet lookups into an agent. Replace its implementation with a real provider to give agents access to live search APIs.
 
 ## Reasoning strategies
 
