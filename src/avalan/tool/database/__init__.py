@@ -1,22 +1,16 @@
-from abc import ABC
-from dataclasses import dataclass, field
-from re import compile as regex_compile
-from typing import Any, Literal
-
-from asyncio import sleep as _sleep
-from sqlalchemy import event, inspect as _inspect
-from sqlalchemy.engine import Connection
-from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine as _create_async_engine
-from sqlglot import exp, parse, parse_one
-
 from .. import Tool
 from ...compat import override
 
-sleep = _sleep
-inspect = _inspect
-create_async_engine = _create_async_engine
-
+from abc import ABC
+from asyncio import sleep
+from dataclasses import dataclass, field
+from re import compile as regex_compile
+from typing import Any, Literal
+from sqlalchemy import event, inspect
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlglot import exp, parse, parse_one
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ForeignKey:
@@ -112,6 +106,19 @@ class DatabaseTool(Tool, ABC):
             )
         self._table_cache = table_cache if table_cache is not None else {}
         super().__init__()
+
+    async def _sleep_if_configured(self) -> None:
+        delay = self._settings.delay_secs
+        if delay:
+            await sleep(delay)
+
+    @staticmethod
+    def _inspect_connection(connection: Connection) -> Inspector:
+        return inspect(connection)
+
+    @staticmethod
+    def _create_engine(dsn: str, **kwargs: Any) -> AsyncEngine:
+        return create_async_engine(dsn, **kwargs)
 
     def _register_table_names(
         self, schema: str | None, table_names: list[str]

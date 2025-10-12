@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTool,
@@ -10,8 +8,6 @@ from . import (
 from sqlalchemy import MetaData, func, select
 from sqlalchemy import Table as SATable
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-_database = import_module(__package__)
 
 
 class DatabaseCountTool(DatabaseTool):
@@ -51,8 +47,7 @@ class DatabaseCountTool(DatabaseTool):
         self, table_name: str, *, context: ToolCallContext
     ) -> int:
         assert table_name, "table_name must not be empty"
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.connect() as conn:
             schema, tbl_name = self._split_schema_and_table(table_name)

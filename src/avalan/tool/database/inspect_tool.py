@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTool,
@@ -12,8 +10,6 @@ from . import (
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-_database = import_module(__package__)
 
 
 class DatabaseInspectTool(DatabaseTool):
@@ -51,8 +47,7 @@ class DatabaseInspectTool(DatabaseTool):
         context: ToolCallContext,
     ) -> list[Table]:
         assert table_names, "table_names must not be empty"
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.connect() as conn:
             result = await conn.run_sync(
@@ -69,7 +64,7 @@ class DatabaseInspectTool(DatabaseTool):
         schema: str | None,
         table_names: list[str],
     ) -> list[Table]:
-        inspector = _database.inspect(connection)
+        inspector = self._inspect_connection(connection)
         default_schema, _ = self._schemas(connection, inspector)
         sch = schema or default_schema
 

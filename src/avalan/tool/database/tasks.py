@@ -1,6 +1,3 @@
-from importlib import import_module
-from typing import Any
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTask,
@@ -9,11 +6,11 @@ from . import (
     IdentifierCaseNormalizer,
 )
 
+from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-_database = import_module(__package__)
 
 class DatabaseTasksTool(DatabaseTool):
     """List killable database tasks from supported engines.
@@ -51,8 +48,7 @@ class DatabaseTasksTool(DatabaseTool):
     ) -> list[DatabaseTask]:
         if running_for is not None:
             assert running_for >= 0, "running_for must be zero or greater"
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.connect() as conn:
             result = await conn.run_sync(
