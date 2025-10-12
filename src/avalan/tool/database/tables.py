@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTool,
@@ -9,8 +7,6 @@ from . import (
 
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-_database = import_module(__package__)
 
 
 class DatabaseTablesTool(DatabaseTool):
@@ -42,15 +38,14 @@ class DatabaseTablesTool(DatabaseTool):
     async def __call__(
         self, *, context: ToolCallContext
     ) -> dict[str | None, list[str]]:
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.connect() as conn:
             result = await conn.run_sync(self._collect)
         return result
 
     def _collect(self, connection: Connection) -> dict[str | None, list[str]]:
-        inspector = _database.inspect(connection)
+        inspector = self._inspect_connection(connection)
         _, schemas = self._schemas(connection, inspector)
         result: dict[str | None, list[str]] = {}
         for schema in schemas:

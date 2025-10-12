@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTool,
@@ -12,8 +10,6 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql.elements import TextClause
-
-_database = import_module(__package__)
 
 
 class DatabasePlanTool(DatabaseTool):
@@ -43,8 +39,7 @@ class DatabasePlanTool(DatabaseTool):
         self.__name__ = "plan"
 
     async def __call__(self, sql: str, *, context: ToolCallContext) -> QueryPlan:
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.connect() as conn:
             normalized_sql = self._prepare_sql_for_execution(sql)

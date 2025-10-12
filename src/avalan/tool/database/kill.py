@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTool,
@@ -10,8 +8,6 @@ from . import (
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-_database = import_module(__package__)
 
 
 class DatabaseKillTool(DatabaseTool):
@@ -47,8 +43,7 @@ class DatabaseKillTool(DatabaseTool):
         context: ToolCallContext,
     ) -> bool:
         assert task_id, "task_id must not be empty"
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.begin() as conn:
             return await conn.run_sync(self._kill, task_id=task_id)

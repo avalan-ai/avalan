@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from . import (
     DatabaseCountTool,
     DatabaseInspectTool,
@@ -20,9 +18,6 @@ from contextlib import AsyncExitStack
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-_database = import_module(__package__)
-
-
 class DatabaseToolSet(ToolSet):
     _engine: AsyncEngine
     _settings: DatabaseToolSettings
@@ -36,7 +31,7 @@ class DatabaseToolSet(ToolSet):
         namespace: str | None = None,
     ):
         self._settings = settings
-        self._engine = _database.create_async_engine(
+        self._engine = DatabaseTool._create_engine(
             self._settings.dsn, pool_pre_ping=True
         )
         DatabaseTool._configure_read_only_engine(

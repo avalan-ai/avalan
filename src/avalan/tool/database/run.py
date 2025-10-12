@@ -1,6 +1,3 @@
-from importlib import import_module
-from typing import Any
-
 from ...entities import ToolCallContext
 from . import (
     DatabaseTool,
@@ -8,9 +5,9 @@ from . import (
     IdentifierCaseNormalizer,
 )
 
-from sqlalchemy.ext.asyncio import AsyncEngine
+from typing import Any
 
-_database = import_module(__package__)
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class DatabaseRunTool(DatabaseTool):
@@ -42,8 +39,7 @@ class DatabaseRunTool(DatabaseTool):
     async def __call__(
         self, sql: str, *, context: ToolCallContext
     ) -> list[dict[str, Any]]:
-        if self._settings.delay_secs:
-            await _database.sleep(self._settings.delay_secs)
+        await self._sleep_if_configured()
 
         async with self._engine.begin() as conn:
             normalized_sql = self._prepare_sql_for_execution(sql)
