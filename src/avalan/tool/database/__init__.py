@@ -6,7 +6,7 @@ from asyncio import sleep
 from dataclasses import dataclass, field
 from re import compile as regex_compile
 from typing import Any, Literal
-from sqlalchemy import event, inspect
+from sqlalchemy import event, inspect as sqlalchemy_inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -446,11 +446,14 @@ class DatabaseTool(Tool, ABC):
 
 
 from .count import DatabaseCountTool
-from .inspect_tool import DatabaseInspectTool
+from .inspect import DatabaseInspectTool
 from .kill import DatabaseKillTool
 from .plan import DatabasePlanTool
 from .run import DatabaseRunTool
 from .tables import DatabaseTablesTool
 from .tasks import DatabaseTasksTool
 from .toolset import DatabaseToolSet
+
+# Preserve the SQLAlchemy inspect callable for tests that patch the original name.
+inspect = sqlalchemy_inspect
 
