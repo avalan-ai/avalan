@@ -11,9 +11,6 @@ from avalan.tool.database import (
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
-    _configure_read_only_engine,
-    _ensure_sql_command_allowed,
-    _sqlglot_dialect_name,
 )
 
 
@@ -102,33 +99,33 @@ def _inspector(
 
 def test_sqlglot_dialect_name_variants() -> None:
     no_sync = SimpleNamespace()
-    assert _sqlglot_dialect_name(no_sync) is None
+    assert DatabaseTool._sqlglot_dialect_name(no_sync) is None
 
     sqlite_engine = SimpleNamespace(
         sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
     )
-    assert _sqlglot_dialect_name(sqlite_engine) == "sqlite"
+    assert DatabaseTool._sqlglot_dialect_name(sqlite_engine) == "sqlite"
 
     postgres_engine = SimpleNamespace(
         sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
     )
-    assert _sqlglot_dialect_name(postgres_engine) == "postgres"
+    assert DatabaseTool._sqlglot_dialect_name(postgres_engine) == "postgres"
 
     mariadb_engine = SimpleNamespace(
         sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="mariadb"))
     )
-    assert _sqlglot_dialect_name(mariadb_engine) == "mysql"
+    assert DatabaseTool._sqlglot_dialect_name(mariadb_engine) == "mysql"
 
 
 def test_ensure_sql_command_allowed_validates_allow_list() -> None:
     with pytest.raises(PermissionError):
-        _ensure_sql_command_allowed("SELECT 1", [])
+        DatabaseTool._ensure_sql_command_allowed("SELECT 1", [])
 
     with pytest.raises(PermissionError):
-        _ensure_sql_command_allowed("???", ["select"])
+        DatabaseTool._ensure_sql_command_allowed("???", ["select"])
 
     with pytest.raises(PermissionError):
-        _ensure_sql_command_allowed("DELETE FROM table_name", ["select"])
+        DatabaseTool._ensure_sql_command_allowed("DELETE FROM table_name", ["select"])
 
 
 def test_ensure_sql_command_allowed_special_cases(
@@ -138,20 +135,20 @@ def test_ensure_sql_command_allowed_special_cases(
 
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(parse_one_path, lambda *args, **kwargs: None)
-        _ensure_sql_command_allowed("SELECT 1", ["select"])
+        DatabaseTool._ensure_sql_command_allowed("SELECT 1", ["select"])
 
     blank_key = SimpleNamespace(key="", this=None)
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(parse_one_path, lambda *args, **kwargs: blank_key)
-        _ensure_sql_command_allowed("SELECT 1", ["select"])
+        DatabaseTool._ensure_sql_command_allowed("SELECT 1", ["select"])
 
     with_expr = SimpleNamespace(key="with", this=SimpleNamespace(key="select"))
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(parse_one_path, lambda *args, **kwargs: with_expr)
-        _ensure_sql_command_allowed("WITH ...", ["select"])
+        DatabaseTool._ensure_sql_command_allowed("WITH ...", ["select"])
 
     statement = "WITH cte AS (SELECT 1) SELECT * FROM cte"
-    _ensure_sql_command_allowed(statement, ["select"])
+    DatabaseTool._ensure_sql_command_allowed(statement, ["select"])
 
 
 @pytest.mark.parametrize(
@@ -324,7 +321,9 @@ def test_prepare_sql_for_execution_respects_allowed_commands(
             nonlocal called
             called = True
 
-        ensure_path = "avalan.tool.database._ensure_sql_command_allowed"
+        ensure_path = (
+            "avalan.tool.database.DatabaseTool._ensure_sql_command_allowed"
+        )
         patch_ctx.setattr(ensure_path, forbidden)
         assert allow_all._prepare_sql_for_execution(" SELECT 1 ") == "SELECT 1"
         assert called is False
@@ -359,7 +358,7 @@ def test_configure_read_only_engine_noops(
     listens_for_path = "avalan.tool.database.event.listens_for"
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(listens_for_path, lambda *args, **kwargs: None)
-        _configure_read_only_engine(engine_without_sync, True)
+        DatabaseTool._configure_read_only_engine(engine_without_sync, True)
 
     sqlite_dialect = SimpleNamespace(name="sqlite")
     engine = SimpleNamespace(
@@ -373,7 +372,7 @@ def test_configure_read_only_engine_noops(
             listener_called = True
 
         patch_ctx.setattr(listens_for_path, fake_listens_for)
-        _configure_read_only_engine(engine, False)
+        DatabaseTool._configure_read_only_engine(engine, False)
         assert listener_called is False
 
 
@@ -398,12 +397,12 @@ def test_configure_read_only_engine_registers_statements(
 
         return decorator
 
-    dialect_path = "avalan.tool.database._sqlglot_dialect_name"
+    dialect_path = "avalan.tool.database.DatabaseTool._sqlglot_dialect_name"
     listens_for_path = "avalan.tool.database.event.listens_for"
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(dialect_path, lambda _: "sqlite")
         patch_ctx.setattr(listens_for_path, fake_listens_for)
-        _configure_read_only_engine(engine, True)
+        DatabaseTool._configure_read_only_engine(engine, True)
 
     assert "handler" in captured
 
@@ -440,12 +439,12 @@ def test_configure_read_only_engine_falls_back_to_sqlalchemy_names(
 
         return decorator
 
-    dialect_path = "avalan.tool.database._sqlglot_dialect_name"
+    dialect_path = "avalan.tool.database.DatabaseTool._sqlglot_dialect_name"
     listens_for_path = "avalan.tool.database.event.listens_for"
     with monkeypatch.context() as patch_ctx:
         patch_ctx.setattr(dialect_path, lambda _: None)
         patch_ctx.setattr(listens_for_path, fake_listens_for)
-        _configure_read_only_engine(engine, True)
+        DatabaseTool._configure_read_only_engine(engine, True)
 
     executed: list[str] = []
 
@@ -472,7 +471,7 @@ def test_configure_read_only_engine_skips_unknown_dialect(
         sync_engine=SimpleNamespace(dialect=unknown_dialect)
     )
     listens_for_path = "avalan.tool.database.event.listens_for"
-    dialect_path = "avalan.tool.database._sqlglot_dialect_name"
+    dialect_path = "avalan.tool.database.DatabaseTool._sqlglot_dialect_name"
     with monkeypatch.context() as patch_ctx:
         called = False
 
@@ -482,7 +481,7 @@ def test_configure_read_only_engine_skips_unknown_dialect(
 
         patch_ctx.setattr(dialect_path, lambda _: "unknown")
         patch_ctx.setattr(listens_for_path, fake_listens_for)
-        _configure_read_only_engine(engine, True)
+        DatabaseTool._configure_read_only_engine(engine, True)
     assert called is False
 
 
