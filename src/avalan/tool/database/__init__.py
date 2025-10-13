@@ -5,7 +5,7 @@ from abc import ABC
 from asyncio import sleep
 from dataclasses import dataclass, field
 from re import compile as regex_compile
-from typing import Any, Literal
+from typing import Any, Literal, final
 from sqlalchemy import event, inspect as sqlalchemy_inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
@@ -50,6 +50,16 @@ class DatabaseToolSettings:
 class QueryPlan:
     dialect: str
     steps: list[dict[str, Any]]
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TableRelationship:
+    direction: Literal["incoming", "outgoing"]
+    local_columns: tuple[str, ...]
+    related_table: str
+    related_columns: tuple[str, ...]
+    constraint_name: str | None
 
 
 class IdentifierCaseNormalizer:
@@ -449,6 +459,7 @@ from .count import DatabaseCountTool
 from .inspect import DatabaseInspectTool
 from .kill import DatabaseKillTool
 from .plan import DatabasePlanTool
+from .relationships import DatabaseRelationshipsTool
 from .run import DatabaseRunTool
 from .tables import DatabaseTablesTool
 from .tasks import DatabaseTasksTool
