@@ -4,7 +4,7 @@ from enum import StrEnum
 from collections.abc import Callable
 from numpy import ndarray
 from torch import dtype, Tensor
-from typing import Literal, TypedDict
+from typing import final, Literal, TypedDict
 from uuid import UUID
 
 AttentionImplementation = Literal[
@@ -193,6 +193,7 @@ class ReasoningTag(StrEnum):
     CHANNEL = "channel"
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QuantizationSettings:
     load_in_4bit: bool
@@ -227,6 +228,7 @@ class EngineSettings:
     upsampler_model_id: str | None = None
 
 
+@final
 @dataclass(kw_only=True, frozen=True, slots=True)
 class EngineUri:
     host: str | None
@@ -242,6 +244,7 @@ class EngineUri:
         return not self.vendor or self.vendor == "local"
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningSettings:
     max_new_tokens: int | None = None
@@ -250,6 +253,7 @@ class ReasoningSettings:
     tag: ReasoningTag | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ChatSettings:
     add_generation_prompt: bool = True
@@ -259,6 +263,7 @@ class ChatSettings:
     enable_thinking: bool = True
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class GenerationSettings:
     # Generation length ------------------------------------------------------
@@ -394,6 +399,7 @@ class GenerationSettings:
     response_format: dict | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class GenericProxyConfig:
     scheme: str
@@ -412,6 +418,7 @@ class GenericProxyConfig:
         return {"http": url, "https": url}
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class HubCacheFile:
     name: str
@@ -421,6 +428,7 @@ class HubCacheFile:
     last_modified: datetime
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class HubCache:
     model_id: str
@@ -432,6 +440,7 @@ class HubCache:
     total_revisions: int
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class HubCacheDeletion:
     model_id: str
@@ -443,6 +452,7 @@ class HubCacheDeletion:
     deletable_snapshots: list[str]
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ImageEntity:
     label: str
@@ -450,12 +460,14 @@ class ImageEntity:
     box: list[float] | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class MessageContentText:
     type: Literal["text"]
     text: str
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class MessageContentImage:
     type: Literal["image_url"]
@@ -465,6 +477,7 @@ class MessageContentImage:
 MessageContent = MessageContentText | MessageContentImage
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class MessageToolCall:
     id: str | None = None
@@ -480,6 +493,7 @@ class ToolCall:
     arguments: dict[str, ToolValue] | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallResult(ToolCall):
     id: UUID | str
@@ -487,6 +501,7 @@ class ToolCallResult(ToolCall):
     result: ToolValue | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallError(ToolCall):
     id: UUID | str
@@ -495,6 +510,7 @@ class ToolCallError(ToolCall):
     message: str
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
@@ -510,6 +526,7 @@ class Message:
 Input = str | list[str] | Message | list[Message]
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningOrchestratorResponse:
     """Result returned by :class:`ReasoningOrchestrator`."""
@@ -529,11 +546,13 @@ class EngineMessage:
         return self.message.role == MessageRole.ASSISTANT
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class EngineMessageScored(EngineMessage):
     score: float
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Model:
     id: str
@@ -560,6 +579,7 @@ class Model:
     updated_at: datetime
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ModelConfig:
     # Model architectures that can be used with the model pretrained weights
@@ -628,12 +648,14 @@ class ModelConfig:
     tokenizer_class: str | None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class PermanentMemoryStoreSettings:
     dsn: str
     description: str | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OrchestratorSettings:
     agent_id: UUID
@@ -656,6 +678,7 @@ class OrchestratorSettings:
     log_events: bool
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class SearchMatch:
     query: str
@@ -663,6 +686,7 @@ class SearchMatch:
     l2_distance: float
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class SentenceTransformerModelConfig:
     backend: Literal["torch", "onnx", "openvino"]
@@ -671,6 +695,7 @@ class SentenceTransformerModelConfig:
     transformer_model_config: ModelConfig
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Similarity:
     cosine_distance: float
@@ -680,6 +705,7 @@ class Similarity:
     pearson: float
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OperationAudioParameters:
     path: str
@@ -688,6 +714,7 @@ class OperationAudioParameters:
     sampling_rate: int
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OperationTextParameters:
     context: str | None = None
@@ -702,6 +729,7 @@ class OperationTextParameters:
     developer_prompt: str | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OperationVisionParameters:
     path: str
@@ -735,6 +763,7 @@ class OperationParameters(TypedDict, total=False):
     vision: OperationVisionParameters | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Operation:
     generation_settings: GenerationSettings | None
@@ -744,6 +773,7 @@ class Operation:
     requires_input: bool = False
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TokenizerConfig:
     name_or_path: str
@@ -762,6 +792,7 @@ class Token:
     probability: float | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TokenDetail(Token):
     step: int | None = None
@@ -769,6 +800,7 @@ class TokenDetail(Token):
     tokens: list[Token] | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningToken(Token):
     """Token produced while the model is reasoning."""
@@ -783,11 +815,13 @@ class ReasoningToken(Token):
         Token.__init__(self, id=id, token=token, probability=probability)
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallToken(Token):
     call: ToolCall | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallContext:
     agent_id: UUID | None = None
@@ -797,6 +831,7 @@ class ToolCallContext:
     calls: list[ToolCall] | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolFilter:
     func: Callable[
@@ -805,6 +840,7 @@ class ToolFilter:
     namespace: str | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolTransformer:
     func: Callable[
@@ -813,6 +849,7 @@ class ToolTransformer:
     namespace: str | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolManagerSettings:
     eos_token: str | None = None
@@ -840,6 +877,7 @@ class ToolManagerSettings:
     ) = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TextPartition:
     data: str
@@ -847,6 +885,7 @@ class TextPartition:
     embeddings: ndarray
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TransformerEngineSettings(EngineSettings):
     attention: AttentionImplementation | None = None
@@ -860,6 +899,7 @@ class TransformerEngineSettings(EngineSettings):
     tokens: list[str] | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class User:
     name: str
@@ -867,6 +907,7 @@ class User:
     access_token_name: str | None = None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class WebshareProxyConfig:
     host: str

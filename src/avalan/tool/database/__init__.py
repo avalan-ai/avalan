@@ -12,6 +12,7 @@ from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlglot import exp, parse, parse_one
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ForeignKey:
     field: str
@@ -19,6 +20,7 @@ class ForeignKey:
     ref_field: str
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Table:
     name: str
@@ -26,6 +28,7 @@ class Table:
     foreign_keys: list[ForeignKey]
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseTask:
     id: str
@@ -35,6 +38,7 @@ class DatabaseTask:
     duration: int | None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseToolSettings:
     dsn: str
@@ -46,6 +50,7 @@ class DatabaseToolSettings:
     )
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QueryPlan:
     dialect: str
