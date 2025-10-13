@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from json import JSONDecodeError, loads
 from re import DOTALL, compile, finditer, search, sub
-from typing import Any
+from typing import Any, final
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -76,6 +76,7 @@ class ToolCallParser:
         """
         return bool(token_str and token_str.strip())
 
+    @final
     @dataclass(frozen=True, kw_only=True, slots=True)
     class StructuredMessage:
         """Structured content extracted from a raw message payload."""
@@ -84,6 +85,7 @@ class ToolCallParser:
         thinking: str | None = None
         tool_calls: list[dict[str, object]] = field(default_factory=list)
 
+    @final
     @dataclass(frozen=True, kw_only=True, slots=True)
     class PreparedMessage:
         """Normalized message ready for chat template consumption."""
