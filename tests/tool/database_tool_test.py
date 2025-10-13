@@ -4,12 +4,14 @@ from avalan.tool.database import (
     DatabaseInspectTool,
     DatabaseKillTool,
     DatabasePlanTool,
+    DatabaseRelationshipsTool,
     DatabaseRunTool,
     DatabaseTablesTool,
     DatabaseTasksTool,
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
+    TableRelationship,
     QueryPlan,
 )
 from sqlalchemy import create_engine, text
@@ -210,6 +212,43 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             await tool("SELECT id FROM books", context=ToolCallContext())
 
         self.assertEqual(calls, [0.01])
+        await engine.dispose()
+
+    async def test_relationships_tool_returns_relationships(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseRelationshipsTool(engine, self.settings)
+
+        books_relationships = await tool(
+            "books", context=ToolCallContext()
+        )
+        self.assertEqual(
+            books_relationships,
+            [
+                TableRelationship(
+                    direction="outgoing",
+                    local_columns=("author_id",),
+                    related_table="authors",
+                    related_columns=("id",),
+                    constraint_name=None,
+                )
+            ],
+        )
+
+        authors_relationships = await tool(
+            "authors", context=ToolCallContext()
+        )
+        self.assertEqual(
+            authors_relationships,
+            [
+                TableRelationship(
+                    direction="incoming",
+                    local_columns=("id",),
+                    related_table="books",
+                    related_columns=("author_id",),
+                    constraint_name=None,
+                )
+            ],
+        )
         await engine.dispose()
 
     async def test_tables_tool_lists_tables(self):
@@ -460,6 +499,154 @@ class DatabaseInspectCollectTestCase(TestCase):
         self.assertEqual([t.name for t in tables], ["present"])
         self.assertEqual(tables[0].foreign_keys, [])
 
+
+class DatabaseRelationshipsCollectTestCase(TestCase):
+    def test_collect_incoming_relationships_include_schema_prefix(self):
+        def get_table_names(schema=None):
+            if schema == "public":
+                return ["authors", "books"]
+            if schema == "sales":
+                return ["orders"]
+            return []
+
+        def get_foreign_keys(table_name, schema=None):
+            if table_name == "authors":
+                return []
+            if table_name == "orders" and schema == "sales":
+                return [
+                    {
+                        "name": "fk_orders_authors",
+                        "constrained_columns": ["author_id"],
+                        "referred_table": "authors",
+                        "referred_columns": ["id"],
+                        "referred_schema": "public",
+                    }
+                ]
+            return []
+
+        inspector = SimpleNamespace(
+            default_schema_name="public",
+            get_columns=lambda table_name, schema: [
+                {"name": "id", "type": "INTEGER"}
+            ],
+            get_foreign_keys=get_foreign_keys,
+            get_table_names=get_table_names,
+        )
+
+        tool = DatabaseRelationshipsTool(
+            SimpleNamespace(), DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        )
+
+        with (
+            patch("avalan.tool.database.inspect", return_value=inspector),
+            patch(
+                "avalan.tool.database.DatabaseTool._schemas",
+                return_value=("public", ["public", "sales"]),
+            ),
+        ):
+            relationships = tool._collect(
+                SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
+                schema="public",
+                table_name="authors",
+            )
+
+        self.assertEqual(
+            relationships,
+            [
+                TableRelationship(
+                    direction="incoming",
+                    local_columns=("id",),
+                    related_table="sales.orders",
+                    related_columns=("author_id",),
+                    constraint_name="fk_orders_authors",
+                )
+            ],
+        )
+
+    def test_collect_handles_all_supported_vendors(self):
+        vendors = [
+            ("sqlite", "main"),
+            ("postgresql", "public"),
+            ("mysql", "test"),
+            ("mariadb", "test"),
+            ("mssql", "dbo"),
+            ("oracle", "SYSTEM"),
+        ]
+
+        for dialect, default_schema in vendors:
+            def get_table_names(schema=None):
+                normalized = schema if schema is not None else default_schema
+                if normalized == default_schema:
+                    return ["authors", "books"]
+                return []
+
+            def get_foreign_keys(table_name, schema=None):
+                if table_name == "authors":
+                    return [
+                        {
+                            "name": "fk_authors_leads",
+                            "constrained_columns": ["lead_id"],
+                            "referred_table": "leads",
+                            "referred_columns": ["id"],
+                        }
+                    ]
+                if table_name == "books":
+                    return [
+                        {
+                            "name": "fk_books_authors",
+                            "constrained_columns": ["author_id"],
+                            "referred_table": "authors",
+                            "referred_columns": ["id"],
+                        }
+                    ]
+                return []
+
+            inspector = SimpleNamespace(
+                default_schema_name=default_schema,
+                get_columns=lambda table_name, schema: [
+                    {"name": "id", "type": "INTEGER"}
+                ],
+                get_foreign_keys=get_foreign_keys,
+                get_table_names=get_table_names,
+            )
+
+            tool = DatabaseRelationshipsTool(
+                SimpleNamespace(),
+                DatabaseToolSettings(dsn="sqlite:///db.sqlite"),
+            )
+
+            with (
+                patch("avalan.tool.database.inspect", return_value=inspector),
+                patch(
+                    "avalan.tool.database.DatabaseTool._schemas",
+                    return_value=(default_schema, [default_schema]),
+                ),
+            ):
+                relationships = tool._collect(
+                    SimpleNamespace(dialect=SimpleNamespace(name=dialect)),
+                    schema=default_schema,
+                    table_name="authors",
+                )
+
+            self.assertEqual(
+                relationships,
+                [
+                    TableRelationship(
+                        direction="outgoing",
+                        local_columns=("lead_id",),
+                        related_table="leads",
+                        related_columns=("id",),
+                        constraint_name="fk_authors_leads",
+                    ),
+                    TableRelationship(
+                        direction="incoming",
+                        local_columns=("id",),
+                        related_table="books",
+                        related_columns=("author_id",),
+                        constraint_name="fk_books_authors",
+                    ),
+                ],
+            )
 
 class DatabaseSchemasTestCase(TestCase):
     def test_postgresql_schemas(self):

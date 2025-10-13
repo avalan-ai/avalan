@@ -15,9 +15,10 @@ from playwright.async_api import (
     Page,
     PlaywrightContextManager,
 )
-from typing import Literal
+from typing import final, Literal
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class BrowserToolSettings(dict):
     engine: Literal["chromium", "firefox", "webkit"] = "firefox"

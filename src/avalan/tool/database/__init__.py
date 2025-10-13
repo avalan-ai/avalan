@@ -5,13 +5,14 @@ from abc import ABC
 from asyncio import sleep
 from dataclasses import dataclass, field
 from re import compile as regex_compile
-from typing import Any, Literal
+from typing import Any, Literal, final
 from sqlalchemy import event, inspect as sqlalchemy_inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlglot import exp, parse, parse_one
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ForeignKey:
     field: str
@@ -19,6 +20,7 @@ class ForeignKey:
     ref_field: str
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Table:
     name: str
@@ -26,6 +28,7 @@ class Table:
     foreign_keys: list[ForeignKey]
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseTask:
     id: str
@@ -35,6 +38,7 @@ class DatabaseTask:
     duration: int | None
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseToolSettings:
     dsn: str
@@ -46,10 +50,21 @@ class DatabaseToolSettings:
     )
 
 
+@final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QueryPlan:
     dialect: str
     steps: list[dict[str, Any]]
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TableRelationship:
+    direction: Literal["incoming", "outgoing"]
+    local_columns: tuple[str, ...]
+    related_table: str
+    related_columns: tuple[str, ...]
+    constraint_name: str | None
 
 
 class IdentifierCaseNormalizer:
@@ -449,6 +464,7 @@ from .count import DatabaseCountTool
 from .inspect import DatabaseInspectTool
 from .kill import DatabaseKillTool
 from .plan import DatabasePlanTool
+from .relationships import DatabaseRelationshipsTool
 from .run import DatabaseRunTool
 from .tables import DatabaseTablesTool
 from .tasks import DatabaseTasksTool
