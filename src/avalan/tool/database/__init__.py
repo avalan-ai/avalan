@@ -1,16 +1,19 @@
-from .. import Tool
 from ...compat import override
+from .. import Tool
 
 from abc import ABC
 from asyncio import sleep
 from dataclasses import dataclass, field
 from re import compile as regex_compile
 from typing import Any, Literal, final
-from sqlalchemy import event, inspect as sqlalchemy_inspect
+
+from sqlalchemy import event
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlglot import exp, parse, parse_one
+
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -26,6 +29,14 @@ class Table:
     name: str
     columns: dict[str, str]
     foreign_keys: list[ForeignKey]
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TableKey:
+    type: Literal["primary", "unique"]
+    name: str | None
+    columns: tuple[str, ...]
 
 
 @final
@@ -428,7 +439,9 @@ class DatabaseTool(Tool, ABC):
         sg_name = DatabaseTool._sqlglot_dialect_name(engine)
         statements_by_sqlglot: dict[str, tuple[str, ...]] = {
             "sqlite": ("PRAGMA query_only = ON",),
-            "postgres": ("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",),
+            "postgres": (
+                "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+            ),
             "mysql": ("SET SESSION TRANSACTION READ ONLY",),
             "oracle": ("ALTER SESSION SET READ ONLY = TRUE",),
         }
@@ -460,16 +473,18 @@ class DatabaseTool(Tool, ABC):
                 cursor.close()
 
 
-from .count import DatabaseCountTool
-from .inspect import DatabaseInspectTool
-from .kill import DatabaseKillTool
-from .plan import DatabasePlanTool
-from .relationships import DatabaseRelationshipsTool
-from .run import DatabaseRunTool
-from .tables import DatabaseTablesTool
-from .tasks import DatabaseTasksTool
-from .toolset import DatabaseToolSet
+# ruff: noqa: E402
 
-# Preserve the SQLAlchemy inspect callable for tests that patch the original name.
+from .count import DatabaseCountTool  # noqa: F401
+from .inspect import DatabaseInspectTool  # noqa: F401
+from .keys import DatabaseKeysTool  # noqa: F401
+from .kill import DatabaseKillTool  # noqa: F401
+from .plan import DatabasePlanTool  # noqa: F401
+from .relationships import DatabaseRelationshipsTool  # noqa: F401
+from .run import DatabaseRunTool  # noqa: F401
+from .tables import DatabaseTablesTool  # noqa: F401
+from .tasks import DatabaseTasksTool  # noqa: F401
+from .toolset import DatabaseToolSet  # noqa: F401
+
+# Preserve the SQLAlchemy inspect callable for tests that patch this attribute.
 inspect = sqlalchemy_inspect
-

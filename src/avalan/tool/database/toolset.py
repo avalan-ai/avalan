@@ -1,6 +1,9 @@
+from ...compat import override
+from .. import ToolSet
 from . import (
     DatabaseCountTool,
     DatabaseInspectTool,
+    DatabaseKeysTool,
     DatabaseKillTool,
     DatabasePlanTool,
     DatabaseRelationshipsTool,
@@ -11,8 +14,6 @@ from . import (
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
 )
-from .. import ToolSet
-from ...compat import override
 
 from contextlib import AsyncExitStack
 
@@ -54,6 +55,12 @@ class DatabaseToolSet(ToolSet):
                 table_cache=table_cache,
             ),
             DatabaseInspectTool(
+                self._engine,
+                settings,
+                normalizer=normalizer,
+                table_cache=table_cache,
+            ),
+            DatabaseKeysTool(
                 self._engine,
                 settings,
                 normalizer=normalizer,
@@ -112,4 +119,3 @@ class DatabaseToolSet(ToolSet):
                 await self._engine.dispose()
         finally:
             return await super().__aexit__(exc_type, exc, tb)
-
