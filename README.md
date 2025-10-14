@@ -1105,6 +1105,7 @@ echo "Get me revenue per product, sorting by highest selling" | \
 
 - `database.count(table_name: str) -> int`: Return the number of rows in a table—handy for quick health checks or progress reporting.
 - `database.inspect(table_names: list[str], schema: str | None = None) -> list[Table]`: Describe table columns and foreign keys so the agent can reason about relationships before writing SQL.
+- `database.keys(table_name: str, schema: str | None = None) -> list[TableKey]`: Enumerate primary and unique key definitions so the agent understands table-level uniqueness guarantees.
 - `database.relationships(table_name: str, schema: str | None = None) -> list[TableRelationship]`: Surface incoming and outgoing foreign key links for a table so the agent can understand join paths and cardinality constraints.
 - `database.plan(sql: str) -> QueryPlan`: Request an `EXPLAIN` plan to validate or optimize a generated query.
 - `database.run(sql: str) -> list[dict[str, Any]]`: Execute read or write statements (subject to policy) and return result rows for downstream reasoning.
