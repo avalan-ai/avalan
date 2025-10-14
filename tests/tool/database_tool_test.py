@@ -1,7 +1,16 @@
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, patch
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import NoSuchTableError, OperationalError
+
 from avalan.entities import ToolCallContext
 from avalan.tool.database import (
     DatabaseCountTool,
     DatabaseInspectTool,
+    DatabaseKeysTool,
     DatabaseKillTool,
     DatabasePlanTool,
     DatabaseRelationshipsTool,
@@ -11,15 +20,10 @@ from avalan.tool.database import (
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
-    TableRelationship,
     QueryPlan,
+    TableKey,
+    TableRelationship,
 )
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import NoSuchTableError, OperationalError
-from tempfile import TemporaryDirectory
-from types import SimpleNamespace
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, patch
 
 
 def dummy_create_async_engine(dsn: str, **kwargs):
@@ -86,7 +90,10 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         engine = create_engine(self.dsn)
         with engine.begin() as conn:
             conn.execute(
-                text("CREATE TABLE authors(id INTEGER PRIMARY KEY, name TEXT)")
+                text(
+                    "CREATE TABLE authors("
+                    "id INTEGER PRIMARY KEY, name TEXT UNIQUE)"
+                )
             )
             conn.execute(
                 text(
@@ -218,9 +225,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseRelationshipsTool(engine, self.settings)
 
-        books_relationships = await tool(
-            "books", context=ToolCallContext()
-        )
+        books_relationships = await tool("books", context=ToolCallContext())
         self.assertEqual(
             books_relationships,
             [
@@ -340,6 +345,9 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             tables = DatabaseTablesTool(engine, settings)
             await tables(context=ToolCallContext())
 
+            keys_tool = DatabaseKeysTool(engine, settings)
+            await keys_tool("authors", context=ToolCallContext())
+
             tasks_tool = DatabaseTasksTool(engine, settings)
             await tasks_tool(context=ToolCallContext())
 
@@ -347,7 +355,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await kill_tool("1", context=ToolCallContext())
 
-            self.assertEqual(mocked_sleep.await_count, 6)
+            self.assertEqual(mocked_sleep.await_count, 7)
         await engine.dispose()
 
     async def test_tables_tool_respects_identifier_case(self):
@@ -386,6 +394,24 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
         self.assertIn("value", tables[0].columns)
         await engine.dispose()
 
+    async def test_keys_tool_returns_primary_and_unique_constraints(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseKeysTool(engine, self.settings)
+
+        keys = await tool("authors", context=ToolCallContext())
+
+        types = {key.type for key in keys}
+        self.assertIn("primary", types)
+        self.assertIn("unique", types)
+
+        primary = next(key for key in keys if key.type == "primary")
+        self.assertEqual(primary.columns, ("id",))
+
+        unique = next(key for key in keys if key.type == "unique")
+        self.assertEqual(unique.columns, ("name",))
+
+        await engine.dispose()
+
     async def test_toolset_reuses_engine_and_disposes(self):
         async with DatabaseToolSet(self.settings) as toolset:
             tools_by_name = {
@@ -395,6 +421,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             }
             count_tool = tools_by_name["count"]
             inspect_tool = tools_by_name["inspect"]
+            keys_tool = tools_by_name["keys"]
             plan_tool = tools_by_name["plan"]
             run_tool = tools_by_name["run"]
             tables_tool = tools_by_name["tables"]
@@ -412,6 +439,8 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(rows, [{"id": 1}])
             table = await inspect_tool(["books"], context=ToolCallContext())
             self.assertEqual(table[0].name, "books")
+            key_defs = await keys_tool("authors", context=ToolCallContext())
+            self.assertTrue(any(key.type == "primary" for key in key_defs))
             tables = await tables_tool(context=ToolCallContext())
             self.assertIn("books", tables["main"])
             self.assertEqual(await tasks_tool(context=ToolCallContext()), [])
@@ -574,6 +603,7 @@ class DatabaseRelationshipsCollectTestCase(TestCase):
         ]
 
         for dialect, default_schema in vendors:
+
             def get_table_names(schema=None):
                 normalized = schema if schema is not None else default_schema
                 if normalized == default_schema:
@@ -647,6 +677,162 @@ class DatabaseRelationshipsCollectTestCase(TestCase):
                     ),
                 ],
             )
+
+
+class DatabaseKeysCollectTestCase(TestCase):
+    def test_collect_returns_primary_and_unique_keys(self):
+        def get_pk_constraint(table_name, schema=None):
+            return {"name": f"pk_{table_name}", "constrained_columns": ["id"]}
+
+        def get_unique_constraints(table_name, schema=None):
+            return [
+                {"name": f"uq_{table_name}_name", "column_names": ["name"]},
+                {"name": None, "constrained_columns": ["email"]},
+            ]
+
+        inspector = SimpleNamespace(
+            default_schema_name="main",
+            get_pk_constraint=get_pk_constraint,
+            get_unique_constraints=get_unique_constraints,
+            get_table_names=lambda schema=None: ["authors"],
+        )
+
+        tool = DatabaseKeysTool(
+            SimpleNamespace(), DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        )
+
+        with (
+            patch("avalan.tool.database.inspect", return_value=inspector),
+            patch(
+                "avalan.tool.database.DatabaseTool._schemas",
+                return_value=("main", ["main"]),
+            ),
+        ):
+            keys = tool._collect(
+                SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
+                schema="main",
+                table_name="authors",
+            )
+
+        self.assertEqual(
+            keys,
+            [
+                TableKey(type="primary", name="pk_authors", columns=("id",)),
+                TableKey(
+                    type="unique", name="uq_authors_name", columns=("name",)
+                ),
+                TableKey(type="unique", name=None, columns=("email",)),
+            ],
+        )
+
+    def test_collect_ignores_constraints_without_columns(self):
+        inspector = SimpleNamespace(
+            default_schema_name="main",
+            get_pk_constraint=lambda table_name, schema=None: {
+                "name": "pk_authors",
+                "constrained_columns": [],
+            },
+            get_unique_constraints=lambda table_name, schema=None: [
+                {"name": "uq_empty", "column_names": []}
+            ],
+            get_table_names=lambda schema=None: ["authors"],
+        )
+
+        tool = DatabaseKeysTool(
+            SimpleNamespace(), DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        )
+
+        with (
+            patch("avalan.tool.database.inspect", return_value=inspector),
+            patch(
+                "avalan.tool.database.DatabaseTool._schemas",
+                return_value=("main", ["main"]),
+            ),
+        ):
+            keys = tool._collect(
+                SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
+                schema="main",
+                table_name="authors",
+            )
+
+        self.assertEqual(keys, [])
+
+    def test_collect_handles_all_supported_vendors(self):
+        vendors = [
+            ("sqlite", "main"),
+            ("postgresql", "public"),
+            ("mysql", "test"),
+            ("mariadb", "test"),
+            ("mssql", "dbo"),
+            ("oracle", "SYSTEM"),
+        ]
+
+        for index, (dialect, default_schema) in enumerate(vendors):
+            pk_payload = {
+                "name": f"pk_{dialect}_authors",
+                "constrained_columns": ["id"],
+            }
+
+            if index % 2 == 0:
+                unique_payload = {
+                    "name": f"uq_{dialect}_authors_name",
+                    "column_names": ["name"],
+                }
+            else:
+                unique_payload = {
+                    "name": f"uq_{dialect}_authors_name",
+                    "constrained_columns": ["name"],
+                }
+
+            inspector = SimpleNamespace(
+                default_schema_name=default_schema,
+                get_pk_constraint=lambda table_name,
+                schema=None,
+                payload=pk_payload: payload,
+                get_unique_constraints=lambda table_name,
+                schema=None,
+                payload=unique_payload: [payload],
+                get_table_names=lambda schema=None: (
+                    ["authors"]
+                    if (schema or default_schema) == default_schema
+                    else []
+                ),
+            )
+
+            tool = DatabaseKeysTool(
+                SimpleNamespace(),
+                DatabaseToolSettings(dsn="sqlite:///db.sqlite"),
+            )
+
+            with (
+                patch("avalan.tool.database.inspect", return_value=inspector),
+                patch(
+                    "avalan.tool.database.DatabaseTool._schemas",
+                    return_value=(default_schema, [default_schema]),
+                ),
+            ):
+                keys = tool._collect(
+                    SimpleNamespace(dialect=SimpleNamespace(name=dialect)),
+                    schema=default_schema,
+                    table_name="authors",
+                )
+
+            self.assertEqual(
+                keys,
+                [
+                    TableKey(
+                        type="primary",
+                        name=f"pk_{dialect}_authors",
+                        columns=("id",),
+                    ),
+                    TableKey(
+                        type="unique",
+                        name=f"uq_{dialect}_authors_name",
+                        columns=("name",),
+                    ),
+                ],
+            )
+
 
 class DatabaseSchemasTestCase(TestCase):
     def test_postgresql_schemas(self):
