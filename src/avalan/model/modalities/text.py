@@ -70,9 +70,15 @@ class TextGenerationModality:
         if engine_uri.is_local:
             match engine_settings.backend:
                 case Backend.MLXLM:
-                    from ..nlp.text.mlxlm import MlxLmModel as Loader
+                    mlx_loader = _get_mlx_model()
+                    if mlx_loader is None:
+                        msg = (
+                            "The mlx-lm dependency is not installed. "
+                            "Install avalan[mlx] to enable the MLX backend."
+                        )
+                        raise ModuleNotFoundError(msg)
 
-                    return Loader(**model_load_args)
+                    return mlx_loader(**model_load_args)
                 case Backend.VLLM:
                     from ..nlp.text.vllm import VllmModel as Loader
 
