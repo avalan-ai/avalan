@@ -104,17 +104,23 @@ class ModelManagerLoadEngineModalitiesTestCase(TestCase):
             uri = manager.parse_uri("ai://local/m")
             settings = TransformerEngineSettings(backend=Backend.MLXLM)
             manager._stack.enter_context = MagicMock()
-            with patch("avalan.model.nlp.text.mlxlm.MlxLmModel") as Model:
+            with patch(
+                "avalan.model.modalities.text._get_mlx_model",
+                return_value=MagicMock(),
+            ) as get_model:
                 result = manager.load_engine(
                     uri, settings, Modality.TEXT_GENERATION
                 )
-            Model.assert_called_once_with(
+
+            get_model.assert_called_once_with()
+            loader = get_model.return_value
+            loader.assert_called_once_with(
                 model_id="m", settings=settings, logger=self.logger
             )
             manager._stack.enter_context.assert_called_once_with(
-                Model.return_value
+                loader.return_value
             )
-            self.assertIs(result, Model.return_value)
+            self.assertIs(result, loader.return_value)
 
     def test_load_engine_text_generation_vllm_backend(self):
         with ModelManager(self.hub, self.logger) as manager:

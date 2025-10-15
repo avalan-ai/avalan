@@ -161,10 +161,10 @@ def test_get_mlx_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_text_generation_load_engine_mlx(
     local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module_name = "avalan.model.nlp.text.mlxlm"
-    stub = ModuleType(module_name)
-    stub.MlxLmModel = RecordingLoader
-    monkeypatch.setitem(modules, module_name, stub)
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model",
+        lambda: RecordingLoader,
+    )
     settings = TransformerEngineSettings(backend=Backend.MLXLM)
     logger = MagicMock(spec=Logger)
     exit_stack = AsyncExitStack()
@@ -180,6 +180,25 @@ def test_text_generation_load_engine_mlx(
         "settings": settings,
         "logger": logger,
     }
+
+
+def test_text_generation_load_engine_mlx_missing_dependency(
+    local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model", lambda: None
+    )
+    settings = TransformerEngineSettings(backend=Backend.MLXLM)
+    logger = MagicMock(spec=Logger)
+    exit_stack = AsyncExitStack()
+
+    with pytest.raises(ModuleNotFoundError, match="avalan\[mlx\]"):
+        TextGenerationModality().load_engine(
+            local_engine_uri,
+            settings,
+            logger,
+            exit_stack,
+        )
 
 
 def test_text_generation_load_engine_vllm(
