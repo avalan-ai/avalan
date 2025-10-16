@@ -5,6 +5,7 @@ from . import (
     DatabaseInspectTool,
     DatabaseKeysTool,
     DatabaseKillTool,
+    DatabaseLocksTool,
     DatabasePlanTool,
     DatabaseRelationshipsTool,
     DatabaseRunTool,
@@ -97,6 +98,12 @@ class DatabaseToolSet(ToolSet):
                 table_cache=table_cache,
             ),
             DatabaseKillTool(
+                self._engine,
+                settings,
+                normalizer=normalizer,
+                table_cache=table_cache,
+            ),
+            DatabaseLocksTool(
                 self._engine,
                 settings,
                 normalizer=normalizer,

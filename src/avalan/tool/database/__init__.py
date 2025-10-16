@@ -51,6 +51,20 @@ class DatabaseTask:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class DatabaseLock:
+    pid: str | None
+    user: str | None
+    lock_type: str | None
+    lock_target: str | None
+    mode: str | None
+    granted: bool | None
+    blocking: tuple[str, ...] = ()
+    state: str | None = None
+    query: str | None = None
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class DatabaseToolSettings:
     dsn: str
     delay_secs: float | None = None
@@ -479,6 +493,7 @@ from .count import DatabaseCountTool  # noqa: F401
 from .inspect import DatabaseInspectTool  # noqa: F401
 from .keys import DatabaseKeysTool  # noqa: F401
 from .kill import DatabaseKillTool  # noqa: F401
+from .locks import DatabaseLocksTool  # noqa: F401
 from .plan import DatabasePlanTool  # noqa: F401
 from .relationships import DatabaseRelationshipsTool  # noqa: F401
 from .run import DatabaseRunTool  # noqa: F401
