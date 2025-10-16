@@ -12,6 +12,7 @@ from avalan.tool.database import (
     DatabaseInspectTool,
     DatabaseKeysTool,
     DatabaseKillTool,
+    DatabaseLocksTool,
     DatabasePlanTool,
     DatabaseRelationshipsTool,
     DatabaseRunTool,
@@ -427,6 +428,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             tables_tool = tools_by_name["tables"]
             tasks_tool = tools_by_name["tasks"]
             kill_tool = tools_by_name["kill"]
+            locks_tool = tools_by_name["locks"]
             count = await count_tool("authors", context=ToolCallContext())
             self.assertEqual(count, 1)
             plan = await plan_tool(
@@ -444,6 +446,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             tables = await tables_tool(context=ToolCallContext())
             self.assertIn("books", tables["main"])
             self.assertEqual(await tasks_tool(context=ToolCallContext()), [])
+            self.assertEqual(await locks_tool(context=ToolCallContext()), [])
             with self.assertRaises(RuntimeError):
                 await kill_tool("1", context=ToolCallContext())
         self.assertTrue(toolset._engine.disposed)

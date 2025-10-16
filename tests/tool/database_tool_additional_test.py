@@ -3,11 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from avalan.tool.database import (
     DatabaseCountTool,
     DatabaseInspectTool,
     DatabaseKillTool,
+    DatabaseLock,
+    DatabaseLocksTool,
     DatabasePlanTool,
     DatabaseTask,
     DatabaseTasksTool,
@@ -380,6 +383,131 @@ def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
     tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
     assert tool._collect(connection) == []
+
+
+def test_database_locks_tool_collects_postgresql() -> None:
+    captured: dict[str, str] = {}
+    rows = [
+        {
+            "pid": "42",
+            "user_name": "alice",
+            "locktype": "relation",
+            "mode": "AccessShareLock",
+            "granted": True,
+            "state": "active",
+            "query": " SELECT 1 ",
+            "lock_target": "public.items",
+            "blocking_pids": [99, None],
+        }
+    ]
+
+    def execute(statement):
+        captured["sql"] = statement.text
+        return _result(rows)
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="postgresql"),
+        execute=execute,
+    )
+
+    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    locks = tool._collect(connection)
+
+    assert "FROM pg_locks" in captured["sql"]
+    assert locks == [
+        DatabaseLock(
+            pid="42",
+            user="alice",
+            lock_type="relation",
+            lock_target="public.items",
+            mode="AccessShareLock",
+            granted=True,
+            blocking=("99",),
+            state="active",
+            query="SELECT 1",
+        )
+    ]
+
+
+def test_database_locks_tool_collects_mysql() -> None:
+    captured: dict[str, str] = {}
+    rows = [
+        {
+            "pid": 12,
+            "user_name": "root",
+            "lock_type": "TABLE",
+            "lock_mode": "IX",
+            "lock_status": "GRANTED",
+            "lock_schema": "app",
+            "lock_name": "items",
+            "lock_data": None,
+            "state": "executing",
+            "query": " UPDATE items ",
+            "blocking_pids": "15,16",
+        }
+    ]
+
+    def execute(statement):
+        captured["sql"] = statement.text
+        return _result(rows)
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"),
+        execute=execute,
+    )
+
+    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    locks = tool._collect(connection)
+
+    assert "FROM performance_schema.data_locks" in captured["sql"]
+    assert locks == [
+        DatabaseLock(
+            pid="12",
+            user="root",
+            lock_type="TABLE",
+            lock_target="app.items",
+            mode="IX",
+            granted=True,
+            blocking=("15", "16"),
+            state="executing",
+            query="UPDATE items",
+        )
+    ]
+
+
+def test_database_locks_tool_collects_mariadb() -> None:
+    executed = False
+
+    def execute(statement):
+        nonlocal executed
+        executed = True
+        return _result([])
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mariadb"),
+        execute=execute,
+    )
+
+    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    locks = tool._collect(connection)
+
+    assert executed is True
+    assert locks == []
+
+
+def test_database_locks_tool_handles_mysql_errors() -> None:
+    def execute(statement):
+        raise SQLAlchemyError()
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"),
+        execute=execute,
+    )
+
+    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    locks = tool._collect(connection)
+
+    assert locks == []
 
 
 def test_database_inspect_tool_collects_with_custom_schema(
