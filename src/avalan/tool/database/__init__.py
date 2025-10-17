@@ -92,6 +92,22 @@ class TableRelationship:
     constraint_name: str | None
 
 
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TableSizeMetric:
+    category: Literal["data", "indexes", "total", "toast", "lob", "free"]
+    bytes: int | None
+    human_readable: str | None
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TableSize:
+    name: str
+    schema: str | None
+    metrics: tuple[TableSizeMetric, ...]
+
+
 class IdentifierCaseNormalizer:
     __slots__ = ("_mode", "_token_pattern")
 
@@ -497,6 +513,7 @@ from .locks import DatabaseLocksTool  # noqa: F401
 from .plan import DatabasePlanTool  # noqa: F401
 from .relationships import DatabaseRelationshipsTool  # noqa: F401
 from .run import DatabaseRunTool  # noqa: F401
+from .size import DatabaseSizeTool  # noqa: F401
 from .tables import DatabaseTablesTool  # noqa: F401
 from .tasks import DatabaseTasksTool  # noqa: F401
 from .toolset import DatabaseToolSet  # noqa: F401
