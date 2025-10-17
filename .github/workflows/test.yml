@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - '**'
+  workflow_dispatch:
+    inputs:
+      ignore_venv_cache:
+        description: 'Ignore cached venv when running tests.'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}‑${{ github.ref }}
@@ -14,6 +21,8 @@ permissions:
 
 jobs:
   test:
+    env:
+      IGNORE_VENV_CACHE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ignore_venv_cache == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +62,7 @@ jobs:
 
       - name: Load cached venv
         id: cached-poetry-dependencies
+        if: env.IGNORE_VENV_CACHE != 'true'
         uses: actions/cache@v4
         with:
           path: .venv
@@ -66,7 +76,7 @@ jobs:
 
       - name: Install dependencies
         id: install-deps
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        if: env.IGNORE_VENV_CACHE == 'true' || steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry install --no-interaction --extras "test"
 
       - name: Run tests with coverage analysis
