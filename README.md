@@ -1113,6 +1113,7 @@ echo "Get me revenue per product, sorting by highest selling" | \
 - `database.tables() -> dict[str | None, list[str]]`: List tables grouped by schema—useful for schema discovery in unknown databases.
 - `database.tasks(running_for: int | None = None) -> list[DatabaseTask]`: Surface long-running queries on PostgreSQL or MySQL so humans can monitor or intervene.
 - `database.kill(task_id: str) -> bool`: Cancel a runaway query when safeguards permit it.
+- `database.size(table_name: str) -> TableSize`: Summarize how much space a table occupies, including data and index bytes where the backend provides them, so agents can gauge storage usage before recommending optimizations.
 
 ### Browser toolset (`browser.*`)
 

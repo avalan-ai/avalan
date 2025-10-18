@@ -16,6 +16,7 @@ from avalan.tool.database import (
     DatabasePlanTool,
     DatabaseRelationshipsTool,
     DatabaseRunTool,
+    DatabaseSizeTool,
     DatabaseTablesTool,
     DatabaseTasksTool,
     DatabaseTool,
@@ -349,6 +350,9 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             keys_tool = DatabaseKeysTool(engine, settings)
             await keys_tool("authors", context=ToolCallContext())
 
+            size_tool = DatabaseSizeTool(engine, settings)
+            await size_tool("authors", context=ToolCallContext())
+
             tasks_tool = DatabaseTasksTool(engine, settings)
             await tasks_tool(context=ToolCallContext())
 
@@ -356,7 +360,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await kill_tool("1", context=ToolCallContext())
 
-            self.assertEqual(mocked_sleep.await_count, 7)
+            self.assertEqual(mocked_sleep.await_count, 8)
         await engine.dispose()
 
     async def test_tables_tool_respects_identifier_case(self):
