@@ -229,6 +229,26 @@ def test_collect_sqlite_uses_dbstat() -> None:
     assert totals["total"].bytes == 12288
 
 
+def test_collect_sqlite_skips_nameless_indexes() -> None:
+    connection = DummySyncConnection(
+        dialect_name="sqlite",
+        results=[
+            DummyResult(rows=[{"size": 2048}]),
+            DummyResult(rows=[{"name": None}, {"name": "idx_books_title"}]),
+            DummyResult(rows=[{"size": 1024}]),
+        ],
+    )
+
+    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    metrics = tool._collect_sqlite(connection, "books")
+
+    totals = {metric.category: metric for metric in metrics}
+    assert totals["data"].bytes == 2048
+    assert totals["indexes"].bytes == 1024
+    assert totals["total"].bytes == 3072
+    assert len(connection.statements) == 3
+
+
 def test_collect_oracle_sizes() -> None:
     connection = DummySyncConnection(
         dialect_name="oracle",
@@ -411,6 +431,53 @@ def test_collect_uses_effective_schema_when_display_blank(
     assert result.name == "private.display_books"
     assert result.schema == ""
     assert result.metrics == tuple(metrics)
+
+
+def test_collect_includes_normalized_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    class UpperNormalizer:
+        def normalize(self, value: str) -> str:
+            return value.upper() if value is not None else ""
+
+    tool = DatabaseSizeTool(
+        SimpleNamespace(),
+        DatabaseToolSettings(dsn="sqlite://", identifier_case="lower"),
+        normalizer=UpperNormalizer(),
+    )
+
+    inspector = SimpleNamespace()
+    connection = SimpleNamespace()
+
+    monkeypatch.setattr(
+        DatabaseSizeTool,
+        "_inspect_connection",
+        lambda self, conn: inspector,
+    )
+    monkeypatch.setattr(
+        DatabaseSizeTool,
+        "_schemas",
+        lambda self, conn, insp: ("public", ["public", "custom"]),
+    )
+    monkeypatch.setattr(
+        DatabaseSizeTool,
+        "_denormalize_table_name",
+        lambda self, conn, schema, table: "actual_books",
+    )
+    monkeypatch.setattr(
+        DatabaseSizeTool,
+        "_metrics_for_dialect",
+        lambda self, conn, schema, table: [],
+    )
+    monkeypatch.setattr(
+        DatabaseSizeTool,
+        "_normalize_table_for_output",
+        lambda self, table: "display_books",
+    )
+
+    result = tool._collect(connection, schema="custom", table_name="books")
+
+    assert result.name == "CUSTOM.display_books"
+    assert result.schema == "CUSTOM"
+    assert result.metrics == ()
 
 
 def test_collect_postgresql_empty_rows() -> None:
