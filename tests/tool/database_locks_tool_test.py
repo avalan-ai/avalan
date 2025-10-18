@@ -225,6 +225,14 @@ def test_collect_mysql_returns_normalized_locks() -> None:
     ]
 
 
+def test_normalize_blocking_handles_braced_strings() -> None:
+    class BracedValue:
+        def __str__(self) -> str:
+            return "{}"
+
+    assert DatabaseLocksTool._normalize_blocking(BracedValue()) == ()
+
+
 def test_collect_mysql_handles_execution_errors() -> None:
     connection = DummySyncConnection(
         dialect_name="mysql",
