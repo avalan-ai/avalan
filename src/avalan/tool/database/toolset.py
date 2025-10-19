@@ -9,6 +9,7 @@ from . import (
     DatabasePlanTool,
     DatabaseRelationshipsTool,
     DatabaseRunTool,
+    DatabaseSampleTool,
     DatabaseSizeTool,
     DatabaseTablesTool,
     DatabaseTasksTool,
@@ -81,6 +82,12 @@ class DatabaseToolSet(ToolSet):
                 table_cache=table_cache,
             ),
             DatabaseRunTool(
+                self._engine,
+                settings,
+                normalizer=normalizer,
+                table_cache=table_cache,
+            ),
+            DatabaseSampleTool(
                 self._engine,
                 settings,
                 normalizer=normalizer,
