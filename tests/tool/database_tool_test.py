@@ -16,6 +16,7 @@ from avalan.tool.database import (
     DatabasePlanTool,
     DatabaseRelationshipsTool,
     DatabaseRunTool,
+    DatabaseSampleTool,
     DatabaseSizeTool,
     DatabaseTablesTool,
     DatabaseTasksTool,
@@ -429,6 +430,7 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             keys_tool = tools_by_name["keys"]
             plan_tool = tools_by_name["plan"]
             run_tool = tools_by_name["run"]
+            sample_tool = tools_by_name["sample"]
             tables_tool = tools_by_name["tables"]
             tasks_tool = tools_by_name["tasks"]
             kill_tool = tools_by_name["kill"]
@@ -443,6 +445,13 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
                 "SELECT id FROM authors", context=ToolCallContext()
             )
             self.assertEqual(rows, [{"id": 1}])
+            sample_rows = await sample_tool(
+                "authors",
+                columns=["id"],
+                count=1,
+                context=ToolCallContext(),
+            )
+            self.assertEqual(sample_rows, [{"id": 1}])
             table = await inspect_tool(["books"], context=ToolCallContext())
             self.assertEqual(table[0].name, "books")
             key_defs = await keys_tool("authors", context=ToolCallContext())

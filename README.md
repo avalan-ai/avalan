@@ -1109,6 +1109,7 @@ echo "Get me revenue per product, sorting by highest selling" | \
 - `database.relationships(table_name: str, schema: str | None = None) -> list[TableRelationship]`: Surface incoming and outgoing foreign key links for a table so the agent can understand join paths and cardinality constraints.
 - `database.plan(sql: str) -> QueryPlan`: Request an `EXPLAIN` plan to validate or optimize a generated query.
 - `database.run(sql: str) -> list[dict[str, Any]]`: Execute read or write statements (subject to policy) and return result rows for downstream reasoning.
+- `database.sample(table_name: str, columns: list[str] | None = None, conditions: str | None = None, order: dict[str, str] | None = None, count: int | None = None) -> list[dict[str, Any]]`: Fetch up to `count` rows (default 10) from a table so agents can preview data, optionally narrowing by columns, SQL conditions, or ordering before crafting more complex queries.
 - `database.locks() -> list[DatabaseLock]`: Inspect PostgreSQL, MySQL, and MariaDB lock metadata—including blocking session IDs, lock targets, and whether the lock is granted—to debug contention before running or terminating queries.
 - `database.tables() -> dict[str | None, list[str]]`: List tables grouped by schema—useful for schema discovery in unknown databases.
 - `database.tasks(running_for: int | None = None) -> list[DatabaseTask]`: Surface long-running queries on PostgreSQL or MySQL so humans can monitor or intervene.

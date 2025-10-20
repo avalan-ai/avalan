@@ -513,6 +513,7 @@ from .locks import DatabaseLocksTool  # noqa: F401
 from .plan import DatabasePlanTool  # noqa: F401
 from .relationships import DatabaseRelationshipsTool  # noqa: F401
 from .run import DatabaseRunTool  # noqa: F401
+from .sample import DatabaseSampleTool  # noqa: F401
 from .size import DatabaseSizeTool  # noqa: F401
 from .tables import DatabaseTablesTool  # noqa: F401
 from .tasks import DatabaseTasksTool  # noqa: F401
