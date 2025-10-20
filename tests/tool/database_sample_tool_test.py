@@ -162,6 +162,20 @@ class DatabaseSampleToolTestCase(IsolatedAsyncioTestCase):
         finally:
             await engine.dispose()
 
+    async def test_sample_tool_resolves_normalized_column_names(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseSampleTool(engine, self.settings_lower)
+        try:
+            rows = await tool(
+                "CamelCase",
+                columns=["VALUE"],
+                count=1,
+                context=ToolCallContext(),
+            )
+            self.assertEqual(rows, [{"Value": "Item"}])
+        finally:
+            await engine.dispose()
+
     async def test_sample_tool_raises_for_unknown_column(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseSampleTool(engine, self.settings)
@@ -171,6 +185,57 @@ class DatabaseSampleToolTestCase(IsolatedAsyncioTestCase):
                     "books",
                     columns=["missing"],
                     count=1,
+                    context=ToolCallContext(),
+                )
+        finally:
+            await engine.dispose()
+
+    async def test_sample_tool_requires_table_name(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseSampleTool(engine, self.settings)
+        try:
+            with self.assertRaises(AssertionError):
+                await tool(
+                    "",
+                    context=ToolCallContext(),
+                )
+        finally:
+            await engine.dispose()
+
+    async def test_sample_tool_rejects_empty_column_name(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseSampleTool(engine, self.settings)
+        try:
+            with self.assertRaises(AssertionError):
+                await tool(
+                    "books",
+                    columns=[""],
+                    context=ToolCallContext(),
+                )
+        finally:
+            await engine.dispose()
+
+    async def test_sample_tool_rejects_empty_order(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseSampleTool(engine, self.settings)
+        try:
+            with self.assertRaises(AssertionError):
+                await tool(
+                    "books",
+                    order={},
+                    context=ToolCallContext(),
+                )
+        finally:
+            await engine.dispose()
+
+    async def test_sample_tool_rejects_non_positive_count(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseSampleTool(engine, self.settings)
+        try:
+            with self.assertRaises(AssertionError):
+                await tool(
+                    "books",
+                    count=0,
                     context=ToolCallContext(),
                 )
         finally:
@@ -222,3 +287,25 @@ class DatabaseSampleToolStatementTestCase(TestCase):
             else:
                 self.assertIn("LIMIT 5", upper_sql)
             self.assertIn("ID > 0", upper_sql)
+
+    def test_split_schema_and_table_handles_qualified_names(self):
+        result = DatabaseSampleTool._split_schema_and_table("public.records")
+        self.assertEqual(result, ("public", "records"))
+
+        result = DatabaseSampleTool._split_schema_and_table(".records")
+        self.assertEqual(result, (None, "records"))
+
+    def test_build_ordering_rejects_invalid_direction(self):
+        tool = DatabaseSampleTool(
+            SimpleNamespace(),
+            DatabaseToolSettings(dsn="sqlite://"),
+            normalizer=None,
+        )
+        table = SATable(
+            "records",
+            MetaData(),
+            Column("id", Integer),
+        )
+
+        with self.assertRaises(AssertionError):
+            tool._build_ordering(table, {"id": "sideways"})
