@@ -292,3 +292,40 @@ def test_html_metadata_sources() -> None:
     title, description = source._html_metadata(twitter_only)
     assert title == "Twitter Title"
     assert description is None
+
+
+def test_html_metadata_handles_case_insensitive_meta() -> None:
+    source = MemorySource(max_description_chars=50)
+    html = (
+        b"<html>\n"
+        b"    <head>\n"
+        b'        <meta PROPERTY="OG:TITLE"\n'
+        b'              content="OG Title" />\n'
+        b'        <meta NAME="DESCRIPTION"\n'
+        b'              content="Meta Description" />\n'
+        b'        <meta PROPERTY="TWITTER:DESCRIPTION"\n'
+        b'              content="Twitter Description" />\n'
+        b"    </head>\n"
+        b"</html>\n"
+    )
+
+    title, description = source._html_metadata(html)
+
+    assert title == "OG Title"
+    assert description == "Meta Description"
+
+    fallback_html = (
+        b"<html>\n"
+        b"    <head>\n"
+        b'        <meta property="twitter:title"\n'
+        b'              content="Twitter Title" />\n'
+        b'        <meta property="TWITTER:DESCRIPTION"\n'
+        b'              content="Twitter Description" />\n'
+        b"    </head>\n"
+        b"</html>\n"
+    )
+
+    title, description = source._html_metadata(fallback_html)
+
+    assert title == "Twitter Title"
+    assert description == "Twitter Description"
