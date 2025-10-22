@@ -179,6 +179,29 @@ class DatabaseSampleToolTestCase(IsolatedAsyncioTestCase):
         finally:
             await engine.dispose()
 
+    async def test_sample_tool_returns_all_columns_when_not_specified(self):
+        engine = dummy_create_async_engine(self.dsn)
+        tool = DatabaseSampleTool(engine, self.settings)
+        try:
+            rows = await tool(
+                "books",
+                order={"id": "asc"},
+                count=1,
+                context=ToolCallContext(),
+            )
+            self.assertEqual(
+                rows,
+                [
+                    {
+                        "id": 1,
+                        "author_id": 1,
+                        "title": "Atlas",
+                    }
+                ],
+            )
+        finally:
+            await engine.dispose()
+
     async def test_sample_tool_denormalizes_column_names(self):
         engine = dummy_create_async_engine(self.dsn)
         tool = DatabaseSampleTool(engine, self.settings_lower)
