@@ -38,7 +38,9 @@ class DatabasePlanTool(DatabaseTool):
         )
         self.__name__ = "plan"
 
-    async def __call__(self, sql: str, *, context: ToolCallContext) -> QueryPlan:
+    async def __call__(
+        self, sql: str, *, context: ToolCallContext
+    ) -> QueryPlan:
         await self._sleep_if_configured()
 
         async with self._engine.connect() as conn:
@@ -72,4 +74,3 @@ class DatabasePlanTool(DatabaseTool):
             prefix = "EXPLAIN "
 
         return text(f"{prefix}{sql}"), dialect
-

@@ -1,6 +1,3 @@
-from . import TextGenerationVendorModel
-from ....message import TemplateMessage, TemplateMessageRole
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -17,11 +14,16 @@ from .....model.response.text import TextGenerationResponse
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
-from diffusers import DiffusionPipeline
+from ....message import TemplateMessage, TemplateMessageRole
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
+
 from json import dumps
+from typing import AsyncIterator
+
+from diffusers import DiffusionPipeline
 from openai import AsyncOpenAI
 from transformers import PreTrainedModel
-from typing import AsyncIterator
 
 
 class OpenAIStream(TextGenerationVendorStream):

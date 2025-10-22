@@ -1,5 +1,3 @@
-from . import InvalidJsonResponseException
-from ..stream import TextGenerationSingleStream
 from ...entities import (
     GenerationSettings,
     ReasoningToken,
@@ -7,13 +5,16 @@ from ...entities import (
     TokenDetail,
     ToolCallToken,
 )
+from ..stream import TextGenerationSingleStream
+from . import InvalidJsonResponseException
 from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
-from logging import Logger
-from io import StringIO
-from queue import Queue
+
 from inspect import iscoroutine
-from json import loads, JSONDecodeError
-from re import compile, DOTALL, Pattern
+from io import StringIO
+from json import JSONDecodeError, loads
+from logging import Logger
+from queue import Queue
+from re import DOTALL, Pattern, compile
 from typing import (
     AsyncGenerator,
     AsyncIterator,

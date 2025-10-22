@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from avalan.tool.database import (
-    DatabaseInspectTool,
     DatabaseTool,
     DatabaseToolSet,
     DatabaseToolSettings,
@@ -125,7 +124,9 @@ def test_ensure_sql_command_allowed_validates_allow_list() -> None:
         DatabaseTool._ensure_sql_command_allowed("???", ["select"])
 
     with pytest.raises(PermissionError):
-        DatabaseTool._ensure_sql_command_allowed("DELETE FROM table_name", ["select"])
+        DatabaseTool._ensure_sql_command_allowed(
+            "DELETE FROM table_name", ["select"]
+        )
 
 
 def test_ensure_sql_command_allowed_special_cases(
@@ -258,7 +259,9 @@ def test_apply_identifier_case_handles_schema_replacements(
     assert "main.CamelCase" in rewritten
 
 
-def test_apply_identifier_case_parses_sql_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_identifier_case_parses_sql_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     engine = SimpleNamespace(
         sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
     )

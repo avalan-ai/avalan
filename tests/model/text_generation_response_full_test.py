@@ -1,5 +1,6 @@
-from avalan.model.response.text import TextGenerationResponse
 from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
@@ -7,7 +8,7 @@ from avalan.entities import (
     TokenDetail,
     ToolCallToken,
 )
-from unittest import IsolatedAsyncioTestCase
+from avalan.model.response.text import TextGenerationResponse
 
 
 async def _gen():

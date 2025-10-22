@@ -1,3 +1,9 @@
+from contextlib import AsyncExitStack
+from logging import Logger
+from unittest.mock import MagicMock
+
+import pytest
+
 from avalan.entities import EngineUri, TransformerEngineSettings
 from avalan.model.modalities.audio import (
     AudioSpeechRecognitionModality,
@@ -19,10 +25,6 @@ from avalan.model.modalities.vision import (
     VisionTextToImageModality,
     VisionTextToVideoModality,
 )
-from contextlib import AsyncExitStack
-from logging import Logger
-import pytest
-from unittest.mock import MagicMock
 
 
 @pytest.mark.parametrize(

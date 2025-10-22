@@ -1,7 +1,8 @@
 import asyncio
+from unittest import IsolatedAsyncioTestCase, main
+
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
-from unittest import IsolatedAsyncioTestCase, main
 
 
 class EventManagerTestCase(IsolatedAsyncioTestCase):

@@ -1,11 +1,13 @@
+import unittest
+from datetime import datetime
+from types import SimpleNamespace
+from uuid import UUID
+
+import numpy as np
+
 from avalan.cli.theme import Theme
 from avalan.entities import Model
 from avalan.event import Event
-import unittest
-from datetime import datetime
-from uuid import UUID
-from types import SimpleNamespace
-import numpy as np
 
 
 class DummyTheme(Theme):

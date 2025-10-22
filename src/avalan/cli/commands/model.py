@@ -3,42 +3,46 @@ from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
 from ...entities import (
-    Model,
+    GenerationSettings,  # noqa: F401
     Modality,
+    Model,
     ReasoningToken,
     Token,
     ToolCallToken,
 )
-from ...entities import GenerationSettings  # noqa: F401
-from ...event import Event, EventStats, EventType, TOOL_TYPES
+from ...event import TOOL_TYPES, Event, EventStats, EventType
+from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
-from ...model.call import ModelCall, ModelCallContext
 from ...secrets import KeyringSecrets
 from . import get_model_settings
-from dataclasses import replace
+
 from argparse import Namespace
+from asyncio import (
+    Event as EventSignal,
+)
 from asyncio import (
     as_completed,
     create_task,
     gather,
     sleep,
     to_thread,
-    Event as EventSignal,
 )
+from dataclasses import replace
 from datetime import datetime, timezone
 from logging import Logger
+from time import perf_counter
+
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
 from rich.prompt import Prompt
 from rich.spinner import Spinner
 from rich.theme import Theme
-from time import perf_counter
 
 
 def model_display(

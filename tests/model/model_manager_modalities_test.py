@@ -1,3 +1,7 @@
+from logging import Logger
+from unittest import TestCase
+from unittest.mock import MagicMock, patch
+
 from avalan.entities import (
     Backend,
     EngineUri,
@@ -6,9 +10,6 @@ from avalan.entities import (
 )
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
-from logging import Logger
-from unittest import TestCase
-from unittest.mock import MagicMock, patch
 
 
 class ModelManagerLoadEngineModalitiesTestCase(TestCase):

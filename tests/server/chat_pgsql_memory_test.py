@@ -1,15 +1,15 @@
 import importlib
+import sys
 from logging import getLogger
 from pathlib import Path
-import sys
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
+import numpy as np
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import numpy as np
 from psycopg import AsyncConnection, AsyncCursor
 from psycopg_pool import AsyncConnectionPool
 

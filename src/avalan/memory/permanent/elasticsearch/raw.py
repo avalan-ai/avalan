@@ -1,11 +1,3 @@
-from datetime import datetime, timezone
-from logging import Logger
-from typing import Any
-from uuid import UUID, uuid4
-
-from elasticsearch import AsyncElasticsearch
-import numpy as np
-
 from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     Memory,
@@ -15,6 +7,14 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from . import ElasticsearchMemory, to_thread  # noqa: F401
+
+from datetime import datetime, timezone
+from logging import Logger
+from typing import Any
+from uuid import UUID, uuid4
+
+import numpy as np
+from elasticsearch import AsyncElasticsearch
 
 
 class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):

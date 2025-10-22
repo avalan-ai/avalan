@@ -1,9 +1,10 @@
 from asyncio import AbstractEventLoop, get_running_loop
-from botocore.exceptions import ClientError
-from boto3 import client
-from boto3.session import Session
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
+
+from boto3 import client
+from boto3.session import Session
+from botocore.exceptions import ClientError
 
 
 class DeployError(Exception):

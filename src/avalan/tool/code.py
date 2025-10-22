@@ -1,12 +1,14 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
+from . import Tool, ToolSet
+
 from asyncio import create_subprocess_exec
 from asyncio.subprocess import PIPE
 from contextlib import AsyncExitStack
+
 from RestrictedPython import (
-    compile_restricted,
     RestrictingNodeTransformer,
+    compile_restricted,
     safe_globals,
 )
 
@@ -21,7 +23,7 @@ class CodeTool(Tool):
 
     Returns:
         Text representation of the value returned by `run`.
-"""
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -74,7 +76,7 @@ class AstGrepTool(Tool):
 
     Returns:
         Output produced by ast-grep.
-"""
+    """
 
     def __init__(self) -> None:
         super().__init__()

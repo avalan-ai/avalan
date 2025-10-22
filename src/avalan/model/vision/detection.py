@@ -1,11 +1,14 @@
 from ...compat import override
-from ...entities import ImageEntity, EngineSettings
+from ...entities import EngineSettings, ImageEntity
+from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.classification import ImageClassificationModel
-from ...model.engine import Engine
-from diffusers import DiffusionPipeline
+
 from logging import Logger, getLogger
+from typing import Literal
+
+from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode, tensor
 from transformers import (
@@ -13,7 +16,6 @@ from transformers import (
     AutoModelForObjectDetection,
     PreTrainedModel,
 )
-from typing import Literal
 
 
 class ObjectDetectionModel(ImageClassificationModel):

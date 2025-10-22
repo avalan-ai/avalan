@@ -1,9 +1,10 @@
-from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.entities import ToolCallToken, ToolFormat
-from avalan.tool.parser import ToolCallParser
-from avalan.event import EventType
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
+
+from avalan.entities import ToolCallToken, ToolFormat
+from avalan.event import EventType
+from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.tool.parser import ToolCallParser
 
 
 class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):

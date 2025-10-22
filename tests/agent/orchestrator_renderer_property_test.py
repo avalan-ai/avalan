@@ -1,7 +1,14 @@
+from dataclasses import dataclass
+from logging import Logger
+from typing import Annotated
+from unittest import TestCase
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
 from avalan.agent import (
+    AgentOperation,
     EngineEnvironment,
     EngineUri,
-    AgentOperation,
     Specification,
 )
 from avalan.agent.orchestrator import Orchestrator
@@ -12,16 +19,10 @@ from avalan.agent.orchestrator.orchestrators.reasoning.cot import (
 )
 from avalan.agent.renderer import Renderer
 from avalan.entities import TransformerEngineSettings
+from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
-from avalan.event.manager import EventManager
-from dataclasses import dataclass
-from typing import Annotated
-from logging import Logger
-from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 
 @dataclass

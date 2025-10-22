@@ -1,3 +1,7 @@
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
 from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.orchestrator.orchestrators.reasoning.cot import (
     ReasoningOrchestrator,
@@ -11,9 +15,6 @@ from avalan.entities import (
     MessageRole,
     ReasoningOrchestratorResponse,
 )
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 
 class ReasoningOrchestratorTestCase(IsolatedAsyncioTestCase):

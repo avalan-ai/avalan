@@ -1,6 +1,7 @@
-from avalan.secrets import KeyringSecrets
 from unittest import TestCase, main
 from unittest.mock import MagicMock
+
+from avalan.secrets import KeyringSecrets
 
 
 class KeyringSecretsTestCase(TestCase):

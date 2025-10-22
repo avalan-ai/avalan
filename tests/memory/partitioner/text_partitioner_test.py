@@ -1,11 +1,12 @@
-from avalan.memory.partitioner.text import TextPartitioner, TextPartition
-from avalan.model.nlp.sentence import SentenceTransformerModel
 from logging import Logger
+from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock, MagicMock, _Call, call
+
 from numpy import arange, ndarray
 from numpy.testing import assert_array_equal
 
-from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import AsyncMock, MagicMock, call, _Call
+from avalan.memory.partitioner.text import TextPartition, TextPartitioner
+from avalan.model.nlp.sentence import SentenceTransformerModel
 
 
 class TextPartitionerTestCase(IsolatedAsyncioTestCase):

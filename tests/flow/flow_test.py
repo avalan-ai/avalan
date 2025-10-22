@@ -1,6 +1,7 @@
+from unittest import TestCase, main
+
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
-from unittest import TestCase, main
 
 
 class FlowParseMermaidTestCase(TestCase):

@@ -1,18 +1,20 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.vision.text import (
-    AutoImageProcessor,
-    AutoModelForVision2Seq,
-    ImageToTextModel,
-)
-from avalan.model.engine import Engine
 from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
 from transformers import (
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
-from unittest import IsolatedAsyncioTestCase, main, TestCase
-from unittest.mock import MagicMock, patch, PropertyMock
+
+from avalan.entities import TransformerEngineSettings
+from avalan.model.engine import Engine
+from avalan.model.vision.text import (
+    AutoImageProcessor,
+    AutoModelForVision2Seq,
+    ImageToTextModel,
+)
 
 
 class DummyInputs(dict):

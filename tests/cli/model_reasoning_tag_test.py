@@ -1,13 +1,14 @@
+from argparse import Namespace
+from logging import getLogger
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from avalan.cli.commands import model as model_cmds
 from avalan.entities import Modality, ReasoningTag
 from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.text import TextGenerationResponse
-from types import SimpleNamespace
-from argparse import Namespace
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
-from logging import getLogger
 
 
 class CliModelReasoningTagTestCase(IsolatedAsyncioTestCase):
@@ -54,6 +55,7 @@ class CliModelReasoningTagTestCase(IsolatedAsyncioTestCase):
 
         async def manager_call(self, model_task):
             operation = model_task.operation
+
             async def gen():
                 yield "t"
 

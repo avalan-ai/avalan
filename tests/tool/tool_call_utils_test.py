@@ -1,8 +1,9 @@
-from avalan.tool import ToolSet
-from avalan.tool.math import CalculatorTool
-from avalan.tool.manager import ToolManager
-from avalan.entities import ToolManagerSettings
 from unittest import TestCase, main
+
+from avalan.entities import ToolManagerSettings
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+from avalan.tool.math import CalculatorTool
 
 
 class GetToolCallsTestCase(TestCase):

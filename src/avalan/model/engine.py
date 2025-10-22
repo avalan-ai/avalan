@@ -1,9 +1,8 @@
-from abc import ABC, abstractmethod
 from ..entities import (
     EngineSettings,
-    ParallelStrategy,
     Input,
     ModelConfig,
+    ParallelStrategy,
     SentenceTransformerModelConfig,
     TokenizerConfig,
     WeightType,
@@ -15,13 +14,16 @@ from ..model import (
     TokenizerNotSupportedException,
 )
 from ..model.vendor import TextGenerationVendor
+
 import asyncio
+from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
-from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
+from typing import Any, Final, Literal
+
+from diffusers import DiffusionPipeline
 from torch import (
-    bool as tbool,
     bfloat16,
     cuda,
     dtype,
@@ -34,6 +36,9 @@ from torch import (
     int64,
     uint8,
 )
+from torch import (
+    bool as tbool,
+)
 from torch.backends import mps
 from transformers import (
     PreTrainedModel,
@@ -45,7 +50,6 @@ from transformers.utils.logging import (
     disable_progress_bar,
     enable_progress_bar,
 )
-from typing import Any, Final, Literal
 
 
 class Engine(ABC):

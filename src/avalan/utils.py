@@ -1,7 +1,7 @@
 from dataclasses import asdict, is_dataclass
 from decimal import Decimal
 from json import dumps
-from logging import getLogger, Logger
+from logging import Logger, getLogger
 from typing import Any
 from uuid import UUID
 

@@ -5,6 +5,7 @@ from ...entities import (
     EngineMessageScored,
     HubCache,
     HubCacheDeletion,
+    ImageEntity,
     Model,
     ModelConfig,
     SearchMatch,
@@ -14,13 +15,21 @@ from ...entities import (
     TokenizerConfig,
     ToolCallError,
     User,
-    ImageEntity,
 )
-from ...event import Event, EventStats, EventType, TOOL_TYPES
+from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import PermanentMemoryPartition
 from ...utils import _j, _lf, to_json
+
 from datetime import datetime
+from locale import format_string
+from logging import Logger
+from math import ceil, inf
+from re import sub
+from textwrap import wrap
+from typing import Callable, Generator
+from uuid import UUID
+
 from humanize import (
     clamp,
     intcomma,
@@ -29,12 +38,8 @@ from humanize import (
     naturalsize,
     precisedelta,
 )
-from locale import format_string
-from logging import Logger
-from math import ceil, inf
 from numpy import ndarray
 from numpy.linalg import norm
-from re import sub
 from rich import box
 from rich.align import Align
 from rich.columns import Columns
@@ -44,15 +49,12 @@ from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
-    TimeElapsedColumn,
     SpinnerColumn,
+    TimeElapsedColumn,
 )
 from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
-from textwrap import wrap
-from typing import Callable, Generator
-from uuid import UUID
 
 
 class FancyTheme(Theme):

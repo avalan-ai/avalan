@@ -7,6 +7,7 @@ from uuid import uuid4
 from a2a import types as a2a_types
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from avalan.entities import (
     ReasoningToken,
     Token,
@@ -19,8 +20,10 @@ from avalan.server.a2a.router import (
     A2AResponseTranslator,
     A2AStreamEventConverter,
     _di_get_orchestrator,
-    router as a2a_router,
     well_known_router,
+)
+from avalan.server.a2a.router import (
+    router as a2a_router,
 )
 from avalan.server.a2a.store import TaskStore
 

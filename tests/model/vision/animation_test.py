@@ -2,7 +2,9 @@ import itertools
 from contextlib import nullcontext
 from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
+
+from diffusers import AnimateDiffPipeline, DiffusionPipeline
 
 from avalan.entities import (
     BetaSchedule,
@@ -11,7 +13,6 @@ from avalan.entities import (
 )
 from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToAnimationModel
-from diffusers import AnimateDiffPipeline, DiffusionPipeline
 
 
 class TextToAnimationModelInstantiationTestCase(TestCase):

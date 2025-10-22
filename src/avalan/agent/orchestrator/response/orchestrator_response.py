@@ -1,5 +1,4 @@
-from ... import AgentOperation
-from ...engine import EngineAgent
+from ....cli import CommandAbortException
 from ....entities import (
     Input,
     Message,
@@ -15,11 +14,13 @@ from ....entities import (
 )
 from ....event import Event, EventType
 from ....event.manager import EventManager
-from ....model.response.text import TextGenerationResponse
 from ....model.call import ModelCallContext
-from ....tool.manager import ToolManager
 from ....model.response.parsers.tool import ToolCallResponseParser
-from ....cli import CommandAbortException
+from ....model.response.text import TextGenerationResponse
+from ....tool.manager import ToolManager
+from ... import AgentOperation
+from ...engine import EngineAgent
+
 from base64 import b64encode
 from dataclasses import asdict, is_dataclass
 from inspect import iscoroutine
@@ -564,10 +565,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     async def _on_consumed(self) -> None:
         assert self._event_manager
         await self._event_manager.trigger(Event(type=EventType.STREAM_END))
+
     def _make_child_context(self, messages: Input) -> ModelCallContext:
         parent_context = self._context
         root_parent = (
-            parent_context.root_parent or parent_context if parent_context else None
+            parent_context.root_parent or parent_context
+            if parent_context
+            else None
         )
         context = ModelCallContext(
             specification=self._operation.specification,
@@ -576,9 +580,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             parent=parent_context,
             root_parent=root_parent,
             agent_id=(
-                parent_context.agent_id
-                if parent_context
-                else self._agent_id
+                parent_context.agent_id if parent_context else self._agent_id
             ),
             participant_id=(
                 parent_context.participant_id
@@ -593,4 +595,3 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         )
         self._context = context
         return context
-

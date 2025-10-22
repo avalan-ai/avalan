@@ -20,19 +20,21 @@ from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
 from ...tool.database import DatabaseToolSettings
+
 from argparse import Namespace
 from contextlib import AsyncExitStack
 from dataclasses import fields
-from jinja2 import Environment, FileSystemLoader
 from logging import Logger
 from os.path import dirname, getmtime, join
+from typing import Iterable, Mapping
+from uuid import UUID, uuid4
+
+from jinja2 import Environment, FileSystemLoader
 from rich.console import Console
 from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.theme import Theme
-from typing import Iterable, Mapping
-from uuid import UUID, uuid4
 
 
 def _parse_permanent_memory_items(

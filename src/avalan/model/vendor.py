@@ -1,5 +1,3 @@
-from .message import TemplateMessage, TemplateMessageRole
-from .stream import TextGenerationStream
 from ..entities import (
     GenerationSettings,
     Message,
@@ -10,6 +8,9 @@ from ..entities import (
     ToolCallToken,
 )
 from ..tool.manager import ToolManager
+from .message import TemplateMessage, TemplateMessageRole
+from .stream import TextGenerationStream
+
 from abc import ABC
 from json import JSONDecodeError, dumps, loads
 from typing import AsyncGenerator

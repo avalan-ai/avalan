@@ -5,9 +5,9 @@ from logging import Logger
 from sys import modules
 from types import ModuleType
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from avalan.entities import (
     Backend,
@@ -192,7 +192,7 @@ def test_text_generation_load_engine_mlx_missing_dependency(
     logger = MagicMock(spec=Logger)
     exit_stack = AsyncExitStack()
 
-    with pytest.raises(ModuleNotFoundError, match="avalan\[mlx\]"):
+    with pytest.raises(ModuleNotFoundError, match=r"avalan\[mlx\]"):
         TextGenerationModality().load_engine(
             local_engine_uri,
             settings,

@@ -17,10 +17,10 @@ from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.renderer import Renderer
 from avalan.entities import (
     EngineUri,
+    GenerationSettings,
     Message,
     MessageContentText,
     MessageRole,
-    GenerationSettings,
     TransformerEngineSettings,
 )
 from avalan.event import EventType

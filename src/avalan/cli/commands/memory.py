@@ -1,27 +1,29 @@
 from ...cli import get_input
 from ...cli.commands import get_model_settings
-from ...entities import DistanceType, Modality, SearchMatch, Similarity
 from ...cli.commands.model import model_display
-from ...memory.partitioner.text import TextPartitioner, TextPartition
+from ...entities import DistanceType, Modality, SearchMatch, Similarity
 from ...memory.partitioner.code import CodePartitioner
+from ...memory.partitioner.text import TextPartition, TextPartitioner
 from ...memory.permanent import MemoryType
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from ...memory.source import MemorySource
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
+
 from argparse import Namespace
 from asyncio import to_thread
-from faiss import IndexFlatL2
-from pathlib import Path
-from urllib.parse import urlparse
 from io import BytesIO
 from logging import Logger
-from markitdown import MarkItDown, DocumentConverterResult
+from pathlib import Path
+from urllib.parse import urlparse
+from uuid import UUID
+
+from faiss import IndexFlatL2
+from markitdown import DocumentConverterResult, MarkItDown
 from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
 from rich.theme import Theme
-from uuid import UUID
 
 
 async def memory_document_index(

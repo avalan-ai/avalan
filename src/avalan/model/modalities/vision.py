@@ -1,14 +1,3 @@
-from .registry import ModalityRegistry
-from ..vision.classification import ImageClassificationModel
-from ..vision.decoder import VisionEncoderDecoderModel
-from ..vision.detection import ObjectDetectionModel
-from ..vision.diffusion import (
-    TextToAnimationModel,
-    TextToImageModel,
-    TextToVideoModel,
-)
-from ..vision.segmentation import SemanticSegmentationModel
-from ..vision.text import ImageTextToTextModel, ImageToTextModel
 from ...entities import (
     EngineUri,
     GenerationSettings,
@@ -20,6 +9,17 @@ from ...entities import (
     TransformerEngineSettings,
 )
 from ...tool.manager import ToolManager
+from ..vision.classification import ImageClassificationModel
+from ..vision.decoder import VisionEncoderDecoderModel
+from ..vision.detection import ObjectDetectionModel
+from ..vision.diffusion import (
+    TextToAnimationModel,
+    TextToImageModel,
+    TextToVideoModel,
+)
+from ..vision.segmentation import SemanticSegmentationModel
+from ..vision.text import ImageTextToTextModel, ImageToTextModel
+from .registry import ModalityRegistry
 
 from argparse import Namespace
 from contextlib import AsyncExitStack

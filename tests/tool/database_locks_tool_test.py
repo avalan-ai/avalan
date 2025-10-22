@@ -313,4 +313,3 @@ def test_bool_and_mysql_helpers() -> None:
     assert tool._mysql_granted("granted") is True
     assert tool._mysql_granted("waiting") is False
     assert tool._mysql_granted("other") is None
-

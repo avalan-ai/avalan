@@ -1,12 +1,4 @@
-from datetime import datetime, timezone
-from json import dumps, loads
-from logging import Logger
-from typing import Any
-from uuid import UUID, uuid4
-
-from boto3 import client as boto_client
 from ....deploy.aws import AsyncClient
-
 from ....entities import (
     EngineMessage,
     EngineMessageScored,
@@ -19,6 +11,14 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from . import S3VectorsMemory
+
+from datetime import datetime, timezone
+from json import dumps, loads
+from logging import Logger
+from typing import Any
+from uuid import UUID, uuid4
+
+from boto3 import client as boto_client
 
 
 class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):

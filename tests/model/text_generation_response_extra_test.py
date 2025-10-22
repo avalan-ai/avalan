@@ -1,18 +1,19 @@
-from avalan.model.response.text import TextGenerationResponse
-from avalan.model.response.parsers.reasoning import ReasoningParser
 from logging import getLogger
-from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.tool.parser import ToolCallParser
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import MagicMock
+
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
     ReasoningToken,
-    ToolCallToken,
     Token,
     TokenDetail,
+    ToolCallToken,
 )
-from unittest.mock import MagicMock
-from unittest import IsolatedAsyncioTestCase
+from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.model.response.text import TextGenerationResponse
+from avalan.tool.parser import ToolCallParser
 
 
 async def _complex_generator():

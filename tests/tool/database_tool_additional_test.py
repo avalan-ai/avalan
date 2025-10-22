@@ -1,3 +1,4 @@
+import re
 from asyncio import run
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -47,7 +48,9 @@ def _inspector(
 
 
 def _result(rows):
-    return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: list(rows)))
+    return SimpleNamespace(
+        mappings=lambda: SimpleNamespace(all=lambda: list(rows))
+    )
 
 
 def test_identifier_case_normalizer_behaviour() -> None:
@@ -205,7 +208,9 @@ def test_database_tasks_tool_collects_postgresql_rows() -> None:
     connection = SimpleNamespace(
         dialect=SimpleNamespace(name="postgresql"), execute=execute
     )
-    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseTasksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     tasks = tool._collect(connection)
 
@@ -215,7 +220,18 @@ def test_database_tasks_tool_collects_postgresql_rows() -> None:
     assert tasks[0].user == "alice"
     assert tasks[0].query == "SELECT 1"
     assert tasks[0].duration == 120
-    assert "CAST(EXTRACT(EPOCH FROM clock_timestamp() - query_start) AS BIGINT)" in calls[0][0]
+
+    def normalize(s: str) -> str:
+        return re.sub(r"\s+", " ", s.strip())
+
+    expected = """
+        CAST(
+            EXTRACT(EPOCH FROM clock_timestamp() - query_start)
+            AS BIGINT
+        ) AS duration
+    """
+
+    assert normalize(expected) in normalize(calls[0][0])
 
 
 def test_database_tasks_tool_collects_mysql_rows() -> None:
@@ -248,7 +264,9 @@ def test_database_tasks_tool_collects_mysql_rows() -> None:
         execute=execute,
     )
 
-    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseTasksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     tasks = tool._collect(connection)
 
     assert len(tasks) == 1
@@ -293,7 +311,9 @@ def test_database_tasks_tool_skips_mysql_rows_without_queries() -> None:
         execute=execute,
     )
 
-    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseTasksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     tasks = tool._collect(connection)
 
     assert len(tasks) == 1
@@ -329,7 +349,9 @@ def test_database_tasks_tool_filters_postgresql_rows_by_running_for() -> None:
         execute=lambda statement, params=None: _result(rows),
     )
 
-    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseTasksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     tasks = tool._collect_postgresql(connection, running_for=60)
 
     assert len(tasks) == 1
@@ -371,7 +393,9 @@ def test_database_tasks_tool_filters_mysql_rows_by_running_for() -> None:
         execute=execute,
     )
 
-    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseTasksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     tasks = tool._collect_mysql(connection, running_for=60)
 
     assert len(tasks) == 1
@@ -381,7 +405,9 @@ def test_database_tasks_tool_filters_mysql_rows_by_running_for() -> None:
 
 def test_database_tasks_tool_returns_empty_for_unsupported_dialect() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
-    tool = DatabaseTasksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseTasksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     assert tool._collect(connection) == []
 
 
@@ -410,7 +436,9 @@ def test_database_locks_tool_collects_postgresql() -> None:
         execute=execute,
     )
 
-    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseLocksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     locks = tool._collect(connection)
 
     assert "FROM pg_locks" in captured["sql"]
@@ -456,7 +484,9 @@ def test_database_locks_tool_collects_mysql() -> None:
         execute=execute,
     )
 
-    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseLocksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     locks = tool._collect(connection)
 
     assert "FROM performance_schema.data_locks" in captured["sql"]
@@ -488,7 +518,9 @@ def test_database_locks_tool_collects_mariadb() -> None:
         execute=execute,
     )
 
-    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseLocksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     locks = tool._collect(connection)
 
     assert executed is True
@@ -504,7 +536,9 @@ def test_database_locks_tool_handles_mysql_errors() -> None:
         execute=execute,
     )
 
-    tool = DatabaseLocksTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseLocksTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     locks = tool._collect(connection)
 
     assert locks == []
@@ -555,7 +589,9 @@ def test_database_inspect_tool_collects_with_custom_schema(
 
 
 def test_database_plan_tool_builds_postgresql_statement() -> None:
-    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabasePlanTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     statement, dialect = tool._statement_for_plan(
         SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
         "SELECT 1",
@@ -566,7 +602,9 @@ def test_database_plan_tool_builds_postgresql_statement() -> None:
 
 
 def test_database_plan_tool_builds_mysql_statement() -> None:
-    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabasePlanTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     statement, dialect = tool._statement_for_plan(
         SimpleNamespace(dialect=SimpleNamespace(name="mysql")),
         "SELECT 1",
@@ -577,7 +615,9 @@ def test_database_plan_tool_builds_mysql_statement() -> None:
 
 
 def test_database_plan_tool_builds_sqlite_statement() -> None:
-    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabasePlanTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     statement, dialect = tool._statement_for_plan(
         SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
         "SELECT 1",
@@ -588,7 +628,9 @@ def test_database_plan_tool_builds_sqlite_statement() -> None:
 
 
 def test_database_plan_tool_builds_generic_statement() -> None:
-    tool = DatabasePlanTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabasePlanTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     statement, dialect = tool._statement_for_plan(
         SimpleNamespace(dialect=SimpleNamespace(name="custom")),
         "SELECT 1",
@@ -655,9 +697,13 @@ def test_database_kill_tool_postgresql_executes_cancel() -> None:
         dialect=SimpleNamespace(name="postgresql"), execute=execute
     )
 
-    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseKillTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     assert tool._kill(connection, task_id="7") is True
-    assert captured["statement"] == "SELECT pg_cancel_backend(:pid) AS cancelled"
+    assert (
+        captured["statement"] == "SELECT pg_cancel_backend(:pid) AS cancelled"
+    )
     assert captured["params"] == {"pid": 7}
 
 
@@ -673,7 +719,9 @@ def test_database_kill_tool_mysql_executes_kill() -> None:
         dialect=SimpleNamespace(name="mysql"), execute=execute
     )
 
-    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseKillTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     assert tool._kill(connection, task_id="12") is True
     assert captured["statement"] == "KILL :pid"
     assert captured["params"] == {"pid": 12}
@@ -681,21 +729,27 @@ def test_database_kill_tool_mysql_executes_kill() -> None:
 
 def test_database_kill_tool_rejects_non_integer_identifier() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseKillTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     with pytest.raises(RuntimeError):
         tool._kill(connection, task_id="abc")
 
 
 def test_database_kill_tool_rejects_negative_identifier() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseKillTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     with pytest.raises(RuntimeError):
         tool._kill(connection, task_id="-1")
 
 
 def test_database_kill_tool_unsupported_dialect() -> None:
     connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
-    tool = DatabaseKillTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseKillTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     with pytest.raises(RuntimeError):
         tool._kill(connection, task_id="1")
 

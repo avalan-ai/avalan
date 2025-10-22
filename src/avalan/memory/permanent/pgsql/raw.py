@@ -9,12 +9,14 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from json import dumps
 from logging import Logger
-from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
+
+from pgvector.psycopg import Vector
 
 
 class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):

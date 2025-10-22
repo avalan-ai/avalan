@@ -1,7 +1,9 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
+from . import Tool, ToolSet
+
 from contextlib import AsyncExitStack
+
 from sympy import sympify
 
 
@@ -13,7 +15,7 @@ class CalculatorTool(Tool):
 
     Returns:
         Result of the expression formatted as a string.
-"""
+    """
 
     def __init__(self) -> None:
         super().__init__()

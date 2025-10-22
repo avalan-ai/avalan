@@ -1,11 +1,27 @@
+from asyncio import (
+    CancelledError,
+    run,
+)
+from asyncio import (
+    Event as AsyncEvent,
+)
+from contextlib import suppress
+from json import dumps, loads
+from logging import getLogger
+from types import SimpleNamespace
+from typing import Any, AsyncIterator
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
 from avalan.entities import (
     ReasoningToken,
+    Token,
+    TokenDetail,
     ToolCall,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
-    Token,
-    TokenDetail,
 )
 from avalan.event import Event, EventType
 from avalan.server.entities import (
@@ -14,19 +30,6 @@ from avalan.server.entities import (
     MCPToolRequest,
 )
 from avalan.server.routers import mcp as mcp_router
-from contextlib import suppress
-from asyncio import (
-    CancelledError,
-    Event as AsyncEvent,
-    run,
-)
-from logging import getLogger
-from json import dumps, loads
-from types import SimpleNamespace
-from typing import Any, AsyncIterator
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
 
 
 class DummyRequest:

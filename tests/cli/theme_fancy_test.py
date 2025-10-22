@@ -1,22 +1,25 @@
+import unittest
 from datetime import datetime
 from types import SimpleNamespace
-from uuid import UUID
-import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
-from rich.spinner import Spinner
-from rich.text import Text
-from rich.table import Table
-from rich import box
+from uuid import UUID
+
 import numpy as np
 from numpy.linalg import norm
+from rich import box
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
 
+from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
-    HubCacheFile,
     HubCacheDeletion,
+    HubCacheFile,
+    ImageEntity,
     Message,
     ModelConfig,
     SearchMatch,
@@ -25,14 +28,11 @@ from avalan.entities import (
     Token,
     TokenDetail,
     TokenizerConfig,
-    ImageEntity,
     User,
 )
-from avalan.memory.permanent import PermanentMemoryPartition
-from avalan.memory.partitioner.text import TextPartition
-
-from avalan.cli.theme.fancy import FancyTheme
 from avalan.event import Event, EventStats, EventType
+from avalan.memory.partitioner.text import TextPartition
+from avalan.memory.permanent import PermanentMemoryPartition
 
 
 class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):

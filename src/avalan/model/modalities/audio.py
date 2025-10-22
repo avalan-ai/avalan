@@ -1,8 +1,3 @@
-from .registry import ModalityRegistry
-from ..audio.classification import AudioClassificationModel
-from ..audio.generation import AudioGenerationModel
-from ..audio.speech import TextToSpeechModel
-from ..audio.speech_recognition import SpeechRecognitionModel
 from ...entities import (
     EngineUri,
     GenerationSettings,
@@ -14,6 +9,11 @@ from ...entities import (
     TransformerEngineSettings,
 )
 from ...tool.manager import ToolManager
+from ..audio.classification import AudioClassificationModel
+from ..audio.generation import AudioGenerationModel
+from ..audio.speech import TextToSpeechModel
+from ..audio.speech_recognition import SpeechRecognitionModel
+from .registry import ModalityRegistry
 
 from argparse import Namespace
 from contextlib import AsyncExitStack

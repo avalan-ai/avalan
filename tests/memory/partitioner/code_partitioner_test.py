@@ -1,12 +1,13 @@
+from logging import Logger
+from unittest import TestCase, main
+from unittest.mock import MagicMock
+
 from avalan.memory.partitioner import Encoding, PartitionerException
 from avalan.memory.partitioner.code import (
     CodePartitioner,
     LanguageName,
     Symbol,
 )
-from logging import Logger
-from unittest import main, TestCase
-from unittest.mock import MagicMock
 
 
 class CodePartitionerTestCase(TestCase):

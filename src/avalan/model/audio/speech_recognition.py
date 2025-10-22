@@ -1,7 +1,10 @@
 from ...compat import override
-from ...model.vendor import TextGenerationVendor
 from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
+from ...model.vendor import TextGenerationVendor
+
+from typing import Literal
+
 from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
 from transformers import (
@@ -9,7 +12,6 @@ from transformers import (
     AutoProcessor,
     PreTrainedModel,
 )
-from typing import Literal
 
 
 class SpeechRecognitionModel(BaseAudioModel):

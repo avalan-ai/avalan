@@ -1,5 +1,3 @@
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -10,6 +8,9 @@ from .....entities import (
 )
 from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
+
 from dataclasses import replace
 from logging import Logger, getLogger
 from typing import AsyncIterator

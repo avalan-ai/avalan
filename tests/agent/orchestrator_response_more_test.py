@@ -1,7 +1,12 @@
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+
+from avalan.agent import AgentOperation, EngineEnvironment, Specification
+from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from avalan.agent import EngineEnvironment, AgentOperation, Specification
 from avalan.entities import (
     EngineUri,
     Input,
@@ -10,13 +15,9 @@ from avalan.entities import (
     Token,
 )
 from avalan.event import Event, EventType
-from avalan.tool.manager import ToolManager
-from avalan.model.response.text import TextGenerationResponse
 from avalan.model.call import ModelCallContext
-from logging import getLogger
-from avalan.agent.engine import EngineAgent
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from avalan.model.response.text import TextGenerationResponse
+from avalan.tool.manager import ToolManager
 
 
 class _DummyEngine:

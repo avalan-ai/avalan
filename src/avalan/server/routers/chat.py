@@ -1,6 +1,3 @@
-from . import orchestrate
-from .. import di_get_logger, di_get_orchestrator
-from ..sse import sse_headers, sse_message
 from ...agent.orchestrator import Orchestrator
 from ...entities import MessageRole, ReasoningToken, ToolCallToken
 from ...event import Event
@@ -11,12 +8,17 @@ from ...server.entities import (
     ChatCompletionChunkChoiceDelta,
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatMessage,
     ChatCompletionUsage,
+    ChatMessage,
 )
+from .. import di_get_logger, di_get_orchestrator
+from ..sse import sse_headers, sse_message
+from . import orchestrate
+
+from logging import Logger
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from logging import Logger
 
 router = APIRouter(
     prefix="/chat",

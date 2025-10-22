@@ -1,8 +1,11 @@
 from ...compat import override
 from ...entities import ImageEntity
-from ...model.vendor import TextGenerationVendor
 from ...model.engine import Engine
+from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
+
+from typing import Literal
+
 from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode
@@ -11,7 +14,6 @@ from transformers import (
     AutoModelForImageClassification,
     PreTrainedModel,
 )
-from typing import Literal
 
 
 # model predicts one of the 1000 ImageNet classes

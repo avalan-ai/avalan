@@ -1,16 +1,18 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.engine import Engine
-from avalan.model.nlp.sequence import SequenceClassificationModel
+from contextlib import nullcontext
 from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
 from transformers import (
-    AutoTokenizer,
     AutoModelForSequenceClassification,
+    AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
-from contextlib import nullcontext
+
+from avalan.entities import TransformerEngineSettings
+from avalan.model.engine import Engine
+from avalan.model.nlp.sequence import SequenceClassificationModel
 
 
 class SequenceClassificationModelInstantiationTestCase(TestCase):

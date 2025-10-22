@@ -22,10 +22,12 @@ from ....tool.parser import ToolCallParser
 
 from asyncio import sleep
 from dataclasses import asdict, replace
-from diffusers import DiffusionPipeline
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Thread
+from typing import AsyncGenerator, Literal
+
+from diffusers import DiffusionPipeline
 from torch import Tensor, log_softmax, softmax, topk
 from torch.nn.functional import gumbel_softmax
 from transformers import (
@@ -38,7 +40,6 @@ from transformers import (
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import AsyncGenerator, Literal
 
 _TOOL_MESSAGE_PARSER = ToolCallParser()
 

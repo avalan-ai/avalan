@@ -14,7 +14,7 @@ class DatabaseCountTool(DatabaseTool):
     """Count rows in the given table.
 
     Args:
-        table_name: Table to count rows from (optionally schema-qualified, e.g. 'public.users').
+        table_name: Table to count  (optional schema, e.g. 'public.users').
 
     Returns:
         Number of rows in the table.
@@ -59,4 +59,3 @@ class DatabaseCountTool(DatabaseTool):
 
             result = await conn.execute(stmt)
             return int(result.scalar_one())
-

@@ -1,6 +1,7 @@
+from unittest import IsolatedAsyncioTestCase, main
+
 from avalan.entities import ToolCallContext
 from avalan.tool.code import CodeTool
-from unittest import IsolatedAsyncioTestCase, main
 
 
 class CodeToolTestCase(IsolatedAsyncioTestCase):

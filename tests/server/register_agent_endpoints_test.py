@@ -3,13 +3,12 @@ import sys
 from contextlib import asynccontextmanager
 from logging import Logger
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
 
 from avalan.server import register_agent_endpoints
-
 
 MODULE = register_agent_endpoints.__module__
 SERVER_MODULE = sys.modules[MODULE]
@@ -121,7 +120,9 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
 
     with (
         patch.object(SERVER_MODULE.mcp_router, "MCPResourceStore"),
-        patch.object(SERVER_MODULE.mcp_router, "create_router") as create_router,
+        patch.object(
+            SERVER_MODULE.mcp_router, "create_router"
+        ) as create_router,
         patch.object(SERVER_MODULE, "OrchestratorLoader"),
         patch.object(
             SERVER_MODULE, "import_module", side_effect=import_module
@@ -147,7 +148,9 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
         assert "avalan.server.routers.engine" in called_module_names
         assert "avalan.server.routers.chat" not in called_module_names
         create_router.assert_called_once_with()
-        app.include_router.assert_any_call(modules["avalan.server.routers.engine"].router)
+        app.include_router.assert_any_call(
+            modules["avalan.server.routers.engine"].router
+        )
         app.include_router.assert_any_call(
             modules["avalan.server.routers.responses"].router, prefix="/openai"
         )

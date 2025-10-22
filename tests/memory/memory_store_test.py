@@ -1,7 +1,8 @@
-from avalan.memory import MemoryStore, MessageMemory, RecentMessageMemory
-from avalan.entities import EngineMessage, Message, MessageRole
-from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase, TestCase
+from uuid import uuid4
+
+from avalan.entities import EngineMessage, Message, MessageRole
+from avalan.memory import MemoryStore, MessageMemory, RecentMessageMemory
 
 
 class DummyMemoryStore(MemoryStore[int]):

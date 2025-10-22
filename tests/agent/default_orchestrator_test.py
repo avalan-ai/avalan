@@ -1,8 +1,17 @@
+from dataclasses import asdict
+from json import dumps
+from logging import Logger, getLogger
+from tempfile import TemporaryDirectory
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
 from avalan.agent import Goal, InputType, OutputType, Specification
 from avalan.agent.orchestrator.orchestrators.default import DefaultOrchestrator
+from avalan.agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
+)
 from avalan.agent.renderer import Renderer, TemplateEngineAgent
-from avalan.event import EventType
-from avalan.event.manager import EventManager
 from avalan.entities import (
     EngineUri,
     Message,
@@ -10,20 +19,12 @@ from avalan.entities import (
     Modality,
     TransformerEngineSettings,
 )
-from avalan.agent.orchestrator.response.orchestrator_response import (
-    OrchestratorResponse,
-)
-from avalan.model import TextGenerationResponse
-from dataclasses import asdict
-from json import dumps
-from logging import Logger, getLogger
-from avalan.model.manager import ModelManager
+from avalan.event import EventType
+from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
+from avalan.model import TextGenerationResponse
+from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
-from tempfile import TemporaryDirectory
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 
 class DefaultOrchestratorInitTestCase(TestCase):

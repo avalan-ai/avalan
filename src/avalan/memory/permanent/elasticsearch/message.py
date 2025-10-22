@@ -1,10 +1,3 @@
-from datetime import datetime, timezone
-from logging import Logger
-from typing import Any
-from uuid import UUID, uuid4
-
-from elasticsearch import AsyncElasticsearch
-
 from ....entities import (
     EngineMessage,
     EngineMessageScored,
@@ -17,6 +10,13 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from . import ElasticsearchMemory
+
+from datetime import datetime, timezone
+from logging import Logger
+from typing import Any
+from uuid import UUID, uuid4
+
+from elasticsearch import AsyncElasticsearch
 
 
 class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):

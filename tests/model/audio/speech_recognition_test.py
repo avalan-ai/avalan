@@ -1,15 +1,17 @@
-from avalan.entities import EngineSettings
-from avalan.model.engine import Engine
-from avalan.model.audio.speech_recognition import (
-    AutoProcessor,
-    AutoModelForCTC,
-    SpeechRecognitionModel,
-)
 from contextlib import nullcontext
 from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
 from transformers import PreTrainedModel
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
+
+from avalan.entities import EngineSettings
+from avalan.model.audio.speech_recognition import (
+    AutoModelForCTC,
+    AutoProcessor,
+    SpeechRecognitionModel,
+)
+from avalan.model.engine import Engine
 
 
 class SpeechRecognitionModelInstantiationTestCase(TestCase):

@@ -1,10 +1,10 @@
-import sys
 import importlib
-from types import ModuleType, SimpleNamespace
-from dataclasses import dataclass
+import sys
 from argparse import Namespace
+from dataclasses import dataclass
+from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
 
 
 class CliTokenizerTestCase(IsolatedAsyncioTestCase):

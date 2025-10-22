@@ -1,3 +1,7 @@
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4 as _uuid4
+
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
@@ -9,11 +13,8 @@ from avalan.entities import (
     ToolTransformer,
 )
 from avalan.tool import Tool, ToolSet
-from avalan.tool.math import CalculatorTool
 from avalan.tool.manager import ToolManager
-from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import AsyncMock, patch
-from uuid import uuid4 as _uuid4
+from avalan.tool.math import CalculatorTool
 
 
 class ToolManagerCreationTestCase(TestCase):

@@ -1,8 +1,9 @@
-from avalan.entities import EngineSettings
-from avalan.model.vision import BaseVisionModel
 from logging import Logger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
+
+from avalan.entities import EngineSettings
+from avalan.model.vision import BaseVisionModel
 
 
 class DummyVisionModel(BaseVisionModel):

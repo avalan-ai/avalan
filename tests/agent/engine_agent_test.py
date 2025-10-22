@@ -1,3 +1,8 @@
+from dataclasses import replace
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
@@ -9,14 +14,10 @@ from avalan.entities import (
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
-from avalan.tool.manager import ToolManager
 from avalan.model import TextGenerationResponse
-from logging import getLogger
-from avalan.model.manager import ModelManager
 from avalan.model.call import ModelCallContext
-from dataclasses import replace
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from avalan.model.manager import ModelManager
+from avalan.tool.manager import ToolManager
 
 
 class DummyEngine:
@@ -199,9 +200,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
 
         message = Message(role=MessageRole.USER, content="hi")
         context = self._make_context(message)
-        await agent._run(
-            context, message, temperature=0.4
-        )
+        await agent._run(context, message, temperature=0.4)
 
         self.assertEqual(len(memory.recent_messages), 2)
         self.assertEqual(
@@ -220,9 +219,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         agent, engine, memory, manager = self._make_agent()
         message = Message(role=MessageRole.USER, content="hi")
         context = self._make_context(message)
-        await agent._run(
-            context, message, temperature=0.4
-        )
+        await agent._run(context, message, temperature=0.4)
 
         self.assertEqual(len(memory.recent_messages), 1)
         self.assertEqual(
@@ -256,9 +253,9 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             settings=GenerationSettings(),
         )
         manager.assert_awaited_once()
-        used_settings = (
-            manager.await_args.args[0].operation.generation_settings
-        )
+        used_settings = manager.await_args.args[
+            0
+        ].operation.generation_settings
         self.assertEqual(used_settings.top_p, 0.5)
 
 

@@ -1,11 +1,12 @@
+from logging import Logger
+from os import environ
+from unittest import TestCase, main
+from unittest.mock import MagicMock, patch
+
 from avalan.entities import EngineUri, Modality, TransformerEngineSettings
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 from avalan.secrets import KeyringSecrets
-from logging import Logger
-from os import environ
-from unittest import main, TestCase
-from unittest.mock import MagicMock, patch
 
 
 class ManagerTestCase(TestCase):

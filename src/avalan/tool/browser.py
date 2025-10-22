@@ -1,21 +1,23 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import Message, MessageRole, ToolCallContext
 from ..filters import Partitioner
+from . import Tool, ToolSet
+
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
-from faiss import IndexFlatL2
 from io import BytesIO, TextIOBase
+from typing import Literal, final
+
+from faiss import IndexFlatL2
 from markitdown import MarkItDown
 from numpy import vstack
 from playwright.async_api import (
-    async_playwright,
     Browser,
     Page,
     PlaywrightContextManager,
+    async_playwright,
 )
-from typing import final, Literal
 
 
 @final
@@ -65,7 +67,7 @@ class BrowserTool(Tool):
 
     Returns:
         Contents of the requested page in Markdown format.
-"""
+    """
 
     _client: PlaywrightContextManager
     _settings: BrowserToolSettings

@@ -10,8 +10,8 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class DatabaseLocksTool(DatabaseTool):
@@ -60,7 +60,9 @@ class DatabaseLocksTool(DatabaseTool):
             return self._collect_mysql(connection)
         return []
 
-    def _collect_postgresql(self, connection: Connection) -> list[DatabaseLock]:
+    def _collect_postgresql(
+        self, connection: Connection
+    ) -> list[DatabaseLock]:
         statement = text(
             """
             SELECT
@@ -125,7 +127,8 @@ class DatabaseLocksTool(DatabaseTool):
                 t.PROCESSLIST_STATE AS state,
                 t.PROCESSLIST_INFO AS query,
                 GROUP_CONCAT(
-                    DISTINCT tb.PROCESSLIST_ID ORDER BY tb.PROCESSLIST_ID SEPARATOR ','
+                    DISTINCT tb.PROCESSLIST_ID
+                    ORDER BY tb.PROCESSLIST_ID SEPARATOR ','
                 ) AS blocking_pids
             FROM performance_schema.data_locks AS dl
             JOIN performance_schema.threads AS t ON t.THREAD_ID = dl.THREAD_ID
@@ -133,7 +136,8 @@ class DatabaseLocksTool(DatabaseTool):
                 ON dw.REQUESTING_ENGINE_LOCK_ID = dl.ENGINE_LOCK_ID
             LEFT JOIN performance_schema.data_locks AS bl
                 ON bl.ENGINE_LOCK_ID = dw.BLOCKING_ENGINE_LOCK_ID
-            LEFT JOIN performance_schema.threads AS tb ON tb.THREAD_ID = bl.THREAD_ID
+            LEFT JOIN performance_schema.threads AS tb
+                ON tb.THREAD_ID = bl.THREAD_ID
             GROUP BY
                 t.PROCESSLIST_ID,
                 t.PROCESSLIST_USER,
@@ -194,7 +198,9 @@ class DatabaseLocksTool(DatabaseTool):
         text_value = str(value).strip("{} ")
         if not text_value:
             return ()
-        return tuple(part.strip() for part in text_value.split(",") if part.strip())
+        return tuple(
+            part.strip() for part in text_value.split(",") if part.strip()
+        )
 
     @staticmethod
     def _normalize_query(value: Any) -> str | None:

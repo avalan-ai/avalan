@@ -1,7 +1,8 @@
-from importlib.metadata import metadata, version as metadata_version
-from packaging.version import parse, Version
-from urllib.parse import urlparse
-from urllib.parse import ParseResult
+from importlib.metadata import metadata
+from importlib.metadata import version as metadata_version
+from urllib.parse import ParseResult, urlparse
+
+from packaging.version import Version, parse
 
 
 def _config() -> dict:

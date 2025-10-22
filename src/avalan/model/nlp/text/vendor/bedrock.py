@@ -1,6 +1,3 @@
-from . import TextGenerationVendorModel
-from ....message import TemplateMessageRole
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -19,11 +16,16 @@ from .....entities import (
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
-from aioboto3 import Session as Boto3Session
+from ....message import TemplateMessageRole
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
+
 from contextlib import AsyncExitStack
-from diffusers import DiffusionPipeline
 from json import dumps
 from typing import Any, AsyncIterator
+
+from aioboto3 import Session as Boto3Session
+from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
 
 

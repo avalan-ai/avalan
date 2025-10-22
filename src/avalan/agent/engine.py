@@ -13,10 +13,10 @@ from ..entities import (
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
+from ..model.call import ModelCall, ModelCallContext
 from ..model.engine import Engine
 from ..model.manager import ModelManager
 from ..model.response.text import TextGenerationResponse
-from ..model.call import ModelCall, ModelCallContext
 from ..tool.manager import ToolManager
 
 from abc import ABC, abstractmethod

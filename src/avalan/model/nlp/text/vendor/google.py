@@ -1,13 +1,15 @@
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
 from .....compat import override
 from .....entities import GenerationSettings, Message, Token, TokenDetail
 from .....tool.manager import ToolManager
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
+
+from typing import AsyncIterator
+
 from diffusers import DiffusionPipeline
 from google.genai import Client
 from google.genai.types import GenerateContentResponse
 from transformers import PreTrainedModel
-from typing import AsyncIterator
 
 
 class GoogleStream(TextGenerationVendorStream):

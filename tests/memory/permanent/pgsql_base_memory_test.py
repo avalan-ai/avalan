@@ -1,15 +1,16 @@
 from dataclasses import dataclass
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from psycopg_pool import AsyncConnectionPool
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
 from psycopg import AsyncConnection, AsyncCursor
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
-from avalan.memory.permanent.pgsql import BasePgsqlMemory, PgsqlMemory
 from avalan.memory.permanent import (
     RecordNotFoundException,
     RecordNotSavedException,
 )
+from avalan.memory.permanent.pgsql import BasePgsqlMemory, PgsqlMemory
 
 
 @dataclass

@@ -1,10 +1,12 @@
-from dataclasses import asdict
 from contextlib import nullcontext
+from dataclasses import asdict
+from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from torch import tensor
+
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
-from torch import tensor
-from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
 
 
 class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):

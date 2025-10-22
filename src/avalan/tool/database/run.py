@@ -51,4 +51,3 @@ class DatabaseRunTool(DatabaseTool):
             if result.returns_rows:
                 return [dict(row) for row in result.mappings().all()]
         return []
-

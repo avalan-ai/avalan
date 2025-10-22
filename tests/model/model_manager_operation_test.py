@@ -1,9 +1,9 @@
 import unittest
 from argparse import Namespace
+from enum import StrEnum
 from unittest.mock import MagicMock
 
 from avalan.entities import Modality
-from enum import StrEnum
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
 

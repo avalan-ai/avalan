@@ -1,5 +1,3 @@
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -8,10 +6,14 @@ from .....entities import (
     TokenDetail,
 )
 from .....tool.manager import ToolManager
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
+
+from typing import AsyncIterator
+
 from diffusers import DiffusionPipeline
 from huggingface_hub import AsyncInferenceClient
 from transformers import PreTrainedModel
-from typing import AsyncIterator
 
 
 class HuggingfaceStream(TextGenerationVendorStream):

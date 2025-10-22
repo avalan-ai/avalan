@@ -1,10 +1,10 @@
-from logging import Logger
-from time import perf_counter
-from typing import Any
-
 from ..agent.loader import OrchestratorLoader
 from ..event import Event, EventType
 from .flow import Flow
+
+from logging import Logger
+from time import perf_counter
+from typing import Any
 
 
 class FlowManager:

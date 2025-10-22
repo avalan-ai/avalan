@@ -1,17 +1,17 @@
 import asyncio
-from types import SimpleNamespace, ModuleType
+from logging import getLogger
+from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, patch
-from logging import getLogger
 
 import torch
 
 from avalan.entities import (
     GenerationSettings,
-    QuantizationSettings,
-    TransformerEngineSettings,
     Message,
     MessageRole,
+    QuantizationSettings,
+    TransformerEngineSettings,
 )
 from avalan.model.nlp.text.generation import TextGenerationModel
 

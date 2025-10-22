@@ -1,12 +1,13 @@
-from avalan.agent.loader import OrchestratorLoader
-from avalan.entities import PermanentMemoryStoreSettings
-from avalan.model.hubs.huggingface import HuggingfaceHub
 from contextlib import AsyncExitStack
 from logging import Logger
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+from avalan.agent.loader import OrchestratorLoader
+from avalan.entities import PermanentMemoryStoreSettings
+from avalan.model.hubs.huggingface import HuggingfaceHub
 
 
 class OrchestratorLoaderCoverageTestCase(IsolatedAsyncioTestCase):

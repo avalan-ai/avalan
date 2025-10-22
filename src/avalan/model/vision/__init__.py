@@ -1,5 +1,7 @@
-from abc import ABC
 from ...model.engine import Engine
+
+from abc import ABC
+
 from PIL import Image
 
 

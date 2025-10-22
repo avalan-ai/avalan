@@ -1,15 +1,17 @@
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, call, patch
+
+from transformers import PreTrainedModel
+
 from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
+from avalan.model.vision import BaseVisionModel
 from avalan.model.vision.segmentation import (
     AutoImageProcessor,
     AutoModelForSemanticSegmentation,
     SemanticSegmentationModel,
 )
-from avalan.model.vision import BaseVisionModel
-from logging import Logger
-from transformers import PreTrainedModel
-from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import call, MagicMock, patch
 
 
 class DummyInputs(dict):

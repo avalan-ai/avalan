@@ -1,8 +1,10 @@
-from avalan.entities import TransformerEngineSettings
 from logging import Logger
-from pytest import importorskip
 from unittest import TestCase, main, skip
 from unittest.mock import MagicMock, patch
+
+from pytest import importorskip
+
+from avalan.entities import TransformerEngineSettings
 
 importorskip("mlx_lm", reason="mlx-lm not installed")
 

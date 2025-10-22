@@ -1,15 +1,17 @@
+from contextlib import nullcontext
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from transformers import PreTrainedModel
+
 from avalan.entities import EngineSettings
-from avalan.model.engine import Engine
 from avalan.model.audio.classification import (
     AudioClassificationModel,
     AutoFeatureExtractor,
     AutoModelForAudioClassification,
 )
-from contextlib import nullcontext
-from logging import Logger
-from transformers import PreTrainedModel
-from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import MagicMock, PropertyMock, patch
+from avalan.model.engine import Engine
 
 
 class AudioClassificationModelInstantiationTestCase(TestCase):

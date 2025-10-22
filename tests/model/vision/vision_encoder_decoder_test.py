@@ -1,19 +1,21 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.engine import Engine
-from avalan.model.vision.decoder import (
-    AutoImageProcessor,
-    VisionEncoderDecoderModel,
-    VisionEncoderDecoderModelImpl,
-)
-from avalan.model.vision import BaseVisionModel
 from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
 from transformers import (
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
+
+from avalan.entities import TransformerEngineSettings
+from avalan.model.engine import Engine
+from avalan.model.vision import BaseVisionModel
+from avalan.model.vision.decoder import (
+    AutoImageProcessor,
+    VisionEncoderDecoderModel,
+    VisionEncoderDecoderModelImpl,
+)
 
 
 class DummyInputs(dict):

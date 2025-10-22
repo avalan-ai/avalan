@@ -1,5 +1,6 @@
-from avalan.filters import Partitioner
 from unittest import IsolatedAsyncioTestCase, TestCase
+
+from avalan.filters import Partitioner
 
 
 class DummyPartitioner(Partitioner):

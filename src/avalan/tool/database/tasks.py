@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+
 class DatabaseTasksTool(DatabaseTool):
     """List killable database tasks from supported engines.
 
@@ -62,7 +63,9 @@ class DatabaseTasksTool(DatabaseTool):
         dialect_name = getattr(connection.dialect, "name", None)
 
         if dialect_name == "postgresql":
-            return self._collect_postgresql(connection, running_for=running_for)
+            return self._collect_postgresql(
+                connection, running_for=running_for
+            )
         if dialect_name in {"mysql", "mariadb"}:
             return self._collect_mysql(connection, running_for=running_for)
         return []
@@ -76,8 +79,10 @@ class DatabaseTasksTool(DatabaseTool):
                    usename as user_name,
                    state,
                    query,
-                   CAST(EXTRACT(EPOCH FROM clock_timestamp() - query_start) AS BIGINT)
-                       AS duration
+                   CAST(
+                     EXTRACT(EPOCH FROM clock_timestamp() - query_start)
+                     AS BIGINT
+                   ) AS duration
             from pg_stat_activity
             where pid <> pg_backend_pid()
               and query is not null
@@ -125,7 +130,7 @@ class DatabaseTasksTool(DatabaseTool):
                 continue
 
             info = row.get("Info")
-            query = (str(info).strip() if info is not None else "")
+            query = str(info).strip() if info is not None else ""
             if not query:
                 continue
 
@@ -157,4 +162,3 @@ class DatabaseTasksTool(DatabaseTool):
         if duration < 0:
             return 0
         return duration
-

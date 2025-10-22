@@ -1,14 +1,16 @@
+from datetime import datetime, timezone
+from json import dumps
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
+import numpy as np
+from psycopg import AsyncConnection, AsyncCursor
+from psycopg_pool import AsyncConnectionPool
+
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import Entity, Hyperedge, Memory, MemoryType
 from avalan.memory.permanent.pgsql.raw import PgsqlRawMemory
-from datetime import datetime, timezone
-from json import dumps
-import numpy as np
-from psycopg_pool import AsyncConnectionPool
-from psycopg import AsyncConnection, AsyncCursor
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, ANY, patch
-from uuid import uuid4, UUID
 
 
 class PgsqlRawMemoryTestCase(IsolatedAsyncioTestCase):

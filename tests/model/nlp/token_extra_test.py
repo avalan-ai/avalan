@@ -1,8 +1,9 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.nlp.token import TokenClassificationModel
 from logging import Logger
 from unittest import TestCase
 from unittest.mock import MagicMock
+
+from avalan.entities import TransformerEngineSettings
+from avalan.model.nlp.token import TokenClassificationModel
 
 
 class TokenClassificationModelPropertyTestCase(TestCase):

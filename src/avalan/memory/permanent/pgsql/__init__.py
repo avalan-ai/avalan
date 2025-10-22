@@ -1,19 +1,21 @@
 from ....entities import EngineMessage, EngineMessageScored, Message
-from ....memory import MemoryStore, MemoryChunk
+from ....memory import MemoryChunk, MemoryStore
 from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageScored,
     RecordNotFoundException,
     RecordNotSavedException,
 )
+
 from logging import Logger
 from time import perf_counter
+from typing import TypeVar
+
 from pgvector.psycopg import register_vector_async
-from psycopg_pool import AsyncConnectionPool
 from psycopg import AsyncConnection, AsyncCursor
 from psycopg.rows import dict_row
 from psycopg.types import TypeInfo
-from typing import TypeVar
+from psycopg_pool import AsyncConnectionPool
 
 T = TypeVar("T")
 

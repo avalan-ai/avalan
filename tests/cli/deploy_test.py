@@ -1,6 +1,6 @@
 import sys
-from types import ModuleType
 from tempfile import NamedTemporaryFile
+from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -1,16 +1,18 @@
-from abc import ABC, abstractmethod
 from ...model import TokenizerNotSupportedException
 from ...model.engine import Engine
+
+from abc import ABC, abstractmethod
+from typing import Literal
+
+from numpy import ndarray
 from PIL import Image
 from torch import Tensor
 from torchaudio import load
 from torchaudio.functional import resample
-from numpy import ndarray
 from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Literal
 
 
 class BaseAudioModel(Engine, ABC):

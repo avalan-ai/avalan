@@ -1,12 +1,14 @@
-from avalan.memory.partitioner.text import TextPartition
-from avalan.memory.permanent.s3vectors.message import S3VectorsMessageMemory
-from avalan.entities import EngineMessage, Message, MessageRole
-from avalan.memory.permanent import VectorFunction
-from uuid import uuid4, UUID
 from datetime import datetime, timezone
-import numpy as np
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
+import numpy as np
+
+from avalan.entities import EngineMessage, Message, MessageRole
+from avalan.memory.partitioner.text import TextPartition
+from avalan.memory.permanent import VectorFunction
+from avalan.memory.permanent.s3vectors.message import S3VectorsMessageMemory
 
 
 class S3VectorsMessageMemoryTestCase(IsolatedAsyncioTestCase):

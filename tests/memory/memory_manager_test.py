@@ -1,18 +1,19 @@
-from avalan.entities import EngineMessage, Message, MessageRole
-from avalan.memory.manager import MemoryManager
-from avalan.event.manager import EventManager
-from avalan.event import EventType
-from avalan.memory import RecentMessageMemory
-from avalan.memory.permanent import (
-    PermanentMessageMemory,
-    PermanentMemory,
-    PermanentMemoryStore,
-    VectorFunction,
-)
-from uuid import uuid4
+import types
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
-import types
+from uuid import uuid4
+
+from avalan.entities import EngineMessage, Message, MessageRole
+from avalan.event import EventType
+from avalan.event.manager import EventManager
+from avalan.memory import RecentMessageMemory
+from avalan.memory.manager import MemoryManager
+from avalan.memory.permanent import (
+    PermanentMemory,
+    PermanentMemoryStore,
+    PermanentMessageMemory,
+    VectorFunction,
+)
 
 
 class MemoryManagerCreateTestCase(IsolatedAsyncioTestCase):

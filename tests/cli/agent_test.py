@@ -1,50 +1,51 @@
 import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch, call
 from argparse import Namespace
-from uuid import uuid4
-from tempfile import NamedTemporaryFile
 from dataclasses import asdict, dataclass
+from logging import getLogger
+from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
+from uuid import uuid4
 
 from rich.syntax import Syntax
 
+from avalan.agent import Specification
+from avalan.agent.engine import EngineAgent
+from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import (
     EngineMessage,
-    ToolCall,
+    EngineUri,
+    GenerationCacheStrategy,
+    GenerationSettings,
     Message,
     MessageRole,
-    GenerationSettings,
-    EngineUri,
     Modality,
     Operation,
     OperationParameters,
     OperationTextParameters,
-)
-from avalan.agent import Specification
-from avalan.agent.engine import EngineAgent
-from avalan.memory import RecentMessageMemory
-from avalan.memory.manager import MemoryManager
-from avalan.event.manager import EventManager
-from avalan.tool.manager import ToolManager, ToolManagerSettings
-from avalan.cli.commands import agent as agent_cmds
-from avalan.event import Event, EventType
-from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
-from avalan.model.response.text import TextGenerationResponse
-from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.model.call import ModelCall, ModelCallContext
-from logging import getLogger
-from avalan.entities import (
-    GenerationCacheStrategy,
     OrchestratorSettings,
     ReasoningSettings,
+    ReasoningToken,
+    Token,
+    TokenDetail,
+    ToolCall,
+    ToolCallToken,
     ToolFormat,
 )
+from avalan.event import Event, EventType
+from avalan.event.manager import EventManager
+from avalan.memory import RecentMessageMemory
+from avalan.memory.manager import MemoryManager
+from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
+from avalan.model.call import ModelCall, ModelCallContext
+from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.tool.parser import ToolCallParser
-from avalan.entities import ReasoningToken, Token, TokenDetail, ToolCallToken
+from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
+from avalan.tool.manager import ToolManager, ToolManagerSettings
+from avalan.tool.parser import ToolCallParser
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -1910,9 +1911,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             def _prepare_call(self, context: ModelCallContext):
                 return {}
 
-            async def _run(
-                self, context: ModelCallContext, input, **_kwargs
-            ):
+            async def _run(self, context: ModelCallContext, input, **_kwargs):
                 operation = Operation(
                     generation_settings=GenerationSettings(),
                     input=input,

@@ -1,15 +1,17 @@
-from avalan.cli.commands import memory as memory_cmds
-from avalan.entities import DistanceType, Modality
-from avalan.memory.permanent import MemoryType, VectorFunction
-from avalan.memory.partitioner.text import TextPartition
+import importlib.machinery
+import sys
+import types
 from argparse import Namespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
+
 import numpy as np
-import sys
-import types
-import importlib.machinery
+
+from avalan.cli.commands import memory as memory_cmds
+from avalan.entities import DistanceType, Modality
+from avalan.memory.partitioner.text import TextPartition
+from avalan.memory.permanent import MemoryType, VectorFunction
 
 # Stub faiss before importing the module under test
 faiss_stub = types.ModuleType("faiss")

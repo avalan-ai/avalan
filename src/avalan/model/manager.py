@@ -1,5 +1,3 @@
-from .modalities import ModalityRegistry
-from .call import ModelCall
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -40,13 +38,16 @@ from ..model.vision.diffusion import (
 from ..model.vision.segmentation import SemanticSegmentationModel
 from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
+from .call import ModelCall
+from .modalities import ModalityRegistry
+
 import asyncio
 from argparse import Namespace
 from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
 from os import environ
 from time import perf_counter
-from typing import Any, TYPE_CHECKING, TypeAlias, get_args
+from typing import TYPE_CHECKING, Any, TypeAlias, get_args
 from urllib.parse import parse_qsl, urlparse
 
 if TYPE_CHECKING:

@@ -1,3 +1,11 @@
+import json
+from datetime import datetime, timezone
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
+import numpy as np
+
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import (
     MemoryType,
@@ -5,12 +13,6 @@ from avalan.memory.permanent import (
     VectorFunction,
 )
 from avalan.memory.permanent.s3vectors.raw import S3VectorsRawMemory
-from datetime import datetime, timezone
-import json
-import numpy as np
-from uuid import uuid4, UUID
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class S3VectorsRawMemoryTestCase(IsolatedAsyncioTestCase):

@@ -4,12 +4,12 @@ from unittest import TestCase
 
 from avalan.entities import (
     ReasoningToken,
+    Token,
+    TokenDetail,
     ToolCall,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
-    Token,
-    TokenDetail,
 )
 from avalan.event import Event, EventType
 from avalan.server.routers.responses import (

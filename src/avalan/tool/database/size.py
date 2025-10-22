@@ -90,7 +90,9 @@ class DatabaseSizeTool(DatabaseTool):
         else:
             name = display_table
 
-        return TableSize(name=name, schema=schema_display, metrics=tuple(metrics))
+        return TableSize(
+            name=name, schema=schema_display, metrics=tuple(metrics)
+        )
 
     def _metrics_for_dialect(
         self,
@@ -132,10 +134,14 @@ class DatabaseSizeTool(DatabaseTool):
             """
         )
 
-        row = connection.execute(
-            statement,
-            {"table_name": table_name, "schema": schema},
-        ).mappings().first()
+        row = (
+            connection.execute(
+                statement,
+                {"table_name": table_name, "schema": schema},
+            )
+            .mappings()
+            .first()
+        )
 
         if not row:
             return []
@@ -170,10 +176,14 @@ class DatabaseSizeTool(DatabaseTool):
             """
         )
 
-        row = connection.execute(
-            statement,
-            {"table_name": table_name, "schema": schema},
-        ).mappings().first()
+        row = (
+            connection.execute(
+                statement,
+                {"table_name": table_name, "schema": schema},
+            )
+            .mappings()
+            .first()
+        )
 
         if not row:
             return []
@@ -193,23 +203,32 @@ class DatabaseSizeTool(DatabaseTool):
         self, connection: Connection, table_name: str
     ) -> list[TableSizeMetric]:
         try:
-            table_row = connection.execute(
-                text(
-                    "SELECT SUM(pgsize) AS size FROM dbstat WHERE name = :table_name"
-                ),
-                {"table_name": table_name},
-            ).mappings().first()
+            table_row = (
+                connection.execute(
+                    text(
+                        "SELECT SUM(pgsize) AS size FROM dbstat WHERE name ="
+                        " :table_name"
+                    ),
+                    {"table_name": table_name},
+                )
+                .mappings()
+                .first()
+            )
         except Exception:
             return self._collect_sqlite_via_pages(connection)
 
-        data_bytes = self._int_or_none(table_row.get("size") if table_row else None)
+        data_bytes = self._int_or_none(
+            table_row.get("size") if table_row else None
+        )
 
         index_rows: list[dict[str, Any]] = []
         try:
             pragma = table_name.replace("'", "''")
-            index_rows = connection.execute(
-                text(f"PRAGMA index_list('{pragma}')")
-            ).mappings().all()
+            index_rows = (
+                connection.execute(text(f"PRAGMA index_list('{pragma}')"))
+                .mappings()
+                .all()
+            )
         except Exception:
             index_rows = []
 
@@ -218,12 +237,17 @@ class DatabaseSizeTool(DatabaseTool):
             index_name = row.get("name")
             if not index_name:
                 continue
-            index_row = connection.execute(
-                text(
-                    "SELECT SUM(pgsize) AS size FROM dbstat WHERE name = :index_name"
-                ),
-                {"index_name": index_name},
-            ).mappings().first()
+            index_row = (
+                connection.execute(
+                    text(
+                        "SELECT SUM(pgsize) AS size FROM dbstat WHERE name ="
+                        " :index_name"
+                    ),
+                    {"index_name": index_name},
+                )
+                .mappings()
+                .first()
+            )
             index_value = self._int_or_none(
                 index_row.get("size") if index_row else None
             )
@@ -265,32 +289,42 @@ class DatabaseSizeTool(DatabaseTool):
         owner = schema.upper() if schema else None
         table_key = table_name.upper()
 
-        data_row = connection.execute(
-            text(
-                """
+        data_row = (
+            connection.execute(
+                text(
+                    """
                 SELECT SUM(bytes) AS bytes
                 FROM all_segments
                 WHERE segment_name = :table_name
                   AND segment_type LIKE 'TABLE%'
                   AND (:owner IS NULL OR owner = :owner)
                 """
-            ),
-            {"table_name": table_key, "owner": owner},
-        ).mappings().first()
+                ),
+                {"table_name": table_key, "owner": owner},
+            )
+            .mappings()
+            .first()
+        )
 
-        data_bytes = self._int_or_none(data_row.get("bytes") if data_row else None)
+        data_bytes = self._int_or_none(
+            data_row.get("bytes") if data_row else None
+        )
 
-        index_rows = connection.execute(
-            text(
-                """
+        index_rows = (
+            connection.execute(
+                text(
+                    """
                 SELECT index_name
                 FROM all_indexes
                 WHERE table_name = :table_name
                   AND (:owner IS NULL OR owner = :owner)
                 """
-            ),
-            {"table_name": table_key, "owner": owner},
-        ).mappings().all()
+                ),
+                {"table_name": table_key, "owner": owner},
+            )
+            .mappings()
+            .all()
+        )
 
         index_total = 0
         index_found = False
@@ -298,17 +332,21 @@ class DatabaseSizeTool(DatabaseTool):
             index_name = row.get("index_name")
             if not index_name:
                 continue
-            seg_row = connection.execute(
-                text(
-                    """
+            seg_row = (
+                connection.execute(
+                    text(
+                        """
                     SELECT SUM(bytes) AS bytes
                     FROM all_segments
                     WHERE segment_name = :index_name
                       AND (:owner IS NULL OR owner = :owner)
                     """
-                ),
-                {"index_name": index_name, "owner": owner},
-            ).mappings().first()
+                    ),
+                    {"index_name": index_name, "owner": owner},
+                )
+                .mappings()
+                .first()
+            )
             seg_value = self._int_or_none(
                 seg_row.get("bytes") if seg_row else None
             )
@@ -337,10 +375,18 @@ class DatabaseSizeTool(DatabaseTool):
         statement = text(
             """
             SELECT
-                SUM(CASE WHEN i.index_id <= 1 THEN ps.used_page_count ELSE 0 END)
-                    * 8192 AS data_bytes,
-                SUM(CASE WHEN i.index_id > 1 THEN ps.used_page_count ELSE 0 END)
-                    * 8192 AS index_bytes
+                SUM(
+                    CASE
+                        WHEN i.index_id <= 1 THEN ps.used_page_count
+                        ELSE 0
+                    END
+                ) * 8192 AS data_bytes,
+                SUM(
+                    CASE
+                        WHEN i.index_id > 1 THEN ps.used_page_count
+                        ELSE 0
+                    END
+                ) * 8192 AS index_bytes
             FROM sys.dm_db_partition_stats AS ps
             JOIN sys.indexes AS i
                 ON ps.object_id = i.object_id AND ps.index_id = i.index_id
@@ -350,10 +396,14 @@ class DatabaseSizeTool(DatabaseTool):
             """
         )
 
-        row = connection.execute(
-            statement,
-            {"table_name": table_name, "schema": schema},
-        ).mappings().first()
+        row = (
+            connection.execute(
+                statement,
+                {"table_name": table_name, "schema": schema},
+            )
+            .mappings()
+            .first()
+        )
 
         if not row:
             return []

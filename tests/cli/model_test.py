@@ -1,41 +1,44 @@
-from avalan.cli.commands import (
-    cache as cache_cmds,
-    get_model_settings,
-    model as model_cmds,
-)
+import asyncio
+from argparse import Namespace
+from datetime import datetime, timezone
+from logging import getLogger
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator import OrchestratorResponse
-from avalan.model.call import ModelCallContext
+from avalan.cli.commands import (
+    cache as cache_cmds,
+)
+from avalan.cli.commands import (
+    get_model_settings,
+)
+from avalan.cli.commands import (
+    model as model_cmds,
+)
 from avalan.entities import (
+    GenerationCacheStrategy,
+    GenerationSettings,
     ImageEntity,
     Message,
     MessageRole,
     Modality,
+    ReasoningSettings,
     Token,
     TokenDetail,
     ToolCallToken,
+    TransformerEngineSettings,
 )
-from avalan.event.manager import EventManager
 from avalan.event import Event, EventType
-from types import SimpleNamespace
-from argparse import Namespace
-from datetime import datetime, timezone
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from avalan.event.manager import EventManager
+from avalan.model.call import ModelCallContext
 from avalan.model.manager import ModelManager as RealModelManager
-from avalan.model.response.text import TextGenerationResponse
-from logging import getLogger
-from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.entities import (
-    GenerationCacheStrategy,
-    GenerationSettings,
-    ReasoningSettings,
-)
-from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.parser import ToolCallParser
-import asyncio
-from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 
 class CliModelTestCase(TestCase):
@@ -2174,9 +2177,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2278,9 +2279,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2380,9 +2379,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2477,9 +2474,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2584,9 +2579,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2698,9 +2691,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2803,9 +2794,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -2906,9 +2895,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3008,9 +2995,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3106,9 +3091,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3209,9 +3192,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3317,9 +3298,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3425,9 +3404,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3533,9 +3510,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3647,9 +3622,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3767,9 +3740,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -3888,9 +3859,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 
@@ -4010,9 +3979,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         manager.load = MagicMock(return_value=load_cm)
 
         async def call_side_effect(model_task):
-            return await RealModelManager.__call__(
-                manager, model_task
-            )
+            return await RealModelManager.__call__(manager, model_task)
 
         manager.side_effect = call_side_effect
 

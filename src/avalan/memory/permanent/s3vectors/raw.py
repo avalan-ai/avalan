@@ -8,6 +8,7 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from . import S3VectorsMemory
+
 from asyncio import to_thread  # noqa: F401
 from datetime import datetime, timezone
 from json import dumps, loads
@@ -15,8 +16,8 @@ from logging import Logger
 from typing import Any
 from uuid import UUID, uuid4
 
-from boto3 import client as boto_client
 import numpy as np
+from boto3 import client as boto_client
 
 
 class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):

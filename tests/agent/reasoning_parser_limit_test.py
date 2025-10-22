@@ -1,7 +1,7 @@
+from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import ReasoningSettings, ReasoningToken
-from logging import getLogger
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
     ReasoningTokenLimitExceeded,

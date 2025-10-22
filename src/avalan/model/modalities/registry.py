@@ -1,8 +1,8 @@
 from ...entities import (
     ChatSettings,
     EngineUri,
-    GenerationSettings,
     GenerationCacheStrategy,
+    GenerationSettings,
     Input,
     Modality,
     Operation,
