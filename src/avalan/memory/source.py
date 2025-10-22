@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from io import BytesIO
 from os.path import basename
@@ -141,28 +142,17 @@ class MemorySource:
             title = soup.title.string.strip()
 
         if not title:
-            og = soup.find(
-                "meta", attrs={"property": "og:title"}
-            ) or soup.find("meta", attrs={"name": "og:title"})
-            if og and og.get("content"):
-                title = str(og["content"]).strip()
-
-        if not title:
-            tw = soup.find("meta", attrs={"name": "twitter:title"})
-            if tw and tw.get("content"):
-                title = str(tw["content"]).strip()
+            title = self._find_meta_content(
+                soup, keys=("og:title", "twitter:title")
+            )
 
         desc: str | None = None
-        for attrs in (
-            {"name": "description"},
-            {"property": "og:description"},
-            {"name": "og:description"},
-            {"name": "twitter:description"},
-        ):
-            tag = soup.find("meta", attrs=attrs)
-            if tag and tag.get("content"):
-                desc = str(tag["content"]).strip()
-                break
+        meta_keys: tuple[str, ...] = (
+            "description",
+            "og:description",
+            "twitter:description",
+        )
+        desc = self._find_meta_content(soup, keys=meta_keys)
 
         if not desc:
             p = soup.find("p")
@@ -172,6 +162,22 @@ class MemorySource:
                 )
 
         return (title, desc)
+
+    def _find_meta_content(
+        self, soup: BeautifulSoup, *, keys: Iterable[str]
+    ) -> str | None:
+        normalized_keys = {key.lower() for key in keys}
+        for meta in soup.find_all("meta"):
+            content = meta.get("content")
+            if not content:
+                continue
+
+            for attr in ("name", "property"):
+                value = meta.get(attr)
+                if value and str(value).strip().lower() in normalized_keys:
+                    return str(content).strip()
+
+        return None
 
     @staticmethod
     def _markdown_title(md: str) -> str | None:
