@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from bs4 import BeautifulSoup
 import pytest
 
 from avalan.memory.source import MemorySource, MemorySourceDocument
@@ -329,3 +330,22 @@ def test_html_metadata_handles_case_insensitive_meta() -> None:
 
     assert title == "Twitter Title"
     assert description == "Twitter Description"
+
+
+def test_find_meta_content_skips_missing_content() -> None:
+    source = MemorySource()
+    html = (
+        "<html>"
+        "    <head>"
+        "        <meta name='description'>"
+        "        <meta property='og:description' content='OG Description'>"
+        "    </head>"
+        "</html>"
+    )
+
+    soup = BeautifulSoup(html, "html.parser")
+    result = source._find_meta_content(
+        soup, keys=("description", "og:description")
+    )
+
+    assert result == "OG Description"
