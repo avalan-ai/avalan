@@ -1,5 +1,7 @@
 from ..event import Event, EventType
-from asyncio import Event as EventSignal, Queue, TimeoutError, wait_for
+
+from asyncio import Event as EventSignal
+from asyncio import Queue, TimeoutError, wait_for
 from collections import defaultdict, deque
 from inspect import iscoroutine
 from typing import Awaitable, Callable, Iterable

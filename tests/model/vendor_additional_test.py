@@ -1,3 +1,5 @@
+from unittest import IsolatedAsyncioTestCase
+
 from avalan.entities import (
     Message,
     MessageContentImage,
@@ -5,7 +7,6 @@ from avalan.entities import (
     MessageRole,
 )
 from avalan.model.vendor import TextGenerationVendor
-from unittest import IsolatedAsyncioTestCase
 
 
 class DummyVendor(TextGenerationVendor):

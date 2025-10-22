@@ -63,9 +63,7 @@ class DatabaseKillTool(DatabaseTool):
 
     def _kill_postgresql(self, connection: Connection, task_id: str) -> bool:
         pid = self._parse_integer_task_id(task_id)
-        statement = text(
-            "SELECT pg_cancel_backend(:pid) AS cancelled"
-        )
+        statement = text("SELECT pg_cancel_backend(:pid) AS cancelled")
         result = connection.execute(statement, {"pid": pid})
         cancelled = result.scalar()
         return bool(cancelled)
@@ -80,9 +78,10 @@ class DatabaseKillTool(DatabaseTool):
         try:
             value = int(task_id)
         except ValueError as error:
-            raise RuntimeError("Task identifier must be an integer value.") from error
+            raise RuntimeError(
+                "Task identifier must be an integer value."
+            ) from error
 
         if value < 0:
             raise RuntimeError("Task identifier must be a positive integer.")
         return value
-

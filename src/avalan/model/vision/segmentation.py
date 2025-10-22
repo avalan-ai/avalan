@@ -1,7 +1,10 @@
 from ...compat import override
+from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
-from ...model.engine import Engine
+
+from typing import Literal
+
 from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode, unique
@@ -10,7 +13,6 @@ from transformers import (
     AutoModelForSemanticSegmentation,
     PreTrainedModel,
 )
-from typing import Literal
 
 
 class SemanticSegmentationModel(BaseVisionModel):

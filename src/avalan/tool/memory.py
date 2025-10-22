@@ -1,4 +1,3 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
@@ -8,6 +7,7 @@ from ..memory.permanent import (
     PermanentMemoryStore,
     VectorFunction,
 )
+from . import Tool, ToolSet
 
 from contextlib import AsyncExitStack
 
@@ -20,7 +20,7 @@ class MessageReadTool(Tool):
 
     Returns:
         Retrieved message content or 'NOT_FOUND' when no match exists.
-"""
+    """
 
     _memory_manager: MemoryManager
     _NOT_FOUND = "NOT_FOUND"
@@ -63,7 +63,7 @@ class MemoryReadTool(Tool):
 
     Returns:
         Matching permanent memory partitions.
-"""
+    """
 
     _memory_manager: MemoryManager
     _function: VectorFunction
@@ -117,7 +117,7 @@ class MemoryListTool(Tool):
 
     Returns:
         Memories stored in the requested namespace.
-"""
+    """
 
     _memory_manager: MemoryManager
 
@@ -151,7 +151,7 @@ class MemoryStoresTool(Tool):
 
     Returns:
         Available permanent memory stores.
-"""
+    """
 
     _memory_manager: MemoryManager
 

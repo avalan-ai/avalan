@@ -1,6 +1,7 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import ToolCallContext
+from . import Tool, ToolSet
+
 from contextlib import AsyncExitStack
 
 
@@ -14,7 +15,7 @@ class McpCallTool(Tool):
 
     Returns:
         Responses returned by the MCP tool invocation.
-"""
+    """
 
     _client_params: dict[str, object]
     _call_params: dict[str, object]

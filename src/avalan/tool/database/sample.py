@@ -5,12 +5,13 @@ from . import (
     IdentifierCaseNormalizer,
 )
 
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable
 
-from sqlalchemy import MetaData, Table as SATable, select, text
+from sqlalchemy import MetaData, select, text
+from sqlalchemy import Table as SATable
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class DatabaseSampleTool(DatabaseTool):
@@ -20,7 +21,7 @@ class DatabaseSampleTool(DatabaseTool):
         table_name: Table to sample rows from (optionally schema-qualified).
         columns: Optional list of column names to include in the result.
         conditions: Optional SQL expression to filter returned rows.
-        order: Optional mapping of column names to sort direction ('asc' or 'desc').
+        order: Optional mapping of columns to sort direction ('asc','desc').
         count: Optional maximum number of rows to return.
 
     Returns:
@@ -57,7 +58,7 @@ class DatabaseSampleTool(DatabaseTool):
         table_name: str,
         *,
         context: ToolCallContext,
-        columns: Sequence[str] | None = None,
+        columns: list[str] | None = None,
         conditions: str | None = None,
         order: dict[str, str] | None = None,
         count: int | None = None,
@@ -96,7 +97,7 @@ class DatabaseSampleTool(DatabaseTool):
         *,
         schema: str | None,
         actual_table: str,
-        requested_columns: Sequence[str] | None,
+        requested_columns: list[str] | None,
         conditions: str | None,
         order: dict[str, str] | None,
         limit: int | None,
@@ -128,9 +129,10 @@ class DatabaseSampleTool(DatabaseTool):
         for column_name, direction in order.items():
             column = self._resolve_column(table, column_name)
             direction_value = str(direction).lower()
-            assert direction_value in {"asc", "desc"}, (
-                "order directions must be 'asc' or 'desc'"
-            )
+            assert direction_value in {
+                "asc",
+                "desc",
+            }, "order directions must be 'asc' or 'desc'"
             if direction_value == "desc":
                 clauses.append(column.desc())
             else:
@@ -138,13 +140,11 @@ class DatabaseSampleTool(DatabaseTool):
         return clauses
 
     def _resolve_columns(
-        self, table: SATable, columns: Sequence[str]
+        self, table: SATable, columns: list[str]
     ) -> list[ColumnElement[Any]]:
         return [self._resolve_column(table, name) for name in columns]
 
-    def _resolve_column(
-        self, table: SATable, name: str
-    ) -> ColumnElement[Any]:
+    def _resolve_column(self, table: SATable, name: str) -> ColumnElement[Any]:
         lookup = {col.name: col for col in table.c}
         if self._normalizer is not None:
             for col in table.c:
@@ -155,7 +155,9 @@ class DatabaseSampleTool(DatabaseTool):
         if column is None and self._normalizer is not None:
             column = lookup.get(self._normalizer.normalize(name))
         if column is None:
-            raise ValueError(f"Column '{name}' does not exist on table '{table.name}'")
+            raise ValueError(
+                f"Column '{name}' does not exist on table '{table.name}'"
+            )
         return column
 
     def _reflect_table(
@@ -167,5 +169,3 @@ class DatabaseSampleTool(DatabaseTool):
             schema=schema,
             autoload_with=connection,
         )
-
-

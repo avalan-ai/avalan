@@ -1,14 +1,16 @@
-from .. import di_get_logger, di_set
-from ..entities import EngineRequest, OrchestratorContext
 from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator import Orchestrator
 from ...tool.context import ToolSettingsContext
 from ...tool.database import DatabaseToolSettings
+from .. import di_get_logger, di_set
+from ..entities import EngineRequest, OrchestratorContext
+
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from fastapi import APIRouter, Depends, Request
 from logging import Logger
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, Request
 
 router = APIRouter()
 

@@ -1,10 +1,12 @@
-from avalan.entities import GenerationSettings, TransformerEngineSettings
-from avalan.model.nlp.text.vllm import VllmModel, VllmStream
-from avalan.model.nlp.text.generation import TextGenerationModel
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
+
+from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.nlp.text.vllm import VllmModel, VllmStream
 
 
 class VllmStreamTestCase(IsolatedAsyncioTestCase):

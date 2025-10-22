@@ -56,4 +56,3 @@ class DatabaseTablesTool(DatabaseTool):
                 for name in actual_tables
             ]
         return result
-

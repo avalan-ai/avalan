@@ -5,15 +5,17 @@ from ....entities import (
     VisionColorModel,
     VisionImageFormat,
 )
-from ....model.vendor import TextGenerationVendor
 from ....model.engine import Engine
+from ....model.vendor import TextGenerationVendor
 from ....model.vision import BaseVisionModel
+
 from dataclasses import replace
-from diffusers import DiffusionPipeline
 from logging import Logger, getLogger
+from typing import Literal
+
+from diffusers import DiffusionPipeline
 from torch import inference_mode
 from transformers import PreTrainedModel
-from typing import Literal
 
 
 class TextToImageModel(BaseVisionModel):

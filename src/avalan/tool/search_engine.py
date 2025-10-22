@@ -10,7 +10,7 @@ class SearchEngineTool(Tool):
 
     Returns:
         Result of executing the query against the chosen engine.
-"""
+    """
 
     def __init__(self) -> None:
         self.__name__ = "search"

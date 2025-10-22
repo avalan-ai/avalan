@@ -1,19 +1,21 @@
 from ...compat import override
 from ...entities import GenerationSettings, Input
-from ...model.vendor import TextGenerationVendor
-from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
-from diffusers import DiffusionPipeline
+from ...model.nlp import BaseNLPModel
+from ...model.vendor import TextGenerationVendor
+
 from dataclasses import replace
-from torch import argmax, inference_mode, softmax, Tensor
+from typing import Literal
+
+from diffusers import DiffusionPipeline
+from torch import Tensor, argmax, inference_mode, softmax
 from transformers import (
-    AutoModelForSequenceClassification,
     AutoModelForSeq2SeqLM,
+    AutoModelForSequenceClassification,
     PreTrainedModel,
 )
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal
 
 
 class SequenceClassificationModel(BaseNLPModel):

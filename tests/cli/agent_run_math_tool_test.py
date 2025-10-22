@@ -1,31 +1,33 @@
 import unittest
 from argparse import Namespace
+from logging import getLogger
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from avalan.cli.commands import agent as agent_cmds
 from avalan.agent import (
-    Specification,
-    EngineEnvironment,
     AgentOperation,
+    EngineEnvironment,
+    Specification,
 )
 from avalan.agent.engine import EngineAgent
+from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import (
     EngineUri,
     GenerationSettings,
     Message,
     MessageRole,
     Modality,
-    Operation as EntitiesOperation,
     OperationParameters,
     OperationTextParameters,
 )
+from avalan.entities import (
+    Operation as EntitiesOperation,
+)
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
-from avalan.model.response.text import TextGenerationResponse
 from avalan.model.call import ModelCall, ModelCallContext
-from logging import getLogger
-from avalan.tool.math import MathToolSet
+from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.manager import ToolManager, ToolManagerSettings
+from avalan.tool.math import MathToolSet
 
 
 class DummyEngine:

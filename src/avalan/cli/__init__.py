@@ -1,16 +1,18 @@
 from ..entities import ToolCall
+
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from io import UnsupportedOperation
 from json import dumps
+from select import select
+from sys import stdin
+
 from rich.console import Console
 from rich.live import Live
 from rich.padding import Padding
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 from rich.text import Text
-from select import select
-from sys import stdin
 
 
 @contextmanager

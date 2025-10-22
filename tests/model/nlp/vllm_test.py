@@ -1,10 +1,12 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.nlp.text.vllm import VllmModel
 from logging import Logger
+from unittest import TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
 from pytest import importorskip
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
-from unittest import TestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
+
+from avalan.entities import TransformerEngineSettings
+from avalan.model.nlp.text.vllm import VllmModel
 
 importorskip("vllm.LLM", reason="vllm not installed")
 

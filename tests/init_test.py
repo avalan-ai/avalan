@@ -1,5 +1,6 @@
 from unittest import TestCase
 from urllib.parse import ParseResult
+
 import avalan
 
 

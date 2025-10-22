@@ -1,7 +1,7 @@
 import unittest
-from types import SimpleNamespace
 from argparse import Namespace
 from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from avalan.cli.__main__ import CLI, ModelManager

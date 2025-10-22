@@ -1,6 +1,3 @@
-from . import TextGenerationVendorModel
-from ....message import TemplateMessage, TemplateMessageRole
-from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from .....compat import override
 from .....entities import (
     GenerationSettings,
@@ -16,12 +13,17 @@ from .....entities import (
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
+from ....message import TemplateMessage, TemplateMessageRole
+from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from . import TextGenerationVendorModel
+
+from contextlib import AsyncExitStack
+from typing import AsyncIterator
+
 from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
-from contextlib import AsyncExitStack
 from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
-from typing import AsyncIterator
 
 
 class AnthropicStream(TextGenerationVendorStream):

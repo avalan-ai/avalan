@@ -1,5 +1,6 @@
 from io import StringIO
-from re import compile, escape, Pattern
+from re import Pattern, compile, escape
+
 from transformers import AutoTokenizer
 from transformers.generation import StoppingCriteria
 

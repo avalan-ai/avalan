@@ -1,10 +1,12 @@
 from ...memory.partitioner import Encoding, PartitionerException
 from ...utils import _j
+
 from dataclasses import dataclass
 from logging import Logger
-from tree_sitter_python import language as python
-from tree_sitter import Language, Node, Parser
 from typing import Literal
+
+from tree_sitter import Language, Node, Parser
+from tree_sitter_python import language as python
 
 LanguageName = Literal["python"]
 

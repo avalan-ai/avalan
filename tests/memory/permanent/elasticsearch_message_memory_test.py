@@ -1,6 +1,6 @@
+import importlib.machinery
 import sys
 import types
-import importlib.machinery
 from unittest.mock import MagicMock
 
 # Stub elasticsearch before importing the module under test
@@ -9,16 +9,18 @@ es_stub.AsyncElasticsearch = MagicMock()
 es_stub.__spec__ = importlib.machinery.ModuleSpec("elasticsearch", loader=None)
 sys.modules.setdefault("elasticsearch", es_stub)
 
+from unittest import IsolatedAsyncioTestCase  # noqa: E402
+from unittest.mock import AsyncMock, patch  # noqa: E402
+from uuid import UUID, uuid4  # noqa: E402
+
+import numpy as np  # noqa: E402
+
+from avalan.entities import EngineMessage, Message, MessageRole  # noqa: E402
 from avalan.memory.partitioner.text import TextPartition  # noqa: E402
+from avalan.memory.permanent import VectorFunction  # noqa: E402
 from avalan.memory.permanent.elasticsearch.message import (  # noqa: E402
     ElasticsearchMessageMemory,
 )
-from avalan.entities import EngineMessage, Message, MessageRole  # noqa: E402
-from avalan.memory.permanent import VectorFunction  # noqa: E402
-from uuid import UUID, uuid4  # noqa: E402
-import numpy as np  # noqa: E402
-from unittest import IsolatedAsyncioTestCase  # noqa: E402
-from unittest.mock import AsyncMock, patch  # noqa: E402
 
 
 class ElasticsearchMessageMemoryTestCase(IsolatedAsyncioTestCase):

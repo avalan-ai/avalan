@@ -1,11 +1,12 @@
+from logging import Logger
+from unittest import TestCase
+from unittest.mock import MagicMock
+
 from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.sequence import (
     SequenceClassificationModel,
     SequenceToSequenceModel,
 )
-from logging import Logger
-from unittest import TestCase
-from unittest.mock import MagicMock
 
 
 class SequenceModelPropertyTestCase(TestCase):

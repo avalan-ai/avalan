@@ -1,11 +1,12 @@
-from types import SimpleNamespace
 from argparse import Namespace
-from unittest import TestCase, IsolatedAsyncioTestCase
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, patch
+
+from rich.console import Group
 
 from avalan.cli.commands import model as model_cmds
 from avalan.entities import Modality
-from rich.console import Group
 
 
 class CliModelInstallTestCase(TestCase):

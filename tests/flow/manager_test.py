@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from avalan.flow.flow import Flow
-from avalan.flow.node import Node
-from avalan.flow.manager import FlowManager
-from avalan.event import EventType
 from avalan.agent.loader import OrchestratorLoader
+from avalan.event import EventType
+from avalan.flow.flow import Flow
+from avalan.flow.manager import FlowManager
+from avalan.flow.node import Node
 
 
 class FlowManagerCallTestCase(unittest.IsolatedAsyncioTestCase):

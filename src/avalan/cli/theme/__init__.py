@@ -1,10 +1,10 @@
-from abc import ABC, abstractmethod
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     EngineMessage,
     EngineMessageScored,
     HubCache,
     HubCacheDeletion,
+    ImageEntity,
     Model,
     ModelConfig,
     SearchMatch,
@@ -13,20 +13,23 @@ from ...entities import (
     Token,
     TokenizerConfig,
     User,
-    ImageEntity,
 )
 from ...event import Event, EventStats
 from ...memory.partitioner.text import TextPartition
-from ...memory.permanent import Memory as Memory, PermanentMemoryPartition
+from ...memory.permanent import Memory as Memory
+from ...memory.permanent import PermanentMemoryPartition
+
+from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from enum import StrEnum
-from humanize import intcomma, intword, naturalsize, naturaltime
 from logging import Logger
-from numpy import ndarray
-from rich.console import RenderableType
 from typing import Callable, Generator, Literal
 from uuid import UUID
+
+from humanize import intcomma, intword, naturalsize, naturaltime
+from numpy import ndarray
+from rich.console import RenderableType
 
 Formatter = (
     Callable[[datetime], str] | Callable[[float], str] | Callable[[int], str]

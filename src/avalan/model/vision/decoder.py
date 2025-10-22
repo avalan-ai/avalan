@@ -1,17 +1,21 @@
 from ...compat import override
-from ...model.vendor import TextGenerationVendor
 from ...model.engine import Engine
+from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.text import ImageToTextModel
+
+from typing import Literal
+
 from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode
 from transformers import (
     AutoImageProcessor,
     PreTrainedModel,
+)
+from transformers import (
     VisionEncoderDecoderModel as VisionEncoderDecoderModelImpl,
 )
-from typing import Literal
 
 
 class VisionEncoderDecoderModel(ImageToTextModel):

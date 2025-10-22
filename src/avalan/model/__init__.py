@@ -1,13 +1,16 @@
-from .response.text import TextGenerationResponse
-from .call import ModelCall, ModelCallContext
-from .vendor import TextGenerationVendorStream
 from ..entities import (
     ImageEntity,
     Token,
     TokenDetail,
 )
-from numpy import ndarray
+from .call import ModelCall as ModelCall
+from .call import ModelCallContext as ModelCallContext
+from .response.text import TextGenerationResponse
+from .vendor import TextGenerationVendorStream
+
 from typing import AsyncGenerator, Callable, Generator
+
+from numpy import ndarray
 
 OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
 OutputFunction = Callable[..., OutputGenerator | str]

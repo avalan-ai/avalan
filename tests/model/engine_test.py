@@ -1,3 +1,13 @@
+import importlib.machinery
+import logging
+import sys
+import types
+from contextlib import AsyncExitStack
+from unittest import TestCase
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
+from transformers import PreTrainedModel, PreTrainedTokenizerFast
+
 from avalan.entities import (
     EngineSettings,
     ModelConfig,
@@ -9,14 +19,6 @@ from avalan.model.engine import (
     ModelAlreadyLoadedException,
     TokenizerAlreadyLoadedException,
 )
-from unittest import TestCase
-from contextlib import AsyncExitStack
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-import logging
-import sys
-import types
-import importlib.machinery
-from transformers import PreTrainedModel, PreTrainedTokenizerFast
 
 
 class DummyEngine(Engine):

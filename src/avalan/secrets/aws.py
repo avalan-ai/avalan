@@ -1,5 +1,6 @@
-from boto3 import client
 from . import Secrets
+
+from boto3 import client
 
 
 class AwsSecrets(Secrets):

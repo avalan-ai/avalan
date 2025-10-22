@@ -1,6 +1,7 @@
-from avalan.flow.node import Node
-from avalan.flow.flow import Flow
 from unittest import TestCase
+
+from avalan.flow.flow import Flow
+from avalan.flow.node import Node
 
 
 class NodeExecuteTestCase(TestCase):

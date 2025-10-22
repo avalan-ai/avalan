@@ -1,8 +1,8 @@
 from logging import DEBUG, INFO, Logger
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from avalan.agent.loader import OrchestratorLoader
 

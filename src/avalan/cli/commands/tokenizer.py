@@ -1,9 +1,11 @@
-from argparse import Namespace
 from ...cli import get_input
 from ...entities import Token, TransformerEngineSettings
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.generation import TextGenerationModel
+
+from argparse import Namespace
 from logging import Logger
+
 from rich.console import Console
 from rich.theme import Theme
 

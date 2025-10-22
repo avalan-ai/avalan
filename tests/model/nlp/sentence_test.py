@@ -1,13 +1,15 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.nlp.sentence import SentenceTransformerModel
-from avalan.model.transformer import AutoTokenizer
-from transformers import PreTrainedTokenizerFast
-from avalan.model.engine import Engine
-from logging import Logger
-from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
 import types
 from importlib.machinery import ModuleSpec
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from transformers import PreTrainedTokenizerFast
+
+from avalan.entities import TransformerEngineSettings
+from avalan.model.engine import Engine
+from avalan.model.nlp.sentence import SentenceTransformerModel
+from avalan.model.transformer import AutoTokenizer
 
 
 class SentenceTransformerModelTestCase(IsolatedAsyncioTestCase):

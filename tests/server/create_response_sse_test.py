@@ -4,9 +4,9 @@ from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import ModuleType
-from uuid import uuid4
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (

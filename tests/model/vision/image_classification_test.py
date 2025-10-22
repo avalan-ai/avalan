@@ -1,16 +1,18 @@
+from contextlib import nullcontext
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, call, patch
+
+from transformers import PreTrainedModel
+
 from avalan.entities import EngineSettings, ImageEntity
 from avalan.model.engine import Engine
 from avalan.model.vision.classification import (
-    ImageClassificationModel,
     AutoImageProcessor,
     AutoModelForImageClassification,
     BaseVisionModel,
+    ImageClassificationModel,
 )
-from contextlib import nullcontext
-from logging import Logger
-from transformers import PreTrainedModel
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import call, MagicMock, patch, PropertyMock
 
 
 class DummyInputs(dict):

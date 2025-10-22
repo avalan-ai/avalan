@@ -1,8 +1,8 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from os import path
 from sys import modules
-from types import ModuleType
 from tempfile import TemporaryDirectory
+from types import ModuleType
 from unittest import TestCase, main
 from unittest.mock import patch
 

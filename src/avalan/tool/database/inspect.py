@@ -17,7 +17,7 @@ class DatabaseInspectTool(DatabaseTool):
 
     Args:
         table_names: Tables to inspect.
-        schema: Optional schema the tables belong to; defaults to the current schema.
+        schema: Optional schema tables belong to; defaults to current schema.
 
     Returns:
         Schemas describing the requested tables.
@@ -114,4 +114,3 @@ class DatabaseInspectTool(DatabaseTool):
             )
 
         return tables
-

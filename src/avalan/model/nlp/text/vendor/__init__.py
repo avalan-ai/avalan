@@ -1,23 +1,25 @@
-from abc import ABC, abstractmethod
+from .....compat import override
 from .....entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings,
 )
+from .....model.nlp.text.generation import TextGenerationModel
 from .....model.response.text import TextGenerationResponse
 from .....model.vendor import TextGenerationVendor
-from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
-from .....compat import override
+
+from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import replace
-from diffusers import DiffusionPipeline
 from logging import Logger, getLogger
+from typing import Literal
+
+from diffusers import DiffusionPipeline
 from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal
 
 
 class TextGenerationVendorModel(TextGenerationModel, ABC):

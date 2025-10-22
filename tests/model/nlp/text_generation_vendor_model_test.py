@@ -1,3 +1,4 @@
+from logging import getLogger
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +9,6 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model import TextGenerationResponse
-from logging import getLogger
 from avalan.model.nlp.text.vendor import TextGenerationVendorModel
 
 

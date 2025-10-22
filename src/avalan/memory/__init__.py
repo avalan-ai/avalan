@@ -1,9 +1,10 @@
-from abc import ABC, abstractmethod
+from ..compat import override
 from ..entities import EngineMessage
+
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock
 from typing import Generic, TypeVar
-from ..compat import override
 from uuid import UUID
 
 T = TypeVar("T")

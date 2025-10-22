@@ -3,10 +3,11 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
-from inspect import isfunction, signature, Signature
-from transformers.utils import get_json_schema
+from inspect import Signature, isfunction, signature
 from types import FunctionType
 from typing import get_type_hints
+
+from transformers.utils import get_json_schema
 
 
 class Tool(ABC, ContextDecorator):

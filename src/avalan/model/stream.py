@@ -1,8 +1,9 @@
-from abc import ABC, abstractmethod
 from ..entities import (
     Token,
     TokenDetail,
 )
+
+from abc import ABC, abstractmethod
 from typing import (
     AsyncGenerator,
     AsyncIterator,

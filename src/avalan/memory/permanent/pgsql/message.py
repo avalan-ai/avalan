@@ -7,10 +7,12 @@ from ....memory.permanent import (
     VectorFunction,
 )
 from ....memory.permanent.pgsql import PgsqlMemory
+
 from datetime import datetime, timezone
 from logging import Logger
-from pgvector.psycopg import Vector
 from uuid import UUID, uuid4
+
+from pgvector.psycopg import Vector
 
 
 class PgsqlMessageMemory(

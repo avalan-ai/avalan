@@ -176,7 +176,9 @@ async def test_convert_bytes_uses_url_as_title_when_missing_metadata(
     source = MemorySource()
 
     async def fake_run_sync(func, stream):
-        return SimpleNamespace(markdown="No headings here", title=None, text_content=None)
+        return SimpleNamespace(
+            markdown="No headings here", title=None, text_content=None
+        )
 
     monkeypatch.setattr(
         "avalan.memory.source.to_thread.run_sync",

@@ -1,13 +1,11 @@
-from . import orchestrate
-from ..sse import sse_bytes, sse_headers
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     ReasoningToken,
+    Token,
+    TokenDetail,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
-    Token,
-    TokenDetail,
 )
 from ...event import Event, EventType
 from ...server.entities import (
@@ -16,16 +14,13 @@ from ...server.entities import (
     MCPToolRequest,
 )
 from ...utils import to_json
-from asyncio import Event as AsyncEvent, Lock, create_task
+from ..sse import sse_bytes, sse_headers
+from . import orchestrate
+
+from asyncio import Event as AsyncEvent
+from asyncio import Lock, create_task
 from contextlib import suppress
 from dataclasses import dataclass, replace
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import (
-    JSONResponse,
-    PlainTextResponse,
-    Response,
-    StreamingResponse,
-)
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import (
@@ -39,6 +34,14 @@ from typing import (
     cast,
 )
 from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 
 RS: Final[str] = "\x1e"
 

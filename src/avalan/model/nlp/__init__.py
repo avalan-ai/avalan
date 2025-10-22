@@ -1,10 +1,13 @@
-from abc import ABC
-from ...entities import GenerationSettings, WeightType as WeightType
+from ...entities import GenerationSettings
+from ...entities import WeightType as WeightType
 from ...model.transformer import TransformerModel
+
+from abc import ABC
 from contextlib import nullcontext
+
 from torch import (
-    inference_mode,
     Tensor,
+    inference_mode,
 )
 from transformers import AsyncTextIteratorStreamer
 from transformers.generation import StoppingCriteria

@@ -1,5 +1,6 @@
-from avalan.memory.permanent.elasticsearch import to_thread
 from unittest import IsolatedAsyncioTestCase
+
+from avalan.memory.permanent.elasticsearch import to_thread
 
 
 class ToThreadTestCase(IsolatedAsyncioTestCase):

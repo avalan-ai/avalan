@@ -1,11 +1,13 @@
-from avalan.entities import EngineSettings
-from avalan.model.engine import Engine
-from avalan.model.vision.diffusion import TextToVideoModel
-from diffusers import DiffusionPipeline
 from contextlib import nullcontext
 from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import MagicMock, call, patch, ANY
+from unittest.mock import ANY, MagicMock, call, patch
+
+from diffusers import DiffusionPipeline
+
+from avalan.entities import EngineSettings
+from avalan.model.engine import Engine
+from avalan.model.vision.diffusion import TextToVideoModel
 
 
 class TextToVideoModelInstantiationTestCase(TestCase):

@@ -1,5 +1,6 @@
 from .browser import BrowserToolSettings
 from .database import DatabaseToolSettings
+
 from dataclasses import dataclass
 from typing import final
 

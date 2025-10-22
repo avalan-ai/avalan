@@ -5,9 +5,9 @@ from ..entities import (
     EngineUri,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
-    TransformerEngineSettings,
     ToolFormat,
     ToolManagerSettings,
+    TransformerEngineSettings,
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager
@@ -24,6 +24,7 @@ from ..tool.database import DatabaseToolSet, DatabaseToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
+
 from contextlib import AsyncExitStack
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access

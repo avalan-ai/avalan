@@ -1,12 +1,17 @@
-from avalan.entities import TransformerEngineSettings
-from avalan.model.vision.diffusion import TextToImageModel
-from avalan.entities import VisionColorModel, VisionImageFormat
-from avalan.model.engine import Engine
-from diffusers import DiffusionPipeline
 from contextlib import nullcontext
 from logging import Logger
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, call
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, call, patch
+
+from diffusers import DiffusionPipeline
+
+from avalan.entities import (
+    TransformerEngineSettings,
+    VisionColorModel,
+    VisionImageFormat,
+)
+from avalan.model.engine import Engine
+from avalan.model.vision.diffusion import TextToImageModel
 
 
 class TextToImageModelInstantiationTestCase(TestCase):

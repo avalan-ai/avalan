@@ -1,11 +1,12 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from collections.abc import Callable
-from numpy import ndarray
-from torch import dtype, Tensor
-from typing import final, Literal, TypedDict
+from typing import Literal, TypedDict, final
 from uuid import UUID
+
+from numpy import ndarray
+from torch import Tensor, dtype
 
 AttentionImplementation = Literal[
     "eager", "flash_attention_2", "flex_attention", "sdpa"

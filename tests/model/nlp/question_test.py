@@ -1,16 +1,18 @@
+from contextlib import nullcontext
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from torch import tensor
+from transformers import PreTrainedModel, PreTrainedTokenizerFast
+
 from avalan.entities import TransformerEngineSettings
-from avalan.model.transformer import AutoTokenizer
 from avalan.model.engine import Engine
 from avalan.model.nlp.question import (
     AutoModelForQuestionAnswering,
     QuestionAnsweringModel,
 )
-from logging import Logger
-from torch import tensor
-from transformers import PreTrainedModel, PreTrainedTokenizerFast
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from contextlib import nullcontext
-from unittest.mock import patch, MagicMock, PropertyMock
+from avalan.model.transformer import AutoTokenizer
 
 
 class TruthyMagicMock(MagicMock):

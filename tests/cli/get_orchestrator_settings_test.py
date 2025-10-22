@@ -2,8 +2,8 @@ import unittest
 from argparse import Namespace
 from uuid import UUID
 
-from avalan.cli.commands import agent as agent_cmds
 from avalan.agent.loader import OrchestratorLoader
+from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import PermanentMemoryStoreSettings
 
 

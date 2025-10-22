@@ -1,30 +1,31 @@
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from avalan.agent import EngineEnvironment, AgentOperation, Specification
+from avalan.cli import CommandAbortException
 from avalan.entities import (
     EngineUri,
     Input,
     Message,
     MessageRole,
+    Token,
     ToolCall,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
-    Token,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
-from avalan.tool.manager import ToolManager
-from avalan.cli import CommandAbortException
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
-from logging import getLogger
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from avalan.tool.manager import ToolManager
 
 
 class _DummyEngine:

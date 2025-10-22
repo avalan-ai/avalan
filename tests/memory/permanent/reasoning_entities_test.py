@@ -1,6 +1,7 @@
 from datetime import datetime
 from unittest import TestCase
 from uuid import uuid4
+
 from numpy import array
 
 from avalan.memory.permanent import (

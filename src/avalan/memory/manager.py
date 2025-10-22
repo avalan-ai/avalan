@@ -11,8 +11,9 @@ from ..memory.permanent import (
     PermanentMessageMemory,
     VectorFunction,
 )
-from time import perf_counter
+
 from logging import Logger
+from time import perf_counter
 from typing import Any
 from uuid import UUID
 

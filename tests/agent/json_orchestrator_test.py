@@ -1,3 +1,9 @@
+from dataclasses import dataclass
+from logging import Logger, getLogger
+from typing import Annotated
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from avalan.agent import InputType, OutputType, Role
 from avalan.agent.orchestrator.orchestrators.json import (
     JsonOrchestrator,
@@ -10,18 +16,12 @@ from avalan.entities import (
     MessageRole,
     TransformerEngineSettings,
 )
-from avalan.event.manager import EventManager
 from avalan.event import EventType
-from avalan.model import TextGenerationResponse
-from logging import getLogger
-from avalan.model.manager import ModelManager
+from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
+from avalan.model import TextGenerationResponse
+from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
-from dataclasses import dataclass
-from typing import Annotated
-from logging import Logger
-from unittest import TestCase, IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, AsyncMock, patch
 
 
 @dataclass
@@ -185,7 +185,9 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(context.input, Message)
         self.assertEqual(context.input.content, "hi")
         self.assertEqual(context.input.role, MessageRole.USER)
-        self.assertEqual(context.specification.role, Role(persona=["assistant"]))
+        self.assertEqual(
+            context.specification.role, Role(persona=["assistant"])
+        )
 
         self.assertEqual(result, '{"value": "ok"}')
         self.assertTrue(

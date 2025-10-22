@@ -1,16 +1,18 @@
-from avalan.entities import EngineMessage, Message, MessageRole, TextPartition
-from avalan.memory.permanent import (
-    PermanentMessageMemory,
-    PermanentMemory,
-    MemoryType,
-    VectorFunction,
-)
-from avalan.model.nlp.sentence import SentenceTransformerModel
-from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
 import numpy as np
+
+from avalan.entities import EngineMessage, Message, MessageRole, TextPartition
+from avalan.memory.permanent import (
+    MemoryType,
+    PermanentMemory,
+    PermanentMessageMemory,
+    VectorFunction,
+)
+from avalan.model.nlp.sentence import SentenceTransformerModel
 
 
 class DummyPermanentMessageMemory(PermanentMessageMemory):

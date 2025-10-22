@@ -1,5 +1,6 @@
-from avalan.model.engine import Engine
 from unittest import TestCase
+
+from avalan.model.engine import Engine
 
 
 class ModelTypePropertyTestCase(TestCase):

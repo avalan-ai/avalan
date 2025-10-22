@@ -1,19 +1,21 @@
-from avalan.entities import TransformerEngineSettings, Token
-from avalan.model.transformer import AutoTokenizer
-from avalan.model.nlp.text.generation import (
-    AutoModelForCausalLM,
-    TextGenerationModel,
-)
-from avalan.model.engine import Engine
 from logging import Logger
+from unittest import TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from torch import tensor
 from transformers import (
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
-from torch import tensor
-from unittest import main, TestCase
-from unittest.mock import patch, MagicMock, PropertyMock
+
+from avalan.entities import Token, TransformerEngineSettings
+from avalan.model.engine import Engine
+from avalan.model.nlp.text.generation import (
+    AutoModelForCausalLM,
+    TextGenerationModel,
+)
+from avalan.model.transformer import AutoTokenizer
 
 
 class TextGenerationModelTestCase(TestCase):

@@ -1,5 +1,12 @@
 from asyncio import wait_for
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from io import StringIO
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
 from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
@@ -13,13 +20,13 @@ from avalan.entities import (
     MessageRole,
     ReasoningSettings,
     ReasoningToken,
+    Token,
+    TokenDetail,
     ToolCall,
     ToolCallContext,
     ToolCallResult,
     ToolCallToken,
     ToolFormat,
-    Token,
-    TokenDetail,
     TransformerEngineSettings,
 )
 from avalan.event import EventType
@@ -30,12 +37,6 @@ from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
-from dataclasses import dataclass
-from io import StringIO
-from logging import getLogger
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 
 class _DummyEngine:

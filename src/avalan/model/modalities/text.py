@@ -1,13 +1,3 @@
-from .registry import ModalityRegistry
-from ..criteria import KeywordStoppingCriteria
-from ..nlp.question import QuestionAnsweringModel
-from ..nlp.sequence import (
-    SequenceClassificationModel,
-    SequenceToSequenceModel,
-    TranslationModel,
-)
-from ..nlp.text.generation import TextGenerationModel
-from ..nlp.token import TokenClassificationModel
 from ...entities import (
     Backend,
     EngineUri,
@@ -20,6 +10,16 @@ from ...entities import (
     TransformerEngineSettings,
 )
 from ...tool.manager import ToolManager
+from ..criteria import KeywordStoppingCriteria
+from ..nlp.question import QuestionAnsweringModel
+from ..nlp.sequence import (
+    SequenceClassificationModel,
+    SequenceToSequenceModel,
+    TranslationModel,
+)
+from ..nlp.text.generation import TextGenerationModel
+from ..nlp.token import TokenClassificationModel
+from .registry import ModalityRegistry
 
 from argparse import Namespace
 from contextlib import AsyncExitStack

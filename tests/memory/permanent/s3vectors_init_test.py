@@ -1,5 +1,6 @@
-from avalan.memory.permanent.s3vectors import to_thread
 from unittest import IsolatedAsyncioTestCase
+
+from avalan.memory.permanent.s3vectors import to_thread
 
 
 class ToThreadTestCase(IsolatedAsyncioTestCase):

@@ -1,10 +1,11 @@
+from logging import Logger
+from typing import Literal
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import MagicMock, patch
+
 from avalan.entities import EngineSettings
 from avalan.model import TokenizerNotSupportedException
 from avalan.model.audio import BaseAudioModel
-from logging import Logger
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
-from typing import Literal
 
 
 class DummyAudioModel(BaseAudioModel):

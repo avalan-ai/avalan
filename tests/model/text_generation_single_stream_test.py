@@ -1,4 +1,5 @@
 from unittest import IsolatedAsyncioTestCase
+
 from avalan.model.stream import TextGenerationSingleStream
 
 

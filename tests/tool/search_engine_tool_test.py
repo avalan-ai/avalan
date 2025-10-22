@@ -1,5 +1,6 @@
-from avalan.tool.search_engine import SearchEngineTool
 from unittest import IsolatedAsyncioTestCase, main
+
+from avalan.tool.search_engine import SearchEngineTool
 
 
 class SearchEngineToolTestCase(IsolatedAsyncioTestCase):

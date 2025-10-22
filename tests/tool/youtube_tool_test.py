@@ -1,12 +1,13 @@
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, patch
+
 from avalan.entities import (
     GenericProxyConfig,
     ToolCallContext,
     WebshareProxyConfig,
 )
 from avalan.tool.youtube import YouTubeToolSet, YouTubeTranscriptTool
-from unittest import IsolatedAsyncioTestCase, TestCase, main
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 
 class YouTubeToolSetTestCase(TestCase):

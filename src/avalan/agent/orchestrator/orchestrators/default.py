@@ -1,10 +1,11 @@
-from ....agent import EngineEnvironment, AgentOperation, Goal, Specification
+from ....agent import AgentOperation, EngineEnvironment, Goal, Specification
 from ....agent.orchestrator import Orchestrator
 from ....entities import EngineUri, Modality, TransformerEngineSettings
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
+
 from logging import Logger
 from uuid import UUID
 

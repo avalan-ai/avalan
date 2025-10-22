@@ -1,13 +1,14 @@
-from . import Tool, ToolSet
 from ..compat import override
 from ..entities import (
     GenericProxyConfig,
     ToolCallContext,
     WebshareProxyConfig,
 )
+from . import Tool, ToolSet
+
 from contextlib import AsyncExitStack
-from typing import Iterable
 from importlib import import_module
+from typing import Iterable
 
 
 class YouTubeTranscriptTool(Tool):
@@ -19,7 +20,7 @@ class YouTubeTranscriptTool(Tool):
 
     Returns:
         Transcript text chunks for the requested video.
-"""
+    """
 
     _proxy: GenericProxyConfig | WebshareProxyConfig | None
 

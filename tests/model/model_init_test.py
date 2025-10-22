@@ -1,13 +1,14 @@
-from avalan.model.response.text import TextGenerationResponse
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+
 from avalan.entities import GenerationSettings, Message, MessageRole
 from avalan.model.response import InvalidJsonResponseException
+from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import TextGenerationStream
 from avalan.model.vendor import (
     TextGenerationVendor,
     TextGenerationVendorStream,
 )
-from logging import getLogger
-from unittest import IsolatedAsyncioTestCase
 
 
 class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):

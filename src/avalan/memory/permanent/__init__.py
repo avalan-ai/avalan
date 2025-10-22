@@ -1,20 +1,23 @@
-from abc import abstractmethod
+from ...compat import override
 from ...entities import (
     EngineMessage,
     MessageContentImage,
     MessageContentText,
     MessageRole,
 )
-from ...memory import MessageMemory, MemoryStore as MemoryStoreBase
+from ...memory import MemoryStore as MemoryStoreBase
+from ...memory import MessageMemory
 from ...memory.partitioner.text import TextPartition
 from ...model.nlp.sentence import SentenceTransformerModel
+
+from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from numpy import ndarray
 from typing import Literal
-from ...compat import override
 from uuid import UUID, uuid4
+
+from numpy import ndarray
 
 Order = Literal["asc", "desc"]
 

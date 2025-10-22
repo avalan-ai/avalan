@@ -1,5 +1,4 @@
 import asyncio
-
 from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,9 +16,9 @@ from avalan.entities import (
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
+from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
-from avalan.model.call import ModelCall, ModelCallContext
 
 
 class ModelManagerExtraTestCase(TestCase):

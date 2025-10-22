@@ -1,11 +1,12 @@
-from avalan.model.response.text import TextGenerationResponse
 from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
     ReasoningToken,
 )
-from unittest import IsolatedAsyncioTestCase
+from avalan.model.response.text import TextGenerationResponse
 
 
 class TextGenerationStopOnLimitTestCase(IsolatedAsyncioTestCase):

@@ -1,26 +1,26 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from avalan.agent import (
+    AgentOperation,
+    EngineEnvironment,
+    Goal,
+    OutputType,
+    Role,
+    Specification,
+)
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.orchestrator.orchestrators.json import (
     JsonSpecification,
     Property,
 )
-from avalan.agent import (
-    EngineEnvironment,
-    AgentOperation,
-    Specification,
-    Role,
-    OutputType,
-    Goal,
-)
 from avalan.entities import EngineUri, TransformerEngineSettings
-from avalan.memory.manager import MemoryManager
-from avalan.model.manager import ModelManager
-from avalan.model.call import ModelCallContext
-from avalan.tool.manager import ToolManager
 from avalan.event.manager import EventManager
+from avalan.memory.manager import MemoryManager
+from avalan.model.call import ModelCallContext
+from avalan.model.manager import ModelManager
+from avalan.tool.manager import ToolManager
 
 
 class DummyEngine:

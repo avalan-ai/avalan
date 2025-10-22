@@ -1,11 +1,13 @@
 from ...compat import override
-from ...filters import Partitioner
 from ...entities import TextPartition
+from ...filters import Partitioner
 from ...model.nlp.sentence import SentenceTransformerModel
+
 from logging import Logger
 from re import split
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from typing import Callable
+
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 
 class TextPartitioner(Partitioner):

@@ -1,3 +1,7 @@
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
@@ -9,12 +13,9 @@ from avalan.entities import (
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
-from avalan.tool.manager import ToolManager
-from avalan.model.manager import ModelManager
 from avalan.model.call import ModelCallContext
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from avalan.model.manager import ModelManager
+from avalan.tool.manager import ToolManager
 
 
 class DummyEngine:

@@ -1,11 +1,12 @@
+from argparse import Namespace
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import GenerationSettings, ReasoningSettings, ReasoningTag
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.text import TextGenerationResponse
-from argparse import Namespace
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
-from logging import getLogger
 
 
 class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):

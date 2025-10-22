@@ -5,6 +5,13 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.exc import NoSuchTableError
 
+from avalan.entities import ToolCallContext
+from avalan.tool.database import (
+    DatabaseRelationshipsTool,
+    DatabaseToolSettings,
+    TableRelationship,
+)
+
 stub_utils = ModuleType("transformers.utils")
 stub_utils.get_json_schema = lambda tool: {}
 stub_transformers = ModuleType("transformers")
@@ -89,14 +96,6 @@ class _DummyEngine:
         return _DummyConnectionContext()
 
 
-from avalan.entities import ToolCallContext
-from avalan.tool.database import (
-    DatabaseRelationshipsTool,
-    DatabaseToolSettings,
-    TableRelationship,
-)
-
-
 class DatabaseRelationshipsEdgeCaseTestCase(TestCase):
     def setUp(self) -> None:
         self.tool = DatabaseRelationshipsTool(
@@ -114,7 +113,9 @@ class DatabaseRelationshipsEdgeCaseTestCase(TestCase):
             get_table_names=lambda schema=None: [],
         )
 
-        connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        connection = SimpleNamespace(
+            dialect=SimpleNamespace(name="postgresql")
+        )
 
         with (
             patch.object(
@@ -135,11 +136,13 @@ class DatabaseRelationshipsEdgeCaseTestCase(TestCase):
 
         self.assertEqual(relationships, [])
 
-    def test_collect_outgoing_handles_missing_tables_and_relationships(self) -> None:
+    def test_collect_outgoing_handles_missing_tables_and_relationships(
+        self,
+    ) -> None:
         inspector_missing = SimpleNamespace(
-            get_foreign_keys=lambda table_name, schema=None: (_ for _ in ()).throw(
-                NoSuchTableError(table_name)
-            )
+            get_foreign_keys=lambda table_name, schema=None: (
+                _ for _ in ()
+            ).throw(NoSuchTableError(table_name))
         )
 
         self.assertEqual(
@@ -211,10 +214,14 @@ class DatabaseRelationshipsEdgeCaseTestCase(TestCase):
             default_schema_name="public",
             get_columns=lambda table_name, schema=None: [{"name": "id"}],
             get_foreign_keys=get_foreign_keys,
-            get_table_names=lambda schema=None: ["orders"] if schema == "sales" else [],
+            get_table_names=lambda schema=None: (
+                ["orders"] if schema == "sales" else []
+            ),
         )
 
-        connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        connection = SimpleNamespace(
+            dialect=SimpleNamespace(name="postgresql")
+        )
 
         with (
             patch.object(

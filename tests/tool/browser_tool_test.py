@@ -1,3 +1,11 @@
+import types
+from contextlib import AsyncExitStack
+from io import StringIO
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import numpy as np
+
 from avalan.entities import (
     Message,
     MessageRole,
@@ -9,12 +17,6 @@ from avalan.tool.browser import (
     BrowserToolSet,
     BrowserToolSettings,
 )
-from contextlib import AsyncExitStack
-import types
-from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
-from io import StringIO
-import numpy as np
 
 
 class BrowserToolCallTestCase(IsolatedAsyncioTestCase):

@@ -1,20 +1,22 @@
-from abc import ABC, abstractmethod
 from ..entities import (
     Input,
     Token,
     TransformerEngineSettings,
 )
 from ..model.engine import Engine
+
+from abc import ABC, abstractmethod
 from logging import Logger, getLogger
+from typing import Literal
+
 from tokenizers import AddedToken
 from torch import Tensor
-from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoTokenizer,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-from typing import Literal
+from transformers.tokenization_utils_base import BatchEncoding
 
 
 class TransformerModel(Engine, ABC):

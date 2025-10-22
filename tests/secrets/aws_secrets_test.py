@@ -1,6 +1,7 @@
-from avalan.secrets.aws import AwsSecrets
 from unittest import TestCase, main
 from unittest.mock import MagicMock
+
+from avalan.secrets.aws import AwsSecrets
 
 
 class AwsSecretsTestCase(TestCase):

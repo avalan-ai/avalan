@@ -1,8 +1,9 @@
-from os.path import basename
-from re import DOTALL, MULTILINE, search, split
 from dataclasses import dataclass
 from io import BytesIO
+from os.path import basename
+from re import DOTALL, MULTILINE, search, split
 from urllib.parse import urlparse
+
 from anyio import to_thread
 from bs4 import BeautifulSoup
 from httpx import AsyncClient, Response

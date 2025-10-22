@@ -1,8 +1,8 @@
-from contextlib import AsyncExitStack
-from dataclasses import dataclass
 import importlib
 import sys
 import types
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch

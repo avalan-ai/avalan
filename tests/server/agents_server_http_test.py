@@ -1,10 +1,11 @@
-from avalan.server import agents_server
-from avalan.server.a2a import router as a2a_router
-from logging import Logger
 import sys
+from logging import Logger
 from types import ModuleType
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+
+from avalan.server import agents_server
+from avalan.server.a2a import router as a2a_router
 
 
 class AgentsServerHttpTestCase(TestCase):

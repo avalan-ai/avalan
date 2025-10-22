@@ -1,15 +1,17 @@
-from avalan.entities import EngineSettings
-from avalan.model.engine import Engine
-from avalan.model.audio.speech import (
-    AutoProcessor,
-    TextToSpeechModel,
-    DiaForConditionalGeneration,
-)
 from contextlib import nullcontext
 from logging import Logger
-from transformers import PreTrainedModel
-from unittest import TestCase, IsolatedAsyncioTestCase, main
+from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, patch
+
+from transformers import PreTrainedModel
+
+from avalan.entities import EngineSettings
+from avalan.model.audio.speech import (
+    AutoProcessor,
+    DiaForConditionalGeneration,
+    TextToSpeechModel,
+)
+from avalan.model.engine import Engine
 
 
 class TextToSpeechModelInstantiationTestCase(TestCase):

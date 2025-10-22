@@ -3,7 +3,17 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 
-from sqlalchemy import Column, Integer, MetaData, String, Table as SATable, create_engine, text
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    create_engine,
+    text,
+)
+from sqlalchemy import (
+    Table as SATable,
+)
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 
 from avalan.entities import ToolCallContext
@@ -66,31 +76,50 @@ class DatabaseSampleToolTestCase(IsolatedAsyncioTestCase):
         with engine.begin() as conn:
             conn.execute(
                 text(
-                    "CREATE TABLE books(" "id INTEGER PRIMARY KEY, author_id INTEGER, title TEXT)"
+                    "CREATE TABLE books("
+                    "id INTEGER PRIMARY KEY, author_id INTEGER, title TEXT)"
                 )
             )
             conn.execute(
-                text("INSERT INTO books(id, author_id, title) VALUES (1, 1, 'Atlas')")
+                text(
+                    "INSERT INTO books(id, author_id, title) VALUES (1, 1,"
+                    " 'Atlas')"
+                )
             )
             conn.execute(
-                text("INSERT INTO books(id, author_id, title) VALUES (2, 2, 'Bestiary')")
+                text(
+                    "INSERT INTO books(id, author_id, title) VALUES (2, 2,"
+                    " 'Bestiary')"
+                )
             )
             conn.execute(
-                text("INSERT INTO books(id, author_id, title) VALUES (3, 1, 'Chronicle')")
+                text(
+                    "INSERT INTO books(id, author_id, title) VALUES (3, 1,"
+                    " 'Chronicle')"
+                )
             )
             conn.execute(
-                text("CREATE TABLE numbers(id INTEGER PRIMARY KEY, label TEXT)")
+                text(
+                    "CREATE TABLE numbers(id INTEGER PRIMARY KEY, label TEXT)"
+                )
             )
             for idx in range(20):
                 conn.execute(
-                    text("INSERT INTO numbers(id, label) VALUES (:id, :label)"),
+                    text(
+                        "INSERT INTO numbers(id, label) VALUES (:id, :label)"
+                    ),
                     {"id": idx, "label": f"value-{idx}"},
                 )
             conn.execute(
-                text('CREATE TABLE "CamelCase"("Id" INTEGER PRIMARY KEY, "Value" TEXT)')
+                text(
+                    'CREATE TABLE "CamelCase"("Id" INTEGER PRIMARY KEY,'
+                    ' "Value" TEXT)'
+                )
             )
             conn.execute(
-                text('INSERT INTO "CamelCase"("Id", "Value") VALUES (1, "Item")')
+                text(
+                    'INSERT INTO "CamelCase"("Id", "Value") VALUES (1, "Item")'
+                )
             )
         engine.dispose()
         self.settings = DatabaseToolSettings(dsn=self.dsn)
@@ -128,7 +157,9 @@ class DatabaseSampleToolTestCase(IsolatedAsyncioTestCase):
                 count=5,
                 context=ToolCallContext(),
             )
-            self.assertEqual(rows, [{"title": "Atlas"}, {"title": "Chronicle"}])
+            self.assertEqual(
+                rows, [{"title": "Atlas"}, {"title": "Chronicle"}]
+            )
         finally:
             await engine.dispose()
 
@@ -274,7 +305,11 @@ class DatabaseSampleToolStatementTestCase(TestCase):
         }
 
         for name, dialect in dialects.items():
-            sql = str(stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
+            sql = str(
+                stmt.compile(
+                    dialect=dialect, compile_kwargs={"literal_binds": True}
+                )
+            )
             upper_sql = sql.upper()
             self.assertIn("ORDER BY", upper_sql)
             self.assertIn("NAME", upper_sql)

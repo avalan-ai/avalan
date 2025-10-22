@@ -1,14 +1,14 @@
-import sys
 import logging
+import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
-from types import SimpleNamespace
-from pathlib import Path
 from contextlib import ExitStack
-from unittest import TestCase, IsolatedAsyncioTestCase
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from avalan.cli.__main__ import CLI, HuggingfaceHub
 from avalan.cli import CommandAbortException
+from avalan.cli.__main__ import CLI, HuggingfaceHub
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:

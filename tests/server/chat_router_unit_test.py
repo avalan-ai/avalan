@@ -1,3 +1,11 @@
+import importlib
+import sys
+from logging import Logger, getLogger
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
+
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
     MessageContentImage,
@@ -13,12 +21,6 @@ from avalan.server.entities import (
     ContentImage,
     ContentText,
 )
-from fastapi import HTTPException
-from logging import Logger, getLogger
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
-import importlib
-import sys
 
 
 class DummyOrchestrator(Orchestrator):

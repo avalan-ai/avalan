@@ -1,21 +1,25 @@
-from ..agent import Role, Specification
+from ..agent import Role
 from ..agent.engine import EngineAgent
 from ..entities import EngineUri
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
+from ..model.call import ModelCallContext
 from ..model.engine import Engine
 from ..model.manager import ModelManager
-from ..model.call import ModelCallContext
 from ..tool.manager import ToolManager
-from jinja2 import (
-    Environment as TemplateEnvironment,
-    FileSystemLoader,
-    Template,
-)
+
 from os import linesep
 from os.path import dirname, join
 from typing import Any
 from uuid import UUID
+
+from jinja2 import (
+    Environment as TemplateEnvironment,
+)
+from jinja2 import (
+    FileSystemLoader,
+    Template,
+)
 
 
 class Renderer:

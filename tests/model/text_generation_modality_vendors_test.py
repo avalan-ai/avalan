@@ -1,7 +1,7 @@
-from contextlib import AsyncExitStack
-from logging import Logger
 import sys
 import types
+from contextlib import AsyncExitStack
+from logging import Logger
 from unittest.mock import MagicMock, patch
 
 import pytest

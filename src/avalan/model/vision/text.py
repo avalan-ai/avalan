@@ -5,13 +5,16 @@ from ...entities import (
     Input,
     MessageRole,
 )
-from ...model.vendor import TextGenerationVendor
 from ...model.engine import Engine
-from ...model.vision import BaseVisionModel
-from diffusers import DiffusionPipeline
 from ...model.transformer import TransformerModel
+from ...model.vendor import TextGenerationVendor
+from ...model.vision import BaseVisionModel
+
+from typing import Literal
+
+from diffusers import DiffusionPipeline
 from PIL import Image
-from torch import inference_mode, Tensor
+from torch import Tensor, inference_mode
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageTextToText,
@@ -22,7 +25,6 @@ from transformers import (
     Qwen2VLForConditionalGeneration,
 )
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal
 
 
 class ImageToTextModel(TransformerModel):

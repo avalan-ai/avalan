@@ -1,7 +1,18 @@
+from contextlib import nullcontext
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from transformers import (
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerFast,
+)
+
 from avalan.entities import (
     GenerationSettings,
-    TransformerEngineSettings,
     MessageRole,
+    TransformerEngineSettings,
 )
 from avalan.model.engine import Engine
 from avalan.model.vision import BaseVisionModel
@@ -10,18 +21,9 @@ from avalan.model.vision.text import (
     AutoModelForImageTextToText,
     AutoModelForVision2Seq,
     AutoProcessor,
-    ImageToTextModel,
     ImageTextToTextModel,
+    ImageToTextModel,
 )
-from contextlib import nullcontext
-from logging import Logger
-from transformers import (
-    AutoTokenizer,
-    PreTrainedModel,
-    PreTrainedTokenizerFast,
-)
-from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import MagicMock, PropertyMock, patch
 
 
 class DummyInputs(dict):

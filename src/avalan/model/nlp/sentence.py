@@ -1,15 +1,17 @@
 from ...compat import override
 from ...entities import Input
-from ...model.vendor import TextGenerationVendor
-from ...model.nlp import BaseNLPModel
 from ...model.engine import Engine
-from diffusers import DiffusionPipeline
+from ...model.nlp import BaseNLPModel
+from ...model.vendor import TextGenerationVendor
+
 from contextlib import nullcontext
+from typing import Literal
+
+from diffusers import DiffusionPipeline
 from numpy import ndarray
 from torch import inference_mode
 from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
-from typing import Literal
 
 
 class SentenceTransformerModel(BaseNLPModel):

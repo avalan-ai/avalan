@@ -1,10 +1,10 @@
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-from uuid import UUID
-
 from ..agent import Specification
 from ..entities import EngineUri, Input, Operation
 from ..tool.manager import ToolManager
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 if TYPE_CHECKING:
     from .engine import Engine

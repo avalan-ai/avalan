@@ -7,14 +7,16 @@ from ..utils import logger_replace
 from .a2a.store import TaskStore
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
+
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from importlib import import_module
 from logging import Logger
-from typing import Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 from uuid import UUID, uuid4
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -180,7 +182,9 @@ def _include_protocol_routers(
         app.include_router(mcp_http_router, prefix=mcp_prefix)
 
 
-def _attach_lifespan(app: FastAPI, lifespan: Callable[[FastAPI], AsyncIterator[None]]) -> None:
+def _attach_lifespan(
+    app: FastAPI, lifespan: Callable[[FastAPI], AsyncIterator[None]]
+) -> None:
     existing = app.router.lifespan_context
 
     if existing is None:

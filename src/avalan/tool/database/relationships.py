@@ -17,7 +17,7 @@ class DatabaseRelationshipsTool(DatabaseTool):
 
     Args:
         table_name: Table to inspect for foreign key relationships.
-        schema: Optional schema containing the table; defaults to the active schema.
+        schema: Optional schema containing table; defaults to active schema.
 
     Returns:
         Relationships describing how the table links to other tables.
@@ -98,7 +98,9 @@ class DatabaseRelationshipsTool(DatabaseTool):
         default_schema: str | None,
     ) -> list[TableRelationship]:
         try:
-            foreign_keys = inspector.get_foreign_keys(table_name, schema=schema) or []
+            foreign_keys = (
+                inspector.get_foreign_keys(table_name, schema=schema) or []
+            )
         except NoSuchTableError:
             return []
 
@@ -111,17 +113,13 @@ class DatabaseRelationshipsTool(DatabaseTool):
             relationships.append(
                 TableRelationship(
                     direction="outgoing",
-                    local_columns=tuple(
-                        fk.get("constrained_columns") or ()
-                    ),
+                    local_columns=tuple(fk.get("constrained_columns") or ()),
                     related_table=self._format_related_table(
                         referred_table,
                         target_schema,
                         default_schema,
                     ),
-                    related_columns=tuple(
-                        fk.get("referred_columns") or ()
-                    ),
+                    related_columns=tuple(fk.get("referred_columns") or ()),
                     constraint_name=fk.get("name"),
                 )
             )
@@ -140,7 +138,9 @@ class DatabaseRelationshipsTool(DatabaseTool):
 
         for schema_name in schemas:
             try:
-                table_names = inspector.get_table_names(schema=schema_name) or []
+                table_names = (
+                    inspector.get_table_names(schema=schema_name) or []
+                )
             except Exception:
                 continue
 
@@ -159,7 +159,10 @@ class DatabaseRelationshipsTool(DatabaseTool):
 
                 try:
                     foreign_keys = (
-                        inspector.get_foreign_keys(candidate, schema=schema_name) or []
+                        inspector.get_foreign_keys(
+                            candidate, schema=schema_name
+                        )
+                        or []
                     )
                 except NoSuchTableError:
                     continue

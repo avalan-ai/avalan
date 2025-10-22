@@ -1,16 +1,18 @@
-from avalan.entities import TransformerEngineSettings, ParallelStrategy
-from avalan.model.transformer import AutoTokenizer
+from contextlib import nullcontext
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from torch import Tensor, tensor
+from transformers import PreTrainedModel, PreTrainedTokenizerFast
+
+from avalan.entities import ParallelStrategy, TransformerEngineSettings
 from avalan.model.engine import Engine
 from avalan.model.nlp.token import (
-    TokenClassificationModel,
     AutoModelForTokenClassification,
+    TokenClassificationModel,
 )
-from logging import Logger
-from transformers import PreTrainedModel, PreTrainedTokenizerFast
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import MagicMock, patch, PropertyMock
-from contextlib import nullcontext
-from torch import Tensor, tensor
+from avalan.model.transformer import AutoTokenizer
 
 
 class TokenClassificationModelInstantiationTestCase(TestCase):

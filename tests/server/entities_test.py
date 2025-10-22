@@ -1,13 +1,15 @@
+from unittest import TestCase
+
+from pydantic import ValidationError
+
+from avalan.entities import MessageRole
 from avalan.server.entities import (
-    ChatCompletionRequest,
     ChatCompletionChoice,
+    ChatCompletionRequest,
     ChatCompletionResponse,
     ChatCompletionUsage,
     ChatMessage,
 )
-from avalan.entities import MessageRole
-from pydantic import ValidationError
-from unittest import TestCase
 
 
 class ChatEntitiesTestCase(TestCase):

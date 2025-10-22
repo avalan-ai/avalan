@@ -1,7 +1,8 @@
 import unittest
+
+from avalan.flow.connection import Connection
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
-from avalan.flow.connection import Connection
 
 
 class FlowExtraTestCase(unittest.TestCase):

@@ -1,19 +1,15 @@
-from argparse import ArgumentParser, Namespace, _SubParsersAction
-import sys
-from asyncio import run as run_in_loop
-from asyncio.exceptions import CancelledError
-from torch.cuda import device_count, is_available, set_device
-from torch.distributed import destroy_process_group
 from .. import license, name, site, version
+from ..agent.loader import OrchestratorLoader
 from ..cli import CommandAbortException, has_input
 from ..cli.commands.agent import (
+    agent_init,
     agent_message_search,
+    agent_proxy,
     agent_run,
     agent_serve,
-    agent_proxy,
-    agent_init,
 )
 from ..cli.commands.cache import cache_delete, cache_download, cache_list
+from ..cli.commands.deploy import deploy_run
 from ..cli.commands.memory import (
     memory_document_index,
     memory_embeddings,
@@ -27,65 +23,74 @@ from ..cli.commands.model import (
     model_uninstall,
 )
 from ..cli.commands.tokenizer import tokenize
-from ..cli.commands.deploy import deploy_run
 from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
+    Backend,
+    BetaSchedule,
     DistanceType,
+    GenerationCacheStrategy,
     Modality,
     ParallelStrategy,
+    ReasoningTag,
+    TextGenerationLoaderClass,
+    TimestepSpacing,
+    ToolFormat,
+    User,
     VisionColorModel,
     VisionImageFormat,
-    BetaSchedule,
-    TimestepSpacing,
-    TextGenerationLoaderClass,
-    Backend,
-    ReasoningTag,
-    GenerationCacheStrategy,
-    User,
     WeightType,
-    ToolFormat,
 )
 from ..memory.permanent import VectorFunction
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
-from ..agent.loader import OrchestratorLoader
 from ..tool.browser import BrowserToolSettings
 from ..tool.database import DatabaseToolSettings
 from ..utils import logger_replace
+
 import gettext
+import sys
+from argparse import ArgumentParser, Namespace, _SubParsersAction
+from asyncio import run as run_in_loop
+from asyncio.exceptions import CancelledError
+from dataclasses import fields
 from gettext import translation
 from importlib.util import find_spec
 from locale import getlocale
 from logging import (
-    basicConfig,
     DEBUG,
-    Filter,
-    getLogger,
     INFO,
+    WARNING,
+    Filter,
     Logger,
     LogRecord,
-    WARNING,
+    basicConfig,
+    getLogger,
 )
-from os import getenv, environ
-from subprocess import run
+from os import environ, getenv
 from os.path import join
 from pathlib import Path
+from subprocess import run
+from tomllib import load as toml_load
+from typing import Optional, get_args, get_origin
+from typing import get_args as get_type_args
+from uuid import uuid4
+from warnings import filterwarnings
+
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
+from torch.cuda import device_count, is_available, set_device
+from torch.distributed import destroy_process_group
 from transformers.utils import (
     is_flash_attn_2_available,
     is_torch_flex_attn_available,
+)
+from transformers.utils import (
     logging as hf_logging,
 )
-from typing import get_args, Optional, get_origin, get_args as get_type_args
-from dataclasses import fields
-from tomllib import load as toml_load
-from uuid import uuid4
-from warnings import filterwarnings
 
 
 class CLI:

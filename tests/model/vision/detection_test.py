@@ -1,15 +1,17 @@
+from logging import Logger
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import MagicMock, PropertyMock, call, patch
+
+from pytest import importorskip
+from transformers import PreTrainedModel
+
 from avalan.entities import EngineSettings, ImageEntity
 from avalan.model.engine import Engine
 from avalan.model.vision.detection import (
-    ObjectDetectionModel,
     AutoImageProcessor,
     AutoModelForObjectDetection,
+    ObjectDetectionModel,
 )
-from pytest import importorskip
-from transformers import PreTrainedModel
-from unittest import TestCase, IsolatedAsyncioTestCase, main
-from unittest.mock import call, MagicMock, patch, PropertyMock
-from logging import Logger
 
 importorskip("torch", reason="torch not installed")
 importorskip("PIL", reason="Pillow not installed")

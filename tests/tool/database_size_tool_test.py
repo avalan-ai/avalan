@@ -15,7 +15,9 @@ from avalan.tool.database import (
 
 
 class DummyResult:
-    def __init__(self, rows: list[dict[str, Any]] | None = None, scalar: Any = None) -> None:
+    def __init__(
+        self, rows: list[dict[str, Any]] | None = None, scalar: Any = None
+    ) -> None:
         self._rows = [dict(row) for row in rows or []]
         self._scalar = scalar
 
@@ -56,7 +58,9 @@ class DummySyncConnection:
         self._results = list(results)
         self.statements: list[tuple[str, dict[str, Any] | None]] = []
 
-    def execute(self, statement, params: dict[str, Any] | None = None) -> DummyResult:
+    def execute(
+        self, statement, params: dict[str, Any] | None = None
+    ) -> DummyResult:
         text_statement = str(statement)
         self.statements.append((text_statement, params))
         if not self._results:
@@ -124,19 +128,20 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.anyio
-async def test_database_size_tool_sqlite_collects_stats(tmp_path: Path) -> None:
+async def test_database_size_tool_sqlite_collects_stats(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "example.sqlite"
     dsn = f"sqlite:///{db_path}"
     engine = create_engine(dsn)
     with engine.begin() as conn:
         conn.execute(
             text(
-                "CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT NOT NULL, pages INTEGER)"
+                "CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT NOT"
+                " NULL, pages INTEGER)"
             )
         )
-        conn.execute(
-            text("CREATE INDEX idx_books_title ON books(title)")
-        )
+        conn.execute(text("CREATE INDEX idx_books_title ON books(title)"))
         conn.execute(
             text("INSERT INTO books(title, pages) VALUES ('Book', 100)")
         )
@@ -172,13 +177,19 @@ def test_collect_postgresql_sizes() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_postgresql(connection, "public", "books")
 
     assert metrics == [
         TableSizeMetric(category="data", bytes=2048, human_readable="2.0 KiB"),
-        TableSizeMetric(category="indexes", bytes=1024, human_readable="1.0 KiB"),
-        TableSizeMetric(category="total", bytes=4096, human_readable="4.0 KiB"),
+        TableSizeMetric(
+            category="indexes", bytes=1024, human_readable="1.0 KiB"
+        ),
+        TableSizeMetric(
+            category="total", bytes=4096, human_readable="4.0 KiB"
+        ),
     ]
 
 
@@ -198,7 +209,9 @@ def test_collect_mysql_sizes() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_mysql(connection, "main", "orders")
 
     assert metrics[0].category == "data"
@@ -220,7 +233,9 @@ def test_collect_sqlite_uses_dbstat() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_sqlite(connection, "books")
 
     totals = {metric.category: metric for metric in metrics}
@@ -239,7 +254,9 @@ def test_collect_sqlite_skips_nameless_indexes() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_sqlite(connection, "books")
 
     totals = {metric.category: metric for metric in metrics}
@@ -259,7 +276,9 @@ def test_collect_oracle_sizes() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_oracle(connection, "library", "books")
 
     totals = {metric.category: metric for metric in metrics}
@@ -276,7 +295,9 @@ def test_collect_mssql_sizes() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_mssql(connection, "dbo", "books")
 
     totals = {metric.category: metric for metric in metrics}
@@ -291,15 +312,24 @@ def test_split_schema_and_table_variants() -> None:
         "books",
     )
     assert DatabaseSizeTool._split_schema_and_table("books") == (None, "books")
-    assert DatabaseSizeTool._split_schema_and_table(".books") == (None, "books")
+    assert DatabaseSizeTool._split_schema_and_table(".books") == (
+        None,
+        "books",
+    )
 
 
 def test_metrics_for_dialect_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
     calls: list[tuple[str, str | None, str]] = []
 
-    def record_standard(name: str) -> Callable[[DatabaseSizeTool, Any, str | None, str], list[TableSizeMetric]]:
+    def record_standard(
+        name: str,
+    ) -> Callable[
+        [DatabaseSizeTool, Any, str | None, str], list[TableSizeMetric]
+    ]:
         def _inner(
             self: DatabaseSizeTool,
             conn: Any,
@@ -433,7 +463,9 @@ def test_collect_uses_effective_schema_when_display_blank(
     assert result.metrics == tuple(metrics)
 
 
-def test_collect_includes_normalized_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_includes_normalized_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class UpperNormalizer:
         def normalize(self, value: str) -> str:
             return value.upper() if value is not None else ""
@@ -481,8 +513,12 @@ def test_collect_includes_normalized_schema(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_collect_postgresql_empty_rows() -> None:
-    connection = DummySyncConnection(dialect_name="postgresql", results=[DummyResult()])
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    connection = DummySyncConnection(
+        dialect_name="postgresql", results=[DummyResult()]
+    )
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     assert tool._collect_postgresql(connection, "public", "books") == []
 
@@ -492,12 +528,20 @@ def test_collect_postgresql_inferring_total() -> None:
         dialect_name="postgresql",
         results=[
             DummyResult(
-                rows=[{"data_bytes": 1024, "index_bytes": 512, "total_bytes": None}]
+                rows=[
+                    {
+                        "data_bytes": 1024,
+                        "index_bytes": 512,
+                        "total_bytes": None,
+                    }
+                ]
             )
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_postgresql(connection, "public", "books")
 
     totals = {metric.category: metric for metric in metrics}
@@ -505,8 +549,12 @@ def test_collect_postgresql_inferring_total() -> None:
 
 
 def test_collect_mysql_empty_rows() -> None:
-    connection = DummySyncConnection(dialect_name="mysql", results=[DummyResult()])
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    connection = DummySyncConnection(
+        dialect_name="mysql", results=[DummyResult()]
+    )
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     assert tool._collect_mysql(connection, "main", "books") == []
 
@@ -527,7 +575,9 @@ def test_collect_mysql_partial_values() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     metrics = tool._collect_mysql(connection, "main", "books")
 
     totals = {metric.category: metric for metric in metrics}
@@ -552,7 +602,9 @@ def test_collect_sqlite_falls_back_to_pages() -> None:
             return super().execute(statement, params)
 
     connection = FallbackConnection()
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     metrics = tool._collect_sqlite(connection, "books")
     assert metrics == [
@@ -579,7 +631,9 @@ def test_collect_sqlite_handles_index_list_failure() -> None:
             return super().execute(statement, params)
 
     connection = IndexFailureConnection()
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     metrics = tool._collect_sqlite(connection, "books")
 
@@ -593,7 +647,9 @@ def test_collect_sqlite_via_pages_handles_missing_values() -> None:
         results=[DummyResult(scalar=None), DummyResult(scalar=4096)],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     assert tool._collect_sqlite_via_pages(connection) == []
 
 
@@ -607,19 +663,27 @@ def test_collect_oracle_handles_missing_indexes() -> None:
         ],
     )
 
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
     assert tool._collect_oracle(connection, None, "books") == []
 
 
 def test_collect_mssql_missing_rows() -> None:
-    connection = DummySyncConnection(dialect_name="mssql", results=[DummyResult(rows=[])])
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    connection = DummySyncConnection(
+        dialect_name="mssql", results=[DummyResult(rows=[])]
+    )
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     assert tool._collect_mssql(connection, "dbo", "books") == []
 
 
 def test_helper_functions_behave_consistently() -> None:
-    tool = DatabaseSizeTool(SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://"))
+    tool = DatabaseSizeTool(
+        SimpleNamespace(), DatabaseToolSettings(dsn="sqlite://")
+    )
 
     assert tool._normalize_schema_for_output(None) is None
     assert tool._normalize_schema_for_output("public") == "public"
@@ -637,5 +701,3 @@ def test_helper_functions_behave_consistently() -> None:
     assert DatabaseSizeTool._format_bytes(None) is None
     assert DatabaseSizeTool._format_bytes(-1) is None
     assert DatabaseSizeTool._format_bytes(500) == "500 B"
-
-

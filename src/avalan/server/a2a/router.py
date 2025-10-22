@@ -15,20 +15,22 @@ from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from ..sse import sse_message
 from .store import TaskStore
-from a2a import types as a2a_types
+
 from asyncio import CancelledError
 from collections.abc import AsyncGenerator, AsyncIterable
 from datetime import datetime, timezone
 from enum import Enum, auto
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
 from json import JSONDecodeError
 from logging import Logger
-from pydantic import ValidationError
 from re import compile
 from time import time
 from typing import Any, Final, Iterable
 from uuid import uuid4
+
+from a2a import types as a2a_types
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 
 def _di_get_logger(request: Request) -> Logger:

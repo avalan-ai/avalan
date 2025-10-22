@@ -1,9 +1,10 @@
+from logging import getLogger
+from unittest import IsolatedAsyncioTestCase
+
+from avalan.entities import ReasoningSettings, ReasoningToken
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
-from avalan.entities import ReasoningToken, ReasoningSettings
-from logging import getLogger
-from unittest import IsolatedAsyncioTestCase
 
 
 class ReasoningParserTestCase(IsolatedAsyncioTestCase):

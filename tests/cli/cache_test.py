@@ -1,10 +1,11 @@
 import unittest
-from unittest.mock import MagicMock, patch
 from argparse import Namespace
+from unittest.mock import MagicMock, patch
+
+from rich.padding import Padding
 
 from avalan.cli.commands import cache as cache_cmds
 from avalan.model.hubs import HubAccessDeniedException
-from rich.padding import Padding
 
 
 class CliCacheDeleteTestCase(unittest.TestCase):

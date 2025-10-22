@@ -1,20 +1,22 @@
-from ...vendor import TextGenerationVendorStream
-from ....model.response.text import TextGenerationResponse
-from .generation import TextGenerationModel
 from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
     TransformerEngineSettings,
 )
+from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
+from ...vendor import TextGenerationVendorStream
+from .generation import TextGenerationModel
+
 from asyncio import to_thread
 from dataclasses import asdict, replace
 from logging import Logger, getLogger
+from typing import AsyncGenerator, Callable, Literal
+
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 from torch import Tensor
-from typing import AsyncGenerator, Callable, Literal
 
 
 class MlxLmStream(TextGenerationVendorStream):

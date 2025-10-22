@@ -1,13 +1,16 @@
-from avalan.entities import GenerationSettings, TransformerEngineSettings
-import torch
-from avalan.model.nlp import BaseNLPModel
-from avalan.entities import (
-    GenerationCacheStrategy,
-)
-from logging import Logger
 from contextlib import nullcontext
+from logging import Logger
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+
+import torch
+
+from avalan.entities import (
+    GenerationCacheStrategy,
+    GenerationSettings,
+    TransformerEngineSettings,
+)
+from avalan.model.nlp import BaseNLPModel
 
 
 class DummyNLPModel(BaseNLPModel):
