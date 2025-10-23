@@ -12,7 +12,13 @@ class TestParseServeProtocols:
         assert OrchestratorLoader._parse_serve_protocols(None) is None
         assert OrchestratorLoader._parse_serve_protocols([]) is None
 
-    def test_parses_protocols_and_aliases(self) -> None:
+    def test_parses_protocols_and_aliases(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "avalan.agent.loader.OrchestratorLoader._is_a2a_supported",
+            staticmethod(lambda: True),
+        )
         protocols = OrchestratorLoader._parse_serve_protocols(
             [
                 " openai: responses,Chat ",
@@ -39,6 +45,17 @@ class TestParseServeProtocols:
     def test_rejects_unknown_openai_endpoint(self) -> None:
         with pytest.raises(AssertionError):
             OrchestratorLoader._parse_serve_protocols(["openai:unknown"])
+
+    def test_rejects_a2a_when_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "avalan.agent.loader.OrchestratorLoader._is_a2a_supported",
+            staticmethod(lambda: False),
+        )
+
+        with pytest.raises(AssertionError):
+            OrchestratorLoader._parse_serve_protocols(["a2a"])
 
 
 class TestLoadServeProtocolStrings:

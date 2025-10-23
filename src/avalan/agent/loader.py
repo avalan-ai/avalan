@@ -17,6 +17,7 @@ from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
+from ..server.a2a.availability import is_a2a_supported
 from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.code import CodeToolSet
 from ..tool.context import ToolSettingsContext
@@ -91,6 +92,10 @@ class OrchestratorLoader:
         assert dsn, "Permanent memory store DSN must be provided"
         return PermanentMemoryStoreSettings(dsn=dsn, description=description)
 
+    @staticmethod
+    def _is_a2a_supported() -> bool:
+        return is_a2a_supported()
+
     @classmethod
     def _parse_serve_protocols(
         cls, raw_protocols: list[str] | None
@@ -104,6 +109,10 @@ class OrchestratorLoader:
             protocol_part, _, endpoints_part = raw_protocol.partition(":")
             protocol = protocol_part.strip().lower()
             assert protocol, "Protocol name cannot be empty"
+            if protocol == "a2a" and not cls._is_a2a_supported():
+                raise AssertionError(
+                    "A2A protocol requires the optional 'a2a-sdk' package."
+                )
             assert (
                 protocol in cls._ALLOWED_PROTOCOLS
             ), f"Unsupported protocol '{protocol}'"

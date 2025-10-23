@@ -4,6 +4,7 @@ from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
+from .a2a.availability import is_a2a_supported
 from .a2a.store import TaskStore
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
@@ -26,19 +27,29 @@ _ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
 _OPENAI_ENDPOINTS = frozenset({"completions", "responses"})
 
 
+def _is_a2a_supported() -> bool:
+    return is_a2a_supported()
+
+
 def _normalize_protocols(
     protocols: Mapping[str, set[str]] | None,
 ) -> dict[str, set[str]]:
     if protocols is None:
-        return {
+        defaults = {
             "openai": set(_OPENAI_ENDPOINTS),
             "mcp": set(),
-            "a2a": set(),
         }
+        if _is_a2a_supported():
+            defaults["a2a"] = set()
+        return defaults
 
     normalized: dict[str, set[str]] = {}
     for name, endpoints in protocols.items():
         protocol = name.lower()
+        if protocol == "a2a" and not _is_a2a_supported():
+            raise AssertionError(
+                "A2A protocol requires the optional 'a2a-sdk' package."
+            )
         assert protocol in _ALLOWED_PROTOCOLS, f"Unsupported protocol '{name}'"
         if protocol == "openai":
             normalized_endpoints = {endpoint.lower() for endpoint in endpoints}
@@ -173,6 +184,10 @@ def _include_protocol_routers(
         app.include_router(engine_router_module.router)
 
     if "a2a" in selected_protocols:
+        if not _is_a2a_supported():
+            raise RuntimeError(
+                "A2A router cannot be enabled without the optional 'a2a-sdk'"
+            )
         a2a_module = import_module("avalan.server.a2a")
         app.include_router(a2a_module.router, prefix=a2a_prefix)
         app.include_router(a2a_module.well_known_router)
