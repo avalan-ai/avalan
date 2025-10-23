@@ -17,7 +17,6 @@ from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
-from ..server.a2a.availability import is_a2a_supported
 from ..tool.browser import BrowserToolSet, BrowserToolSettings
 from ..tool.code import CodeToolSet
 from ..tool.context import ToolSettingsContext
@@ -94,7 +93,9 @@ class OrchestratorLoader:
 
     @staticmethod
     def _is_a2a_supported() -> bool:
-        return is_a2a_supported()
+        from .. import server
+
+        return server._is_a2a_supported()
 
     @classmethod
     def _parse_serve_protocols(
