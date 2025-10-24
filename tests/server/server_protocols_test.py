@@ -9,9 +9,13 @@ class TestNormalizeProtocols:
         assert _is_module_available("math") is True
         assert _is_module_available("__this_module_wont_exist__") is False
 
-    def test_defaults_when_protocols_missing_without_a2a(self, monkeypatch) -> None:
+    def test_defaults_when_protocols_missing_without_a2a(
+        self, monkeypatch
+    ) -> None:
         # Patch the module attribute directly to avoid import-path edge cases
-        monkeypatch.setattr(server_module, "_is_module_available", lambda name: False)
+        monkeypatch.setattr(
+            server_module, "_is_module_available", lambda name: False
+        )
         result = _normalize_protocols(None)
 
         assert result == {
@@ -19,9 +23,13 @@ class TestNormalizeProtocols:
             "mcp": set(),
         }
 
-    def test_defaults_when_protocols_missing_with_a2a(self, monkeypatch) -> None:
+    def test_defaults_when_protocols_missing_with_a2a(
+        self, monkeypatch
+    ) -> None:
         # Patch the module attribute directly to avoid import-path edge cases
-        monkeypatch.setattr(server_module, "_is_module_available", lambda name: name == "a2a")
+        monkeypatch.setattr(
+            server_module, "_is_module_available", lambda name: name == "a2a"
+        )
         result = _normalize_protocols(None)
 
         assert result == {

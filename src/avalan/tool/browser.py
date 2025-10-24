@@ -9,15 +9,27 @@ from email.message import EmailMessage
 from io import BytesIO, TextIOBase
 from typing import Literal, final
 
-from faiss import IndexFlatL2
-from markitdown import MarkItDown
-from numpy import vstack
-from playwright.async_api import (
-    Browser,
-    Page,
-    PlaywrightContextManager,
-    async_playwright,
-)
+try:
+    from faiss import IndexFlatL2
+    from markitdown import MarkItDown
+    from numpy import vstack
+    from playwright.async_api import (
+        Browser,
+        Page,
+        PlaywrightContextManager,
+        async_playwright,
+    )
+
+    HAS_BROWSER_DEPENDENCIES = True
+except ImportError:
+    HAS_BROWSER_DEPENDENCIES = False
+    IndexFlatL2 = None
+    MarkItDown = None
+    vstack = None
+    Browser = None
+    Page = None
+    PlaywrightContextManager = None
+    async_playwright = None
 
 
 @final
@@ -82,6 +94,11 @@ class BrowserTool(Tool):
         client: PlaywrightContextManager,
         partitioner: Partitioner | None = None,
     ) -> None:
+        if not HAS_BROWSER_DEPENDENCIES:
+            raise ImportError(
+                "BrowserTool requires optional dependencies. "
+                "Install them with: pip install avalan[tool]"
+            )
         super().__init__()
         self._settings = settings
         self._client = client
@@ -272,6 +289,11 @@ class BrowserToolSet(ToolSet):
         namespace: str | None = None,
         partitioner: Partitioner | None = None,
     ):
+        if not HAS_BROWSER_DEPENDENCIES:
+            raise ImportError(
+                "BrowserToolSet requires optional dependencies. "
+                "Install them with: pip install avalan[tool]"
+            )
         assert settings
 
         if not exit_stack:

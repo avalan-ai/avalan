@@ -17,7 +17,11 @@ from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..model.nlp.sentence import SentenceTransformerModel
-from ..tool.browser import BrowserToolSet, BrowserToolSettings
+from ..tool.browser import (
+    HAS_BROWSER_DEPENDENCIES,
+    BrowserToolSet,
+    BrowserToolSettings,
+)
 from ..tool.code import CodeToolSet
 from ..tool.context import ToolSettingsContext
 from ..tool.database import DatabaseToolSet, DatabaseToolSettings
@@ -556,15 +560,18 @@ class OrchestratorLoader:
         )
 
         available_toolsets = [
-            BrowserToolSet(
-                settings=browser_settings or BrowserToolSettings(),
-                partitioner=text_partitioner,
-                namespace="browser",
-            ),
             CodeToolSet(namespace="code"),
             MathToolSet(namespace="math"),
             MemoryToolSet(memory, namespace="memory"),
         ]
+        if HAS_BROWSER_DEPENDENCIES:
+            available_toolsets.append(
+                BrowserToolSet(
+                    settings=browser_settings or BrowserToolSettings(),
+                    partitioner=text_partitioner,
+                    namespace="browser",
+                )
+            )
         if database_settings:
             available_toolsets.append(
                 DatabaseToolSet(
