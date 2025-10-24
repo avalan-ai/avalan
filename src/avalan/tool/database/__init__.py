@@ -8,11 +8,36 @@ from dataclasses import dataclass
 from re import compile as regex_compile
 from typing import Any, Literal, final
 
-from sqlalchemy import event
-from sqlalchemy import inspect as sqlalchemy_inspect
-from sqlalchemy.engine import Connection
-from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+try:
+    from sqlalchemy import MetaData, event, func, select, text
+    from sqlalchemy import Table as SATable
+    from sqlalchemy import inspect as sqlalchemy_inspect
+    from sqlalchemy.engine import Connection
+    from sqlalchemy.engine.reflection import Inspector
+    from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
+    from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+    from sqlalchemy.sql import Select
+    from sqlalchemy.sql.elements import ColumnElement, TextClause
+
+    _SQLALCHEMY_AVAILABLE = True
+except ImportError:
+    _SQLALCHEMY_AVAILABLE = False
+    MetaData = None  # type: ignore[assignment]
+    event = None  # type: ignore[assignment]
+    func = None  # type: ignore[assignment]
+    select = None  # type: ignore[assignment]
+    text = None  # type: ignore[assignment]
+    SATable = None  # type: ignore[assignment]
+    sqlalchemy_inspect = None  # type: ignore[assignment]
+    Connection = None  # type: ignore[assignment]
+    Inspector = None  # type: ignore[assignment]
+    NoSuchTableError = None  # type: ignore[assignment]
+    SQLAlchemyError = None  # type: ignore[assignment]
+    AsyncEngine = None  # type: ignore[assignment]
+    create_async_engine = None  # type: ignore[assignment]
+    Select = None  # type: ignore[assignment]
+    ColumnElement = None  # type: ignore[assignment]
+    TextClause = None  # type: ignore[assignment]
 
 try:
     from sqlglot import exp, parse, parse_one
@@ -150,6 +175,7 @@ class DatabaseTool(Tool, ABC):
         normalizer: IdentifierCaseNormalizer | None = None,
         table_cache: dict[str | None, dict[str, str]] | None = None,
     ) -> None:
+        self._ensure_sqlalchemy_available()
         self._engine = engine
         self._settings = settings
         if settings.identifier_case == "preserve":
@@ -160,6 +186,14 @@ class DatabaseTool(Tool, ABC):
             )
         self._table_cache = table_cache if table_cache is not None else {}
         super().__init__()
+
+    @staticmethod
+    def _ensure_sqlalchemy_available() -> None:
+        if not _SQLALCHEMY_AVAILABLE:
+            raise ImportError(
+                "The 'sqlalchemy' package is required for database tools. "
+                "Install it with: pip install sqlalchemy"
+            )
 
     @staticmethod
     def _ensure_sqlglot_available() -> None:

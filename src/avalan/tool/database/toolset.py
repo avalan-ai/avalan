@@ -1,6 +1,7 @@
 from ...compat import override
 from .. import ToolSet
 from . import (
+    AsyncEngine,
     DatabaseCountTool,
     DatabaseInspectTool,
     DatabaseKeysTool,
@@ -19,8 +20,6 @@ from . import (
 from .settings import DatabaseToolSettings
 
 from contextlib import AsyncExitStack
-
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class DatabaseToolSet(ToolSet):

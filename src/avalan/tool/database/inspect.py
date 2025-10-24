@@ -1,15 +1,14 @@
 from ...entities import ToolCallContext
 from . import (
+    AsyncEngine,
+    Connection,
     DatabaseTool,
     DatabaseToolSettings,
     ForeignKey,
     IdentifierCaseNormalizer,
+    NoSuchTableError,
     Table,
 )
-
-from sqlalchemy.engine import Connection
-from sqlalchemy.exc import NoSuchTableError
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class DatabaseInspectTool(DatabaseTool):

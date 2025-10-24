@@ -1,13 +1,12 @@
 from ...entities import ToolCallContext
 from . import (
+    AsyncEngine,
     DatabaseTool,
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
 )
 
 from typing import Any
-
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class DatabaseRunTool(DatabaseTool):
