@@ -14,9 +14,9 @@ from . import (
     DatabaseTablesTool,
     DatabaseTasksTool,
     DatabaseTool,
-    DatabaseToolSettings,
     IdentifierCaseNormalizer,
 )
+from .settings import DatabaseToolSettings
 
 from contextlib import AsyncExitStack
 

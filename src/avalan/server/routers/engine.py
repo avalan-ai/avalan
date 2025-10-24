@@ -1,7 +1,7 @@
 from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator import Orchestrator
 from ...tool.context import ToolSettingsContext
-from ...tool.database import DatabaseToolSettings
+from ...tool.database.settings import DatabaseToolSettings
 from .. import di_get_logger, di_set
 from ..entities import EngineRequest, OrchestratorContext
 

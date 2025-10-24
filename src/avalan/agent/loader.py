@@ -24,7 +24,8 @@ from ..tool.browser import (
 )
 from ..tool.code import HAS_CODE_DEPENDENCIES, CodeToolSet
 from ..tool.context import ToolSettingsContext
-from ..tool.database import DatabaseToolSet, DatabaseToolSettings
+from ..tool.database import DatabaseToolSet
+from ..tool.database.settings import DatabaseToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
