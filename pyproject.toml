@@ -275,7 +275,7 @@ keep-runtime-typing = false
 convention = "pep257"
 
 [tool.poetry]
-version = "1.3.9"
+version = "1.3.10"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
