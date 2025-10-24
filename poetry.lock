@@ -35,10 +35,9 @@ telemetry = ["opentelemetry-api (>=1.33.0)", "opentelemetry-sdk (>=1.33.0)"]
 name = "accelerate"
 version = "1.9.0"
 description = "Accelerate"
-optional = true
+optional = false
 python-versions = ">=3.9.0"
 groups = ["main"]
-markers = "extra == \"cpu\" or extra == \"all\""
 files = [
     {file = "accelerate-1.9.0-py3-none-any.whl", hash = "sha256:c24739a97ade1d54af4549a65f8b6b046adc87e2b3e4d6c66516e32c53d5a8f1"},
     {file = "accelerate-1.9.0.tar.gz", hash = "sha256:0e8c61f81af7bf37195b6175a545ed292617dd90563c88f49020aea5b6a0b47f"},
@@ -6918,10 +6917,9 @@ jeepney = ">=0.6"
 name = "sentence-transformers"
 version = "5.1.0"
 description = "Embeddings, Retrieval, and Reranking"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"memory\" or extra == \"all\""
 files = [
     {file = "sentence_transformers-5.1.0-py3-none-any.whl", hash = "sha256:fc803929f6a3ce82e2b2c06e0efed7a36de535c633d5ce55efac0b710ea5643e"},
     {file = "sentence_transformers-5.1.0.tar.gz", hash = "sha256:70c7630697cc1c64ffca328d6e8688430ebd134b3c2df03dc07cb3a016b04739"},
@@ -8739,11 +8737,10 @@ type = ["pytest-mypy"]
 
 [extras]
 agent = ["jinja2"]
-all = ["RestrictedPython", "SQLAlchemy", "a2a-sdk", "accelerate", "aiomysql", "anthropic", "asyncpg", "beautifulsoup4", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "imageio", "imageio-ffmpeg", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "openai", "opencv-python", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pypdf", "pytest", "pytest-cov", "sentence-transformers", "sentencepiece", "soundfile", "sqlglot", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
+all = ["RestrictedPython", "SQLAlchemy", "a2a-sdk", "aiomysql", "anthropic", "asyncpg", "beautifulsoup4", "boto3", "diffusers", "elasticsearch", "faiss-cpu", "fastapi", "google-genai", "huggingface-hub", "imageio", "imageio-ffmpeg", "jinja2", "keyring", "litellm", "markdownify", "markitdown", "mcp", "openai", "opencv-python", "pgvector", "pillow", "playwright", "protobuf", "psycopg", "pydantic", "pypdf", "pytest", "pytest-cov", "sentencepiece", "soundfile", "sqlglot", "sympy", "tiktoken", "torchaudio", "torchvision", "tree-sitter", "tree-sitter-python", "uvicorn", "youtube-transcript-api"]
 apple = ["mlx", "mlx-lm"]
 audio = ["soundfile", "torchaudio"]
-cpu = ["accelerate"]
-memory = ["beautifulsoup4", "boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "pypdf", "sentence-transformers", "tree-sitter", "tree-sitter-python"]
+memory = ["beautifulsoup4", "boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "pypdf", "tree-sitter", "tree-sitter-python"]
 mlx = ["mlx", "mlx-lm"]
 nvidia = ["bitsandbytes", "vllm"]
 quantization = ["bitsandbytes"]
@@ -8759,4 +8756,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "1f019f18b201eb6df2f2c5d8372e2b88a720a84180f3a703be86ee6c73d18217"
+content-hash = "8631e253579b9b6a7fa5206b39846e0f03b19fd2e160640d724b8e2f0a7d1572"
