@@ -1,9 +1,9 @@
 import asyncio
-from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest import IsolatedAsyncioTestCase, TestCase, main, skipIf
 from unittest.mock import AsyncMock, patch
 
 from avalan.entities import ToolCallContext
-from avalan.tool.code import AstGrepTool, CodeToolSet
+from avalan.tool.code import HAS_CODE_DEPENDENCIES, AstGrepTool, CodeToolSet
 
 
 class AstGrepToolTestCase(IsolatedAsyncioTestCase):
@@ -71,6 +71,7 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
                 await tool("p", context=ToolCallContext(), lang="py")
 
 
+@skipIf(not HAS_CODE_DEPENDENCIES, "RestrictedPython not installed")
 class CodeToolSetTestCase(TestCase):
     def test_json_schema_includes_ast_grep(self):
         toolset = CodeToolSet(namespace="code")

@@ -7,17 +7,40 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
 from io import BytesIO, TextIOBase
-from typing import Literal, final
+from typing import TYPE_CHECKING, Literal, final
 
-from faiss import IndexFlatL2
-from markitdown import MarkItDown
-from numpy import vstack
-from playwright.async_api import (
-    Browser,
-    Page,
-    PlaywrightContextManager,
-    async_playwright,
-)
+if TYPE_CHECKING:
+    from faiss import IndexFlatL2
+    from markitdown import MarkItDown
+    from numpy import vstack
+    from playwright.async_api import (
+        Browser,
+        Page,
+        PlaywrightContextManager,
+        async_playwright,
+    )
+
+try:
+    from faiss import IndexFlatL2
+    from markitdown import MarkItDown
+    from numpy import vstack
+    from playwright.async_api import (
+        Browser,
+        Page,
+        PlaywrightContextManager,
+        async_playwright,
+    )
+
+    HAS_BROWSER_DEPENDENCIES = True
+except ImportError:
+    HAS_BROWSER_DEPENDENCIES = False
+    IndexFlatL2 = None  # type: ignore
+    MarkItDown = None  # type: ignore
+    vstack = None  # type: ignore
+    Browser = None  # type: ignore
+    Page = None  # type: ignore
+    PlaywrightContextManager = None  # type: ignore
+    async_playwright = None  # type: ignore
 
 
 @final
@@ -69,19 +92,24 @@ class BrowserTool(Tool):
         Contents of the requested page in Markdown format.
     """
 
-    _client: PlaywrightContextManager
+    _client: "PlaywrightContextManager"
     _settings: BrowserToolSettings
-    _browser: Browser | None = None
-    _page: Page | None = None
-    _md: MarkItDown | None = None
+    _browser: "Browser | None" = None
+    _page: "Page | None" = None
+    _md: "MarkItDown | None" = None
     _partitioner: Partitioner | None = None
 
     def __init__(
         self,
         settings: BrowserToolSettings,
-        client: PlaywrightContextManager,
+        client: "PlaywrightContextManager",
         partitioner: Partitioner | None = None,
     ) -> None:
+        if not HAS_BROWSER_DEPENDENCIES:
+            raise ImportError(
+                "BrowserTool requires optional dependencies. "
+                "Install them with: pip install avalan[tool]"
+            )
         super().__init__()
         self._settings = settings
         self._client = client
@@ -241,7 +269,7 @@ class BrowserTool(Tool):
         content = result.text_content
         return content
 
-    def with_client(self, client: PlaywrightContextManager) -> "BrowserTool":
+    def with_client(self, client: "PlaywrightContextManager") -> "BrowserTool":
         self._client = client
         return self
 
@@ -261,7 +289,7 @@ class BrowserTool(Tool):
 
 
 class BrowserToolSet(ToolSet):
-    _client: PlaywrightContextManager | None = None
+    _client: "PlaywrightContextManager | None" = None
 
     @override
     def __init__(
@@ -272,6 +300,11 @@ class BrowserToolSet(ToolSet):
         namespace: str | None = None,
         partitioner: Partitioner | None = None,
     ):
+        if not HAS_BROWSER_DEPENDENCIES:
+            raise ImportError(
+                "BrowserToolSet requires optional dependencies. "
+                "Install them with: pip install avalan[tool]"
+            )
         assert settings
 
         if not exit_stack:

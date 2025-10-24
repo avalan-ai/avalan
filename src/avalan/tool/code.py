@@ -6,11 +6,19 @@ from asyncio import create_subprocess_exec
 from asyncio.subprocess import PIPE
 from contextlib import AsyncExitStack
 
-from RestrictedPython import (
-    RestrictingNodeTransformer,
-    compile_restricted,
-    safe_globals,
-)
+try:
+    from RestrictedPython import (
+        RestrictingNodeTransformer,
+        compile_restricted,
+        safe_globals,
+    )
+
+    HAS_CODE_DEPENDENCIES = True
+except ImportError:
+    HAS_CODE_DEPENDENCIES = False
+    RestrictingNodeTransformer = None
+    compile_restricted = None
+    safe_globals = None
 
 
 class CodeTool(Tool):

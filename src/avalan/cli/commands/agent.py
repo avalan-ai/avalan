@@ -19,7 +19,7 @@ from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
-from ...tool.database import DatabaseToolSettings
+from ...tool.database.settings import DatabaseToolSettings
 
 from argparse import Namespace
 from contextlib import AsyncExitStack

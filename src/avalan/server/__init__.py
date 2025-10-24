@@ -4,13 +4,13 @@ from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
-from .a2a.store import TaskStore
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from importlib import import_module
+from importlib.util import find_spec
 from logging import Logger
 from typing import TYPE_CHECKING, Mapping
 from uuid import UUID, uuid4
@@ -30,11 +30,15 @@ def _normalize_protocols(
     protocols: Mapping[str, set[str]] | None,
 ) -> dict[str, set[str]]:
     if protocols is None:
-        return {
+        defaults: dict[str, set[str]] = {
             "openai": set(_OPENAI_ENDPOINTS),
             "mcp": set(),
-            "a2a": set(),
         }
+        # Only enable A2A by default when the optional dependency is present.
+        # Use module availability check instead of importing to avoid cycles.
+        if _is_module_available("a2a"):
+            defaults["a2a"] = set()
+        return defaults
 
     normalized: dict[str, set[str]] = {}
     for name, endpoints in protocols.items():
@@ -60,6 +64,16 @@ def _normalize_protocols(
             ), f"Protocol '{protocol}' does not accept endpoint selection"
             normalized[protocol] = set()
     return normalized
+
+
+def _is_module_available(module_name: str) -> bool:
+    """Return True if the given top-level module can be imported.
+
+    This performs a spec lookup without importing to avoid import-time side
+    effects and circular dependencies. It is used to gate optional features
+    like the A2A server protocols in defaults.
+    """
+    return find_spec(module_name) is not None
 
 
 def _create_lifespan(
@@ -106,6 +120,8 @@ def _create_lifespan(
             app.state.logger = logger
             app.state.agent_id = agent_id
             if "a2a" in selected_protocols:
+                from .a2a.store import TaskStore
+
                 app.state.a2a_store = TaskStore()
                 app.state.a2a_tool_name = a2a_tool_name or "run"
                 if a2a_tool_description:

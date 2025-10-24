@@ -1,18 +1,53 @@
 from ...compat import override
 from .. import Tool
+from .settings import DatabaseToolSettings
 
 from abc import ABC
 from asyncio import sleep
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from re import compile as regex_compile
 from typing import Any, Literal, final
 
-from sqlalchemy import event
-from sqlalchemy import inspect as sqlalchemy_inspect
-from sqlalchemy.engine import Connection
-from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlglot import exp, parse, parse_one
+try:
+    from sqlalchemy import MetaData, event, func, select, text
+    from sqlalchemy import Table as SATable
+    from sqlalchemy import inspect as sqlalchemy_inspect
+    from sqlalchemy.engine import Connection
+    from sqlalchemy.engine.reflection import Inspector
+    from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
+    from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+    from sqlalchemy.sql import Select
+    from sqlalchemy.sql.elements import ColumnElement, TextClause
+
+    _SQLALCHEMY_AVAILABLE = True
+except ImportError:
+    _SQLALCHEMY_AVAILABLE = False
+    MetaData = None  # type: ignore[assignment]
+    event = None  # type: ignore[assignment]
+    func = None  # type: ignore[assignment]
+    select = None  # type: ignore[assignment]
+    text = None  # type: ignore[assignment]
+    SATable = None  # type: ignore[assignment]
+    sqlalchemy_inspect = None  # type: ignore[assignment]
+    Connection = None  # type: ignore[assignment]
+    Inspector = None  # type: ignore[assignment]
+    NoSuchTableError = None  # type: ignore[assignment]
+    SQLAlchemyError = None  # type: ignore[assignment]
+    AsyncEngine = None  # type: ignore[assignment]
+    create_async_engine = None  # type: ignore[assignment]
+    Select = None  # type: ignore[assignment]
+    ColumnElement = None  # type: ignore[assignment]
+    TextClause = None  # type: ignore[assignment]
+
+try:
+    from sqlglot import exp, parse, parse_one
+
+    _SQLGLOT_AVAILABLE = True
+except ImportError:
+    _SQLGLOT_AVAILABLE = False
+    exp = None  # type: ignore[assignment]
+    parse = None  # type: ignore[assignment]
+    parse_one = None  # type: ignore[assignment]
 
 
 @final
@@ -61,18 +96,6 @@ class DatabaseLock:
     blocking: tuple[str, ...] = ()
     state: str | None = None
     query: str | None = None
-
-
-@final
-@dataclass(frozen=True, kw_only=True, slots=True)
-class DatabaseToolSettings:
-    dsn: str
-    delay_secs: float | None = None
-    identifier_case: Literal["preserve", "lower", "upper"] = "preserve"
-    read_only: bool = True
-    allowed_commands: list[str] | None = field(
-        default_factory=lambda: ["select"],
-    )
 
 
 @final
@@ -152,6 +175,7 @@ class DatabaseTool(Tool, ABC):
         normalizer: IdentifierCaseNormalizer | None = None,
         table_cache: dict[str | None, dict[str, str]] | None = None,
     ) -> None:
+        self._ensure_sqlalchemy_available()
         self._engine = engine
         self._settings = settings
         if settings.identifier_case == "preserve":
@@ -162,6 +186,22 @@ class DatabaseTool(Tool, ABC):
             )
         self._table_cache = table_cache if table_cache is not None else {}
         super().__init__()
+
+    @staticmethod
+    def _ensure_sqlalchemy_available() -> None:
+        if not _SQLALCHEMY_AVAILABLE:
+            raise ImportError(
+                "The 'sqlalchemy' package is required for database tools. "
+                "Install it with: pip install sqlalchemy"
+            )
+
+    @staticmethod
+    def _ensure_sqlglot_available() -> None:
+        if not _SQLGLOT_AVAILABLE:
+            raise ImportError(
+                "The 'sqlglot' package is required for database tools. "
+                "Install it with: pip install sqlglot"
+            )
 
     async def _sleep_if_configured(self) -> None:
         delay = self._settings.delay_secs
@@ -217,6 +257,7 @@ class DatabaseTool(Tool, ABC):
         if self._normalizer is None:
             return sql
 
+        self._ensure_sqlglot_available()
         inspector = inspect(connection)
         _, schemas = self._schemas(connection, inspector)
 
@@ -311,6 +352,7 @@ class DatabaseTool(Tool, ABC):
         return False
 
     def _normalize_sql(self, sql: str) -> str:
+        self._ensure_sqlglot_available()
         dialect = self._sqlglot_dialect_name(self._engine)
         try:
             trees = parse(sql, read=dialect) if dialect else parse(sql)
@@ -420,6 +462,7 @@ class DatabaseTool(Tool, ABC):
     def _ensure_sql_command_allowed(
         statement: str, allowed: list[str], dialect_name: str | None = None
     ) -> None:
+        DatabaseTool._ensure_sqlglot_available()
         normalized_allowed = {command.lower() for command in allowed}
         if not normalized_allowed:
             raise PermissionError(

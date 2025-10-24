@@ -1,9 +1,10 @@
-from unittest import IsolatedAsyncioTestCase, main
+from unittest import IsolatedAsyncioTestCase, main, skipIf
 
 from avalan.entities import ToolCallContext
-from avalan.tool.code import CodeTool
+from avalan.tool.code import HAS_CODE_DEPENDENCIES, CodeTool
 
 
+@skipIf(not HAS_CODE_DEPENDENCIES, "RestrictedPython not installed")
 class CodeToolTestCase(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tool = CodeTool()

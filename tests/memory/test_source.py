@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from bs4 import BeautifulSoup
 import pytest
+from bs4 import BeautifulSoup
 
 from avalan.memory.source import MemorySource, MemorySourceDocument
 
