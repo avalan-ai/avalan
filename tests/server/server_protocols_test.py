@@ -1,10 +1,27 @@
 import pytest
 
-from avalan.server import _normalize_protocols
+from avalan import server as server_module
+from avalan.server import _is_module_available, _normalize_protocols
 
 
 class TestNormalizeProtocols:
-    def test_defaults_when_protocols_missing(self) -> None:
+    def test_is_module_available_basic(self) -> None:
+        assert _is_module_available("math") is True
+        assert _is_module_available("__this_module_wont_exist__") is False
+
+    def test_defaults_when_protocols_missing_without_a2a(self, monkeypatch) -> None:
+        # Patch the module attribute directly to avoid import-path edge cases
+        monkeypatch.setattr(server_module, "_is_module_available", lambda name: False)
+        result = _normalize_protocols(None)
+
+        assert result == {
+            "openai": {"completions", "responses"},
+            "mcp": set(),
+        }
+
+    def test_defaults_when_protocols_missing_with_a2a(self, monkeypatch) -> None:
+        # Patch the module attribute directly to avoid import-path edge cases
+        monkeypatch.setattr(server_module, "_is_module_available", lambda name: name == "a2a")
         result = _normalize_protocols(None)
 
         assert result == {

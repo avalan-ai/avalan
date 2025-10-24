@@ -1,112 +1,114 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This repository contains the **avalan** framework, a Python project that
+orchestrates multiple models and provides a CLI for AI agents. The repository
+uses [Poetry](https://python-poetry.org/) for dependency management
+and `pytest` for testing.
 
-## Common Development Commands
+## Formatting & Style
 
-### Build and Installation
+- Python files use 4 spaces per indentation as enforced by `.editorconfig`.
+- Avoid code duplication wherever possible.
+- Code must target Python **3.11** or newer with fully strict type hints.
+- Prefer `type | None` instead of `Optional[type]` for optional values.
+- Use assertions to ensure argument validity.
+- Do not ignore exceptions unless instructed.
+- Don't use `from __future__ import annotations`.
+- Make sure you use `from X import Y` type of imports, don't use inline imports, and sort imports by package name alphabetically, leaving relative imports at the top, also sorted alphabetically.
+- Do not declare `__all__` lists.
+
+### Coding Standards
+
+Code must adhere to the following PEP standards:
+
+1. **PEP 8**: Style guide for Python code: 4 spaces per indentation level;
+with naming conventions `lowercase_with_underscores` for modules/packages,
+`PascalCase` for classes, `lowercase_with_underscores` for
+functions/variables/parameters, `ALL_CAPS_WITH_UNDERSCORES` for constants;
+no extra spaces inside parentheses/brackets/braces, surround binary operators
+with a single space.
+
+2. **PEP 257**: write docstrings with triple-quoted strings immediately under
+`def`/`class`/`module` for one-line docstrings. For multiline docstrings
+write the summary, then a blank line, the extended description, and include
+optional and relevant sections like `Args:`, `Returns:`, `Raises:`. Follow
+imperative tone ("Return", not "Returns"), and wrap at ~72 chars.
+
+3. **PEP 585**: Write `list[int]`, `dict[str, float]`, `tuple[int, ...]`, etc.,
+using the built-in collection classes directly, instead of importing `List`,
+`Dict`, `Tuple` from `typing`.
+
+4. **PEP 604**: Write `str | float` instead of `Union[str, float]`.
+
+5. **PEP 634**, **PEP 635** and **PEP 636**: use structural pattern matching
+(`match` / `case`) when appropriate.
+
+Type hints encouraged throughout the codebase.
+
+Before committing, run `make lint` to perform syntax checks and formatting
+fixes with [black](https://black.readthedocs.io/en/stable/) and
+[ruff](https://docs.astral.sh/ruff/):
+
 ```bash
-# Install all dependencies including optional extras
-poetry install --extras all
-
-# Install specific extras (e.g., for Apple Silicon)
-poetry install --extras all --extras apple
-
-# Sync dependencies
-poetry sync --extras all
-```
-
-### Code Quality
-```bash
-# Run linters and formatters
 make lint
-# Or directly:
-poetry run ruff format --preview src/ tests/
-poetry run black --preview --enable-unstable-feature=string_processing src/ tests/
-poetry run ruff check --fix src/ tests/
 ```
 
-### Testing
+## Tool Docstrings
+
+All subclasses of `Tool` must include descriptive docstrings in a consistent format:
+
+- Start with a summary sentence written in the imperative mood and ending with a period.
+- Follow the summary with a blank line, then `Args:` and `Returns:` sections documenting every user-provided parameter and the return value. Do **not** document the implicit `context` parameter.
+- Keep the docstring informative; agents rely on these descriptions when selecting tools.
+- Update the docstring format test in `tests/tool/tool_docstring_format_test.py` whenever new tools are introduced, including validations that ensure `context` is omitted.
+
+## Testing and coverage
+
+When adding or modifying code make sure you add unit tests for it, aiming to maintain **100% test coverage**, so test varying parameter values, and include negative testing.
+
+To get information about test coverage, use the `test-coverage` target from the `Makefile`. If you run it without arguments, like so:
+
 ```bash
-# Run all tests
-make test
-# Or:
-poetry run pytest --verbose
-
-# Run tests with coverage
-poetry run pytest --cov=src/ --cov-report=xml
-
-# Run specific tests
-poetry run pytest tests/path/to/test.py -k "test_name"
-
-# Run tests matching a pattern
-poetry run pytest -k "agent or model"
+make test-coverage
 ```
 
-## High-Level Architecture
+You'll get test coverage information for all files in `src/`, in the form:
+`path: percentage`. If you want to get the list of files where test coverage
+is less than 95%, do:
 
-### Core Components
+```bash
+make test coverage -- -95
+```
 
-**Model System** (`src/avalan/model/`)
-- Multi-modal model support (text, vision, audio) with unified interfaces
-- Backend abstraction layer supporting transformers, vLLM, mlx-lm
-- Vendor integrations through AI URIs (`ai://` protocol)
-- Each modality has its own module with specialized models
+You can also add a specific path. For example, if you're looking for files
+that have less than 95% coverage on folder `src/avalan/tool`:
 
-**Agent Framework** (`src/avalan/agent/`)
-- Template-based agent configuration using TOML files
-- Event-driven architecture with streaming support
-- Tool integration system with native and custom tools
-- Reasoning strategies (ReACT, Chain-of-Thought, etc.)
+```bash
+make test-coverage -- -95 src/avalan/tool
+```
 
-**Memory Management** (`src/avalan/memory/`)
-- Unified memory API with multiple backends (PostgreSQL/pgvector, Elasticsearch, AWS S3)
-- Recent memory for conversation context
-- Permanent memory stores for long-term knowledge
-- Document partitioning and embedding support
+When working to increase code coverage **don't apply tricks** like using `exec` with `compile` to simulate lines covered.
 
-**CLI Interface** (`src/avalan/cli/`)
-- Main entry points: `avalan` and `avl` commands
-- Subcommands: agent, model, memory, flow, deploy
-- Rich terminal output with streaming support
+## Submitting changes
 
-**Server Components** (`src/avalan/server/`)
-- OpenAI API-compatible endpoints
-- MCP (Model Context Protocol) support
-- FastAPI-based REST API
+Run the full test suite before every commit:
 
-### Key Design Patterns
+```bash
+poetry run pytest --verbose -s
+```
 
-1. **AI URI System**: Unified resource identifier for models and engines
-   - Format: `ai://[key@]provider/model[/options]`
-   - Enables seamless switching between local and cloud models
+Tests must pass before you commit.
 
-2. **Engine Abstraction**: Models are loaded through engine-specific implementations
-   - TransformerEngine for HuggingFace models
-   - VLLMEngine for optimized inference
-   - MLXEngine for Apple Silicon optimization
+### Commit Messages
 
-3. **Event-Driven Streaming**: All model interactions support async streaming
-   - Token-by-token generation for text models
-   - Progress events for long-running operations
-   - Tool call events for agent interactions
+- Keep commit messages short and descriptive (e.g. `Fix memory tests`).
+- Do not amend or rewrite previous commits.
 
-4. **Configuration-First Agents**: Agents defined in TOML with templates
-   - Role, task, instructions, and rules sections
-   - Template variables for dynamic configuration
-   - Tool and memory configuration
+### Pull Request Message
 
-### Testing Strategy
+When you open a Pull Request, include two sections in the body:
 
-- Unit tests in `tests/` mirror source structure
-- Integration tests for CLI commands
-- Mock-based testing for external services
-- Coverage reporting with pytest-cov
+1. **Summary** – A short overview describing what was changed.
+2. **Testing** – Commands you executed and their output. If tests could not be
+run due to missing dependencies or network restrictions, mention this.
 
-### Development Workflow
-
-1. Make changes to source files in `src/avalan/`
-2. Run `make lint` to ensure code quality
-3. Run `make test` to verify functionality
-4. For new features, add corresponding tests in `tests/`
-5. Update documentation if adding new CLI commands or major features
