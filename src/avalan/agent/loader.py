@@ -22,7 +22,7 @@ from ..tool.browser import (
     BrowserToolSet,
     BrowserToolSettings,
 )
-from ..tool.code import CodeToolSet
+from ..tool.code import HAS_CODE_DEPENDENCIES, CodeToolSet
 from ..tool.context import ToolSettingsContext
 from ..tool.database import DatabaseToolSet, DatabaseToolSettings
 from ..tool.manager import ToolManager
@@ -560,10 +560,11 @@ class OrchestratorLoader:
         )
 
         available_toolsets = [
-            CodeToolSet(namespace="code"),
             MathToolSet(namespace="math"),
             MemoryToolSet(memory, namespace="memory"),
         ]
+        if HAS_CODE_DEPENDENCIES:
+            available_toolsets.append(CodeToolSet(namespace="code"))
         if HAS_BROWSER_DEPENDENCIES:
             available_toolsets.append(
                 BrowserToolSet(
