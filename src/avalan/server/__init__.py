@@ -4,7 +4,6 @@ from ..entities import OrchestratorSettings
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
-from .a2a.store import TaskStore
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 
@@ -121,6 +120,8 @@ def _create_lifespan(
             app.state.logger = logger
             app.state.agent_id = agent_id
             if "a2a" in selected_protocols:
+                from .a2a.store import TaskStore
+
                 app.state.a2a_store = TaskStore()
                 app.state.a2a_tool_name = a2a_tool_name or "run"
                 if a2a_tool_description:

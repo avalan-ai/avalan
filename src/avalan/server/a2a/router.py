@@ -24,13 +24,29 @@ from json import JSONDecodeError
 from logging import Logger
 from re import compile
 from time import time
-from typing import Any, Final, Iterable
+from typing import TYPE_CHECKING, Any, Final, Iterable
 from uuid import uuid4
 
-from a2a import types as a2a_types
+if TYPE_CHECKING:
+    from a2a import types as a2a_types
+
+try:
+    from a2a import types as a2a_types
+
+    HAS_A2A = True
+except ImportError:
+    HAS_A2A = False
+    a2a_types = None  # type: ignore
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
+
+if not HAS_A2A:
+    raise ImportError(
+        "A2A router requires the a2a-sdk package. "
+        "Install it with: pip install a2a-sdk"
+    )
 
 
 def _di_get_logger(request: Request) -> Logger:
