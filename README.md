@@ -13,6 +13,23 @@
 
 Avalan empowers developers and enterprises to build, orchestrate, and deploy intelligent AI solutions locally, on-premises and in the cloud. It provides a unified SDK and CLI for running millions of models with ease.
 
+## Table of Contents
+
+- [Highlights](#highlights)
+- [Why Avalan](#why-avalan)
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Models](#models)
+- [Modalities](#modalities)
+- [Tools](#tools)
+- [Reasoning strategies](#reasoning-strategies)
+- [Memories](#memories)
+- [Agents](#agents)
+- [Serving agents](#serving-agents)
+- [Documentation & Resources](#documentation--resources)
+- [Community & Support](#community--support)
+- [Contributing](#contributing)
+
 # Highlights
 
 - 🎞️ **Multi-modal** integration (NLP/text, vision, audio.)
@@ -36,9 +53,80 @@ These features make avalan ideal for everything from quick experiments to enterp
 * 🛡️ **No vendor lock-in**: Avalan orchestrates your services and code, fitting your existing stack instead of replacing it.
 * 🧩 **Composable reasoning**: multiple strategy templates and nested workflows that can call other flows, invoke applications, and execute code on demand.
 
-# Quick Look
+## Install
 
-Take a quick look at how to setup avalan in [Install](#install), which models and modalities you can use in [Models](#models), the tools available to agents in [Tools](#tools), the reasoning approaches in [Reasoning strategies](#reasoning-strategies), the memories you can configure in [Memories](#memories), how to build and deploy agents in [Agents](#agents), including serving over open protocols: [OpenAI API](#openai-completion-and-responses-api), [MCP](#mcp-server), and [A2A (Agent to Agent)](#a2a-server). For full CLI reference see the [CLI docs](docs/CLI.md).
+Avalan targets Python 3.11–3.12. Pick the installation path that matches your workflow:
+
+### Pip (recommended)
+
+```bash
+python3 -m pip install -U "avalan[agent,audio,memory,server,tool,vision]"
+```
+
+Add extras as needed:
+
+- `vllm` – Nvidia GPU acceleration via vLLM.
+- `quantization` – 4/8-bit quantized model loading.
+- `vendors` – hosted APIs such as Anthropic, Google, OpenAI, and others.
+
+For minimal installs simply omit the extras list.
+
+### Homebrew (macOS)
+
+```bash
+brew tap avalan-ai/avalan
+brew install avalan
+```
+
+### From source with Poetry
+
+```bash
+poetry install --all-extras
+```
+
+> [!TIP]
+> On macOS ensure the Xcode command line tools are present and install the build dependencies before compiling extras that rely on `sentencepiece`:
+>
+> ```bash
+> xcode-select --install
+> brew install cmake pkg-config protobuf sentencepiece
+> ```
+
+When you need bleeding-edge `transformers` features, install the latest nightly:
+
+```bash
+poetry run pip install --no-cache-dir "git+https://github.com/huggingface/transformers"
+```
+
+## Quickstart
+
+1. **Install Avalan** using pip or Homebrew.
+2. **Pick a model backend**: either export an API key for a vendor service (for example `export OPENAI_API_KEY=...`) or install an open model locally with `avalan model install`.
+3. **Run your first prompt** with the CLI:
+
+   ```bash
+   echo "Who are you, and who is Leo Messi?" \
+       | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+           --system "You are Aurora, a helpful assistant" \
+           --max-new-tokens 100
+   ```
+
+4. **Use the Python SDK** inside an async application:
+
+   ```python
+   import asyncio
+
+   from avalan.model.nlp.generation import TextGenerationModel
+
+   async def main() -> None:
+       with TextGenerationModel("ai://$OPENAI_API_KEY@openai/gpt-4o") as model:
+           response = await model("Give me two facts about Leo Messi.")
+           print(response)
+
+   asyncio.run(main())
+   ```
+
+   See [docs/examples](docs/examples/README.md) for runnable scripts covering every modality, reasoning strategy, and deployment path.
 
 ## Models
 
@@ -1553,6 +1641,30 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
+## Documentation & Resources
+
+- [CLI reference](docs/CLI.md) – exhaustive documentation for every command and flag.
+- [Installation guide](docs/INSTALL.md) – environment preparation and platform-specific tips.
+- [docs/examples](docs/examples/README.md) – runnable scripts that mirror the snippets in this README.
+- [docs/ai_uri.md](docs/ai_uri.md) – the authoritative guide to engine URIs and backend selection.
+- [docs/tutorials](docs/tutorials) – longer-form walkthroughs for advanced workflows.
+
+## Community & Support
+
+- Join the [Avalan Discord](https://discord.gg/8Eh9TNvk) to ask questions, share workflows, and follow release announcements.
+- Browse community answers or ask DeepWiki follow-up questions from the README badge at the top of this page.
+- For commercial support, email [avalan@avalan.ai](mailto:avalan@avalan.ai).
+
+## Contributing
+
+We welcome pull requests, issue reports, and new examples.
+
+1. Read the [Code of Conduct](CODE_OF_CONDUCT.md) before you start.
+2. Install the project in editable mode with `poetry install --all-extras` and activate the virtual environment with `poetry shell`.
+3. Run `poetry run pytest -s` and `make lint` before submitting a pull request.
+
+Open a [GitHub issue](https://github.com/avalan-ai/avalan/issues) if you discover bugs or want to propose larger changes.
+
 > [!TIP]
 > Use `--protocol openai:responses,completion` to enable both OpenAI Responses and Completions endpoints, or narrow the surface by specifying just `responses` or `completion` after the colon.
 
@@ -1655,45 +1767,3 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
-# Install
-
-On macOS, install avalan with Homebrew:
-
-```bash
-brew tap avalan-ai/avalan
-```
-
-In other environments, use [Poetry](https://python-poetry.org/) to install
-avalan with the `all` extra:
-
-```bash
-poetry install avalan --extras all
-```
-
-> [!TIP]
-> If you have access to Nvidia GPUs, add the `nvidia` extra to benefit from the
-> `vllm` backend and quantized models:
->
-> ```bash
-> poetry install avalan --extras all --extras nvidia
-> ```
-
-> [!TIP]
-> If you are running on Apple Silicon Macs, add the `apple` extra to benefit
-> from the `mlx` backend:
->
-> ```bash
-> poetry install avalan --extras all --extras apple
-> ```
-
-> [!TIP]
-> On macOS, sentencepiece may fail to build. Ensure the Xcode CLI is installed
-> and install the required Homebrew packages:
->
-> `xcode-select --install`
-> `brew install cmake pkg-config protobuf sentencepiece`
-
-> [!TIP]
-> If you need transformer loading classes that are not yet released, install
-> the development version of transformers:
-> `poetry install git+https://github.com/huggingface/transformers --no-cache`
