@@ -1692,31 +1692,6 @@ the real API; simply change `--base-url`:
 echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
-
-## Documentation & Resources
-
-- [CLI reference](docs/CLI.md) – exhaustive documentation for every command and flag.
-- [Installation guide](docs/INSTALL.md) – environment preparation and platform-specific tips.
-- [docs/examples](docs/examples/README.md) – runnable scripts that mirror the snippets in this README.
-- [docs/ai_uri.md](docs/ai_uri.md) – the authoritative guide to engine URIs and backend selection.
-- [docs/tutorials](docs/tutorials) – longer-form walkthroughs for advanced workflows.
-
-## Community & Support
-
-- Join the [Avalan Discord](https://discord.gg/8Eh9TNvk) to ask questions, share workflows, and follow release announcements.
-- Browse community answers or ask DeepWiki follow-up questions from the README badge at the top of this page.
-- For commercial support, email [avalan@avalan.ai](mailto:avalan@avalan.ai).
-
-## Contributing
-
-We welcome pull requests, issue reports, and new examples.
-
-1. Read the [Code of Conduct](CODE_OF_CONDUCT.md) before you start.
-2. Install the project in editable mode with `poetry install --all-extras` and activate the virtual environment with `poetry shell`.
-3. Run `poetry run pytest -s` and `make lint` before submitting a pull request.
-
-Open a [GitHub issue](https://github.com/avalan-ai/avalan/issues) if you discover bugs or want to propose larger changes.
-
 > [!TIP]
 > Use `--protocol openai:responses,completion` to enable both OpenAI Responses and Completions endpoints, or narrow the surface by specifying just `responses` or `completion` after the colon.
 
@@ -1818,4 +1793,29 @@ And you can connect to it from another terminal using `--base-url`:
 echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
+
+
+## Documentation & Resources
+
+- [CLI reference](docs/CLI.md) – exhaustive documentation for every command and flag.
+- [Installation guide](docs/INSTALL.md) – environment preparation and platform-specific tips.
+- [docs/examples](docs/examples/README.md) – runnable scripts that mirror the snippets in this README.
+- [docs/ai_uri.md](docs/ai_uri.md) – the authoritative guide to engine URIs and backend selection.
+- [docs/tutorials](docs/tutorials) – longer-form walkthroughs for advanced workflows.
+
+## Community & Support
+
+- Join the [Avalan Discord](https://discord.gg/8Eh9TNvk) to ask questions, share workflows, and follow release announcements.
+- Browse community answers or ask DeepWiki follow-up questions from the README badge at the top of this page.
+- For commercial support, email [avalan@avalan.ai](mailto:avalan@avalan.ai).
+
+## Contributing
+
+We welcome pull requests, issue reports, and new examples.
+
+1. Read the [Code of Conduct](CODE_OF_CONDUCT.md) before you start.
+2. Install the project in editable mode with `poetry install --all-extras` and activate the virtual environment with `poetry shell`.
+3. Run `poetry run pytest -s` and `make lint` before submitting a pull request.
+
+Open a [GitHub issue](https://github.com/avalan-ai/avalan/issues) if you discover bugs or want to propose larger changes.
 
