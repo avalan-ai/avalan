@@ -26,28 +26,28 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
   - [Vendor models](#vendor-models)
   - [Open models](#open-models)
 - [Modalities](#modalities)
-  - [Audio](#audio)
-    - [Audio classification](#audio-classification)
-    - [Speech recognition](#speech-recognition)
-    - [Text to speech](#text-to-speech)
-    - [Audio generation](#audio-generation)
-  - [Text](#text)
-    - [Question answering](#question-answering)
-    - [Sequence classification](#sequence-classification)
-    - [Sequence to sequence](#sequence-to-sequence)
-    - [Text generation](#text-generation)
-    - [Token classification](#token-classification)
-    - [Translation](#translation)
-  - [Vision](#vision)
-    - [Encoder decoder](#encoder-decoder)
-    - [Image classification](#image-classification)
-    - [Image to text](#image-to-text)
-    - [Image text to text](#image-text-to-text)
-    - [Object detection](#object-detection)
-    - [Semantic segmentation](#semantic-segmentation)
-    - [Text to animation](#text-to-animation)
-    - [Text to image](#text-to-image)
-    - [Text to video](#text-to-video)
+  - 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
+    - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
+    - 🗣️ [Speech recognition](#speech-recognition): Convert spoken audio to text.
+    - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
+    - 🎵 [Audio generation](#audio-generation): Compose music from text.
+  - 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
+    - ❓ [Question answering](#question-answering): Answer questions from context.
+    - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
+    - 🔁 [Sequence to sequence](#sequence-to-sequence): Transform text like summarization.
+    - ✍️ [Text generation](#text-generation): Produce new text from prompts.
+    - 🏷️ [Token classification](#token-classification): Tag tokens for tasks like Named Entity Recognition.
+    - 🌍 [Translation](#translation): Convert text between languages.
+  - 👁️ [**Vision**](#vision): Analyze images or create visuals for content and automation.
+    - 👓 [Encoder Decoder](#encoder-decoder): Answer questions on documents, OCR-free.
+    - 🖼️ [Image classification](#image-classification): Identify objects in an image
+    - 📷 [Image to text](#image-to-text): Describe an image with text
+    - 🔤 [Image text to text](#image-text-to-text): Provide an image and instruction to produce text
+    - 🎯 [Object detection](#object-detection): Locate objects within an image
+    - 🧩 [Semantic segmentation](#semantic-segmentation): Label each pixel in an image
+    - 🎬 [Text to animation](#text-to-animation): Create animations from prompts
+    - 🖌️ [Text to image](#text-to-image): Generate images from text
+    - 🎥 [Text to video](#text-to-video): Produce videos from text prompts
 - [Tools](#tools)
   - [Math toolset (`math.*`)](#math-toolset-math)
     - [Example: `math.calculator`](#example-mathcalculator)
@@ -74,13 +74,13 @@ Avalan empowers developers and enterprises to build, orchestrate, and deploy int
 - [Agents](#agents)
   - [Serving agents](#serving-agents)
     - [OpenAI completion and responses API](#openai-completion-and-responses-api)
+    - [MCP server](#mcp-server)
+    - [A2A server](#a2a-server)
+    - [Embedding in existing FastAPI apps](#embedding-in-existing-fastapi-apps)
+    - [Proxy agents](#proxy-agents)
 - [Documentation & Resources](#documentation--resources)
 - [Community & Support](#community--support)
 - [Contributing](#contributing)
-  - [MCP server](#mcp-server)
-  - [A2A server](#a2a-server)
-  - [Embedding in existing FastAPI apps](#embedding-in-existing-fastapi-apps)
-  - [Proxy agents](#proxy-agents)
 
 # Highlights
 
@@ -315,25 +315,6 @@ task you need:
 * 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
   - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
   - 🗣️ [Speech recognition](#speech-recognition): Convert spoken audio to text.
-  - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
-  - 🎵 [Audio generation](#audio-generation): Compose music from text.
-* 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
-  - ❓ [Question answering](#question-answering): Answer questions from context.
-  - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
-  - 🔁 [Sequence to sequence](#sequence-to-sequence): Transform text like summarization.
-  - ✍️ [Text generation](#text-generation): Produce new text from prompts.
-  - 🏷️ [Token classification](#token-classification): Tag tokens for tasks like Named Entity Recognition.
-  - 🌍 [Translation](#translation): Convert text between languages.
-* 👁️ [**Vision**](#vision): Analyze images or create visuals for content and automation.
-  - 👓 [Encoder Decoder](#encoder-decoder): Answer questions on documents, OCR-free.
-  - 🖼️ [Image classification](#image-classification): Identify objects in an image
-  - 📷 [Image to text](#image-to-text): Describe an image with text
-  - 🔤 [Image text to text](#image-text-to-text): Provide an image and instruction to produce text
-  - 🎯 [Object detection](#object-detection): Locate objects within an image
-  - 🧩 [Semantic segmentation](#semantic-segmentation): Label each pixel in an image
-  - 🎬 [Text to animation](#text-to-animation): Create animations from prompts
-  - 🖌️ [Text to image](#text-to-image): Generate images from text
-  - 🎥 [Text to video](#text-to-video): Produce videos from text prompts
 
 ### Audio
 
