@@ -29,16 +29,16 @@ These features make avalan ideal for everything from quick experiments to enterp
 
 # Table of Contents
 
-- [Why Avalan](#why-avalan)
-- [Install](#install)
-  - [Pip (recommended)](#pip-recommended)
-  - [Homebrew (macOS)](#homebrew-macos)
-  - [From source with Poetry](#from-source-with-poetry)
-- [Quickstart](#quickstart)
-- [Models](#models)
-  - [Vendor models](#vendor-models)
-  - [Open models](#open-models)
-- [Modalities](#modalities)
+- ❓ [Why Avalan](#why-avalan): Discover why avalan is a flexible foundation for agents.
+- 📦 [Install](#install): Set up avalan using your preferred package manager.
+  - 🐍 [Pip (recommended)](#pip-recommended): Install the full avalan toolkit from PyPI.
+  - 🍺 [Homebrew (macOS)](#homebrew-macos): Add avalan via the macOS package manager.
+  - 🛠️ [From source with Poetry](#from-source-with-poetry): Develop against avalan using a local checkout.
+- 🚀 [Quickstart](#quickstart): Run your first avalan prompt from the CLI or SDK.
+- 🧠 [Models](#models): Explore supported vendor-hosted and open-source models.
+  - 🏢 [Vendor models](#vendor-models): Connect to commercial APIs through engine URIs.
+  - 🆓 [Open models](#open-models): Run community models locally with avalan backends.
+- 🎛️ [Modalities](#modalities): Build workflows spanning audio, text, and vision tasks.
   - 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
     - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
     - 🗣️ [Speech recognition](#speech-recognition): Convert spoken audio to text.
@@ -61,39 +61,39 @@ These features make avalan ideal for everything from quick experiments to enterp
     - 🎬 [Text to animation](#text-to-animation): Create animations from prompts
     - 🖌️ [Text to image](#text-to-image): Generate images from text
     - 🎥 [Text to video](#text-to-video): Produce videos from text prompts
-- [Tools](#tools)
-  - [Math toolset (`math.*`)](#math-toolset-math)
-    - [Example: `math.calculator`](#example-mathcalculator)
-  - [Code toolset (`code.*`)](#code-toolset-code)
-    - [Example: `code.run`](#example-coderun)
-  - [Database toolset (`database.*`)](#database-toolset-database)
-  - [Browser toolset (`browser.*`)](#browser-toolset-browser)
-  - [Memory toolset (`memory.*`)](#memory-toolset-memory)
-  - [YouTube toolset (`youtube.*`)](#youtube-toolset-youtube)
-  - [MCP toolset (`mcp.*`)](#mcp-toolset-mcp)
-  - [Search tool (`search_engine.search`)](#search-tool-search_enginesearch)
-- [Reasoning strategies](#reasoning-strategies)
-  - [Reasoning models](#reasoning-models)
-  - [ReACT](#react)
-  - [Chain-of-Thought](#chain-of-thought)
-  - [Tree-of-Thought](#tree-of-thought)
-  - [Plan-and-Reflect](#plan-and-reflect)
-  - [Self-Consistency](#self-consistency)
-  - [Scratchpad-Toolformer](#scratchpad-toolformer)
-  - [Cascaded Prompting](#cascaded-prompting)
-  - [Critic-Guided Direction-Following Experts](#critic-guided-direction-following-experts)
-  - [Product-of-Experts](#product-of-experts)
-- [Memories](#memories)
-- [Agents](#agents)
-  - [Serving agents](#serving-agents)
-    - [OpenAI completion and responses API](#openai-completion-and-responses-api)
-    - [MCP server](#mcp-server)
-    - [A2A server](#a2a-server)
-    - [Embedding in existing FastAPI apps](#embedding-in-existing-fastapi-apps)
-    - [Proxy agents](#proxy-agents)
-- [Documentation & Resources](#documentation--resources)
-- [Community & Support](#community--support)
-- [Contributing](#contributing)
+- 🛠️ [Tools](#tools): Extend agents with specialized capabilities and integrations.
+  - ➗ [Math](#math-toolset-math): Perform calculations and numeric reasoning during runs.
+    - 🧮 [Example: `math.calculator`](#example-mathcalculator): Demonstrates arithmetic support in prompts.
+  - 💻 [Code](#code-toolset-code): Execute and evaluate source code inside workflows.
+    - 🧾 [Example: `code.run`](#example-coderun): Showcase running multi-file code sessions.
+  - 🗄️ [Database](#database-toolset-database): Query and manage structured datasets from agents.
+  - 🌐 [Browser](#browser-toolset-browser): Navigate and extract information from web pages.
+  - 🧠 [Memory](#memory-toolset-memory): Persist and retrieve contextual knowledge over time.
+  - ▶️ [YouTube](#youtube-toolset-youtube): Interact with videos for search and transcription.
+  - 🧩 [MCP](#mcp-toolset-mcp): Connect to Model Context Protocol compliant services.
+  - 🔍 [Search](#search-tool-search_enginesearch): Perform live information retrieval during reasoning.
+- 🧭 [Reasoning strategies](#reasoning-strategies): Combine planning approaches for complex tasks.
+  - 🪄 [Reasoning models](#reasoning-models): Choose dedicated reasoning-capable backends.
+  - ♻️ [ReACT](#react): Alternate between thought and action steps for iterative solving.
+  - 🧵 [Chain-of-Thought](#chain-of-thought): Encourage detailed intermediate reasoning traces.
+  - 🌳 [Tree-of-Thought](#tree-of-thought): Branch reasoning paths and prune based on outcomes.
+  - 🗺️ [Plan-and-Reflect](#plan-and-reflect): Outline steps and refine results through reflection.
+  - 🔁 [Self-Consistency](#self-consistency): Sample multiple outputs and reconcile the best answer.
+  - ✏️ [Scratchpad-Toolformer](#scratchpad-toolformer): Mix scratchpad notes with adaptive tool calls.
+  - 🪜 [Cascaded Prompting](#cascaded-prompting): Stage prompts to incrementally improve responses.
+  - 🧑‍⚖️ [Critic-Guided Direction-Following Experts](#critic-guided-direction-following-experts): Combine specialist agents with critic feedback.
+  - 🤝 [Product-of-Experts](#product-of-experts): Merge expert outputs into a unified consensus.
+- 🗂️ [Memories](#memories): Learn how avalan structures short- and long-term memory.
+- 🕴️ [Agents](#agents): Compose, host, and embed intelligent agent services.
+  - 🛰️ [Serving agents](#serving-agents): Deploy avalan agents to different hosting environments.
+    - 🧠 [OpenAI completion and responses API](#openai-completion-and-responses-api): Serve OpenAI-compatible interfaces for drop-in usage.
+    - 🛰️ [MCP server](#mcp-server): Offer avalan functionality through the MCP protocol.
+    - 🔄 [A2A server](#a2a-server): Bridge avalan agents with the Assistant-to-Assistant network.
+    - ⚙️ [Embedding in existing FastAPI apps](#embedding-in-existing-fastapi-apps): Integrate avalan into current Python services.
+    - 🕷️ [Proxy agents](#proxy-agents): Relay requests through intermediary agents and services.
+- 📚 [Documentation & Resources](#documentation--resources): Find manuals, guides, and supporting materials.
+- 🤝 [Community & Support](#community--support): Join the community and get help from maintainers.
+- 🧑‍💻 [Contributing](#contributing): Learn how to propose changes and collaborate on avalan.
 
 # Why Avalan
 
