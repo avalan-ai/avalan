@@ -29,7 +29,6 @@ These features make avalan ideal for everything from quick experiments to enterp
 
 # Table of Contents
 
-- [Highlights](#highlights)
 - [Why Avalan](#why-avalan)
 - [Install](#install)
   - [Pip (recommended)](#pip-recommended)
