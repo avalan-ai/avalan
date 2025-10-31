@@ -16,7 +16,7 @@ jobs:
         if: github.event_name == 'push'
         run: |
           message="Push by **${{ github.actor }}** to \`${{ github.ref_name }}\`. <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}>"
-          payload=$(printf '{"content":"%s"}' "$message")
+          payload=$(jq -n --arg msg "$message" '{"content": $msg}')
           curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
       - name: Notify Discord on pull request
         if: github.event_name == 'pull_request'
@@ -26,7 +26,7 @@ jobs:
           number="${{ github.event.pull_request.number }}"
           url="${{ github.event.pull_request.html_url }}"
           message="Pull request #$number $action: *$title* by **${{ github.actor }}**. <$url>"
-          payload=$(printf '{"content":"%s"}' "$message")
+          payload=$(jq -n --arg msg "$message" '{"content": $msg}')
           curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
       - name: Notify Discord on release
         if: github.event_name == 'release'
@@ -34,5 +34,5 @@ jobs:
           tag="${{ github.event.release.tag_name }}"
           url="${{ github.event.release.html_url }}"
           message="Release $tag published by **${{ github.actor }}**. <$url>"
-          payload=$(printf '{"content":"%s"}' "$message")
+          payload=$(jq -n --arg msg "$message" '{"content": $msg}')
           curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
