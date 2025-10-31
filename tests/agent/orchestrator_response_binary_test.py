@@ -565,6 +565,189 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             parsed_content["list"][2], b64encode(b"\x04\x05").decode()
         )
 
+    async def test_to_str_with_memoryview_result_in_tool_call(self):
+        """Memoryview data in tool results should be base64 encoded."""
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def outer_gen():
+            yield "query"
+
+        settings = GenerationSettings()
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        memview_data = memoryview(b"memoryview content")
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="database.fetch", arguments=None)]
+            if text == "query"
+            else None
+        )
+
+        async def tool_exec(call, context: ToolCallContext):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result={"id": 1, "buffer": memview_data},
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "ok"
+
+        inner_settings = GenerationSettings()
+        inner_response = TextGenerationResponse(
+            lambda **_: inner_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=inner_settings,
+            settings=inner_settings,
+        )
+        agent.return_value = inner_response
+
+        TextGenerationResponse._buffer = StringIO()
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="fetch data"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        result = await resp.to_str()
+        self.assertEqual(result, "ok")
+
+        call_args = agent.await_args
+        context = call_args[0][0]
+        messages = context.input
+        tool_message = next(
+            (m for m in messages if m.role == MessageRole.TOOL), None
+        )
+        self.assertIsNotNone(tool_message)
+
+        parsed_content = loads(tool_message.content)
+        self.assertIsInstance(parsed_content, dict)
+        self.assertEqual(parsed_content["id"], 1)
+        self.assertIsInstance(parsed_content["buffer"], str)
+        self.assertEqual(
+            parsed_content["buffer"], b64encode(memview_data).decode()
+        )
+
+    async def test_to_str_with_nested_memoryview_data(self):
+        """Nested memoryview data in complex structures should be encoded."""
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def outer_gen():
+            yield "fetch"
+
+        settings = GenerationSettings()
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        memview1 = memoryview(b"\x11\x22\x33\x44")
+        memview2 = memoryview(b"\xaa\xbb\xcc\xdd")
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="complex_fetch", arguments=None)]
+            if text == "fetch"
+            else None
+        )
+
+        async def tool_exec(call, context: ToolCallContext):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result={
+                    "records": [
+                        {"id": 1, "buffer": memview1},
+                        {"id": 2, "buffer": memview2},
+                    ]
+                },
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "done"
+
+        inner_settings = GenerationSettings()
+        inner_response = TextGenerationResponse(
+            lambda **_: inner_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=inner_settings,
+            settings=inner_settings,
+        )
+        agent.return_value = inner_response
+
+        TextGenerationResponse._buffer = StringIO()
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="query"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        result = await resp.to_str()
+        self.assertEqual(result, "done")
+
+        call_args = agent.await_args
+        context = call_args[0][0]
+        messages = context.input
+        tool_message = next(
+            (m for m in messages if m.role == MessageRole.TOOL), None
+        )
+        self.assertIsNotNone(tool_message)
+
+        parsed_content = loads(tool_message.content)
+        self.assertIsInstance(parsed_content, dict)
+        self.assertIn("records", parsed_content)
+        self.assertEqual(len(parsed_content["records"]), 2)
+        self.assertEqual(parsed_content["records"][0]["id"], 1)
+        self.assertEqual(
+            parsed_content["records"][0]["buffer"],
+            b64encode(memview1).decode(),
+        )
+        self.assertEqual(parsed_content["records"][1]["id"], 2)
+        self.assertEqual(
+            parsed_content["records"][1]["buffer"],
+            b64encode(memview2).decode(),
+        )
+
 
 @dataclass
 class BinaryDataClass:

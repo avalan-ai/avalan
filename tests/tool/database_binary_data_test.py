@@ -294,3 +294,33 @@ class DatabaseBinaryDataTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(bytes(rows[0]["content"]), bytes(test_bytearray))
         finally:
             await engine.dispose()
+
+    async def test_sample_tool_handles_memoryview_columns(self):
+        """Test that memoryview data is also properly handled."""
+        engine = dummy_create_async_engine(self.dsn)
+        sync_engine = create_engine(self.dsn)
+        test_data = b"test memoryview data"
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO files(id, name, content) VALUES (8,"
+                    " 'memview.dat', :content)"
+                ),
+                {"content": test_data},
+            )
+        sync_engine.dispose()
+
+        tool = DatabaseSampleTool(engine, self.settings)
+        try:
+            rows = await tool(
+                "files",
+                columns=["id", "content"],
+                conditions="id = 8",
+                context=ToolCallContext(),
+            )
+            self.assertEqual(len(rows), 1)
+            content = rows[0]["content"]
+            self.assertIsInstance(content, (bytes, bytearray, memoryview))
+            self.assertEqual(bytes(content), test_data)
+        finally:
+            await engine.dispose()

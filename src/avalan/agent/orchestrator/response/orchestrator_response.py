@@ -262,7 +262,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     ),
                     default=lambda o: (
                         b64encode(o).decode()
-                        if isinstance(o, (bytes, bytearray))
+                        if isinstance(o, (bytes, bytearray, memoryview))
                         else str(o)
                     ),
                 )
@@ -463,7 +463,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                                 ),
                                 default=lambda o: (
                                     b64encode(o).decode()
-                                    if isinstance(o, (bytes, bytearray))
+                                    if isinstance(
+                                        o, (bytes, bytearray, memoryview)
+                                    )
                                     else str(o)
                                 ),
                             )
