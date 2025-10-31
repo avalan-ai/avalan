@@ -455,7 +455,18 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         result.result
                         if isinstance(result.result, str)
                         else (
-                            dumps(result.result)
+                            dumps(
+                                (
+                                    asdict(result.result)
+                                    if is_dataclass(result.result)
+                                    else result.result
+                                ),
+                                default=lambda o: (
+                                    b64encode(o).decode()
+                                    if isinstance(o, (bytes, bytearray))
+                                    else str(o)
+                                ),
+                            )
                             if result.result is not None
                             else ""
                         )
