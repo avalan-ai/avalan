@@ -49,7 +49,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local
-          key: poetry-v7
+          key: poetry-v8
 
       - name: Install Poetry
         if: steps.cached-poetry.outputs.cache-hit != 'true'
@@ -67,7 +67,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-v7-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          key: venv-v8-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
       - name: Install mlx
         run: poetry run pip install "mlx[cpu]==0.28.0" "mlx-lm==0.26.3"
