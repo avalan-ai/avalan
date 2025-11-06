@@ -97,6 +97,27 @@ class FlowExecutionTestCase(TestCase):
         self.assertEqual(result, 4)
         self.assertEqual(executed, ["A", "B", "C"])
 
+    def test_skip_node_without_inputs(self):
+        executed = []
+
+        def start(_):
+            executed.append("A")
+            return "ignored"
+
+        def should_not_run(_):
+            executed.append("B")
+            raise AssertionError("Callback should not run")
+
+        flow = Flow()
+        flow.add_node(Node("A", func=start))
+        flow.add_node(Node("B", func=should_not_run))
+        flow.add_connection("A", "B", conditions=[lambda _: False])
+
+        result = flow.execute()
+
+        self.assertIsNone(result)
+        self.assertEqual(executed, ["A"])
+
     def test_execute_with_initial_node(self):
         executed = []
 
