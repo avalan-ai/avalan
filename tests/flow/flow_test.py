@@ -126,6 +126,26 @@ class FlowExecutionTestCase(TestCase):
         self.assertEqual(result, 12)
         self.assertEqual(executed, ["B", "C"])
 
+    def test_execute_raises_when_no_start_nodes(self):
+        flow = Flow()
+        flow.add_node(Node("A"))
+        flow.add_node(Node("B"))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "A")
+        with self.assertRaises(ValueError) as context:
+            flow.execute()
+        self.assertIn("cycle", str(context.exception))
+
+    def test_execute_detects_cycle_with_initial_node(self):
+        flow = Flow()
+        flow.add_node(Node("A"))
+        flow.add_node(Node("B"))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "A")
+        with self.assertRaises(ValueError) as context:
+            flow.execute(initial_node="A", initial_data=1)
+        self.assertIn("cycle", str(context.exception))
+
 
 class FlowAddConnectionTestCase(TestCase):
     def test_add_connection_unknown_src(self):
