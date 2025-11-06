@@ -1,8 +1,8 @@
 from ..flow.connection import Connection
 from ..flow.node import Node
 
-import re
 from collections import deque
+import re
 from typing import Any, Callable
 
 
@@ -124,9 +124,10 @@ class Flow:
                 "Flow has no valid starting node; graph may contain a cycle"
             )
 
-        indegree = {
+        incoming_counts = {
             name: len(self.incoming.get(name, [])) for name in self.nodes
         }
+        indegree = dict(incoming_counts)
         buffers: dict[str, dict[str, Any]] = {name: {} for name in self.nodes}
         if initial_data is not None and len(start_nodes) == 1:
             buffers[start_nodes[0].name] = {"__init__": initial_data}
@@ -143,7 +144,7 @@ class Flow:
             node = queue.popleft()
             processed.add(node.name)
             inputs = buffers[node.name]
-            if indegree[node.name] > 0 and not inputs:
+            if incoming_counts[node.name] > 0 and not inputs:
                 outputs[node.name] = None
             else:
                 outputs[node.name] = node.execute(inputs)
