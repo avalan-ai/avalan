@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -15,7 +13,7 @@ class Node:
         input_schema: type | None = None,
         output_schema: type | None = None,
         func: Callable[..., Any] | None = None,
-        subgraph: Flow | None = None,
+        subgraph: "Flow | None" = None,
     ) -> None:
         self.name: str = name
         self.label: str = label or name
@@ -23,7 +21,7 @@ class Node:
         self.input_schema: type | None = input_schema
         self.output_schema: type | None = output_schema
         self.func: Callable[..., Any] | None = func
-        self.subgraph: Flow | None = subgraph
+        self.subgraph: "Flow | None" = subgraph
 
     def execute(self, inputs: dict[str, Any]) -> Any:
         # Delegate to subgraph if present

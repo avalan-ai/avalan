@@ -97,6 +97,27 @@ class FlowExecutionTestCase(TestCase):
         self.assertEqual(result, 4)
         self.assertEqual(executed, ["A", "B", "C"])
 
+    def test_skip_node_without_inputs(self):
+        executed = []
+
+        def start(_):
+            executed.append("A")
+            return "ignored"
+
+        def should_not_run(_):
+            executed.append("B")
+            raise AssertionError("Callback should not run")
+
+        flow = Flow()
+        flow.add_node(Node("A", func=start))
+        flow.add_node(Node("B", func=should_not_run))
+        flow.add_connection("A", "B", conditions=[lambda _: False])
+
+        result = flow.execute()
+
+        self.assertIsNone(result)
+        self.assertEqual(executed, ["A"])
+
     def test_execute_with_initial_node(self):
         executed = []
 
@@ -125,6 +146,26 @@ class FlowExecutionTestCase(TestCase):
 
         self.assertEqual(result, 12)
         self.assertEqual(executed, ["B", "C"])
+
+    def test_execute_raises_when_no_start_nodes(self):
+        flow = Flow()
+        flow.add_node(Node("A"))
+        flow.add_node(Node("B"))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "A")
+        with self.assertRaises(ValueError) as context:
+            flow.execute()
+        self.assertIn("cycle", str(context.exception))
+
+    def test_execute_detects_cycle_with_initial_node(self):
+        flow = Flow()
+        flow.add_node(Node("A"))
+        flow.add_node(Node("B"))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "A")
+        with self.assertRaises(ValueError) as context:
+            flow.execute(initial_node="A", initial_data=1)
+        self.assertIn("cycle", str(context.exception))
 
 
 class FlowAddConnectionTestCase(TestCase):
