@@ -1,6 +1,6 @@
 from asyncio import AbstractEventLoop, get_running_loop
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
+from typing import Any, Awaitable, Callable
 
 from boto3 import client
 from boto3.session import Session
@@ -9,6 +9,25 @@ from botocore.exceptions import ClientError
 
 class DeployError(Exception):
     """Deployment failed."""
+
+
+class AsyncWaiter:
+    """Run waiter operations without blocking the event loop."""
+
+    def __init__(
+        self,
+        waiter: Any,
+        loop: AbstractEventLoop,
+        executor: ThreadPoolExecutor,
+    ) -> None:
+        self._waiter = waiter
+        self._loop = loop
+        self._executor = executor
+
+    async def wait(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._loop.run_in_executor(
+            self._executor, lambda: self._waiter.wait(*args, **kwargs)
+        )
 
 
 class AsyncClient:
@@ -22,15 +41,18 @@ class AsyncClient:
         self._loop = loop or get_running_loop()
         self._executor = executor or ThreadPoolExecutor()
 
-    def __getattr__(self, name: str) -> Callable[..., any]:
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[Any]] | Any:
         attr = getattr(self._client, name)
         if not callable(attr):
             return attr
 
         async def fn(*args, **kwargs):
-            return await self._loop.run_in_executor(
+            result = await self._loop.run_in_executor(
                 self._executor, lambda: attr(*args, **kwargs)
             )
+            if name == "get_waiter":
+                return AsyncWaiter(result, self._loop, self._executor)
+            return result
 
         return fn
 
@@ -82,7 +104,7 @@ class Aws:
                 Resources=[vpc_id], Tags=[{"Key": "Name", "Value": name}]
             )
             waiter = await self._ec2.get_waiter("vpc_available")
-            waiter.wait(VpcIds=[vpc_id])
+            await waiter.wait(VpcIds=[vpc_id])
             return vpc_id
 
     async def get_security_group(self, name: str, vpc_id: str) -> str:
@@ -130,7 +152,7 @@ class Aws:
                 Tags=[{"Key": "Name", "Value": db_id}],
             )
             waiter = await self._rds.get_waiter("db_instance_available")
-            waiter.wait(DBInstanceIdentifier=db_id)
+            await waiter.wait(DBInstanceIdentifier=db_id)
         return db_id
 
     async def create_instance_if_missing(
