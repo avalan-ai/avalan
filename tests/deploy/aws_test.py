@@ -1,7 +1,7 @@
 import sys
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Provide boto3/botocore stubs when missing
 try:
@@ -36,7 +36,7 @@ except ModuleNotFoundError:
     sys.modules.setdefault("boto3.session", boto3_session)
     sys.modules.setdefault("botocore.exceptions", botocore_exceptions)
 
-from avalan.deploy.aws import AsyncClient, Aws, DeployError
+from avalan.deploy.aws import AsyncClient, AsyncWaiter, Aws, DeployError
 
 
 class AsyncClientTestCase(IsolatedAsyncioTestCase):
@@ -59,6 +59,34 @@ class AsyncClientTestCase(IsolatedAsyncioTestCase):
         loop = MagicMock()
         ac = AsyncClient(cli, loop=loop)
         self.assertEqual(ac.value, 5)
+
+    async def test_get_waiter_returns_async_waiter(self):
+        waiter = MagicMock()
+        cli = MagicMock()
+        cli.get_waiter = MagicMock(return_value=waiter)
+        loop = MagicMock()
+        loop.run_in_executor = AsyncMock(side_effect=lambda exec, func: func())
+        ac = AsyncClient(cli, loop=loop, executor="E")
+
+        result = await ac.get_waiter("example")
+
+        self.assertIsInstance(result, AsyncWaiter)
+        cli.get_waiter.assert_called_once_with("example")
+        loop.run_in_executor.assert_awaited_once()
+
+    async def test_async_waiter_wait_runs_in_executor(self):
+        waiter = MagicMock()
+        waiter.wait = MagicMock(return_value="done")
+        loop = MagicMock()
+        loop.run_in_executor = AsyncMock(side_effect=lambda exec, func: func())
+        executor = MagicMock()
+        async_waiter = AsyncWaiter(waiter, loop, executor)
+
+        result = await async_waiter.wait(Answer=True)
+
+        self.assertEqual(result, "done")
+        waiter.wait.assert_called_once_with(Answer=True)
+        loop.run_in_executor.assert_awaited_once_with(executor, ANY)
 
 
 class AwsTestCase(IsolatedAsyncioTestCase):
@@ -154,13 +182,13 @@ class AwsTestCase(IsolatedAsyncioTestCase):
         )
         self.aws._ec2.create_tags = AsyncMock()
         waiter = MagicMock()
-        waiter.wait = MagicMock()
+        waiter.wait = AsyncMock()
         self.aws._ec2.get_waiter = AsyncMock(return_value=waiter)
         vpc = await self.aws.create_vpc_if_missing("name", "c")
         self.assertEqual(vpc, "n")
         self.aws._ec2.create_vpc.assert_awaited_once_with(CidrBlock="c")
         self.aws._ec2.create_tags.assert_awaited_once()
-        waiter.wait.assert_called_once_with(VpcIds=["n"])
+        waiter.wait.assert_awaited_once_with(VpcIds=["n"])
 
     async def test_get_security_group(self):
         self.aws._ec2.describe_security_groups = AsyncMock(
@@ -211,12 +239,12 @@ class AwsTestCase(IsolatedAsyncioTestCase):
         )
         self.aws._rds.create_db_instance = AsyncMock()
         waiter = MagicMock()
-        waiter.wait = MagicMock()
+        waiter.wait = AsyncMock()
         self.aws._rds.get_waiter = AsyncMock(return_value=waiter)
         db = await self.aws.create_rds_if_missing("db", "cls", "sg", 10)
         self.assertEqual(db, "db")
         self.aws._rds.create_db_instance.assert_awaited_once()
-        waiter.wait.assert_called_once_with(DBInstanceIdentifier="db")
+        waiter.wait.assert_awaited_once_with(DBInstanceIdentifier="db")
 
         self.aws._rds.describe_db_instances = AsyncMock(return_value=None)
         self.aws._rds.create_db_instance.reset_mock()
