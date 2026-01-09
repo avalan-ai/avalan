@@ -73,7 +73,7 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
         live.__exit__.return_value = False
 
         async def fake_to_thread(fn, *a, **kw):
-            return fn()
+            return fn(*a, **kw)
 
         with (
             patch.object(model_cmds, "Live", return_value=live),

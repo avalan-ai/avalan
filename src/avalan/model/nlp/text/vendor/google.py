@@ -13,12 +13,13 @@ from transformers import PreTrainedModel
 
 
 class GoogleStream(TextGenerationVendorStream):
-    def __init__(self, stream: AsyncIterator[GenerateContentResponse]):
-        super().__init__(stream)
+    def __init__(self, stream: AsyncIterator[GenerateContentResponse]) -> None:
+        super().__init__(stream)  # type: ignore[arg-type]
 
     async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
-        return chunk.text
+        text: str = chunk.text
+        return text
 
 
 class GoogleClient(TextGenerationVendor):
@@ -28,7 +29,7 @@ class GoogleClient(TextGenerationVendor):
         self._client = Client(api_key=api_key)
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         model_id: str,
         messages: list[Message],
@@ -51,7 +52,7 @@ class GoogleClient(TextGenerationVendor):
                 contents=contents,
             )
 
-            async def single_gen():
+            async def single_gen() -> AsyncIterator[Token | TokenDetail | str]:
                 yield response.text
 
             return single_gen()

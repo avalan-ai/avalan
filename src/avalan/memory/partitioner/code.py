@@ -1,5 +1,4 @@
 from ...memory.partitioner import Encoding, PartitionerException
-from ...utils import _j
 
 from dataclasses import dataclass
 from logging import Logger
@@ -80,7 +79,9 @@ class CodePartitioner:
         if root_node.children and root_node.children[0].is_error:
             error_node = root_node.children[0]
             error_name = error_node.grammar_name
-            error_message = error_node.text.decode(encoding)
+            error_text = error_node.text
+            assert error_text is not None, "Error node text cannot be None"
+            error_message = error_text.decode(encoding)
             error_row, error_column = error_node.start_point
             raise PartitionerException(
                 f'{error_name}: "{error_message}" at'
@@ -133,12 +134,16 @@ class CodePartitioner:
         for child_node in node.children:
             if child_node.type == "class_definition":
                 class_name_node = child_node.child_by_field_name("name")
-                current_class_name = (
-                    class_name_node.text.decode(encoding)
-                    if class_name_node
-                    else None
-                )
-                class_id = _j(".", [current_namespace, current_class_name])
+                if class_name_node and class_name_node.text:
+                    current_class_name = class_name_node.text.decode(encoding)
+                else:
+                    current_class_name = None
+                class_parts: list[str] = []
+                if current_namespace:
+                    class_parts.append(current_namespace)
+                if current_class_name:
+                    class_parts.append(current_class_name)
+                class_id = ".".join(class_parts) if class_parts else ""
                 child_symbols = current_symbols + [
                     Symbol(symbol_type="class", id=class_id)
                 ]
@@ -215,11 +220,10 @@ class CodePartitioner:
         results = []
         if node.type == "class_definition":
             class_name_node = node.child_by_field_name("name")
-            class_name = (
-                class_name_node.text.decode(encoding)
-                if class_name_node
-                else None
-            )
+            if class_name_node and class_name_node.text:
+                class_name = class_name_node.text.decode(encoding)
+            else:
+                class_name = None
             for child in node.children:
                 functs = cls._get_functions(
                     current_namespace,
@@ -262,6 +266,9 @@ class CodePartitioner:
         )
         params_node = node.child_by_field_name("parameters")
         return_type_node = node.child_by_field_name("return_type")
+        return_type: str | None = None
+        if return_type_node and return_type_node.text:
+            return_type = return_type_node.text.decode(encoding)
         return Function(
             id=function_id,
             namespace=current_namespace,
@@ -272,11 +279,7 @@ class CodePartitioner:
                 if params_node
                 else None
             ),
-            return_type=(
-                return_type_node.text.decode(encoding)
-                if return_type_node
-                else None
-            ),
+            return_type=return_type,
         )
 
     @staticmethod
@@ -291,53 +294,64 @@ class CodePartitioner:
             "async_function_definition",
         )
         function_name_node = node.child_by_field_name("name")
-        assert function_name_node
+        assert function_name_node is not None
+        assert function_name_node.text is not None
         function_name = function_name_node.text.decode(encoding)
         assert function_name
-        function_id = _j(
-            ".", [current_namespace, current_class_name, function_name]
-        )
+        id_parts: list[str] = []
+        if current_namespace:
+            id_parts.append(current_namespace)
+        if current_class_name:
+            id_parts.append(current_class_name)
+        id_parts.append(function_name)
+        function_id = ".".join(id_parts)
         return function_id, function_name
 
     @staticmethod
-    def _get_parameters(
-        node: Node, encoding: Encoding
-    ) -> list[dict[str, str | None]]:
+    def _get_parameters(node: Node, encoding: Encoding) -> list[Parameter]:
         assert node
-        parameters = []
+        parameters: list[Parameter] = []
         for child in node.children:
-            if child.type in (
-                "default_parameter",
-                "typed_default_parameter",
-                "typed_parameter",
-            ):
-                param_type = child.child_by_field_name("type").text.decode(
-                    encoding
-                )
-                param_name = None
-                if child.named_child_count:
-                    for parameter_child in child.children:
-                        if parameter_child.type == "identifier":
-                            param_name = parameter_child.text.decode(encoding)
-                            break
-                parameters.append(
-                    Parameter(
-                        parameter_type=child.type,
-                        name=param_name,
-                        type=param_type,
+            match child.type:
+                case (
+                    "default_parameter"
+                    | "typed_default_parameter"
+                    | "typed_parameter"
+                ) as param_kind:
+                    type_node = child.child_by_field_name("type")
+                    param_type: str | None = None
+                    if type_node and type_node.text:
+                        param_type = type_node.text.decode(encoding)
+                    param_name: str = ""
+                    if child.named_child_count:
+                        for parameter_child in child.children:
+                            if parameter_child.type == "identifier":
+                                if parameter_child.text:
+                                    param_name = parameter_child.text.decode(
+                                        encoding
+                                    )
+                                break
+                    parameters.append(
+                        Parameter(
+                            parameter_type=param_kind,
+                            name=param_name,
+                            type=param_type,
+                        )
                     )
-                )
-            elif child.type in (
-                "dictionary_splat_pattern",
-                "identifier",
-                "keyword_separator",
-            ):
-                parameters.append(
-                    Parameter(
-                        parameter_type=child.type,
-                        name=child.text.decode(encoding),
-                        type=None,
+                case (
+                    "dictionary_splat_pattern"
+                    | "identifier"
+                    | "keyword_separator"
+                ) as simple_kind:
+                    name: str = ""
+                    if child.text:
+                        name = child.text.decode(encoding)
+                    parameters.append(
+                        Parameter(
+                            parameter_type=simple_kind,
+                            name=name,
+                            type=None,
+                        )
                     )
-                )
 
         return parameters

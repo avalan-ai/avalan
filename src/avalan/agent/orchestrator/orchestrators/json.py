@@ -8,7 +8,11 @@ from ....agent import (
     Specification,
 )
 from ....agent.orchestrator import Orchestrator
-from ....entities import Input, Modality, TransformerEngineSettings
+from ....entities import (
+    Input,
+    Modality,
+    TransformerEngineSettings,
+)
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
@@ -17,6 +21,7 @@ from ....tool.manager import ToolManager
 from dataclasses import dataclass
 from logging import Logger
 from typing import Annotated, get_args, get_origin
+from uuid import UUID
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -56,7 +61,9 @@ class JsonSpecification(Specification):
                         Property(
                             name=name,
                             data_type=data_type,
-                            description=description.strip(),
+                            description=(
+                                description.strip() if description else None
+                            ),
                         )
                     )
         else:
@@ -93,6 +100,7 @@ class JsonOrchestrator(Orchestrator):
         event_manager: EventManager,
         output: type | list[Property],
         *,
+        id: UUID | None = None,
         role: str | None = None,
         task: str | None = None,
         instructions: str | None = None,
@@ -136,15 +144,20 @@ class JsonOrchestrator(Orchestrator):
             AgentOperation(
                 specification=specification,
                 environment=EngineEnvironment(
-                    engine_uri=engine_uri, settings=settings
+                    engine_uri=engine_uri,
+                    settings=settings or TransformerEngineSettings(),
                 ),
                 modality=Modality.TEXT_GENERATION,
             ),
             call_options=call_options,
+            id=id,
+            name=name,
             user=user,
             user_template=user_template,
         )
 
-    async def __call__(self, input: Input, **kwargs) -> str:
+    async def __call__(  # type: ignore[override]
+        self, input: Input, **kwargs
+    ) -> str:
         text_response = await super().__call__(input, **kwargs)
         return await text_response.to_json()

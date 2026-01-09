@@ -5,18 +5,18 @@ from urllib.parse import ParseResult, urlparse
 from packaging.version import Version, parse
 
 
-def _config() -> dict:
+def _config() -> dict[str, str]:
     config = metadata("avalan")
     package_version = metadata_version("avalan")
     return {
-        "name": config["Name"],
+        "name": str(config["Name"]),
         "version": package_version,
-        "license": config["License"],
+        "license": str(config["License"]),
         "url": "https://avalan.ai",
     }
 
 
-config = _config()
+config: dict[str, str] = _config()
 
 
 def license() -> str:

@@ -1,11 +1,14 @@
-from __future__ import annotations
-
 from abc import ABC
 from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack, ContextDecorator
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+    ContextDecorator,
+)
 from inspect import Signature, isfunction, signature
-from types import FunctionType
-from typing import get_type_hints
+from types import FunctionType, TracebackType
+from typing import Any, Union, cast, get_type_hints
 
 from transformers.utils import get_json_schema
 
@@ -44,19 +47,20 @@ class Tool(ABC, ContextDecorator):
             return_annotation=function_signature.return_annotation,
         )
 
-    async def __aenter__(self) -> "ToolSet":
+    async def __aenter__(self) -> "Tool":
         return self
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool:
         if self._exit_stack:
-            return await self._exit_stack.__aexit__(
+            result = await self._exit_stack.__aexit__(
                 exc_type, exc_value, traceback
             )
+            return result if result is not None else False
         return True
 
 
@@ -65,14 +69,14 @@ class ToolSet(ContextDecorator):
 
     _namespace: str | None
     _exit_stack: AsyncExitStack
-    _tools: Sequence[Callable]
+    _tools: list[Callable[..., Any]]
 
     @property
     def namespace(self) -> str | None:
         return self._namespace
 
     @property
-    def tools(self) -> Sequence[Callable]:
+    def tools(self) -> list[Callable[..., Any]]:
         return self._tools
 
     def __init__(
@@ -80,15 +84,15 @@ class ToolSet(ContextDecorator):
         *,
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
-        tools: Sequence[Callable | "ToolSet"],
+        tools: Sequence[Union[Callable[..., Any], "ToolSet"]],
     ):
         self._namespace = namespace
         self._exit_stack = exit_stack or AsyncExitStack()
-        self._tools = tools
+        self._tools = list(tools)
 
         exclude_type_names = ["self", "context"]
 
-        for i, tool in enumerate(self.tools):
+        for i, tool in enumerate(self._tools):
             if (
                 not isfunction(tool)
                 and callable(tool)
@@ -102,12 +106,16 @@ class ToolSet(ContextDecorator):
                     if type_name not in exclude_type_names
                 }
                 tool.__annotations__ = type_hints
-                tool.__signature__ = Tool._get_signature(
-                    tool.__call__, exclude_type_names
+                setattr(
+                    tool,
+                    "__signature__",
+                    Tool._get_signature(
+                        cast(FunctionType, tool.__call__), exclude_type_names
+                    ),
                 )
                 if not tool.__doc__ and tool.__call__.__doc__:
                     tool.__doc__ = tool.__call__.__doc__
-                self.tools[i] = tool
+                self._tools[i] = tool
 
     def with_enabled_tools(self, enable_tools: list[str]) -> "ToolSet":
         prefix = f"{self.namespace}." if self.namespace else ""
@@ -128,18 +136,25 @@ class ToolSet(ContextDecorator):
     async def __aenter__(self) -> "ToolSet":
         for tool in self.tools:
             if hasattr(tool, "__aenter__"):
-                await self._exit_stack.enter_async_context(tool)
+                await self._exit_stack.enter_async_context(
+                    cast(AbstractAsyncContextManager[Any, bool | None], tool)
+                )
             elif hasattr(tool, "__enter__"):
-                self._exit_stack.enter_context(tool)
+                self._exit_stack.enter_context(
+                    cast(AbstractContextManager[Any, bool | None], tool)
+                )
         return self
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool:
-        return await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
+        result = await self._exit_stack.__aexit__(
+            exc_type, exc_value, traceback
+        )
+        return result if result is not None else False
 
     def json_schemas(self, prefix: str | None = None) -> list[dict] | None:
         schemas = []

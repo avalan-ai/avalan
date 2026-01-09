@@ -4,7 +4,7 @@ from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.text import ImageToTextModel
 
-from typing import Literal
+from typing import Any, Literal
 
 from diffusers import DiffusionPipeline
 from PIL import Image
@@ -22,11 +22,12 @@ class VisionEncoderDecoderModel(ImageToTextModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id is not None, "Model ID is required"
         self._processor = AutoImageProcessor.from_pretrained(
             self._model_id,
             use_fast=True,
         )
-        model = VisionEncoderDecoderModelImpl.from_pretrained(
+        model: PreTrainedModel = VisionEncoderDecoderModelImpl.from_pretrained(
             self._model_id,
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
@@ -37,7 +38,7 @@ class VisionEncoderDecoderModel(ImageToTextModel):
         return model
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         image_source: str | Image.Image,
         prompt: str | None,
@@ -55,8 +56,11 @@ class VisionEncoderDecoderModel(ImageToTextModel):
                 tensor_format=tensor_format,
             )
 
+        assert self._model is not None, "Model must be loaded"
+        assert self._tokenizer is not None, "Tokenizer must be loaded"
+
         image = BaseVisionModel._get_image(image_source)
-        pixel_values = self._processor(
+        pixel_values: Any = self._processor(  # type: ignore[operator]
             image, return_tensors=tensor_format
         ).pixel_values.to(self._device)
         decoder_input_ids = self._tokenizer(
@@ -64,10 +68,11 @@ class VisionEncoderDecoderModel(ImageToTextModel):
         ).input_ids.to(self._device)
 
         with inference_mode():
-            outputs = self._model.generate(
+            # self._model is VisionEncoderDecoderModel at runtime
+            outputs = self._model.generate(  # type: ignore[union-attr, operator]
                 pixel_values=pixel_values,
                 decoder_input_ids=decoder_input_ids,
-                max_length=self._model.decoder.config.max_position_embeddings,
+                max_length=self._model.decoder.config.max_position_embeddings,  # type: ignore[union-attr]
                 early_stopping=early_stopping,
                 pad_token_id=self._tokenizer.pad_token_id,
                 eos_token_id=self._tokenizer.eos_token_id,
@@ -77,7 +82,8 @@ class VisionEncoderDecoderModel(ImageToTextModel):
                 return_dict_in_generate=True,
             )
 
-        output = self._tokenizer.batch_decode(
-            outputs.sequences, skip_special_tokens=skip_special_tokens
+        output: str = self._tokenizer.batch_decode(
+            outputs.sequences,  # type: ignore[union-attr]
+            skip_special_tokens=skip_special_tokens,
         )[0]
         return output

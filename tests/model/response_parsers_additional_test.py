@@ -168,7 +168,9 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         )
         event = next(item for item in output if isinstance(item, Event))
         self.assertEqual(event.type, EventType.TOOL_PROCESS)
-        self.assertEqual(event.payload, [SimpleNamespace(name="call")])
+        self.assertEqual(
+            event.payload, {"calls": [SimpleNamespace(name="call")]}
+        )
         trigger_event = event_manager.trigger.await_args_list[0].args[0]
         self.assertEqual(trigger_event.type, EventType.TOOL_DETECT)
 

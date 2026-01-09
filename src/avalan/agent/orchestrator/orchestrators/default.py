@@ -1,4 +1,10 @@
-from ....agent import AgentOperation, EngineEnvironment, Goal, Specification
+from ....agent import (
+    AgentOperation,
+    EngineEnvironment,
+    Goal,
+    Role,
+    Specification,
+)
 from ....agent.orchestrator import Orchestrator
 from ....entities import EngineUri, Modality, TransformerEngineSettings
 from ....event.manager import EventManager
@@ -47,7 +53,7 @@ class DefaultOrchestrator(Orchestrator):
             )
         else:
             specification = Specification(
-                role=role,
+                role=Role(persona=[role]) if role else None,
                 goal=(
                     Goal(task=task, instructions=[instructions])
                     if task and instructions
@@ -66,7 +72,8 @@ class DefaultOrchestrator(Orchestrator):
             AgentOperation(
                 specification=specification,
                 environment=EngineEnvironment(
-                    engine_uri=engine_uri, settings=settings
+                    engine_uri=engine_uri,
+                    settings=settings or TransformerEngineSettings(),
                 ),
                 modality=Modality.TEXT_GENERATION,
             ),

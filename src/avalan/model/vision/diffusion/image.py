@@ -11,7 +11,7 @@ from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Any, Literal
 
 from diffusers import DiffusionPipeline
 from torch import inference_mode
@@ -19,7 +19,7 @@ from transformers import PreTrainedModel
 
 
 class TextToImageModel(BaseVisionModel):
-    _base: DiffusionPipeline
+    _base: Any
 
     def __init__(
         self,
@@ -38,7 +38,7 @@ class TextToImageModel(BaseVisionModel):
         dtype = Engine.weight(self._settings.weight_type)
         dtype_variant = self._settings.weight_type
 
-        base = DiffusionPipeline.from_pretrained(
+        base: Any = DiffusionPipeline.from_pretrained(
             self._model_id,
             torch_dtype=dtype,
             variant=dtype_variant,
@@ -46,7 +46,7 @@ class TextToImageModel(BaseVisionModel):
         )
         base.to(self._device)
 
-        refiner = DiffusionPipeline.from_pretrained(
+        refiner: Any = DiffusionPipeline.from_pretrained(
             self._settings.refiner_model_id,
             text_encoder_2=base.text_encoder_2,
             vae=base.vae,
@@ -58,10 +58,10 @@ class TextToImageModel(BaseVisionModel):
 
         self._base = base
 
-        return refiner
+        return refiner  # type: ignore[no-any-return]
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         path: str,
@@ -81,7 +81,9 @@ class TextToImageModel(BaseVisionModel):
             and n_steps
             and output_type
         )
+        assert self._model is not None, "Model must be loaded"
 
+        model: Any = self._model
         with inference_mode():
             image = self._base(
                 prompt=input if isinstance(input, str) else str(input),
@@ -89,7 +91,7 @@ class TextToImageModel(BaseVisionModel):
                 denoising_end=high_noise_frac,
                 output_type=output_type,
             ).images
-            image = self._model(
+            image = model(
                 prompt=input if isinstance(input, str) else str(input),
                 num_inference_steps=n_steps,
                 denoising_start=high_noise_frac,

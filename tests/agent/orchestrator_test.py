@@ -230,7 +230,7 @@ class OrchestratorUserTransformationOptionsTestCase(unittest.TestCase):
     def test_user_string_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         message = orchestrator._input_messages(specification, "world")
-        self.assertEqual(message.content, b"hello world Bob")
+        self.assertEqual(message.content, "hello world Bob")
 
     def test_user_list_strings_transformation(self):
         orchestrator, specification = self._create_orchestrator()
@@ -241,13 +241,13 @@ class OrchestratorUserTransformationOptionsTestCase(unittest.TestCase):
         orchestrator, specification = self._create_orchestrator()
         msg = self._message("earth")
         message = orchestrator._input_messages(specification, msg)
-        self.assertEqual(message.content, b"hello earth Bob")
+        self.assertEqual(message.content, "hello earth Bob")
 
     def test_user_list_messages_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         msg = self._message("moon")
         messages = orchestrator._input_messages(specification, [msg])
-        self.assertEqual(messages[0].content, b"hello moon Bob")
+        self.assertEqual(messages[0].content, "hello moon Bob")
 
 
 class OrchestratorUserTemplateTransformationOptionsTestCase(unittest.TestCase):
@@ -348,7 +348,7 @@ class OrchestratorSettingsTemplateVarsUserTestCase(unittest.TestCase):
     def test_user_string_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         message = orchestrator._input_messages(specification, "world")
-        self.assertEqual(message.content, b"hello world Bob")
+        self.assertEqual(message.content, "hello world Bob")
 
 
 class OrchestratorSettingsTemplateVarsUserTemplateTestCase(unittest.TestCase):

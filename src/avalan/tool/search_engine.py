@@ -15,7 +15,9 @@ class SearchEngineTool(Tool):
     def __init__(self) -> None:
         self.__name__ = "search"
 
-    async def __call__(self, query: str, engine: str) -> str:
+    async def __call__(  # type: ignore[override]
+        self, query: str, engine: str
+    ) -> str:
         return (
             "The weather is nice and warm, with 23 degrees celsius, clear"
             " skies, and winds under 11 kmh."

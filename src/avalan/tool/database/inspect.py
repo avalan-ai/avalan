@@ -38,7 +38,7 @@ class DatabaseInspectTool(DatabaseTool):
         )
         self.__name__ = "inspect"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         table_names: list[str],
         schema: str | None = None,

@@ -38,7 +38,7 @@ class DatabaseRelationshipsTool(DatabaseTool):
         )
         self.__name__ = "relationships"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         table_name: str,
         *,

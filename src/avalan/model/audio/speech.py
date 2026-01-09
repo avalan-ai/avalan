@@ -3,7 +3,7 @@ from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal
 
 from diffusers import DiffusionPipeline
 from torch import inference_mode
@@ -15,17 +15,18 @@ from transformers import (
 
 
 class TextToSpeechModel(BaseAudioModel):
-    _processor: AutoProcessor
+    _processor: Any  # AutoProcessor with DiaModel-specific methods
 
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id, "model_id is required"
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
             subfolder=self._settings.tokenizer_subfolder or "",
         )
-        model = DiaForConditionalGeneration.from_pretrained(
+        model: PreTrainedModel = DiaForConditionalGeneration.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
             device_map=self._device,
@@ -38,7 +39,7 @@ class TextToSpeechModel(BaseAudioModel):
         return model
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         prompt: str,
         path: str,
@@ -50,6 +51,7 @@ class TextToSpeechModel(BaseAudioModel):
         sampling_rate: int = 44_100,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
+        assert self._model is not None, "Model must be loaded"
         assert (not reference_path and not reference_text) or (
             reference_path and reference_text
         )
@@ -81,7 +83,8 @@ class TextToSpeechModel(BaseAudioModel):
         )
 
         with inference_mode():
-            outputs = self._model.generate(
+            assert isinstance(self._model, PreTrainedModel)
+            outputs = self._model.generate(  # type: ignore[operator]
                 **inputs, max_new_tokens=max_new_tokens
             )
 

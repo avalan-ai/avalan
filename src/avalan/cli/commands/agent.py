@@ -5,6 +5,7 @@ from ...agent.orchestrator.response.orchestrator_response import (
 )
 from ...cli import confirm_tool_call, get_input, has_input
 from ...cli.commands.model import token_generation
+from ...cli.theme import Theme
 from ...entities import (
     Backend,
     GenerationCacheStrategy,
@@ -23,10 +24,10 @@ from ...tool.database.settings import DatabaseToolSettings
 
 from argparse import Namespace
 from contextlib import AsyncExitStack
-from dataclasses import fields
+from dataclasses import fields as dataclass_fields
 from logging import Logger
 from os.path import dirname, getmtime, join
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping, TypeVar, cast
 from uuid import UUID, uuid4
 
 from jinja2 import Environment, FileSystemLoader
@@ -34,7 +35,6 @@ from rich.console import Console
 from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
-from rich.theme import Theme
 
 
 def _parse_permanent_memory_items(
@@ -188,16 +188,19 @@ def get_orchestrator_settings(
     )
 
 
+T = TypeVar("T")
+
+
 def _tool_settings_from_mapping(
     mapping: Mapping[str, object] | Namespace,
     *,
     prefix: str | None = None,
-    settings_cls: type,
+    settings_cls: type[T],
     open_files: bool = True,
-) -> object:
+) -> T | None:
     """Return tool settings from a mapping using dataclass ``settings_cls``."""
     values: dict[str, object] = {}
-    for field in fields(settings_cls):
+    for field in dataclass_fields(cast(Any, settings_cls)):
         key = f"tool_{prefix}_{field.name}" if prefix else field.name
         if isinstance(mapping, Namespace):
             if hasattr(mapping, key):
@@ -231,9 +234,10 @@ def get_tool_settings(
     args: Namespace,
     *,
     prefix: str,
-    settings_cls: type,
+    settings_cls: type[T],
     open_files: bool = True,
-) -> object:
+) -> T | None:
+    """Return tool settings instance from CLI arguments."""
     return _tool_settings_from_mapping(
         args, prefix=prefix, settings_cls=settings_cls, open_files=open_files
     )
@@ -247,7 +251,7 @@ async def agent_message_search(
     logger: Logger,
     refresh_per_second: int,
 ) -> None:
-    _, _i = theme._, theme.icons
+    _, _i = theme._, theme._icons
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
@@ -267,7 +271,7 @@ async def agent_message_search(
 
     input_string = get_input(
         console,
-        _i["user_input"] + " ",
+        (_i.get("user_input") or "") + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
         tty_path=tty_path,
@@ -277,6 +281,8 @@ async def agent_message_search(
 
     limit = args.limit
 
+    spinner = theme.get_spinner("agent_loading")
+    assert spinner is not None
     async with AsyncExitStack() as stack:
         loader = OrchestratorLoader(
             hub=hub,
@@ -286,7 +292,7 @@ async def agent_message_search(
         )
         with console.status(
             _("Loading agent..."),
-            spinner=theme.get_spinner("agent_loading"),
+            spinner=spinner,
             refresh_per_second=refresh_per_second,
         ):
             if specs_path:
@@ -331,7 +337,8 @@ async def agent_message_search(
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
 
-            assert orchestrator.engine_agent and orchestrator.engine.model_id
+            assert orchestrator.engine_agent
+            assert orchestrator.engine and orchestrator.engine.model_id
 
             can_access = args.skip_hub_access_check or hub.can_access(
                 orchestrator.engine.model_id
@@ -380,7 +387,7 @@ async def agent_run(
     logger: Logger,
     refresh_per_second: int,
 ) -> None:
-    _, _i = theme._, theme.icons
+    _, _i = theme._, theme._icons
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
@@ -485,6 +492,7 @@ async def agent_run(
                 not orchestrator.tool.is_empty
             ), "--tools-confirm requires tools"
 
+        permanent_message = orchestrator.memory.permanent_message
         logger.debug(
             "Agent loaded from %s, models used: %s, with recent message "
             "memory: %s, with permanent message memory: %s",
@@ -492,15 +500,16 @@ async def agent_run(
             orchestrator.model_ids,
             "yes" if orchestrator.memory.has_recent_message else "no",
             (
-                "yes, with session #"
-                + str(orchestrator.memory.permanent_message.session_id)
+                "yes, with session #" + str(permanent_message.session_id)
                 if orchestrator.memory.has_permanent_message
+                and permanent_message
                 else "no"
             ),
         )
 
         if not args.quiet:
-            assert orchestrator.engine_agent and orchestrator.engine.model_id
+            assert orchestrator.engine_agent
+            assert orchestrator.engine and orchestrator.engine.model_id
 
             is_local = not isinstance(
                 orchestrator.engine, TextGenerationVendorModel
@@ -530,26 +539,30 @@ async def agent_run(
             else:
                 await orchestrator.memory.start_session()
 
+        recent_message = orchestrator.memory.recent_message
         if (
             load_recent_messages
             and orchestrator.memory.has_recent_message
-            and not orchestrator.memory.recent_message.is_empty
+            and recent_message
+            and not recent_message.is_empty
             and not args.quiet
         ):
             console.print(
                 theme.recent_messages(
                     participant_id,
                     orchestrator,
-                    orchestrator.memory.recent_message.data,
+                    recent_message.data,
                 )
             )
 
         return orchestrator
 
+    spinner = theme.get_spinner("agent_loading")
+    assert spinner is not None
     async with AsyncExitStack() as stack:
         with console.status(
             _("Loading agent..."),
-            spinner=theme.get_spinner("agent_loading"),
+            spinner=spinner,
             refresh_per_second=refresh_per_second,
         ):
             orchestrator = await _init_orchestrator()
@@ -569,16 +582,21 @@ async def agent_run(
                     specs_mtime = new_mtime
                     in_conversation = False
                     continue
+            current_recent_message = orchestrator.memory.recent_message
+            recent_size = (
+                str(current_recent_message.size)
+                if orchestrator.memory.has_recent_message
+                and current_recent_message
+                else "0"
+            )
             logger.debug(
                 "Waiting for new message to add to orchestrator's existing "
-                + str(orchestrator.memory.recent_message.size)
-                if orchestrator.memory
-                and orchestrator.memory.has_recent_message
-                else "0" + " messages"
+                + recent_size
+                + " messages"
             )
             input_string = get_input(
                 console,
-                _i["user_input"] + " ",
+                (_i.get("user_input") or "") + " ",
                 echo_stdin=not args.no_repl,
                 force_prompt=in_conversation,
                 is_quiet=args.quiet,
@@ -596,7 +614,7 @@ async def agent_run(
             )
 
             if not args.quiet and not args.stats:
-                console.print(_i["agent_output"] + " ", end="")
+                console.print((_i.get("agent_output") or "") + " ", end="")
 
             if args.quiet:
                 console.print(await output.to_str())

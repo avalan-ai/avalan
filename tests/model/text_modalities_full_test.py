@@ -254,7 +254,7 @@ def test_text_generation_get_operation_from_arguments() -> None:
         GenerationSettings(),
     )
     text_params = operation.parameters["text"]
-    assert text_params.manual_sampling == 5
+    assert text_params.manual_sampling is True
     assert text_params.pick_tokens == 10
     assert text_params.skip_special_tokens is True
     assert text_params.stop_on_keywords == ["STOP"]
@@ -447,7 +447,7 @@ def test_text_sequence_classification_get_operation_from_arguments() -> None:
             GenerationSettings(),
         )
     )
-    assert operation.parameters is None
+    assert operation.parameters == {}
     assert operation.input == "text"
 
 

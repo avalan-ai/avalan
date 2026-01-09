@@ -1,5 +1,6 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
+    MessageRole,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -345,7 +346,7 @@ async def _expect_jsonrpc_message(
     return message, messages
 
 
-def _server_info(request: Request) -> dict[str, str]:
+def _server_info(request: Request) -> dict[str, JSONValue]:
     app = request.app
     name = getattr(app, "title", None) or "avalan"
     version = getattr(app, "version", None)
@@ -397,7 +398,11 @@ def _build_chat_request(
     model_id = _default_model_id(orchestrator)
     return ChatCompletionRequest(
         model=model_id,
-        messages=[ChatMessage(role="user", content=tool_request.input_string)],
+        messages=[
+            ChatMessage(
+                role=MessageRole.USER, content=tool_request.input_string
+            )
+        ],
         stream=True,
     )
 
@@ -409,7 +414,7 @@ async def _start_tool_streaming_response(
     request_id: str | int,
     tool_request: MCPToolRequest,
     progress_token: str,
-) -> StreamingResponse:
+) -> StreamingResponse | JSONResponse:
     chat_request = _build_chat_request(tool_request, orchestrator)
     response, response_uuid, timestamp = await orchestrate(
         chat_request, logger, orchestrator
@@ -580,7 +585,7 @@ def _handle_list_tools_message(
     return JSONResponse(payload)
 
 
-def _collect_tool_descriptions(request: Request) -> list[dict[str, JSONValue]]:
+def _collect_tool_descriptions(request: Request) -> list[JSONValue]:
     name = cast(str, getattr(request.app.state, "mcp_tool_name", "run"))
     description = cast(
         str,
@@ -613,7 +618,7 @@ def _extract_call_arguments(
             raise HTTPException(
                 status_code=400, detail="Invalid tool arguments"
             )
-        return cast(dict[str, JSONValue], arguments)
+        return arguments
 
     raise HTTPException(
         status_code=400, detail=f'Unsupported MCP method "{method}"'
@@ -655,7 +660,9 @@ async def _stream_mcp_response(
     resources: dict[str, MCPResource] = {}
     finished_normally = False
 
-    def emit(message: JSONObject) -> Iterator[bytes]:
+    def emit(
+        message: JSONObject | JSONRPCResult | JSONRPCError,
+    ) -> Iterator[bytes]:
         encoded = dumps(message, separators=(",", ":")) + "\n"
         yield encoded.encode("utf-8")
 
@@ -697,18 +704,18 @@ async def _stream_mcp_response(
                 continue
 
             if isinstance(item, ToolCallToken):
-                notification = _tool_call_token_notification(item)
-                if notification is not None:
-                    for payload in emit(notification):
+                tool_notification = _tool_call_token_notification(item)
+                if tool_notification is not None:
+                    for payload in emit(tool_notification):
                         yield payload
                 continue
 
             text = _token_text(item)
 
             if text:
+                answer_chunks.append(text)
                 if isinstance(item, Token):
-                    answer_chunks.append(text)
-                    notification: JSONObject = {
+                    answer_notification: JSONObject = {
                         "jsonrpc": "2.0",
                         "method": "notifications/message",
                         "params": {
@@ -720,8 +727,7 @@ async def _stream_mcp_response(
                         },
                     }
                 else:
-                    answer_chunks.append(text)
-                    notification: JSONObject = {
+                    answer_notification = {
                         "jsonrpc": "2.0",
                         "method": "notifications/progress",
                         "params": {
@@ -732,7 +738,7 @@ async def _stream_mcp_response(
                             },
                         },
                     }
-                for payload in emit(notification):
+                for payload in emit(answer_notification):
                     yield payload
 
         finished_normally = not cancel_event.is_set()
@@ -757,15 +763,15 @@ async def _stream_mcp_response(
         await _close_response_iterator(response)
         for resource in resources.values():
             closed = await resource_store.close(resource.id)
-            notification = _resource_notification(closed)
-            for payload in emit(notification):
+            resource_notification = _resource_notification(closed)
+            for payload in emit(resource_notification):
                 yield payload
-        error_message: JSONRPCError = {
+        cancel_error: JSONRPCError = {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {"code": -32000, "message": "Request cancelled"},
         }
-        for payload in emit(error_message):
+        for payload in emit(cancel_error):
             yield payload
         await orchestrator.sync_messages()
         return
@@ -830,11 +836,13 @@ def _token_text(item: ResponseItem) -> str:
 
 async def _close_response_iterator(response: StreamResponse) -> None:
     iterator = getattr(response, "_response_iterator", None)
-    if iterator and hasattr(iterator, "aclose"):
-        try:
-            await cast(AsyncIterator[object], iterator).aclose()
-        except Exception:  # pragma: no cover - best effort cleanup
-            pass
+    if iterator is not None:
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
 
 
 def _tool_call_token_notification(
@@ -858,7 +866,7 @@ def _tool_call_token_notification(
     delta: dict[str, JSONValue] = {
         "id": str(token.call.id),
         "name": token.call.name,
-        "arguments": token.call.arguments,
+        "arguments": cast(JSONValue, token.call.arguments),
     }
     return {
         "jsonrpc": "2.0",
@@ -886,7 +894,7 @@ async def _tool_event_notifications(
     if item is None:
         return
 
-    tool_call_id = item["id"]
+    tool_call_id = cast(str, item["id"])
 
     if event.type is EventType.TOOL_PROCESS:
         tool_summaries[tool_call_id] = {
@@ -910,7 +918,7 @@ async def _tool_event_notifications(
         }
         return
 
-    tool_summary = tool_summaries.setdefault(
+    tool_summary: dict[str, JSONValue] = tool_summaries.setdefault(
         tool_call_id,
         {
             "id": tool_call_id,
@@ -938,7 +946,8 @@ async def _tool_event_notifications(
         },
     }
 
-    message = cast(dict[str, JSONValue], payload["params"]["message"])
+    params_dict = cast(dict[str, JSONValue], payload["params"])
+    message = cast(dict[str, JSONValue], params_dict["message"])
 
     if "error" in item:
         message["error"] = item["error"]
@@ -946,8 +955,9 @@ async def _tool_event_notifications(
     elif "result" in item:
         message["resultDelta"] = item["result"]
         tool_summary["result"] = item["result"]
+        result_value = item["result"]
         for resource_key, payload2 in _extract_append_streams(
-            tool_call_id, item["result"]
+            tool_call_id, result_value
         ).items():
             name, text = payload2
             resource = resources.get(resource_key)
@@ -959,7 +969,11 @@ async def _tool_event_notifications(
                 resource = await resource_store.append(resource.id, text)
             resources[resource_key] = resource
             yield _resource_notification(resource)
-            tool_summary.setdefault("resources", []).append(
+            resources_list = cast(
+                list[dict[str, JSONValue]],
+                tool_summary.setdefault("resources", []),
+            )
+            resources_list.append(
                 {
                     "uri": resource.uri,
                     "name": name,
@@ -1021,11 +1035,11 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
             return {
                 "id": str(tool_result.call.id),
                 "name": tool_result.name,
-                "arguments": tool_result.arguments,
+                "arguments": cast(JSONValue, tool_result.arguments),
                 "error": tool_result.message,
             }
         if isinstance(tool_result, ToolCallResult):
-            result: JSONValue = (
+            result_value: JSONValue = (
                 tool_result.result
                 if isinstance(
                     tool_result.result, (dict, list, str, int, float, bool)
@@ -1035,8 +1049,8 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
             return {
                 "id": str(tool_result.call.id),
                 "name": tool_result.name,
-                "arguments": tool_result.arguments,
-                "result": result,
+                "arguments": cast(JSONValue, tool_result.arguments),
+                "result": result_value,
             }
     if isinstance(event.payload, list) and event.payload:
         call = event.payload[0]
@@ -1051,7 +1065,7 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
     return {
         "id": str(call.id),
         "name": call.name,
-        "arguments": call.arguments,
+        "arguments": cast(JSONValue, call.arguments),
     }
 
 

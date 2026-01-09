@@ -33,7 +33,7 @@ class YouTubeTranscriptTool(Tool):
         self._proxy = proxy
         self.__name__ = "transcript"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         video_id: str,
         *,

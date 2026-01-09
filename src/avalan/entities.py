@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, TypedDict, final
+from typing import Any, Literal, TypedDict, final
 from uuid import UUID
 
 from numpy import ndarray
@@ -636,7 +636,7 @@ class ModelConfig:
     sep_token: str | None
     state_size: int
     # Additional keyword arguments to store for the current task
-    task_specific_params: dict[str, any] | None
+    task_specific_params: dict[str, Any] | None
     # The dtype of the weight. Since the config object is stored in plain
     # text, this attribute contains just the floating type string without the
     # torch
@@ -759,9 +759,9 @@ class OperationVisionParameters:
 
 
 class OperationParameters(TypedDict, total=False):
-    audio: OperationAudioParameters | None = None
-    text: OperationTextParameters | None = None
-    vision: OperationVisionParameters | None = None
+    audio: OperationAudioParameters | None
+    text: OperationTextParameters | None
+    vision: OperationVisionParameters | None
 
 
 @final
@@ -896,7 +896,7 @@ class TransformerEngineSettings(EngineSettings):
     low_cpu_mem_usage: bool = False
     output_hidden_states: bool = False
     special_tokens: list[str] | None = None
-    state_dict: dict[str, Tensor] = None
+    state_dict: dict[str, Tensor] | None = None
     tokens: list[str] | None = None
 
 

@@ -76,7 +76,8 @@ class EngineAgent(ABC):
                 },
             )
         )
-        count = self._model.input_token_count(
+        assert hasattr(self._model, "input_token_count")
+        count: int | None = self._model.input_token_count(
             self._last_prompt[0],
             system_prompt=self._last_prompt[1],
             developer_prompt=self._last_prompt[2],
@@ -158,6 +159,7 @@ class EngineAgent(ABC):
                 },
             )
         )
+        assert context.input is not None
         output = await self._run(context, context.input, **run_args)
         await self._event_manager.trigger(
             Event(
@@ -246,11 +248,18 @@ class EngineAgent(ABC):
                 if previous_message:
                     await self.sync_message(previous_message)
 
-            for current_message in input_value:
+            for current_item in input_value:
+                current_message = (
+                    current_item
+                    if isinstance(current_item, Message)
+                    else Message(role=MessageRole.USER, content=current_item)
+                )
                 await self.sync_message(current_message)
 
             # Make recent memory the new model input
-            input_value = [rm.message for rm in self._memory.recent_messages]
+            recent = self._memory.recent_messages
+            assert recent is not None
+            input_value = [rm.message for rm in recent]
 
         # Have model generate output from input
 
@@ -289,7 +298,7 @@ class EngineAgent(ABC):
             tool=self._tool,
             context=context,
         )
-        output = await self._model_manager(model_task)
+        output: TextGenerationResponse = await self._model_manager(model_task)
         await self._event_manager.trigger(
             Event(
                 type=EventType.MODEL_EXECUTE_AFTER,
@@ -344,6 +353,7 @@ class EngineAgent(ABC):
                 },
             )
         )
+        assert self._model.model_id is not None
         await self._memory.append_message(
             EngineMessage(
                 agent_id=self._id,

@@ -55,6 +55,8 @@ def _get_mlx_model() -> type[TextGenerationModel] | None:
 
 @ModalityRegistry.register(Modality.TEXT_GENERATION)
 class TextGenerationModality:
+    """Handler for text generation modality."""
+
     def load_engine(
         self,
         engine_uri: EngineUri,
@@ -62,7 +64,8 @@ class TextGenerationModality:
         logger: Logger,
         exit_stack: AsyncExitStack,
     ) -> TextGenerationModel:
-        model_load_args = dict(
+        assert engine_uri.model_id, "model_id is required for text generation"
+        model_load_args: dict[str, Any] = dict(
             model_id=engine_uri.model_id,
             settings=engine_settings,
             logger=logger,
@@ -80,75 +83,71 @@ class TextGenerationModality:
 
                     return mlx_loader(**model_load_args)
                 case Backend.VLLM:
-                    from ..nlp.text.vllm import VllmModel as Loader
+                    from ..nlp.text.vllm import VllmModel
 
-                    return Loader(**model_load_args)
+                    return VllmModel(**model_load_args)
                 case _:
                     return TextGenerationModel(**model_load_args)
         match engine_uri.vendor:
             case "anthropic":
-                from ..nlp.text.vendor.anthropic import (
-                    AnthropicModel as Loader,
-                )
+                from ..nlp.text.vendor.anthropic import AnthropicModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return AnthropicModel(**model_load_args, exit_stack=exit_stack)
 
             case "openai":
-                from ..nlp.text.vendor.openai import OpenAIModel as Loader
+                from ..nlp.text.vendor.openai import OpenAIModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return OpenAIModel(**model_load_args, exit_stack=exit_stack)
             case "bedrock":
-                from ..nlp.text.vendor.bedrock import BedrockModel as Loader
+                from ..nlp.text.vendor.bedrock import BedrockModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return BedrockModel(**model_load_args, exit_stack=exit_stack)
             case "openrouter":
-                from ..nlp.text.vendor.openrouter import (
-                    OpenRouterModel as Loader,
-                )
+                from ..nlp.text.vendor.openrouter import OpenRouterModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return OpenRouterModel(
+                    **model_load_args, exit_stack=exit_stack
+                )
             case "anyscale":
-                from ..nlp.text.vendor.anyscale import AnyScaleModel as Loader
+                from ..nlp.text.vendor.anyscale import AnyScaleModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return AnyScaleModel(**model_load_args, exit_stack=exit_stack)
             case "together":
-                from ..nlp.text.vendor.together import TogetherModel as Loader
+                from ..nlp.text.vendor.together import TogetherModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return TogetherModel(**model_load_args, exit_stack=exit_stack)
             case "deepseek":
-                from ..nlp.text.vendor.deepseek import DeepSeekModel as Loader
+                from ..nlp.text.vendor.deepseek import DeepSeekModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return DeepSeekModel(**model_load_args, exit_stack=exit_stack)
             case "deepinfra":
-                from ..nlp.text.vendor.deepinfra import (
-                    DeepInfraModel as Loader,
-                )
+                from ..nlp.text.vendor.deepinfra import DeepInfraModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return DeepInfraModel(**model_load_args, exit_stack=exit_stack)
             case "groq":
-                from ..nlp.text.vendor.groq import GroqModel as Loader
+                from ..nlp.text.vendor.groq import GroqModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return GroqModel(**model_load_args, exit_stack=exit_stack)
             case "ollama":
-                from ..nlp.text.vendor.ollama import OllamaModel as Loader
+                from ..nlp.text.vendor.ollama import OllamaModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return OllamaModel(**model_load_args, exit_stack=exit_stack)
             case "huggingface":
-                from ..nlp.text.vendor.huggingface import (
-                    HuggingfaceModel as Loader,
-                )
+                from ..nlp.text.vendor.huggingface import HuggingfaceModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return HuggingfaceModel(
+                    **model_load_args, exit_stack=exit_stack
+                )
             case "hyperbolic":
-                from ..nlp.text.vendor.hyperbolic import (
-                    HyperbolicModel as Loader,
+                from ..nlp.text.vendor.hyperbolic import HyperbolicModel
+
+                return HyperbolicModel(
+                    **model_load_args, exit_stack=exit_stack
                 )
-
-                return Loader(**model_load_args, exit_stack=exit_stack)
             case "litellm":
-                from ..nlp.text.vendor.litellm import LiteLLMModel as Loader
+                from ..nlp.text.vendor.litellm import LiteLLMModel
 
-                return Loader(**model_load_args, exit_stack=exit_stack)
+                return LiteLLMModel(**model_load_args, exit_stack=exit_stack)
         raise NotImplementedError()
 
     def get_operation_from_arguments(
@@ -159,7 +158,7 @@ class TextGenerationModality:
     ) -> Operation:
         parameters = OperationParameters(
             text=OperationTextParameters(
-                manual_sampling=args.display_tokens or 0,
+                manual_sampling=bool(args.display_tokens),
                 pick_tokens=(
                     10
                     if args.display_tokens and args.display_tokens > 0
@@ -186,7 +185,9 @@ class TextGenerationModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
-        assert operation.input and operation.parameters["text"]
+        assert operation.input, "operation.input is required"
+        text_params = operation.parameters["text"]
+        assert text_params, "text parameters are required"
 
         criteria = _stopping_criteria(operation, model)
         mlx_model = _get_mlx_model()
@@ -194,21 +195,19 @@ class TextGenerationModality:
         if engine_uri.is_local and not is_mlx:
             return await model(
                 operation.input,
-                system_prompt=operation.parameters["text"].system_prompt,
-                developer_prompt=operation.parameters["text"].developer_prompt,
+                system_prompt=text_params.system_prompt,
+                developer_prompt=text_params.developer_prompt,
                 settings=operation.generation_settings,
                 stopping_criterias=[criteria] if criteria else None,
-                manual_sampling=operation.parameters["text"].manual_sampling,
-                pick=operation.parameters["text"].pick_tokens,
-                skip_special_tokens=operation.parameters[
-                    "text"
-                ].skip_special_tokens,
+                manual_sampling=text_params.manual_sampling or False,
+                pick=text_params.pick_tokens,
+                skip_special_tokens=text_params.skip_special_tokens or False,
                 tool=tool,
             )
         return await model(
             operation.input,
-            system_prompt=operation.parameters["text"].system_prompt,
-            developer_prompt=operation.parameters["text"].developer_prompt,
+            system_prompt=text_params.system_prompt,
+            developer_prompt=text_params.developer_prompt,
             settings=operation.generation_settings,
             tool=tool,
         )
@@ -226,6 +225,9 @@ class TextQuestionAnsweringModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for question answering"
         return QuestionAnsweringModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -286,6 +288,9 @@ class TextSequenceClassificationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for sequence classification"
         return SequenceClassificationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -302,7 +307,7 @@ class TextSequenceClassificationModality:
             generation_settings=settings,
             input=input_string,
             modality=Modality.TEXT_SEQUENCE_CLASSIFICATION,
-            parameters=None,
+            parameters=OperationParameters(),
             requires_input=True,
         )
 
@@ -329,6 +334,9 @@ class TextSequenceToSequenceModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for sequence to sequence"
         return SequenceToSequenceModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -362,6 +370,7 @@ class TextSequenceToSequenceModality:
         tool: ToolManager | None = None,
     ) -> Any:
         assert operation.input and operation.parameters["text"]
+        assert operation.generation_settings, "generation_settings is required"
         criteria = _stopping_criteria(operation, model)
         return await model(
             operation.input,
@@ -382,6 +391,9 @@ class TextTokenClassificationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for token classification"
         return TokenClassificationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -437,6 +449,7 @@ class TextTranslationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for translation"
         return TranslationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -472,22 +485,25 @@ class TextTranslationModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
+        text_params = operation.parameters["text"]
         assert (
             operation.input
-            and operation.parameters["text"]
-            and operation.parameters["text"].language_source
-            and operation.parameters["text"].language_destination
+            and text_params
+            and text_params.language_source
+            and text_params.language_destination
+            and operation.generation_settings
         )
         criteria = _stopping_criteria(operation, model)
+        skip_special_tokens = (
+            text_params.skip_special_tokens
+            if text_params.skip_special_tokens is not None
+            else True
+        )
         return await model(
             operation.input,
-            source_language=operation.parameters["text"].language_source,
-            destination_language=operation.parameters[
-                "text"
-            ].language_destination,
+            source_language=text_params.language_source,
+            destination_language=text_params.language_destination,
             settings=operation.generation_settings,
             stopping_criterias=[criteria] if criteria else None,
-            skip_special_tokens=operation.parameters[
-                "text"
-            ].skip_special_tokens,
+            skip_special_tokens=skip_special_tokens,
         )

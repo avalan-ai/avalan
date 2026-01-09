@@ -33,6 +33,9 @@ class AudioClassificationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for audio classification"
         return AudioClassificationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -90,6 +93,9 @@ class AudioSpeechRecognitionModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for speech recognition"
         return SpeechRecognitionModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -147,6 +153,7 @@ class AudioTextToSpeechModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for text to speech"
         return TextToSpeechModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -182,19 +189,24 @@ class AudioTextToSpeechModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
+        audio_params = operation.parameters["audio"]
         assert (
-            operation.parameters["audio"]
-            and operation.parameters["audio"].path
-            and operation.parameters["audio"].sampling_rate
+            audio_params
+            and audio_params.path
+            and audio_params.sampling_rate
+            and operation.generation_settings
         )
+        assert isinstance(operation.input, str), "prompt must be a string"
+        max_tokens = operation.generation_settings.max_new_tokens
+        assert max_tokens is not None, "max_new_tokens is required"
 
         return await model(
-            path=operation.parameters["audio"].path,
             prompt=operation.input,
-            max_new_tokens=operation.generation_settings.max_new_tokens,
-            reference_path=operation.parameters["audio"].reference_path,
-            reference_text=operation.parameters["audio"].reference_text,
-            sampling_rate=operation.parameters["audio"].sampling_rate,
+            path=audio_params.path,
+            max_new_tokens=max_tokens,
+            reference_path=audio_params.reference_path,
+            reference_text=audio_params.reference_text,
+            sampling_rate=audio_params.sampling_rate,
         )
 
 
@@ -210,6 +222,7 @@ class AudioGenerationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for audio generation"
         return AudioGenerationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -243,14 +256,19 @@ class AudioGenerationModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
+        audio_params = operation.parameters["audio"]
         assert (
             operation.input
-            and operation.parameters["audio"]
-            and operation.parameters["audio"].path
+            and audio_params
+            and audio_params.path
+            and operation.generation_settings
         )
+        assert isinstance(operation.input, str), "prompt must be a string"
+        max_tokens = operation.generation_settings.max_new_tokens
+        assert max_tokens is not None, "max_new_tokens is required"
 
         return await model(
             operation.input,
-            operation.parameters["audio"].path,
-            operation.generation_settings.max_new_tokens,
+            audio_params.path,
+            max_tokens,
         )

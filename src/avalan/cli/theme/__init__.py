@@ -1,7 +1,6 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     EngineMessage,
-    EngineMessageScored,
     HubCache,
     HubCacheDeletion,
     ImageEntity,
@@ -14,29 +13,41 @@ from ...entities import (
     TokenizerConfig,
     User,
 )
+from ...entities import (
+    EngineMessageScored as EngineMessageScored,
+)
 from ...event import Event, EventStats
 from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory as Memory
 from ...memory.permanent import PermanentMemoryPartition
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import fields
 from datetime import datetime
 from enum import StrEnum
 from logging import Logger
-from typing import Callable, Generator, Literal
+from typing import Any, Callable, Literal, get_args
 from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
 from numpy import ndarray
 from rich.console import RenderableType
+from rich.spinner import Spinner as RichSpinner
 
 Formatter = (
     Callable[[datetime], str] | Callable[[float], str] | Callable[[int], str]
 )
 Formatters = dict[Literal["datetime", "number", "quantity", "size"], Formatter]
-Spinner = Literal["cache_accessing", "connecting", "thinking", "downloading"]
-Data = StrEnum(
+SpinnerName = Literal[
+    "agent_loading",
+    "cache_accessing",
+    "connecting",
+    "downloading",
+    "thinking",
+    "tool_running",
+]
+Data = StrEnum(  # type: ignore[misc]
     "Data",
     {
         **{field.name: field.name for field in fields(Model)},
@@ -48,10 +59,10 @@ Stylers = dict[Data, Callable[[DataValue], str]]
 
 
 class Theme(ABC):
-    _all_spinners: dict[Spinner, str]
-    _all_stylers: Stylers
-    _all_styles: dict[Data, str]
-    _icons: dict[Data, str]
+    _all_spinners: dict[SpinnerName, str | None]
+    _all_stylers: dict[str, Any]
+    _all_styles: dict[str, str]
+    _icons: dict[str, str | None]
     _: Callable[[str], str]
 
     @property
@@ -67,7 +78,7 @@ class Theme(ABC):
         return []
 
     @property
-    def spinners(self) -> dict[Spinner, str]:
+    def spinners(self) -> dict[SpinnerName, str]:
         return {}
 
     @property
@@ -97,7 +108,7 @@ class Theme(ABC):
         agent: Orchestrator,
         *args,
         models: list[Model | str],
-        cans_access: bool | None,
+        can_access: bool | None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -252,7 +263,7 @@ class Theme(ABC):
 
     @abstractmethod
     def saved_tokenizer_files(
-        directory_path: str, total_files: int
+        self, directory_path: str, total_files: int
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -261,8 +272,8 @@ class Theme(ABC):
         self,
         participant_id: UUID,
         agent: Orchestrator,
-        messages: list[EngineMessageScored],
-    ):
+        messages: list[EngineMessage],
+    ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
@@ -284,8 +295,9 @@ class Theme(ABC):
         dtokens: list[Token],
         added_tokens: list[str] | None,
         special_tokens: list[str] | None,
+        display_details: bool = False,
         current_dtoken: Token | None = None,
-        dtokens_selected: list[Token] = [],
+        dtokens_selected: list[Token] | None = None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -334,6 +346,7 @@ class Theme(ABC):
         tool_events: list[Event] | None,
         tool_event_calls: list[Event] | None,
         tool_event_results: list[Event] | None,
+        tool_running_spinner: RichSpinner | None,
         ttft: float,
         ttnt: float | None,
         ttsr: float | None,
@@ -355,8 +368,9 @@ class Theme(ABC):
         limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[tuple[Token | None, RenderableType], None, None]:
+    ) -> AsyncGenerator[tuple[Token | None, RenderableType], None]:
         raise NotImplementedError()
+        yield  # pragma: no cover - Makes this an async generator
 
     @abstractmethod
     def welcome(
@@ -376,7 +390,7 @@ class Theme(ABC):
         formatters: Formatters = {},
         stylers: Stylers = {},
         styles: dict[Data, str] = {},
-        spinners: dict[Spinner, str] = {},
+        spinners: dict[SpinnerName, str] = {},
         icons: dict[Data, str] = {},
         quantity_data: list[str] = [],
     ):
@@ -392,20 +406,20 @@ class Theme(ABC):
             **self.formatters,
         }
 
-        all_icons = {
+        all_icons: dict[str, str | None] = {
             **{data: None for data in data_keys},
-            **self.icons,
-            **icons,
+            **{str(k): v for k, v in self.icons.items()},
+            **{str(k): v for k, v in icons.items()},
         }
 
         data_keys.extend(all_icons)
         data_keys.extend(self.styles.keys())
 
-        self._all_spinners = {
-            **{spinner: None for spinner in Spinner.__args__},
+        self._all_spinners: dict[SpinnerName, str | None] = {
+            **{spinner: None for spinner in get_args(SpinnerName)},
             **self.spinners,
         }
-        self._all_stylers = {
+        self._all_stylers: dict[str, Any] = {
             **{
                 data: lambda data, value, prefix=None, icon=True: "".join(
                     [
@@ -420,13 +434,13 @@ class Theme(ABC):
                         ),
                         f"[{data}]",
                         (
-                            formatters["quantity"](value)
+                            formatters["quantity"](value)  # type: ignore[arg-type]
                             if data in quantity_data
                             else (
-                                formatters["datetime"](value)
+                                formatters["datetime"](value)  # type: ignore[arg-type]
                                 if isinstance(value, datetime)
                                 else (
-                                    formatters["number"](value)
+                                    formatters["number"](value)  # type: ignore[arg-type]
                                     if isinstance(value, int)
                                     or isinstance(value, float)
                                     else value
@@ -438,17 +452,20 @@ class Theme(ABC):
                 )
                 for data in data_keys
             },
-            **self.stylers,
+            **{str(k): v for k, v in self.stylers.items()},
         }
-        self._all_styles = {**{data: "" for data in data_keys}, **self.styles}
+        self._all_styles: dict[str, str] = {
+            **{data: "" for data in data_keys},
+            **{str(k): v for k, v in self.styles.items()},
+        }
         self._icons = all_icons
         self._ = translator
         self._n = translator_plurals
 
-    def get_styles(self) -> dict[Data, str]:
+    def get_styles(self) -> dict[str, str]:
         return self._all_styles
 
-    def get_spinner(self, spinner_name: str) -> Spinner:
+    def get_spinner(self, spinner_name: SpinnerName) -> str | None:
         return self._all_spinners[spinner_name]
 
     def __call__(self, item: Model | str) -> RenderableType:
@@ -461,8 +478,8 @@ class Theme(ABC):
         prefix: str | None = None,
         icon: bool | str = True,
     ) -> str:
-        return (
-            self._all_stylers[data](data, value, prefix, icon)
-            if data in self._all_stylers and self._all_stylers[data]
-            else str(value)
-        )
+        styler = self._all_stylers.get(data)
+        if styler is not None:
+            result: str = styler(data, value, prefix, icon)  # type: ignore[call-arg]
+            return result
+        return str(value)

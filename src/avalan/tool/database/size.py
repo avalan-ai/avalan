@@ -10,7 +10,7 @@ from . import (
     text,
 )
 
-from typing import Any
+from typing import Any, Literal
 
 
 class DatabaseSizeTool(DatabaseTool):
@@ -46,7 +46,7 @@ class DatabaseSizeTool(DatabaseTool):
             return (schema or None), table
         return None, qualified
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, table_name: str, *, context: ToolCallContext
     ) -> TableSize:
         assert table_name, "table_name must not be empty"
@@ -220,10 +220,10 @@ class DatabaseSizeTool(DatabaseTool):
             table_row.get("size") if table_row else None
         )
 
-        index_rows: list[dict[str, Any]] = []
+        index_rows: list[Any] = []
         try:
             pragma = table_name.replace("'", "''")
-            index_rows = (
+            index_rows = list(
                 connection.execute(text(f"PRAGMA index_list('{pragma}')"))
                 .mappings()
                 .all()
@@ -420,7 +420,11 @@ class DatabaseSizeTool(DatabaseTool):
             metrics.append(self._metric("total", total_bytes))
         return metrics
 
-    def _metric(self, category: str, value: int | None) -> TableSizeMetric:
+    def _metric(
+        self,
+        category: Literal["data", "indexes", "total", "toast", "lob", "free"],
+        value: int | None,
+    ) -> TableSizeMetric:
         return TableSizeMetric(
             category=category,
             bytes=value,

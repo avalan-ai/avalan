@@ -1,6 +1,7 @@
 from ...cli import get_input
 from ...cli.commands import get_model_settings
 from ...cli.commands.model import model_display
+from ...cli.theme import Theme
 from ...entities import DistanceType, Modality, SearchMatch, Similarity
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.partitioner.text import TextPartition, TextPartitioner
@@ -15,6 +16,7 @@ from asyncio import to_thread
 from io import BytesIO
 from logging import Logger
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -23,7 +25,6 @@ from markitdown import DocumentConverterResult, MarkItDown
 from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
-from rich.theme import Theme
 
 
 async def memory_document_index(
@@ -40,7 +41,7 @@ async def memory_document_index(
     def transform(html: bytes) -> DocumentConverterResult:
         return MarkItDown().convert_stream(BytesIO(html))
 
-    _, _i = theme._, theme.icons
+    _, _i = theme._, cast(dict[str, Any], theme.icons)
     model_id = args.model
     source = args.source
     participant_id = UUID(args.participant)
@@ -139,7 +140,7 @@ async def memory_document_index(
                     args.encoding,
                     args.partition_max_tokens,
                 )
-                partitions: list[TextPartition] = []
+                partitions = []
                 for cp in code_partitions:
                     embeddings = await stm(cp.data)
                     tokens = stm.token_count(cp.data)
@@ -184,7 +185,7 @@ async def memory_embeddings(
     logger: Logger,
 ) -> None:
     assert args.model
-    _, _i = theme._, theme.icons
+    _, _i = theme._, cast(dict[str, Any], theme.icons)
     model_id = args.model
     display_partitions = (
         args.display_partitions if not args.no_display_partitions else None
@@ -357,7 +358,7 @@ async def memory_embeddings(
 
                 index = IndexFlatL2(input_string_embeddings.shape[0])
 
-                if partitioner:
+                if partitioner and knowledge_partitions is not None:
                     knowledge_stack = vstack(
                         [kp.embeddings for kp in knowledge_partitions]
                     ).astype("float32", copy=False)
@@ -414,7 +415,7 @@ async def memory_search(
     assert args.model and args.dsn and args.participant and args.namespace
     assert args.function
 
-    _, _i = theme._, theme.icons
+    _, _i = theme._, cast(dict[str, Any], theme.icons)
     model_id = args.model
     participant_id = UUID(args.participant)
     namespace = args.namespace

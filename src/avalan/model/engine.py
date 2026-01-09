@@ -53,12 +53,14 @@ from transformers.utils.logging import (
 
 
 class Engine(ABC):
+    """Base class for model engines."""
+
     _device: str
     _logger: Logger
     _model_id: str | None
     _settings: EngineSettings
-    _transformers_logging_logger: Logger
-    _transformers_logging_level: int
+    _transformers_logging_logger: Logger | None
+    _transformers_logging_level: int | None
     _loaded_model: bool = False
     _loaded_tokenizer: bool = False
     _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
@@ -117,7 +119,7 @@ class Engine(ABC):
     ) -> dict[str, object] | None:
         if distributed_config is None:
             return None
-        config = {"enable_expert_parallel": False}
+        config: dict[str, object] = {"enable_expert_parallel": False}
         config.update(distributed_config)
         return config
 
@@ -139,16 +141,16 @@ class Engine(ABC):
             if self._settings.device
             else Engine.get_default_device()
         )
-        self._transformers_logging_logger = (
-            transformers_logging.get_logger()
-            if self._settings.change_transformers_logging_level
-            else None
-        )
-        self._transformers_logging_level = (
-            self._transformers_logging_logger.level
-            if self._settings.change_transformers_logging_level
-            else None
-        )
+        if self._settings.change_transformers_logging_level:
+            self._transformers_logging_logger = (
+                transformers_logging.get_logger()
+            )
+            self._transformers_logging_level = (
+                self._transformers_logging_logger.level
+            )
+        else:
+            self._transformers_logging_logger = None
+            self._transformers_logging_level = None
 
         auto_load_tokenizer = (
             self.uses_tokenizer and self._settings.auto_load_tokenizer
@@ -239,11 +241,9 @@ class Engine(ABC):
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
-        raise (
-            TokenizerNotSupportedException()
-            if not self.uses_tokenizer()
-            else NotImplementedError()
-        )
+        if not self.uses_tokenizer:
+            raise TokenizerNotSupportedException()
+        raise NotImplementedError()
 
     def __enter__(self):
         _l = self._log
@@ -365,12 +365,22 @@ class Engine(ABC):
                 self._settings.cache_dir,
             )
 
-            if self._settings.enable_eval:
+            if self._settings.enable_eval and isinstance(
+                self._model, PreTrainedModel
+            ):
                 _l("Setting model %s in eval mode", self._model_id)
                 self._model.eval()
 
-            if self._tokenizer and (
-                self._settings.tokens or self._settings.special_tokens
+            settings = self._settings
+            has_tokens = (
+                hasattr(settings, "tokens") and settings.tokens  # type: ignore[union-attr]
+            ) or (
+                hasattr(settings, "special_tokens") and settings.special_tokens  # type: ignore[union-attr]
+            )
+            if (
+                self._tokenizer
+                and has_tokens
+                and isinstance(self._model, PreTrainedModel)
             ):
                 total_tokens = len(self._tokenizer)
                 _l(
@@ -407,20 +417,23 @@ class Engine(ABC):
 
         if self._model and not self._config:
             config: ModelConfig | SentenceTransformerModelConfig | None = None
-            mc = (
-                self._model.config
-                if hasattr(self._model, "config")
-                else (
-                    self._model[0].auto_model.config
-                    if is_sentence_transformer
-                    else None
-                )
-            )
+            mc = None
+            if hasattr(self._model, "config"):
+                mc = self._model.config  # type: ignore[union-attr]
+            elif is_sentence_transformer and hasattr(
+                self._model, "__getitem__"
+            ):
+                first_module = self._model[0]  # type: ignore[index]
+                if hasattr(first_module, "auto_model"):
+                    mc = first_module.auto_model.config
 
             if mc:
+                attr_map = getattr(mc, "attribute_map", None)
+                keys_ignore = getattr(mc, "keys_to_ignore_at_inference", None)
+                torch_dt = getattr(mc, "torch_dtype", float32)
                 config = ModelConfig(
                     architectures=getattr(mc, "architectures", None),
-                    attribute_map=getattr(mc, "attribute_map", None),
+                    attribute_map=attr_map if attr_map else {},
                     bos_token_id=getattr(mc, "bos_token_id", None),
                     bos_token=(
                         self._tokenizer.decode(mc.bos_token_id)
@@ -448,9 +461,7 @@ class Engine(ABC):
                         else None
                     ),
                     keys_to_ignore_at_inference=(
-                        mc.keys_to_ignore_at_inference
-                        if hasattr(mc, "keys_to_ignore_at_inference")
-                        else None
+                        keys_ignore if keys_ignore else []
                     ),
                     loss_type=(
                         mc.loss_type if hasattr(mc, "loss_type") else None
@@ -472,9 +483,9 @@ class Engine(ABC):
                         else None
                     ),
                     num_labels=getattr(mc, "num_labels", None),
-                    output_attentions=getattr(mc, "output_attentions", None),
+                    output_attentions=getattr(mc, "output_attentions", False),
                     output_hidden_states=getattr(
-                        mc, "output_hidden_states", None
+                        mc, "output_hidden_states", False
                     ),
                     pad_token_id=getattr(mc, "pad_token_id", None),
                     pad_token=(
@@ -490,7 +501,7 @@ class Engine(ABC):
                         else None
                     ),
                     state_size=(
-                        len(self._model.state_dict().keys())
+                        len(self._model.state_dict().keys())  # type: ignore[union-attr]
                         if hasattr(self._model, "state_dict")
                         and self._model.state_dict
                         else 0
@@ -498,31 +509,41 @@ class Engine(ABC):
                     task_specific_params=getattr(
                         mc, "task_specific_params", None
                     ),
-                    torch_dtype=(
-                        str(mc.torch_dtype)
-                        if hasattr(mc, "torch_dtype")
-                        else None
-                    ),
+                    torch_dtype=torch_dt,
                     vocab_size=(
                         mc.vocab_size if hasattr(mc, "vocab_size") else None
                     ),
                     tokenizer_class=getattr(mc, "tokenizer_class", None),
                 )
 
-            if is_sentence_transformer and config:
+            if (
+                is_sentence_transformer
+                and config
+                and isinstance(config, ModelConfig)
+            ):
                 config = SentenceTransformerModelConfig(
-                    backend=self._model.backend,
-                    similarity_function=self._model.similarity_fn_name,
-                    truncate_dimension=self._model.truncate_dim,
+                    backend=getattr(self._model, "backend", "torch"),
+                    similarity_function=getattr(
+                        self._model, "similarity_fn_name", None
+                    ),
+                    truncate_dimension=getattr(
+                        self._model, "truncate_dim", None
+                    ),
                     transformer_model_config=config,
                 )
 
             self._config = config
 
         if self._tokenizer and not self._tokenizer_config:
+            settings = self._settings
+            tokens_list = (
+                settings.tokens  # type: ignore[union-attr]
+                if hasattr(settings, "tokens")
+                else None
+            )
             self._tokenizer_config = TokenizerConfig(
                 name_or_path=self._tokenizer.name_or_path,
-                tokens=self._settings.tokens,
+                tokens=tokens_list,
                 special_tokens=self._tokenizer.all_special_tokens,
                 tokenizer_model_max_length=getattr(
                     self._tokenizer, "model_max_length", 0
@@ -554,11 +575,11 @@ class Engine(ABC):
             )
             return cuda.get_device_properties(index).total_memory
 
-        from psutil import virtual_memory
+        from psutil import virtual_memory  # type: ignore[import-untyped]
 
         if device == "mps" and mps.is_available():
-            return virtual_memory().total
-        return virtual_memory().total
+            return int(virtual_memory().total)
+        return int(virtual_memory().total)
 
     def _log(self, message: str, *args: object) -> None:
         self._logger.debug(

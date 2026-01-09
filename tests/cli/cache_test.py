@@ -40,7 +40,7 @@ class CliCacheDeleteTestCase(unittest.TestCase):
             )
         self.hub.cache_delete.assert_called_once_with("m", "r")
         self.assertEqual(
-            self.theme.cache_delete.call_args_list[0].args, (cache_del,)
+            self.theme.cache_delete.call_args_list[0].args, (cache_del, False)
         )
         self.assertEqual(
             self.theme.cache_delete.call_args_list[1].args, (cache_del, True)
@@ -65,7 +65,9 @@ class CliCacheDeleteTestCase(unittest.TestCase):
         execute.assert_not_called()
         confirm.assert_called_once()
         self.assertEqual(len(self.theme.cache_delete.call_args_list), 1)
-        self.assertEqual(self.theme.cache_delete.call_args.args, (cache_del,))
+        self.assertEqual(
+            self.theme.cache_delete.call_args.args, (cache_del, False)
+        )
         self.assertEqual(len(self.console.print.call_args_list), 1)
 
 

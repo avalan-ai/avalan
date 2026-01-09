@@ -5,23 +5,28 @@ from ....entities import (
     TransformerEngineSettings,
 )
 from ....model.nlp.text.generation import TextGenerationModel
-from ....model.vendor import TextGenerationVendorStream
+from ....model.vendor import TextGenerationVendor, TextGenerationVendorStream
 from ....tool.manager import ToolManager
 
 from asyncio import to_thread
 from dataclasses import asdict, replace
 from logging import Logger, getLogger
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
+
+from diffusers import DiffusionPipeline
+from transformers import PreTrainedModel
 
 try:
     from vllm import LLM, SamplingParams
 except Exception:  # pragma: no cover - vllm may not be installed
-    LLM = None
-    SamplingParams = None
+    LLM = None  # type: ignore[assignment,misc]
+    SamplingParams = None  # type: ignore[assignment,misc]
 
 
 class VllmStream(TextGenerationVendorStream):
-    def __init__(self, generator):
+    _iterator: Any
+
+    def __init__(self, generator: Any) -> None:
         super().__init__(generator)
         self._iterator = generator
 
@@ -48,17 +53,17 @@ class VllmModel(TextGenerationModel):
     def supports_sample_generation(self) -> bool:
         return False
 
-    def _load_model(self):
+    def _load_model(
+        self,
+    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert LLM, "vLLM is not available"
-        return LLM(
+        return LLM(  # type: ignore[return-value,no-any-return]
             model=self._model_id,
             tokenizer=self._settings.tokenizer_name_or_path or self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
         )
 
-    def _build_sampling_params(
-        self, settings: GenerationSettings
-    ) -> SamplingParams:
+    def _build_sampling_params(self, settings: GenerationSettings) -> Any:
         assert SamplingParams, "vLLM is not available"
         return SamplingParams(
             temperature=settings.temperature,
@@ -85,32 +90,36 @@ class VllmModel(TextGenerationModel):
             tool=tool,
             chat_template_settings=chat_template_settings,
         )
+        assert self._tokenizer is not None
+        assert isinstance(inputs, dict), "inputs must be a dict"
         return self._tokenizer.decode(
             inputs["input_ids"][0], skip_special_tokens=False
         )
 
-    async def _stream_generator(
+    async def _stream_generator(  # type: ignore[override]
         self,
         prompt: str,
         settings: GenerationSettings,
     ) -> AsyncGenerator[str, None]:
         params = self._build_sampling_params(settings)
-        iterator = self._model.generate([prompt], params, stream=True)
+        assert self._model is not None
+        iterator = self._model.generate([prompt], params, stream=True)  # type: ignore[union-attr,operator]
         stream = VllmStream(iter(iterator))
         async for chunk in stream:
             yield chunk
 
-    def _string_output(
+    def _string_output(  # type: ignore[override]
         self,
         prompt: str,
         settings: GenerationSettings,
     ) -> str:
         params = self._build_sampling_params(settings)
-        results = list(self._model.generate([prompt], params))
+        assert self._model is not None
+        results = list(self._model.generate([prompt], params))  # type: ignore[union-attr,operator]
         return results[0].outputs[0].text if results else ""
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         system_prompt: str | None = None,
@@ -129,5 +138,5 @@ class VllmModel(TextGenerationModel):
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:
-            return await self._stream_generator(prompt, generation_settings)
+            return await self._stream_generator(prompt, generation_settings)  # type: ignore[misc,no-any-return]
         return self._string_output(prompt, generation_settings)

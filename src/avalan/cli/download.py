@@ -60,5 +60,5 @@ class tqdm_rich_progress(std_tqdm):
 
     def reset(self, total=None):
         if hasattr(self, "_progress"):
-            self._progress.reset(total=total)
+            self._progress.reset(task_id=self._task_id, total=total)
         super().reset(total=total)

@@ -4,7 +4,7 @@ from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal
 
 from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
@@ -24,7 +24,8 @@ class QuestionAnsweringModel(BaseNLPModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        model = AutoModelForQuestionAnswering.from_pretrained(
+        assert self._model_id is not None, "Model ID must be set"
+        model: PreTrainedModel = AutoModelForQuestionAnswering.from_pretrained(
             self._model_id,
             cache_dir=self._settings.cache_dir,
             subfolder=self._settings.subfolder or "",
@@ -42,7 +43,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         )
         return model
 
-    def _tokenize_input(
+    def _tokenize_input(  # type: ignore[override]
         self,
         input: Input,
         system_prompt: str | None,
@@ -56,14 +57,18 @@ class QuestionAnsweringModel(BaseNLPModel):
             + f"{self._model_id} does not support chat "
             + "templates"
         )
+        assert self._tokenizer is not None, "Tokenizer must be loaded"
+        assert self._model is not None, "Model must be loaded"
         _l = self._log
         _l(f"Tokenizing input {input}")
-        inputs = self._tokenizer(input, context, return_tensors=tensor_format)
-        inputs = inputs.to(self._model.device)
+        inputs: BatchEncoding = self._tokenizer(
+            input, context, return_tensors=tensor_format
+        )
+        inputs = inputs.to(self._model.device)  # type: ignore[union-attr]
         return inputs
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         *,
@@ -71,6 +76,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
         skip_special_tokens: bool = True,
+        **kwargs: Any,
     ) -> str:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
@@ -87,13 +93,13 @@ class QuestionAnsweringModel(BaseNLPModel):
             context=context,
         )
         with inference_mode():
-            outputs = self._model(**inputs)
-        start_answer_logits = outputs.start_logits
-        end_answer_logits = outputs.end_logits
+            outputs = self._model(**inputs)  # type: ignore[operator]
+        start_answer_logits = outputs.start_logits  # type: ignore[union-attr]
+        end_answer_logits = outputs.end_logits  # type: ignore[union-attr]
         start = argmax(start_answer_logits)
         end = argmax(end_answer_logits)
         answer_ids = inputs["input_ids"][0, start : end + 1]
-        answer = self._tokenizer.decode(
+        answer: str = self._tokenizer.decode(
             answer_ids, skip_special_tokens=skip_special_tokens
         )
         return answer

@@ -32,7 +32,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
         ElasticsearchMemory.__init__(
             self, index=index, client=client, logger=logger
         )
-        PermanentMemory.__init__(self, sentence_model=None)
+        PermanentMemory.__init__(self, sentence_model=None)  # type: ignore[arg-type]
 
     @classmethod
     async def create_instance(
@@ -47,11 +47,11 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
         memory = cls(index=index, client=es_client, logger=logger)
         return memory
 
-    async def append_with_partitions(
+    async def append_with_partitions(  # type: ignore[override]
         self,
         namespace: str,
         participant_id: UUID,
-        *,
+        *args: object,
         memory_type: MemoryType,
         data: str,
         identifier: str,
@@ -113,9 +113,9 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
                 },
             )
 
-    async def search_memories(
+    async def search_memories(  # type: ignore[override]
         self,
-        *,
+        *args: object,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -212,7 +212,7 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
             )
         return memories
 
-    async def search(
+    async def search(  # type: ignore[override]
         self, query: str
     ) -> list[PermanentMemoryPartition] | None:
         raise NotImplementedError()

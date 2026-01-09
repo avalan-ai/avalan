@@ -44,7 +44,7 @@ class DatabaseCountTool(DatabaseTool):
             return (sch or None), tbl
         return None, qualified
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, table_name: str, *, context: ToolCallContext
     ) -> int:
         assert table_name, "table_name must not be empty"

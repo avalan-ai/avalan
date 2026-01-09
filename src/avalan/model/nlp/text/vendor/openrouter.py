@@ -6,13 +6,15 @@ from transformers import PreTrainedModel
 
 
 class OpenRouterClient(OpenAIClient):
-    def __init__(self, api_key: str, base_url: str | None = None):
+    def __init__(
+        self, api_key: str | None, base_url: str | None = None
+    ) -> None:
         super().__init__(
             api_key=api_key,
             base_url=base_url or "https://openrouter.ai/api/v1",
         )
         # Optional headers recommended by OpenRouter
-        self._client.headers.update(
+        self._client.headers.update(  # type: ignore[union-attr,attr-defined]
             {
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
                 "X-Title": "avalan",

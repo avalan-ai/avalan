@@ -824,7 +824,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         events = [
             model_cmds.Event(
                 type=model_cmds.EventType.TOOL_EXECUTE,
-                payload=[call],
+                payload={"call": call},
             ),
             token_a,
             model_cmds.Event(
@@ -4242,7 +4242,7 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
             return items
 
         async def to_thread_stub(fn, *a, **kw):
-            return fn()
+            return fn(*a, **kw)
 
         with (
             patch.object(model_cmds, "Live", return_value=live),
@@ -4317,7 +4317,9 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
             patch.object(model_cmds, "Live", return_value=live),
             patch.object(model_cmds, "Group", side_effect=lambda *i: i),
             patch.object(
-                model_cmds, "to_thread", side_effect=lambda f, *a, **k: f()
+                model_cmds,
+                "to_thread",
+                side_effect=lambda f, *a, **k: f(*a, **k),
             ),
         ):
             await model_cmds.model_search(args, console, theme, hub, 5)

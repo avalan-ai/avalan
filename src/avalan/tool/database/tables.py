@@ -34,7 +34,7 @@ class DatabaseTablesTool(DatabaseTool):
         )
         self.__name__ = "tables"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, *, context: ToolCallContext
     ) -> dict[str | None, list[str]]:
         await self._sleep_if_configured()

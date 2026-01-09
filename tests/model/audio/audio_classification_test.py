@@ -92,6 +92,10 @@ class AudioClassificationModelCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.model.audio.classification.inference_mode",
                 return_value=nullcontext(),
             ) as inf_mock,
+            patch(
+                "avalan.model.audio.classification.isinstance",
+                return_value=True,
+            ),
         ):
             extractor_instance = MagicMock()
             extractor_call = MagicMock(return_value="inputs")

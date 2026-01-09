@@ -25,7 +25,7 @@ from dataclasses import asdict, replace
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Thread
-from typing import AsyncGenerator, Literal
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Literal
 
 from diffusers import DiffusionPipeline
 from torch import Tensor, log_softmax, softmax, topk
@@ -41,15 +41,18 @@ from transformers import (
 from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
 
+if TYPE_CHECKING:
+    from types import ModuleType
+
 _TOOL_MESSAGE_PARSER = ToolCallParser()
 
 
 class TextGenerationModel(BaseNLPModel):
     _loaders: dict[TextGenerationLoaderClass, type[PreTrainedModel]] = {
-        "auto": AutoModelForCausalLM,
-        "gemma3": Gemma3ForConditionalGeneration,
-        "gpt-oss": GptOssForCausalLM,
-        "mistral3": Mistral3ForConditionalGeneration,
+        "auto": AutoModelForCausalLM,  # type: ignore[dict-item]
+        "gemma3": Gemma3ForConditionalGeneration,  # type: ignore[dict-item]
+        "gpt-oss": GptOssForCausalLM,  # type: ignore[dict-item]
+        "mistral3": Mistral3ForConditionalGeneration,  # type: ignore[dict-item]
     }
 
     def __init__(
@@ -115,11 +118,13 @@ class TextGenerationModel(BaseNLPModel):
         if model_args["quantization_config"] is None:
             model_args.pop("quantization_config", None)
 
-        model = loader.from_pretrained(self._model_id, **model_args)
+        model: PreTrainedModel = loader.from_pretrained(
+            self._model_id, **model_args
+        )
         return model
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         system_prompt: str | None = None,
@@ -210,7 +215,7 @@ class TextGenerationModel(BaseNLPModel):
         _l = self._log
 
         streamer = AsyncTextIteratorStreamer(
-            self._tokenizer,
+            self._tokenizer,  # type: ignore[arg-type]
             skip_prompt=True,
             decode_kwargs={"skip_special_tokens": skip_special_tokens},
         )
@@ -250,10 +255,15 @@ class TextGenerationModel(BaseNLPModel):
         settings: GenerationSettings,
         stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
-        input_length = inputs["input_ids"].shape[1]
+        assert isinstance(
+            inputs, dict
+        ), "inputs must be a dict for _string_output"
+        input_ids = inputs["input_ids"]
+        input_length: int = input_ids.shape[1]  # type: ignore[union-attr]
         outputs = self._generate_output(inputs, settings, stopping_criterias)
+        assert self._tokenizer is not None
         return self._tokenizer.decode(
             outputs[0][input_length:], skip_special_tokens=skip_special_tokens
         )
@@ -274,12 +284,13 @@ class TextGenerationModel(BaseNLPModel):
 
         _l = self._log
 
+        entmax: ModuleType | None = None
         enable_entmax = find_spec("entmax") and probability_distribution in [
             "entmax",
             "sparsemax",
         ]
         if enable_entmax:
-            import entmax
+            import entmax  # type: ignore[import-not-found,no-redef]
 
         _l(
             f"Generating up to {settings.max_new_tokens} tokens "
@@ -297,11 +308,16 @@ class TextGenerationModel(BaseNLPModel):
         )
         sequences = outputs.sequences[0]
         scores = outputs.scores  # list of logits for each generated token
-        start = inputs["input_ids"].shape[1]  # where generation began
+        assert isinstance(
+            inputs, dict
+        ), "inputs must be a dict for _token_generator"
+        input_ids = inputs["input_ids"]
+        start: int = input_ids.shape[1]  # type: ignore[union-attr]
         generated_sequences = sequences[start:]
 
         _l(f"Generated {len(generated_sequences)} sequences")
 
+        assert self._tokenizer is not None
         total_tokens = 0
         for step, token_id in enumerate(generated_sequences):
             _l(f"Got step {step} token {token_id}")
@@ -312,42 +328,43 @@ class TextGenerationModel(BaseNLPModel):
             logits = tensor[0]  # first element in batch dimension
 
             # apply probabilty  distribution over last tensor layer, vocab_size
+            temp = settings.temperature if settings.temperature else 1.0
             logits_probs = (
                 log_softmax(logits, dim=-1)
                 if probability_distribution == "log_softmax"
                 else (
-                    gumbel_softmax(
-                        logits, tau=settings.temperature, hard=False, dim=-1
-                    )
+                    gumbel_softmax(logits, tau=temp, hard=False, dim=-1)
                     if probability_distribution == "gumbel_softmax"
                     else (
                         entmax.sparsemax(logits, dim=-1)
                         if enable_entmax
+                        and entmax is not None
                         and probability_distribution == "sparsemax"
                         else (
                             entmax.entmax15(logits, dim=-1)
                             if enable_entmax
+                            and entmax is not None
                             and probability_distribution == "entmax"
-                            else softmax(logits / settings.temperature, dim=-1)
+                            else softmax(logits / temp, dim=-1)
                         )
                     )
                 )
             )
 
             tokens: list[Token] | None = None
-            if pick > 0:
+            if pick is not None and pick > 0:
                 picked_logits = topk(logits_probs, pick)
                 picked_logits_ids = picked_logits.indices.tolist()
                 picked_logits_probs = picked_logits.values.tolist()
                 tokens = [
                     Token(
-                        id=token_id,
+                        id=tid,
                         token=self._tokenizer.decode(
-                            token_id, skip_special_tokens=skip_special_tokens
+                            tid, skip_special_tokens=skip_special_tokens
                         ),
                         probability=picked_logits_probs[i],
                     )
-                    for i, token_id in enumerate(picked_logits_ids)
+                    for i, tid in enumerate(picked_logits_ids)
                 ]
 
             raw_token = TokenDetail(
@@ -371,7 +388,7 @@ class TextGenerationModel(BaseNLPModel):
 
         await sleep(0)  # and just like that, a generator is an async generator
 
-    def _tokenize_input(
+    def _tokenize_input(  # type: ignore[override]
         self,
         input: Input,
         system_prompt: str | None,
@@ -383,11 +400,15 @@ class TextGenerationModel(BaseNLPModel):
         tool: ToolManager | None = None,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
+        assert self._tokenizer is not None
         messages = self._messages(input, system_prompt, developer_prompt, tool)
+        tokenizer = self._tokenizer
 
         def _format_content(
-            content: str | MessageContent | list[MessageContent],
+            content: str | MessageContent | list[MessageContent] | None,
         ) -> str | list[dict[str, object]]:
+            if content is None:
+                return ""
             if isinstance(content, str):
                 return content
 
@@ -395,14 +416,14 @@ class TextGenerationModel(BaseNLPModel):
                 return content.text
 
             if isinstance(content, MessageContentImage):
-                if self._tokenizer.chat_template:
+                if tokenizer.chat_template:
                     return [
                         {"type": "image_url", "image_url": content.image_url}
                     ]
                 return ""
 
             if isinstance(content, list):
-                if self._tokenizer.chat_template:
+                if tokenizer.chat_template:
                     blocks: list[dict[str, object]] = []
                     for c in content:
                         if isinstance(c, MessageContentImage):
@@ -426,7 +447,7 @@ class TextGenerationModel(BaseNLPModel):
 
             return str(content)
 
-        template_messages = []
+        template_messages: list[dict[str, Any]] = []
         for message in messages:
             message_dict = asdict(message)
             prepared = _TOOL_MESSAGE_PARSER.prepare_message_for_template(
@@ -441,7 +462,7 @@ class TextGenerationModel(BaseNLPModel):
                 }
             )
 
-        if not self._tokenizer.chat_template:
+        if not tokenizer.chat_template:
             _l("Model does not support template messages, so staying plain")
 
             prompt = f"{system_prompt}\n\n" or ""
@@ -461,27 +482,30 @@ class TextGenerationModel(BaseNLPModel):
                             else ""
                         )
                     )
-                prompt += template_message["content"].strip() + "\n"
+                content = template_message["content"]
+                content_str = content if isinstance(content, str) else ""
+                prompt += content_str.strip() + "\n"
 
-            inputs = self._tokenizer(
+            inputs: Any = tokenizer(
                 prompt, add_special_tokens=True, return_tensors=tensor_format
             )
         else:
             _l(f"Got {len(template_messages)} template messages")
 
             _l(f"Applying chat template to {len(template_messages)} messages")
-            inputs = self._tokenizer.apply_chat_template(
-                template_messages,
+            inputs = tokenizer.apply_chat_template(
+                template_messages,  # type: ignore[arg-type]
                 chat_template=chat_template,
-                tools=tool.json_schemas() if tool else None,
-                **(chat_template_settings or {}),
+                tools=tool.json_schemas() if tool else None,  # type: ignore[arg-type]
+                **(chat_template_settings or {}),  # type: ignore[arg-type]
                 return_tensors=tensor_format,
             )
 
-        if hasattr(self._model, "device"):
-            _l(f"Translating inputs to {self._model.device}")
-            inputs = inputs.to(self._model.device)
-        return inputs
+        if self._model is not None and hasattr(self._model, "device"):
+            device = getattr(self._model, "device", None)
+            _l(f"Translating inputs to {device}")
+            inputs = inputs.to(device)
+        return inputs  # type: ignore[return-value,no-any-return]
 
     def _messages(
         self,
@@ -490,24 +514,27 @@ class TextGenerationModel(BaseNLPModel):
         developer_prompt: str | None = None,
         tool: ToolManager | None = None,
     ) -> list[Message]:
+        messages: list[Message]
         if isinstance(input, str):
-            input = Message(role=MessageRole.USER, content=input)
+            messages = [Message(role=MessageRole.USER, content=input)]
+        elif isinstance(input, Message):
+            messages = [input]
         elif isinstance(input, list):
             for m in input:
                 assert isinstance(m, Message)
-        elif not isinstance(input, Message):
+            messages = list(input)  # type: ignore[arg-type]
+        else:
             raise ValueError(input)
-
-        messages = [input] if not isinstance(input, list) else input
 
         if developer_prompt:
             messages = [
-                Message(role=MessageRole.DEVELOPER, content=developer_prompt)
-            ] + messages
+                Message(role=MessageRole.DEVELOPER, content=developer_prompt),
+                *messages,
+            ]
         if system_prompt:
             messages = [
-                Message(role=MessageRole.SYSTEM, content=system_prompt)
-            ] + messages
+                Message(role=MessageRole.SYSTEM, content=system_prompt),
+                *messages,
+            ]
 
-        assert isinstance(messages, list)
         return messages

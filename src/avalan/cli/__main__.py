@@ -23,6 +23,7 @@ from ..cli.commands.model import (
     model_uninstall,
 )
 from ..cli.commands.tokenizer import tokenize
+from ..cli.theme import Theme
 from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
@@ -51,11 +52,16 @@ from ..utils import logger_replace
 
 import gettext
 import sys
-from argparse import ArgumentParser, Namespace, _SubParsersAction
+from argparse import (
+    ArgumentParser,
+    Namespace,
+    _ArgumentGroup,
+    _SubParsersAction,
+)
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
 from dataclasses import fields
-from gettext import translation
+from gettext import GNUTranslations, NullTranslations, translation
 from importlib.util import find_spec
 from locale import getlocale
 from logging import (
@@ -73,6 +79,7 @@ from os.path import join
 from pathlib import Path
 from subprocess import run
 from tomllib import load as toml_load
+from types import ModuleType
 from typing import Optional, get_args, get_origin
 from typing import get_args as get_type_args
 from uuid import uuid4
@@ -81,7 +88,7 @@ from warnings import filterwarnings
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
-from rich.theme import Theme
+from rich.theme import Theme as RichTheme
 from torch.cuda import device_count, is_available, set_device
 from torch.distributed import destroy_process_group
 from transformers.utils import (
@@ -112,7 +119,10 @@ class CLI:
         )
         default_device = TransformerModel.get_default_device()
         self._parser = CLI._create_parser(
-            default_device, cache_dir, default_locales_path, default_locale
+            default_device,
+            cache_dir,
+            default_locales_path,
+            default_locale or "en_US",
         )
 
     @staticmethod
@@ -141,7 +151,7 @@ class CLI:
         cache_dir: str,
         default_locales_path: str,
         default_locale: str,
-    ):
+    ) -> ArgumentParser:
         default_attention = CLI._default_attention(default_device)
         global_parser = ArgumentParser(add_help=False)
         global_parser.add_argument(
@@ -1637,7 +1647,7 @@ class CLI:
     @staticmethod
     def _get_translator(
         app_name: str, locales_path: str, locale: str
-    ) -> object:
+    ) -> GNUTranslations | NullTranslations | ModuleType:
         """Return translation object for ``locale`` or ``gettext`` fallback."""
         try:
             return translation(
@@ -1763,7 +1773,7 @@ class CLI:
     @staticmethod
     def _add_agent_settings_arguments(
         parser: ArgumentParser,
-    ) -> ArgumentParser:
+    ) -> _ArgumentGroup:
         group = parser.add_argument_group("inline agent settings")
         group.add_argument("--engine-uri", type=str, help="Agent engine URI")
         group.add_argument("--name", type=str, help="Agent name")
@@ -1885,7 +1895,7 @@ class CLI:
     @staticmethod
     def _add_tool_settings_arguments(
         parser: ArgumentParser, *, prefix: str, settings_cls: type
-    ) -> ArgumentParser:
+    ) -> _ArgumentGroup:
         """Add dataclass based tool options to ``parser``."""
         group = parser.add_argument_group(f"{prefix} tool settings")
 
@@ -1975,12 +1985,15 @@ class CLI:
             setattr(args, f"run_chat_{key}", value)
 
         translator = CLI._get_translator(self._name, args.locales, args.locale)
+        gettext_fn = getattr(translator, "gettext", gettext.gettext)
+        ngettext_fn = getattr(translator, "ngettext", gettext.ngettext)
 
         assert self._logger is not None and isinstance(self._logger, Logger)
-        theme = FancyTheme(translator.gettext, translator.ngettext)
+        theme = FancyTheme(gettext_fn, ngettext_fn)
         _ = theme._
         console = Console(
-            theme=Theme(styles=theme.get_styles()), record=args.record
+            theme=RichTheme(styles=theme.get_styles()),
+            record=args.record,
         )
 
         if args.help_full:
@@ -1991,14 +2004,14 @@ class CLI:
 
         if requires_token:
             if not access_token:
-                prompt_kwargs = {}
+                stream = None
                 if has_input(console):
                     try:
-                        prompt_kwargs["stream"] = open(args.tty)
+                        stream = open(args.tty)
                     except OSError:
                         pass
                 access_token = Prompt.ask(
-                    theme.ask_access_token(), **prompt_kwargs
+                    theme.ask_access_token(), stream=stream
                 )
             assert access_token
         else:
@@ -2091,13 +2104,15 @@ class CLI:
         )
 
         suggest_login = suggest_login and not has_input(console)
+        connecting_spinner = theme.get_spinner("connecting")
         if args.login or (
             suggest_login
             and Confirm.ask(theme.ask_login_to_hub(), default=False)
         ):
+            assert connecting_spinner is not None
             with console.status(
                 theme.logging_in(hub.domain),
-                spinner=(theme.get_spinner("connecting")),
+                spinner=connecting_spinner,
                 refresh_per_second=self._REFRESH_RATE,
             ):
                 hub.login()
@@ -2108,7 +2123,7 @@ class CLI:
                 theme.welcome(
                     self._site.geturl(),
                     self._name,
-                    self._version,
+                    str(self._version),
                     self._license,
                     user,
                 )

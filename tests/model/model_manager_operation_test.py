@@ -61,12 +61,12 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
             Modality.AUDIO_TEXT_TO_SPEECH: (self._check_audio, True),
             Modality.AUDIO_GENERATION: (self._check_audio, True),
             Modality.EMBEDDING: (
-                lambda op: self.assertIsNone(op.parameters),
+                lambda op: self.assertEqual(op.parameters, {}),
                 False,
             ),
             Modality.TEXT_QUESTION_ANSWERING: (self._check_text, True),
             Modality.TEXT_SEQUENCE_CLASSIFICATION: (
-                lambda op: self.assertIsNone(op.parameters),
+                lambda op: self.assertEqual(op.parameters, {}),
                 True,
             ),
             Modality.TEXT_SEQUENCE_TO_SEQUENCE: (self._check_text, True),
@@ -95,7 +95,7 @@ class ModelManagerGetOperationTestCase(unittest.TestCase):
             FakeModality.UNKNOWN, self.args, None
         )
         self.assertEqual(op.modality, FakeModality.UNKNOWN)
-        self.assertIsNone(op.parameters)
+        self.assertEqual(op.parameters, {})
         self.assertFalse(op.requires_input)
 
     def test_text_to_video_with_steps(self):

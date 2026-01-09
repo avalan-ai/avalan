@@ -39,7 +39,7 @@ class DatabaseLocksTool(DatabaseTool):
         )
         self.__name__ = "locks"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         *,
         context: ToolCallContext,

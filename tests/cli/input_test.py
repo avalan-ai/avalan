@@ -43,7 +43,7 @@ class CliGetInputTestCase(TestCase):
         ):
             result = get_input(self.console, "prompt")
 
-        ask.assert_called_once_with("prompt ")
+        ask.assert_called_once_with("prompt ", stream=None)
         self.assertEqual(result, "value")
         self.assertEqual(
             self.console.print.call_args_list, [call(""), call("")]
@@ -123,9 +123,10 @@ class CliConfirmToolCallTestCase(TestCase):
             "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            console=console,
             show_choices=True,
             show_default=True,
-            console=console,
+            stream=None,
         )
         self.assertEqual(result, "y")
 
@@ -206,9 +207,10 @@ class CliConfirmToolCallTestCase(TestCase):
             "Execute tool call?",
             choices=["y", "a", "n"],
             default="n",
+            console=console,
             show_choices=True,
             show_default=True,
-            console=console,
+            stream=None,
         )
         self.assertEqual(live.auto_refresh, True)
         self.assertEqual(result, "y")

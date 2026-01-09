@@ -1,8 +1,8 @@
 from asyncio import AbstractEventLoop, get_running_loop
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
+from typing import Any, cast
 
-from boto3 import client
 from boto3.session import Session
 from botocore.exceptions import ClientError
 
@@ -12,22 +12,27 @@ class DeployError(Exception):
 
 
 class AsyncClient:
+    """Async wrapper around a boto3 client."""
+
+    exceptions: Any
+
     def __init__(
         self,
-        client: client,
+        client: Any,
         loop: AbstractEventLoop | None = None,
         executor: ThreadPoolExecutor | None = None,
-    ):
+    ) -> None:
         self._client = client
         self._loop = loop or get_running_loop()
         self._executor = executor or ThreadPoolExecutor()
+        self.exceptions = getattr(client, "exceptions", None)
 
-    def __getattr__(self, name: str) -> Callable[..., any]:
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[Any]]:
         attr = getattr(self._client, name)
         if not callable(attr):
-            return attr
+            return cast(Callable[..., Awaitable[Any]], attr)
 
-        async def fn(*args, **kwargs):
+        async def fn(*args: Any, **kwargs: Any) -> Any:
             return await self._loop.run_in_executor(
                 self._executor, lambda: attr(*args, **kwargs)
             )
@@ -36,17 +41,21 @@ class AsyncClient:
 
 
 class Aws:
+    """AWS deployment manager for EC2 and RDS resources."""
+
     _ec2: AsyncClient
     _rds: AsyncClient
     _session: Session
 
     def __init__(
-        self, settings: dict | None = None, token_pair: str | None = None
-    ):
+        self,
+        settings: dict[str, Any] | None = None,
+        token_pair: str | None = None,
+    ) -> None:
         if settings and "token_pair" in settings and not token_pair:
             token_pair = settings.pop("token_pair")
 
-        aws_settings = {}
+        aws_settings: dict[str, str] = {}
 
         if token_pair:
             access_key, secret_key = token_pair.split(":", 1)
@@ -63,13 +72,14 @@ class Aws:
         self._rds = AsyncClient(self._session.client("rds"))
 
     async def get_vpc_id(self, name: str) -> str:
+        """Return the VPC ID for a VPC with the given name."""
         response = await self._ec2.describe_vpcs(
             Filters=[{"Name": "tag:Name", "Values": [name]}]
         )
         vpcs = response.get("Vpcs", [])
         if not vpcs:
             raise DeployError(f"VPC {name!r} not found")
-        return vpcs[0]["VpcId"]
+        return str(vpcs[0]["VpcId"])
 
     async def create_vpc_if_missing(self, name: str, cidr: str) -> str:
         """Return an existing VPC id or create a new VPC."""
@@ -77,7 +87,7 @@ class Aws:
             return await self.get_vpc_id(name)
         except DeployError:
             response = await self._ec2.create_vpc(CidrBlock=cidr)
-            vpc_id = response["Vpc"]["VpcId"]
+            vpc_id = str(response["Vpc"]["VpcId"])
             await self._ec2.create_tags(
                 Resources=[vpc_id], Tags=[{"Key": "Name", "Value": name}]
             )
@@ -86,21 +96,23 @@ class Aws:
             return vpc_id
 
     async def get_security_group(self, name: str, vpc_id: str) -> str:
+        """Return the security group ID, creating one if necessary."""
         response = await self._ec2.describe_security_groups(
             Filters=[{"Name": "group-name", "Values": [name]}]
         )
         groups = response.get("SecurityGroups", [])
         if groups:
-            return groups[0]["GroupId"]
+            return str(groups[0]["GroupId"])
 
         response = await self._ec2.create_security_group(
             GroupName=name,
             Description="avalan deployment",
             VpcId=vpc_id,
         )
-        return response["GroupId"]
+        return str(response["GroupId"])
 
     async def configure_security_group(self, group_id: str, port: int) -> None:
+        """Configure ingress rules for the security group."""
         try:
             await self._ec2.authorize_security_group_ingress(
                 GroupId=group_id,
@@ -116,9 +128,10 @@ class Aws:
     async def create_rds_if_missing(
         self, db_id: str, instance_class: str, sg_id: str, storage: int
     ) -> str:
+        """Create an RDS instance if it does not already exist."""
         try:
             await self._rds.describe_db_instances(DBInstanceIdentifier=db_id)
-        except self._rds.exceptions.DBInstanceNotFoundFault:
+        except self._rds.exceptions.DBInstanceNotFoundFault:  # type: ignore[misc]
             await self._rds.create_db_instance(
                 DBInstanceIdentifier=db_id,
                 DBInstanceClass=instance_class,
@@ -143,13 +156,14 @@ class Aws:
         agent_path: str,
         port: int,
     ) -> str:
+        """Create an EC2 instance if it does not already exist."""
         user_data = self._create_user_data(agent_path, port)
         response = await self._ec2.describe_instances(
             Filters=[{"Name": "tag:Name", "Values": [instance_name]}]
         )
         reservations = response.get("Reservations", [])
         if reservations:
-            return reservations[0]["Instances"][0]["InstanceId"]
+            return str(reservations[0]["Instances"][0]["InstanceId"])
 
         response = await self._ec2.describe_subnets(
             Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
@@ -172,7 +186,7 @@ class Aws:
                 }
             ],
         )
-        return response["Instances"][0]["InstanceId"]
+        return str(response["Instances"][0]["InstanceId"])
 
     def _create_user_data(self, agent_path: str, port: int) -> str:
         cmd = f"avalan agent serve {agent_path} --host 0.0.0.0 --port {port}\n"

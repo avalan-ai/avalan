@@ -4,8 +4,8 @@ try:
     from keyring import get_keyring
     from keyring.backend import KeyringBackend
 except Exception:  # pragma: no cover - optional dependency
-    get_keyring = None  # type: ignore[assignment]
-    KeyringBackend = object  # type: ignore[assignment]
+    get_keyring = None  # type: ignore[assignment, misc]
+    KeyringBackend = object  # type: ignore[assignment, misc]
 
 
 class KeyringSecrets(Secrets):
@@ -14,7 +14,7 @@ class KeyringSecrets(Secrets):
     _SERVICE = "avalan"
 
     def __init__(self, ring: KeyringBackend | None = None) -> None:
-        if ring is None and get_keyring:
+        if ring is None and get_keyring is not None:
             ring = get_keyring()
         self._ring = ring
 

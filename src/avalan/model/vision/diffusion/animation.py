@@ -6,6 +6,7 @@ from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
 from logging import Logger, getLogger
+from typing import Any
 
 from diffusers import (
     AnimateDiffPipeline,
@@ -40,15 +41,17 @@ class TextToAnimationModel(BaseVisionModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id is not None, "Model ID is required"
+        assert self._settings.checkpoint is not None, "Checkpoint is required"
         dtype = Engine.weight(self._settings.weight_type)
-        adapter = MotionAdapter().to(self._device, dtype)
+        adapter: Any = MotionAdapter().to(self._device, dtype)  # type: ignore[attr-defined]
         adapter.load_state_dict(
             load_file(
                 hf_hub_download(self._model_id, self._settings.checkpoint),
                 device=self._device,
             )
         )
-        pipe = AnimateDiffPipeline.from_pretrained(
+        pipe: DiffusionPipeline = AnimateDiffPipeline.from_pretrained(
             self._settings.base_model_id,
             motion_adapter=adapter,
             torch_dtype=dtype,
@@ -57,15 +60,15 @@ class TextToAnimationModel(BaseVisionModel):
         return pipe
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         path: str,
         *,
-        beta_schedule: BetaSchedule = "linear",
+        beta_schedule: BetaSchedule = BetaSchedule.LINEAR,
         guidance_scale: float = 1.0,
         steps: int = 4,
-        timestep_spacing: TimestepSpacing = "trailing",
+        timestep_spacing: TimestepSpacing = TimestepSpacing.TRAILING,
     ) -> str:
         assert steps and steps in [
             1,
@@ -73,21 +76,24 @@ class TextToAnimationModel(BaseVisionModel):
             4,
             8,
         ], f"Invalid number of steps: {steps}, can only be 1, 2, 4, or 8"
+        assert self._model is not None, "Model must be loaded"
+
+        model: Any = self._model
         scheduler_settings = (timestep_spacing, beta_schedule)
         if scheduler_settings not in self._schedulers:
             scheduler = EulerDiscreteScheduler.from_config(
-                self._model.scheduler.config,
-                timestep_spacing=timestep_spacing,
-                beta_schedule=beta_schedule,
+                model.scheduler.config,
+                timestep_spacing=timestep_spacing.value,
+                beta_schedule=beta_schedule.value,
             )
             self._schedulers[scheduler_settings] = scheduler
         else:
             scheduler = self._schedulers[scheduler_settings]
 
-        self._model.scheduler = scheduler
+        model.scheduler = scheduler
 
         with inference_mode():
-            output = self._model(
+            output = model(
                 prompt=input if isinstance(input, str) else str(input),
                 guidance_scale=guidance_scale,
                 num_inference_steps=steps,

@@ -9,6 +9,9 @@ import pytest
 from avalan.entities import EngineUri, TransformerEngineSettings
 from avalan.model.modalities.text import TextGenerationModality
 
+# Vendors that don't accept exit_stack parameter
+VENDORS_WITHOUT_EXIT_STACK: set[str] = set()
+
 
 @pytest.mark.parametrize(
     "vendor,class_name",
@@ -50,10 +53,17 @@ def test_load_engine_per_vendor(vendor: str, class_name: str) -> None:
         result = TextGenerationModality().load_engine(
             engine_uri, settings, logger, exit_stack
         )
-    loader.assert_called_once_with(
-        model_id="model",
-        settings=settings,
-        logger=logger,
-        exit_stack=exit_stack,
-    )
+    if vendor in VENDORS_WITHOUT_EXIT_STACK:
+        loader.assert_called_once_with(
+            model_id="model",
+            settings=settings,
+            logger=logger,
+        )
+    else:
+        loader.assert_called_once_with(
+            model_id="model",
+            settings=settings,
+            logger=logger,
+            exit_stack=exit_stack,
+        )
     assert result is loader.return_value

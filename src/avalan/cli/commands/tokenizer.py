@@ -1,4 +1,5 @@
 from ...cli import get_input
+from ...cli.theme import Theme
 from ...entities import Token, TransformerEngineSettings
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.generation import TextGenerationModel
@@ -7,7 +8,6 @@ from argparse import Namespace
 from logging import Logger
 
 from rich.console import Console
-from rich.theme import Theme
 
 
 async def tokenize(
@@ -19,7 +19,7 @@ async def tokenize(
 ) -> list[Token] | None:
     assert args.tokenizer
 
-    _, _i, _n = theme._, theme.icons, theme._n
+    _, _i, _n = theme._, theme._icons, theme._n
 
     tokenizer_name_or_path = args.tokenizer
     with TextGenerationModel(
@@ -57,20 +57,21 @@ async def tokenize(
             paths = lm.save_tokenizer(args.save)
             total_files = len(paths)
             console.print(theme.saved_tokenizer_files(args.save, total_files))
-            return
+            return None
 
         tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
+        user_input_icon = _i.get("user_input") or ""
 
         input_string = get_input(
             console,
-            _i["user_input"] + " ",
+            user_input_icon + " ",
             echo_stdin=not args.no_repl,
             is_quiet=args.quiet,
             tty_path=tty_path,
         )
         if input_string:
             logger.debug("Loaded model %s", lm.config.__repr__())
-            tokens = lm.tokenize(input_string)
+            tokens: list[Token] = lm.tokenize(input_string)
 
             panel = theme.tokenizer_tokens(
                 tokens,
@@ -79,3 +80,5 @@ async def tokenize(
                 display_details=True,
             )
             console.print(panel)
+            return tokens
+        return None

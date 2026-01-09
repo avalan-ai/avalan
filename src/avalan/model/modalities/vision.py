@@ -39,6 +39,7 @@ class VisionEncoderDecoderModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for encoder decoder"
         return VisionEncoderDecoderModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -72,17 +73,19 @@ class VisionEncoderDecoderModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
-        assert (
-            operation.parameters["vision"]
-            and operation.parameters["vision"].path
-        )
+        vision_params = operation.parameters["vision"]
+        assert vision_params and vision_params.path
 
+        prompt = operation.input if isinstance(operation.input, str) else None
+        skip_special_tokens = (
+            vision_params.skip_special_tokens
+            if vision_params.skip_special_tokens is not None
+            else True
+        )
         return await model(
-            operation.parameters["vision"].path,
-            prompt=operation.input,
-            skip_special_tokens=operation.parameters[
-                "vision"
-            ].skip_special_tokens,
+            vision_params.path,
+            prompt=prompt,
+            skip_special_tokens=skip_special_tokens,
         )
 
 
@@ -98,6 +101,9 @@ class VisionImageClassificationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for image classification"
         return ImageClassificationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -150,6 +156,7 @@ class VisionImageToTextModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for image to text"
         return ImageToTextModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -183,16 +190,17 @@ class VisionImageToTextModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
-        assert (
-            operation.parameters["vision"]
-            and operation.parameters["vision"].path
-        )
+        vision_params = operation.parameters["vision"]
+        assert vision_params and vision_params.path
 
+        skip_special_tokens = (
+            vision_params.skip_special_tokens
+            if vision_params.skip_special_tokens is not None
+            else True
+        )
         return await model(
-            operation.parameters["vision"].path,
-            skip_special_tokens=operation.parameters[
-                "vision"
-            ].skip_special_tokens,
+            vision_params.path,
+            skip_special_tokens=skip_special_tokens,
         )
 
 
@@ -208,6 +216,9 @@ class VisionImageTextToTextModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for image text to text"
         return ImageTextToTextModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -247,18 +258,17 @@ class VisionImageTextToTextModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
-        assert (
-            operation.parameters["vision"]
-            and operation.parameters["vision"].path
-        )
+        vision_params = operation.parameters["vision"]
+        assert vision_params and vision_params.path
+        assert isinstance(operation.input, str), "prompt must be a string"
 
         return await model(
-            operation.parameters["vision"].path,
+            vision_params.path,
             operation.input,
-            system_prompt=operation.parameters["vision"].system_prompt,
-            developer_prompt=operation.parameters["vision"].developer_prompt,
+            system_prompt=vision_params.system_prompt,
+            developer_prompt=vision_params.developer_prompt,
             settings=operation.generation_settings,
-            width=operation.parameters["vision"].width,
+            width=vision_params.width,
         )
 
 
@@ -274,6 +284,7 @@ class VisionObjectDetectionModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for object detection"
         return ObjectDetectionModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -335,6 +346,7 @@ class VisionTextToImageModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for text to image"
         return TextToImageModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -403,6 +415,9 @@ class VisionTextToAnimationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for text to animation"
         return TextToAnimationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -471,6 +486,7 @@ class VisionTextToVideoModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id, "model_id is required for text to video"
         return TextToVideoModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -517,13 +533,10 @@ class VisionTextToVideoModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
-        assert (
-            operation.input
-            and operation.parameters["vision"]
-            and operation.parameters["vision"].path
-        )
         vision = operation.parameters["vision"]
-        kwargs = {
+        assert operation.input and vision and vision.path
+        assert isinstance(operation.input, str), "prompt must be a string"
+        kwargs: dict[str, Any] = {
             "reference_path": vision.reference_path,
             "negative_prompt": vision.negative_prompt,
             "height": vision.height,
@@ -555,6 +568,9 @@ class VisionSemanticSegmentationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert (
+            engine_uri.model_id
+        ), "model_id is required for semantic segmentation"
         return SemanticSegmentationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,

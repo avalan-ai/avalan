@@ -8,6 +8,8 @@ from . import (
     TableKey,
 )
 
+from typing import Any, cast
+
 
 class DatabaseKeysTool(DatabaseTool):
     """List primary and unique keys defined on a table.
@@ -37,7 +39,7 @@ class DatabaseKeysTool(DatabaseTool):
         )
         self.__name__ = "keys"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         table_name: str,
         schema: str | None = None,
@@ -71,36 +73,38 @@ class DatabaseKeysTool(DatabaseTool):
 
         keys: list[TableKey] = []
 
-        pk = (
-            inspector.get_pk_constraint(actual_table, schema=resolved_schema)
-            or {}
+        pk = cast(
+            dict[str, Any] | None,
+            inspector.get_pk_constraint(actual_table, schema=resolved_schema),
         )
-        pk_columns = tuple(
-            pk.get("constrained_columns") or pk.get("column_names") or []
-        )
-        if pk_columns:
-            keys.append(
-                TableKey(
-                    type="primary",
-                    name=pk.get("name"),
-                    columns=pk_columns,
+        if pk:
+            pk_col_raw = pk.get("constrained_columns") or []
+            pk_columns: tuple[str, ...] = tuple(str(c) for c in pk_col_raw)
+            if pk_columns:
+                keys.append(
+                    TableKey(
+                        type="primary",
+                        name=pk.get("name"),
+                        columns=pk_columns,
+                    )
                 )
-            )
 
-        unique_constraints = (
+        unique_constraints = cast(
+            list[dict[str, Any]],
             inspector.get_unique_constraints(
                 actual_table,
                 schema=resolved_schema,
             )
-            or []
+            or [],
         )
 
         for constraint in unique_constraints:
-            columns = tuple(
+            col_raw = (
                 constraint.get("column_names")
                 or constraint.get("constrained_columns")
                 or []
             )
+            columns: tuple[str, ...] = tuple(str(c) for c in col_raw)
             if not columns:
                 continue
             keys.append(

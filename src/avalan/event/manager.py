@@ -3,6 +3,7 @@ from ..event import Event, EventType
 from asyncio import Event as EventSignal
 from asyncio import Queue, TimeoutError, wait_for
 from collections import defaultdict, deque
+from collections.abc import AsyncGenerator
 from inspect import iscoroutine
 from typing import Awaitable, Callable, Iterable
 
@@ -58,7 +59,7 @@ class EventManager:
 
     async def listen(
         self, stop_signal: EventSignal | None = None, timeout: float = 0.2
-    ):
+    ) -> AsyncGenerator[Event, None]:
         while True:
             try:
                 yield await wait_for(self._queue.get(), timeout=timeout)

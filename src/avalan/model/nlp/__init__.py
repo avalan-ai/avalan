@@ -4,6 +4,7 @@ from ...model.transformer import TransformerModel
 
 from abc import ABC
 from contextlib import nullcontext
+from typing import Any
 
 from torch import (
     Tensor,
@@ -21,7 +22,7 @@ class BaseNLPModel(TransformerModel, ABC):
         settings: GenerationSettings,
         stopping_criterias: list[StoppingCriteria] | None = None,
         streamer: AsyncTextIteratorStreamer | None = None,
-    ):
+    ) -> Any:
         eos_token_id = (
             settings.eos_token_id
             if settings.eos_token_id
@@ -31,7 +32,8 @@ class BaseNLPModel(TransformerModel, ABC):
                 else None
             )
         )
-        generation_kwargs = {
+        assert self._tokenizer is not None, "Tokenizer must be loaded"
+        generation_kwargs: dict[str, Any] = {
             "bos_token_id": settings.bos_token_id,
             "diversity_penalty": settings.diversity_penalty,
             "do_sample": settings.do_sample,
@@ -73,35 +75,42 @@ class BaseNLPModel(TransformerModel, ABC):
         if settings.use_inputs_attention_mask:
             attention_mask = (
                 inputs.get("attention_mask", None)
-                if isinstance(inputs, BatchEncoding)
+                if isinstance(inputs, (BatchEncoding, dict))
                 else getattr(inputs, "attention_mask", None)
             )
             if attention_mask is not None:
                 assert isinstance(attention_mask, Tensor)
-                assert attention_mask.shape == inputs["input_ids"].shape
+                if isinstance(inputs, (BatchEncoding, dict)):
+                    input_ids = inputs.get("input_ids")
+                    if input_ids is not None:
+                        assert attention_mask.shape == input_ids.shape
                 generation_kwargs["attention_mask"] = attention_mask
 
-        if (
+        if isinstance(inputs, (BatchEncoding, dict)) and (
             not settings.use_inputs_attention_mask
             or attention_mask is not None
         ):
-            inputs.pop("attention_mask", None)
+            inputs.pop("attention_mask", None)  # type: ignore[union-attr]
 
         if settings.forced_bos_token_id or settings.forced_eos_token_id:
             del generation_kwargs["bos_token_id"]
             del generation_kwargs["eos_token_id"]
 
+        assert self._model is not None, "Model must be loaded"
+        assert hasattr(
+            self._model, "generate"
+        ), "Model must support generate()"
         with (
             inference_mode()
             if not settings.enable_gradient_calculation
             else nullcontext()
         ):
             outputs = (
-                self._model.generate(
+                self._model.generate(  # type: ignore[operator]
                     inputs, tokenizer=self._tokenizer, **generation_kwargs
                 )
-                if isinstance(inputs, Tensor)
-                else self._model.generate(
+                if isinstance(inputs, Tensor)  # type: ignore[arg-type]
+                else self._model.generate(  # type: ignore[operator]
                     **inputs, tokenizer=self._tokenizer, **generation_kwargs
                 )
             )

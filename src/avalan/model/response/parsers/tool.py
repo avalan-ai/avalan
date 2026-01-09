@@ -90,7 +90,9 @@ class ToolCallResponseParser:
             return result
 
         event = Event(
-            type=EventType.TOOL_PROCESS, payload=calls, started=perf_counter()
+            type=EventType.TOOL_PROCESS,
+            payload={"calls": calls},
+            started=perf_counter(),
         )
 
         self._buffer = StringIO()

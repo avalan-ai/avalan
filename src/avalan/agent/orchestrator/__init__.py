@@ -6,6 +6,7 @@ from ...entities import (
     Message,
     MessageContentText,
     MessageRole,
+    TransformerEngineSettings,
 )
 from ...entities import Modality as Modality
 from ...event import Event, EventType
@@ -14,18 +15,24 @@ from ...memory.manager import MemoryManager
 from ...model.call import ModelCallContext
 from ...model.engine import Engine
 from ...model.manager import ModelManager
+from ...model.response.text import (
+    TextGenerationResponse as TextGenerationResponse,
+)
 from ...tool.manager import ToolManager
 from .. import (
     AgentOperation,
-    EngineEnvironment,
     InputType,
     NoOperationAvailableException,
     Specification,
+)
+from .. import (
+    EngineEnvironment as EngineEnvironment,
 )
 from ..engine import EngineAgent
 from ..renderer import Renderer, TemplateEngineAgent
 from .response.orchestrator_response import OrchestratorResponse
 
+from collections.abc import Callable, Coroutine
 from contextlib import ExitStack
 from dataclasses import asdict
 from json import dumps
@@ -46,7 +53,7 @@ class Orchestrator:
     _memory: MemoryManager
     _tool: ToolManager
     _event_manager: EventManager
-    _engine_agents: dict[EngineEnvironment, EngineAgent] = {}
+    _engine_agents: dict[str, EngineAgent] = {}
     _engines_stack: ExitStack = ExitStack()
     _operation_step: int | None = None
     _model_ids: set[str] = set()
@@ -108,7 +115,9 @@ class Orchestrator:
         return self._id
 
     @property
-    def input_token_count(self) -> int | None:
+    def input_token_count(
+        self,
+    ) -> Callable[[], Coroutine[Any, Any, int | None]] | None:
         return (
             self._last_engine_agent.input_token_count
             if self._last_engine_agent
@@ -243,7 +252,7 @@ class Orchestrator:
 
         return OrchestratorResponse(
             messages,
-            result,
+            result,  # type: ignore[arg-type]
             engine_agent,
             operation,
             engine_args,
@@ -264,7 +273,11 @@ class Orchestrator:
             environment = operation.environment
             environment_hash = dumps(asdict(environment))
             if environment_hash not in self._engine_agents:
+                assert environment.engine_uri.model_id is not None
                 model_ids.append(environment.engine_uri.model_id)
+                assert isinstance(
+                    environment.settings, TransformerEngineSettings
+                )
                 engine = self._model_manager.load_engine(
                     environment.engine_uri,
                     environment.settings,
@@ -359,18 +372,22 @@ class Orchestrator:
                     else message.content
                 )
                 render_vars.update({"input": message_content})
-                content = (
-                    self._renderer(self._user_template, **render_vars)
-                    if self._user_template
-                    else self._renderer.from_string(
+                if self._user_template:
+                    content = self._renderer(
+                        self._user_template, **render_vars
+                    )
+                else:
+                    assert self._user is not None
+                    content = self._renderer.from_string(
                         self._user, template_vars=render_vars
                     )
-                )
                 message = Message(role=message.role, content=content)
 
                 if isinstance(input, list):
-                    input[-1] = message
+                    input[-1] = message  # type: ignore[call-overload]
                 else:
                     input = message
 
-        return input
+        # The return type must be Message | list[Message] per the signature
+        assert isinstance(input, (Message, list))
+        return input  # type: ignore[return-value]

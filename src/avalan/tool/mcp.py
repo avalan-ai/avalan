@@ -31,7 +31,7 @@ class McpCallTool(Tool):
         self._client_params = client_params or {}
         self._call_params = call_params or {}
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         uri: str,
         name: str,
@@ -39,15 +39,16 @@ class McpCallTool(Tool):
         *,
         context: ToolCallContext,
     ) -> list[object]:
-        from mcp import Client
+        from mcp import Client  # type: ignore[attr-defined]
 
         assert uri
         assert name
 
         async with Client(uri, **self._client_params) as client:
-            return await client.call_tool(
+            result: list[object] = await client.call_tool(
                 name, arguments or {}, **self._call_params
             )
+            return result
 
 
 class McpToolSet(ToolSet):

@@ -59,9 +59,7 @@ class RendererTestCase(TestCase):
     def test_from_string(self):
         renderer = self.Renderer()
         tmpl = "Hi {{name}}"
-        self.assertEqual(
-            renderer.from_string(tmpl, {"name": "Ada"}), b"Hi Ada"
-        )
+        self.assertEqual(renderer.from_string(tmpl, {"name": "Ada"}), "Hi Ada")
         self.assertEqual(renderer.from_string(tmpl), tmpl)
 
     def test_template_caching(self):

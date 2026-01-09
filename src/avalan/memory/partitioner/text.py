@@ -60,8 +60,8 @@ class TextPartitioner(Partitioner):
         self._window_size = window_size
         self._overlap_size = overlap_size
 
-    @override
     @property
+    @override
     def sentence_model(self) -> Callable:
         return self._model
 

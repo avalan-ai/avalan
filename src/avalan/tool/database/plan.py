@@ -37,7 +37,7 @@ class DatabasePlanTool(DatabaseTool):
         )
         self.__name__ = "plan"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, sql: str, *, context: ToolCallContext
     ) -> QueryPlan:
         await self._sleep_if_configured()

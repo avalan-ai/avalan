@@ -40,7 +40,7 @@ class DatabaseTasksTool(DatabaseTool):
         )
         self.__name__ = "tasks"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         *,
         running_for: int | None = None,

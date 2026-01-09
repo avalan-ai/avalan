@@ -6,6 +6,7 @@ from abc import ABC
 from asyncio import sleep
 from dataclasses import dataclass
 from re import compile as regex_compile
+from types import TracebackType
 from typing import Any, Literal, final
 
 try:
@@ -22,22 +23,22 @@ try:
     _SQLALCHEMY_AVAILABLE = True
 except ImportError:
     _SQLALCHEMY_AVAILABLE = False
-    MetaData = None  # type: ignore[assignment]
-    event = None  # type: ignore[assignment]
-    func = None  # type: ignore[assignment]
-    select = None  # type: ignore[assignment]
-    text = None  # type: ignore[assignment]
-    SATable = None  # type: ignore[assignment]
-    sqlalchemy_inspect = None  # type: ignore[assignment]
-    Connection = None  # type: ignore[assignment]
-    Inspector = None  # type: ignore[assignment]
-    NoSuchTableError = None  # type: ignore[assignment]
-    SQLAlchemyError = None  # type: ignore[assignment]
-    AsyncEngine = None  # type: ignore[assignment]
-    create_async_engine = None  # type: ignore[assignment]
-    Select = None  # type: ignore[assignment]
-    ColumnElement = None  # type: ignore[assignment]
-    TextClause = None  # type: ignore[assignment]
+    MetaData = None  # type: ignore[misc, assignment]
+    event = None  # type: ignore[misc, assignment]
+    func = None  # type: ignore[misc, assignment]
+    select = None  # type: ignore[misc, assignment]
+    text = None  # type: ignore[misc, assignment]
+    SATable = None  # type: ignore[misc, assignment]
+    sqlalchemy_inspect = None  # type: ignore[misc, assignment]
+    Connection = None  # type: ignore[misc, assignment]
+    Inspector = None  # type: ignore[misc, assignment]
+    NoSuchTableError = None  # type: ignore[misc, assignment]
+    SQLAlchemyError = None  # type: ignore[misc, assignment]
+    AsyncEngine = None  # type: ignore[misc, assignment]
+    create_async_engine = None  # type: ignore[misc, assignment]
+    Select = None  # type: ignore[misc, assignment]
+    ColumnElement = None  # type: ignore[misc, assignment]
+    TextClause = None  # type: ignore[misc, assignment]
 
 try:
     from sqlglot import exp, parse, parse_one
@@ -45,9 +46,9 @@ try:
     _SQLGLOT_AVAILABLE = True
 except ImportError:
     _SQLGLOT_AVAILABLE = False
-    exp = None  # type: ignore[assignment]
-    parse = None  # type: ignore[assignment]
-    parse_one = None  # type: ignore[assignment]
+    exp = None  # type: ignore[misc, assignment]
+    parse = None  # type: ignore[misc, assignment]
+    parse_one = None  # type: ignore[misc, assignment]
 
 
 @final
@@ -257,6 +258,8 @@ class DatabaseTool(Tool, ABC):
         if self._normalizer is None:
             return sql
 
+        normalizer = self._normalizer
+
         self._ensure_sqlglot_available()
         inspector = inspect(connection)
         _, schemas = self._schemas(connection, inspector)
@@ -296,7 +299,7 @@ class DatabaseTool(Tool, ABC):
                         if isinstance(schema_ident, exp.Identifier)
                         else None
                     )
-                    key = self._normalizer.normalize(name)
+                    key = normalizer.normalize(name)
                     lookup = f"{schema}.{key}" if schema else key
                     actual = replacements.get(lookup) or replacements.get(key)
                     if actual:
@@ -387,7 +390,7 @@ class DatabaseTool(Tool, ABC):
 
         if dialect == "postgresql":
             sys = {"information_schema", "pg_catalog"}
-            schemas = [
+            schemas: list[str | None] = [
                 s
                 for s in inspector.get_schema_names()
                 if s not in sys and not (s or "").startswith("pg_")
@@ -396,9 +399,14 @@ class DatabaseTool(Tool, ABC):
                 schemas.append(default_schema)
             return default_schema, schemas
 
-        all_schemas = inspector.get_schema_names() or (
-            [default_schema] if default_schema is not None else [None]
-        )
+        raw_schemas = inspector.get_schema_names()
+        all_schemas: list[str | None]
+        if raw_schemas:
+            all_schemas = list(raw_schemas)
+        elif default_schema is not None:
+            all_schemas = [default_schema]
+        else:
+            all_schemas = [None]
 
         sys_filters = {
             "mysql": {
@@ -421,9 +429,10 @@ class DatabaseTool(Tool, ABC):
         schemas = [s for s in all_schemas if s not in sys]
 
         if not schemas:
-            schemas = (
-                [default_schema] if default_schema is not None else [None]
-            )
+            if default_schema is not None:
+                schemas = [default_schema]
+            else:
+                schemas = [None]
 
         seen: set[str | None] = set()
         uniq: list[str | None] = []
@@ -442,7 +451,7 @@ class DatabaseTool(Tool, ABC):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool:
         return await super().__aexit__(exc_type, exc_value, traceback)
 

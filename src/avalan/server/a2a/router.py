@@ -24,7 +24,7 @@ from json import JSONDecodeError
 from logging import Logger
 from re import compile
 from time import time
-from typing import TYPE_CHECKING, Any, Final, Iterable
+from typing import TYPE_CHECKING, Any, Final, Iterable, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -643,7 +643,7 @@ class A2AResponseTranslator:
 
     async def _handle_tool_process(self, event: Event) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        payload = event.payload or []
+        payload: dict[str, Any] | list[Any] = event.payload or []
         if isinstance(payload, dict):
             calls: Iterable[ToolCall] = payload.get("calls", [])  # type: ignore[assignment]
         else:
@@ -908,11 +908,9 @@ class A2AStreamEventConverter:
             overview = await self._store.get_task_overview(self._task_id)
             metadata = overview.get("metadata") or {}
             self._cached_response_id = metadata.get("jsonrpc_id")
-        return (
-            None
-            if self._cached_response_id is _STREAM_RESPONSE_ID_UNSET
-            else self._cached_response_id
-        )
+        if self._cached_response_id is _STREAM_RESPONSE_ID_UNSET:
+            return None
+        return cast(str | int | None, self._cached_response_id)
 
     async def _task_result(self, event: dict[str, Any]) -> a2a_types.Task:
         overview = await self._store.get_task_overview(self._task_id)
@@ -1315,7 +1313,7 @@ def _call_identifier(item: Token | TokenDetail | Event | str) -> str | None:
         return str(item.call.id)
     if isinstance(item, Event):
         if item.type is EventType.TOOL_PROCESS:
-            payload = item.payload or []
+            payload: dict[str, Any] | list[Any] = item.payload or []
             if isinstance(payload, dict):
                 candidates = payload.get("calls", [])
             else:

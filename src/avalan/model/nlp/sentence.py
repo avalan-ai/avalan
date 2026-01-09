@@ -2,15 +2,12 @@ from ...compat import override
 from ...entities import Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
-from ...model.vendor import TextGenerationVendor
 
 from contextlib import nullcontext
-from typing import Literal
+from typing import Any, Literal
 
-from diffusers import DiffusionPipeline
 from numpy import ndarray
 from torch import inference_mode
-from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 
 
@@ -28,12 +25,13 @@ class SentenceTransformerModel(BaseNLPModel):
         return True
 
     def token_count(self, input: str) -> int:
+        assert self.tokenizer is not None, "Tokenizer must be loaded"
         token_ids = self.tokenizer.encode(input, add_special_tokens=False)
         return len(token_ids)
 
     def _load_model(
         self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+    ) -> Any:  # Returns SentenceTransformer which isn't a PreTrainedModel
         from sentence_transformers import SentenceTransformer
 
         model = SentenceTransformer(
@@ -61,7 +59,7 @@ class SentenceTransformerModel(BaseNLPModel):
         )
         return model
 
-    def _tokenize_input(
+    def _tokenize_input(  # type: ignore[override]
         self,
         input: Input,
         system_prompt: str | None,
@@ -73,9 +71,12 @@ class SentenceTransformerModel(BaseNLPModel):
         raise NotImplementedError()
 
     @override
-    async def __call__(
-        self, input: Input, *args, enable_gradient_calculation: bool = False
-    ) -> ndarray:
+    async def __call__(  # type: ignore[override]
+        self,
+        input: Input,
+        *args: Any,
+        enable_gradient_calculation: bool = False,
+    ) -> ndarray[Any, Any]:
         assert self._model, (
             f"Model {self._model} can't be executed, it "
             + "needs to be loaded first"
@@ -86,7 +87,8 @@ class SentenceTransformerModel(BaseNLPModel):
             if not enable_gradient_calculation
             else nullcontext()
         ):
-            embeddings = self._model.encode(
+            # self._model is SentenceTransformer at runtime
+            embeddings: ndarray[Any, Any] = self._model.encode(  # type: ignore[union-attr, operator]
                 input, convert_to_numpy=True, show_progress_bar=False
             )
         return embeddings

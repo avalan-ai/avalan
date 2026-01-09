@@ -54,7 +54,7 @@ class DatabaseSampleTool(DatabaseTool):
             return (schema or None), table
         return None, qualified
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         table_name: str,
         *,

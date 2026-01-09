@@ -8,7 +8,7 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
-from ...server.entities import ResponsesRequest
+from ...server.entities import ChatCompletionRequest, ResponsesRequest
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
@@ -16,6 +16,7 @@ from . import orchestrate
 
 from enum import Enum, auto
 from logging import Logger
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -30,18 +31,31 @@ class ResponseState(Enum):
 router = APIRouter(tags=["responses"])
 
 
-@router.post("/responses")
+@router.post("/responses", response_model=None)
 async def create_response(
     request: ResponsesRequest,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
-):
+) -> StreamingResponse | dict[str, Any]:
+    """Create a response using the OpenAI Responses API format."""
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
 
+    chat_request = ChatCompletionRequest(
+        model=request.model,
+        messages=request.messages,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        n=request.n,
+        stream=request.stream,
+        stop=request.stop,
+        max_tokens=request.max_tokens,
+        response_format=request.response_format,
+    )
+
     response, response_id, timestamp = await orchestrate(
-        request, logger, orchestrator
+        chat_request, logger, orchestrator
     )
 
     if request.stream:
@@ -69,19 +83,20 @@ async def create_response(
             tool_call_id: str | None = None
 
             async for token in response:
-                is_event = isinstance(token, Event)
-                if is_event and token.type not in (
-                    EventType.TOOL_PROCESS,
-                    EventType.TOOL_RESULT,
-                ):
-                    continue
+                if isinstance(token, Event):
+                    if token.type not in (
+                        EventType.TOOL_PROCESS,
+                        EventType.TOOL_RESULT,
+                    ):
+                        continue
 
                 call_id: str | None = None
-                if is_event and token.type in (
+                if isinstance(token, Event) and token.type in (
                     EventType.TOOL_PROCESS,
                     EventType.TOOL_RESULT,
                 ):
-                    call_id = _tool_call_event_item(token)["id"]
+                    event_item = _tool_call_event_item(token)
+                    call_id = str(event_item["id"])
                 elif (
                     isinstance(token, ToolCallToken) and token.call is not None
                 ):
@@ -259,8 +274,6 @@ def _switch_state(
     current_tool_call_id: str | None,
     new_tool_call_id: str | None,
 ) -> list[str]:
-    new_state: ResponseState | None
-
     events: list[str] = []
     changed = state is not new_state or (
         state is ResponseState.TOOL_CALLING
@@ -295,7 +308,15 @@ def _switch_state(
 
 
 def _new_state(
-    token: ReasoningToken | ToolCallToken | Token | TokenDetail | str | None,
+    token: (
+        ReasoningToken
+        | ToolCallToken
+        | Token
+        | TokenDetail
+        | Event
+        | str
+        | None
+    ),
 ) -> ResponseState | None:
     if isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
@@ -407,16 +428,36 @@ def _content_part_done(id: str | None = None) -> str:
     return sse_message(to_json(data), event="response.content_part.done")
 
 
-def _tool_call_event_item(event: Event) -> dict:
-    tool_result = (
-        event.payload["result"]
-        if event.type == EventType.TOOL_RESULT and "result" in event.payload
-        else None
-    )
-    tool_call = (
-        tool_result.call if tool_result is not None else event.payload[0]
-    )
-    item = {
+def _tool_call_event_item(event: Event) -> dict[str, Any]:
+    """Extract tool call item from an event payload."""
+    payload = event.payload
+    assert payload is not None, "Event payload must be provided"
+
+    tool_result: Any = None
+    if (
+        event.type == EventType.TOOL_RESULT
+        and isinstance(payload, dict)
+        and "result" in payload
+    ):
+        tool_result = payload["result"]
+
+    tool_call: Any
+    if tool_result is not None and hasattr(tool_result, "call"):
+        tool_call = tool_result.call
+    elif isinstance(payload, list) and payload:
+        tool_call = payload[0]
+    elif isinstance(payload, dict):
+        calls = payload.get("calls")
+        if isinstance(calls, list) and calls:
+            tool_call = calls[0]
+        else:
+            call = payload.get("call")
+            assert call is not None, "Event must have calls or call field"
+            tool_call = call
+    else:
+        raise ValueError("Invalid event payload type")
+
+    item: dict[str, Any] = {
         "type": "function_call",
         "id": str(tool_call.id),
         "name": tool_call.name,

@@ -28,8 +28,8 @@ def logger_replace(logger: Logger, logger_names: list[str]) -> None:
 
 
 def to_json(item: Any) -> str:
-    def _default(o):
-        if is_dataclass(o):
+    def _default(o: Any) -> Any:
+        if is_dataclass(o) and not isinstance(o, type):
             return asdict(o)
         elif isinstance(o, (Decimal, UUID)):
             return str(o)

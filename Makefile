@@ -13,6 +13,7 @@ lint:
 	poetry run ruff format --preview src/ tests/
 	poetry run black --preview --enable-unstable-feature=string_processing src/ tests/
 	poetry run ruff check --fix src/ tests/
+	poetry run mypy src/avalan
 
 test:
 	poetry sync --extras test

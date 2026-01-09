@@ -319,7 +319,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
                 self.theme, "n", "d", "a", "id", "lib", True, False
             ),
             lambda: Theme.agent(
-                self.theme, SimpleNamespace(), models=[], cans_access=None
+                self.theme, SimpleNamespace(), models=[], can_access=None
             ),
             lambda: Theme.events(self.theme, []),
             lambda: Theme.ask_access_token(self.theme),
@@ -356,7 +356,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             lambda: Theme.recent_messages(
                 self.theme, "id", SimpleNamespace(), []
             ),
-            lambda: Theme.saved_tokenizer_files("/d", 0),
+            lambda: Theme.saved_tokenizer_files(self.theme, "/d", 0),
             lambda: Theme.search_message_matches(
                 self.theme, "id", SimpleNamespace(), []
             ),
@@ -378,7 +378,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
                 call()
 
         async def run_tokens():
-            await Theme.tokens(
+            async for _ in Theme.tokens(
                 self.theme,
                 model_id="m",
                 added_tokens=None,
@@ -396,13 +396,15 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
                 tool_events=None,
                 tool_event_calls=None,
                 tool_event_results=None,
+                tool_running_spinner=None,
                 ttft=0.0,
                 ttnt=0.0,
                 ttsr=0.0,
                 elapsed=0.0,
                 console_width=80,
                 logger=SimpleNamespace(),
-            )
+            ):
+                pass
 
         with self.assertRaises(NotImplementedError):
             import asyncio

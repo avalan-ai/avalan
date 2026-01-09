@@ -47,7 +47,7 @@ from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
 from os import environ
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, TypeAlias, get_args
+from typing import TYPE_CHECKING, Any, TypeAlias, cast, get_args
 from urllib.parse import parse_qsl, urlparse
 
 if TYPE_CHECKING:
@@ -124,12 +124,13 @@ class ModelManager(ContextDecorator):
         exc_value: BaseException | None,
         traceback: Any | None,
     ) -> bool:
-        return await self._stack.__aexit__(exc_type, exc_value, traceback)
+        result = await self._stack.__aexit__(exc_type, exc_value, traceback)
+        return result if result is not None else False
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         model_task: ModelCall,
-    ):
+    ) -> Any:
         modality = model_task.operation.modality
 
         self._logger.info("ModelManager call process started for %s", modality)
@@ -246,7 +247,9 @@ class ModelManager(ContextDecorator):
         weight_type: WeightType = "auto",
     ) -> ModelType:
         if "backend" in engine_uri.params:
-            backend = Backend(engine_uri.params["backend"])
+            backend_value = engine_uri.params["backend"]
+            assert isinstance(backend_value, str), "backend must be a string"
+            backend = Backend(backend_value)
         engine_settings_args = dict(
             base_url=base_url,
             cache_dir=self._hub.cache_dir,
@@ -294,6 +297,9 @@ class ModelManager(ContextDecorator):
         if modality is Modality.EMBEDDING:
             from ..model.nlp.sentence import SentenceTransformerModel
 
+            assert (
+                engine_uri.model_id is not None
+            ), "model_id is required for embedding modality"
             model = SentenceTransformerModel(
                 model_id=engine_uri.model_id,
                 settings=engine_settings,
@@ -322,9 +328,14 @@ class ModelManager(ContextDecorator):
                 f"Invalid scheme {parsed.scheme!r}, expected 'ai'"
             )
 
-        vendor = parsed.hostname
-        if not vendor or vendor not in get_args(Vendor) or vendor == "local":
-            vendor = None
+        vendor_raw = parsed.hostname
+        vendor: Vendor | None = None
+        if (
+            vendor_raw
+            and vendor_raw in get_args(Vendor)
+            and vendor_raw != "local"
+        ):
+            vendor = cast(Vendor, vendor_raw)
         use_host = bool(vendor)
         path_prefixed = parsed.path.startswith("/")
         params: dict[str, str | int | float | bool] = {}

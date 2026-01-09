@@ -3,7 +3,7 @@ from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal
 
 from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
@@ -15,11 +15,12 @@ from transformers import (
 
 
 class SpeechRecognitionModel(BaseAudioModel):
-    _processor: AutoProcessor
+    _processor: Any  # AutoProcessor with Wav2Vec2-specific methods
 
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id, "model_id is required"
         self._processor = AutoProcessor.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
@@ -27,10 +28,14 @@ class SpeechRecognitionModel(BaseAudioModel):
             use_fast=True,
             subfolder=self._settings.tokenizer_subfolder or "",
         )
-        model = AutoModelForCTC.from_pretrained(
+        # AutoProcessor for CTC models has a tokenizer attribute
+        pad_token_id = getattr(
+            getattr(self._processor, "tokenizer", None), "pad_token_id", None
+        )
+        model: PreTrainedModel = AutoModelForCTC.from_pretrained(
             self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
-            pad_token_id=self._processor.tokenizer.pad_token_id,
+            pad_token_id=pad_token_id,
             ctc_loss_reduction="mean",
             device_map=self._device,
             tp_plan=Engine._get_tp_plan(self._settings.parallel),
@@ -43,12 +48,13 @@ class SpeechRecognitionModel(BaseAudioModel):
         return model
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         path: str,
         sampling_rate: int = 16_000,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
+        assert self._model is not None, "Model must be loaded"
         audio = self._resample(path, sampling_rate)
         inputs = self._processor(
             audio,
@@ -57,7 +63,8 @@ class SpeechRecognitionModel(BaseAudioModel):
         ).to(self._device)
         with inference_mode():
             # shape (batch, time_steps, vocab_size)
+            assert isinstance(self._model, PreTrainedModel)
             logits = self._model(inputs.input_values).logits
         predicted_ids = argmax(logits, dim=-1)
-        transcription = self._processor.batch_decode(predicted_ids)[0]
+        transcription: str = self._processor.batch_decode(predicted_ids)[0]
         return transcription

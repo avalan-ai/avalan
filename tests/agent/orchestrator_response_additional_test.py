@@ -139,7 +139,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         second = await iterator.__anext__()
         self.assertEqual(second.type, EventType.TOOL_PROCESS)
-        self.assertEqual(second.payload, [call])
+        self.assertEqual(second.payload, {"calls": [call]})
 
         third = await iterator.__anext__()
         self.assertEqual(third.type, EventType.TOOL_RESULT)

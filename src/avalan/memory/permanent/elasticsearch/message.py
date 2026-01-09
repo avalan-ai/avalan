@@ -51,8 +51,8 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
             sentence_model=sentence_model,
         )
 
-    async def create_session(
-        self, *, agent_id: UUID, participant_id: UUID
+    async def create_session(  # type: ignore[override]
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         now_utc = datetime.now(timezone.utc)
         session = self._build_session(
@@ -75,7 +75,7 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
 
     async def continue_session_and_get_id(
         self,
-        *,
+        *args: object,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
@@ -92,7 +92,7 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *,
+        *args: object,
         partitions: list[TextPartition],
     ) -> None:
         assert engine_message and partitions
@@ -143,7 +143,7 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         self,
         session_id: UUID,
         participant_id: UUID,
-        *,
+        *args: object,
         limit: int | None = None,
     ) -> list[EngineMessage]:
         response = await self._call_client(
@@ -173,9 +173,9 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
             )
         return messages
 
-    async def search_messages(
+    async def search_messages(  # type: ignore[override]
         self,
-        *,
+        *args: object,
         agent_id: UUID,
         function: VectorFunction,
         limit: int | None = None,

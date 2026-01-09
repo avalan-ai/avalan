@@ -32,7 +32,9 @@ class MemoryStore(ABC, Generic[T]):
 
 
 class MessageMemory(MemoryStore[EngineMessage], ABC):
-    def search(self, query: str) -> list[EngineMessage] | None:
+    def search(  # type: ignore[override]
+        self, query: str
+    ) -> list[EngineMessage] | None:
         raise NotImplementedError()
 
 
@@ -40,17 +42,17 @@ class RecentMessageMemory(MessageMemory):
     _lock: Lock
     _data: list[EngineMessage]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: object) -> None:
         self._lock = Lock()
-        self.reset()
+        self._data = []
         super().__init__(**kwargs)
 
     @override
-    def append(self, data: EngineMessage) -> None:
+    def append(self, data: EngineMessage) -> None:  # type: ignore[override]
         with self._lock:
             self._data.append(data)
 
-    def reset(self) -> None:
+    def reset(self) -> None:  # type: ignore[override]
         with self._lock:
             self._data = []
 

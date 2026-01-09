@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import replace
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Any, Literal
 
 from diffusers import DiffusionPipeline
 from tiktoken import encoding_for_model, get_encoding
@@ -59,12 +59,12 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     def uses_tokenizer(self) -> bool:
         return False
 
-    def _tokenize_input(
+    def _tokenize_input(  # type: ignore[override]
         self,
         input: Input,
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
@@ -74,6 +74,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
     ) -> int:
+        assert self._model_id is not None
         try:
             encoding = encoding_for_model(self._model_id)
         except KeyError:
@@ -85,11 +86,14 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
 
         total_tokens = 0
         for message in messages:
-            total_tokens += len(encoding.encode(message.content or ""))
+            content = (
+                message.content if isinstance(message.content, str) else ""
+            )
+            total_tokens += len(encoding.encode(content))
         return total_tokens
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         system_prompt: str | None = None,
@@ -98,15 +102,17 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         *,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
+        gen_settings = settings or GenerationSettings()
         messages = self._messages(input, system_prompt, developer_prompt, tool)
-        streamer = await self._model(
+        assert self._model is not None
+        assert self._model_id is not None
+        streamer = await self._model(  # type: ignore[operator]
             self._model_id,
             messages,
-            settings,
+            gen_settings,
             tool=tool,
-            use_async_generator=settings.use_async_generator,
+            use_async_generator=gen_settings.use_async_generator,
         )
-        gen_settings = settings or GenerationSettings()
         return TextGenerationResponse(
             streamer,
             logger=self._logger,

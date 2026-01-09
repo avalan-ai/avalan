@@ -43,7 +43,7 @@ class ReasoningOrchestrator(Orchestrator):
     def __getattr__(self, name):
         return getattr(self._orchestrator, name)
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, input: Input, **kwargs
     ) -> ReasoningOrchestratorResponse:
         template_vars = {}

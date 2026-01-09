@@ -379,7 +379,10 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                         ),
                     )
                     result = await cursor.fetchone()
-                    entity_id = result["id"] if result else None
+                    assert result is not None
+                    result_dict = dict(result)
+                    entity_id = result_dict.get("id")
+                    assert entity_id is not None
 
                     await cursor.execute(
                         """
@@ -403,4 +406,6 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                         ),
                     )
                     await cursor.close()
-        return UUID(entity_id) if isinstance(entity_id, str) else entity_id
+        return (
+            UUID(entity_id) if isinstance(entity_id, str) else UUID(entity_id)
+        )

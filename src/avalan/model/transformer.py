@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from logging import Logger, getLogger
 from typing import Literal
 
-from tokenizers import AddedToken
+from tokenizers import AddedToken  # type: ignore[import-untyped]
 from torch import Tensor
 from transformers import (
     AutoTokenizer,
@@ -20,6 +20,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 
 class TransformerModel(Engine, ABC):
+    """Base class for transformer-based models."""
+
+    _settings: TransformerEngineSettings
+
     @property
     def supports_sample_generation(self) -> bool:
         return False
@@ -71,12 +75,12 @@ class TransformerModel(Engine, ABC):
             not hasattr(self, "_loaded_tokenizer")
             or not self._loaded_tokenizer
         ):
-            self.load(
-                load_model=False,
+            self._load(
                 load_tokenizer=True,
                 tokenizer_name_or_path=tokenizer_name_or_path,
             )
 
+        assert self._tokenizer is not None
         _l(f'Tokenizing text "{text}"')
         token_ids = self._tokenizer.encode(text, add_special_tokens=True)
         _l(f'Tokenized text "{text}" into {len(token_ids)} tokens')
@@ -89,7 +93,7 @@ class TransformerModel(Engine, ABC):
                 ),
                 probability=1,
             )
-            for i, token_id in enumerate(token_ids)
+            for token_id in token_ids
         ]
 
     def input_token_count(
@@ -98,7 +102,6 @@ class TransformerModel(Engine, ABC):
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
     ) -> int:
-        _l = self._log
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
             + "without a tokenizer loaded first"
@@ -109,20 +112,27 @@ class TransformerModel(Engine, ABC):
             developer_prompt=developer_prompt,
             context=None,
         )
-        return (
-            len(inputs["input_ids"][0])
-            if inputs and "input_ids" in inputs
-            else 0
-        )
+        if isinstance(inputs, Tensor):
+            return inputs.shape[-1] if inputs.dim() > 0 else 0
+        if isinstance(inputs, dict) and "input_ids" in inputs:
+            input_ids = inputs["input_ids"]
+            if isinstance(input_ids, Tensor):
+                return input_ids.shape[-1] if input_ids.dim() > 0 else 0
+            if isinstance(input_ids, list) and len(input_ids) > 0:
+                return len(input_ids[0])
+        return 0
 
     def _load_tokenizer(
         self, tokenizer_name_or_path: str | None, use_fast: bool
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
-        return AutoTokenizer.from_pretrained(
-            tokenizer_name_or_path or self._model_id,
-            use_fast=use_fast,
-            subfolder=self._settings.tokenizer_subfolder or "",
+        tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast = (
+            AutoTokenizer.from_pretrained(
+                tokenizer_name_or_path or self._model_id,
+                use_fast=use_fast,
+                subfolder=self._settings.tokenizer_subfolder or "",
+            )
         )
+        return tokenizer
 
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True

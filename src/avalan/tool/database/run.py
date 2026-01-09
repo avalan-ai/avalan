@@ -35,7 +35,7 @@ class DatabaseRunTool(DatabaseTool):
         )
         self.__name__ = "run"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, sql: str, *, context: ToolCallContext
     ) -> list[dict[str, Any]]:
         await self._sleep_if_configured()

@@ -1,4 +1,5 @@
 from unittest import TestCase
+from uuid import UUID
 
 from avalan.entities import ToolCall, ToolCallToken
 from avalan.model.vendor import TextGenerationVendor
@@ -26,11 +27,16 @@ class VendorBuildToolCallTokenTestCase(TestCase):
             tool_name="tool",
             arguments='{"a": }',
         )
-        expected = ToolCallToken(
-            token='<tool_call>{"name": "tool", "arguments": {}}</tool_call>',
-            call=ToolCall(id=None, name="tool", arguments={}),
+        # When call_id is None, a UUID is generated
+        self.assertEqual(
+            token.token,
+            '<tool_call>{"name": "tool", "arguments": {}}</tool_call>',
         )
-        self.assertEqual(token, expected)
+        assert token.call is not None
+        self.assertEqual(token.call.name, "tool")
+        self.assertEqual(token.call.arguments, {})
+        # Verify a valid UUID was generated
+        UUID(token.call.id)  # This will raise if not a valid UUID
 
     def test_build_tool_call_token_from_dict(self) -> None:
         token = TextGenerationVendor.build_tool_call_token(

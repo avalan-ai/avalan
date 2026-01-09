@@ -89,9 +89,9 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             "agent.md",
             name="Bob",
             roles=["assistant"],
-            task=b"do",
-            instructions=[b"instr"],
-            rules=[b"rule"],
+            task="do",
+            instructions=["instr"],
+            rules=["rule"],
         )
         self.assertEqual(result["settings"], spec.settings)
         self.assertEqual(result["system_prompt"], expected_prompt)
@@ -108,10 +108,10 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         expected_prompt = self.renderer(
             "agent.md",
             name="Bob",
-            roles=[b"role run"],
-            task=b"do run",
-            instructions=[b"inst run"],
-            rules=[b"rule run"],
+            roles=["role run"],
+            task="do run",
+            instructions=["inst run"],
+            rules=["rule run"],
         )
         self.assertEqual(result["system_prompt"], expected_prompt)
 
@@ -127,10 +127,10 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         expected_prompt = self.renderer(
             "agent.md",
             name="Bob",
-            roles=[b"role run"],
-            task=b"do run",
-            instructions=[b"inst run"],
-            rules=[b"rule run"],
+            roles=["role run"],
+            task="do run",
+            instructions=["inst run"],
+            rules=["rule run"],
         )
         self.assertEqual(result["system_prompt"], expected_prompt)
 
@@ -228,9 +228,9 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
             "agent.md",
             name="Bob",
             roles=["assistant"],
-            task=b"do",
-            instructions=[b"ins"],
-            rules=[b"r"],
+            task="do",
+            instructions=["ins"],
+            rules=["r"],
         )
 
         agent._run = AsyncMock(return_value="out")

@@ -20,7 +20,11 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Self,
+    TypeVar,
 )
+
+T = TypeVar("T")
 
 OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
 OutputFunction = Callable[..., OutputGenerator | str]
@@ -92,14 +96,17 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         if self._buffer.tell():
             return
 
-        result = self._output_fn(*self._args, **self._kwargs)
-        if isinstance(result, TextGenerationSingleStream):
-            result = result.content
-
-        if isinstance(result, (Token, TokenDetail)):
-            text = result.token
+        fn_result = self._output_fn(*self._args, **self._kwargs)
+        if isinstance(fn_result, TextGenerationSingleStream):
+            stream_content = fn_result.content
+            if isinstance(stream_content, (Token, TokenDetail)):
+                text = stream_content.token
+            else:
+                text = str(stream_content)
+        elif isinstance(fn_result, (Token, TokenDetail)):
+            text = fn_result.token
         else:
-            text = str(result)
+            text = str(fn_result)
 
         self._prefetched_text = text
         self._buffer = StringIO()
@@ -125,7 +132,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
     @property
     def is_thinking(self) -> bool:
-        return self.can_think and self._reasoning_parser.is_thinking
+        return (
+            self.can_think
+            and self._reasoning_parser is not None
+            and self._reasoning_parser.is_thinking
+        )
 
     def set_thinking(self, thinking: bool) -> None:
         if self._reasoning_parser:
@@ -140,9 +151,16 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             if iscoroutine(result):
                 await result
 
-    def __aiter__(self):
+    def __aiter__(self) -> Self:
+        """Return iterator for async iteration over tokens.
+
+        Returns:
+            Self for async iteration.
+        """
         # Create a fresh async generator each time we start iterating
-        self._output = self._output_fn(*self._args, **self._kwargs)
+        fn_result = self._output_fn(*self._args, **self._kwargs)
+        if not isinstance(fn_result, str):
+            self._output = fn_result
         return self
 
     async def __anext__(self) -> Token | TokenDetail | str:
@@ -154,9 +172,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 return self._parser_queue.get()
 
             try:
+                assert self._output is not None
                 token = await self._output.__anext__()
             except StopAsyncIteration:
-                if self._reasoning_parser:
+                if self._reasoning_parser and self._parser_queue:
                     for it in await self._reasoning_parser.flush():
                         self._parser_queue.put(it)
                     if not self._parser_queue.empty():
@@ -180,7 +199,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 await self._trigger_consumed()
                 raise StopAsyncIteration
 
+            assert self._parser_queue is not None
             for it in items:
+                parsed: (
+                    Token | TokenDetail | ReasoningToken | ToolCallToken | str
+                )
                 if isinstance(it, ReasoningToken):
                     token_id = (
                         token.id
@@ -188,7 +211,9 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                         else it.id
                     )
                     parsed = ReasoningToken(
-                        token=it.token, id=token_id, probability=it.probability
+                        token=it.token,
+                        id=token_id if token_id is not None else -1,
+                        probability=it.probability,
                     )
                 elif isinstance(token, ToolCallToken):
                     parsed = ToolCallToken(
@@ -227,12 +252,14 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             await self._trigger_consumed()
             return self._prefetched_text
 
-        # Ensure buffer is filled, wether we were already iterating or not
+        # Ensure buffer is filled, whether we were already iterating or not
         if not self._output:
             self.__aiter__()
 
+        assert self._output is not None
         async for token in self._output:
-            self._buffer.write(token)
+            token_str = token if isinstance(token, str) else token.token
+            self._buffer.write(token_str)
             self._output_token_count += 1
 
         await self._trigger_consumed()
@@ -252,7 +279,15 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                     continue
         raise InvalidJsonResponseException(text)
 
-    async def to(self, entity_class: type) -> any:
-        json = await self.to_json()
-        data = loads(json)
+    async def to(self, entity_class: type[T]) -> T:
+        """Convert JSON response to entity class instance.
+
+        Args:
+            entity_class: The class to instantiate with JSON data.
+
+        Returns:
+            Instance of entity_class populated with JSON data.
+        """
+        json_str = await self.to_json()
+        data = loads(json_str)
         return entity_class(**data)

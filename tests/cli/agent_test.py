@@ -72,7 +72,7 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         self.console.status.return_value = status_cm
         self.theme = MagicMock()
         self.theme._ = lambda s: s
-        self.theme.icons = {"user_input": ">"}
+        self.theme._icons = {"user_input": ">", "agent_output": "<"}
         self.theme.get_spinner.return_value = "sp"
         self.theme.agent.return_value = "agent_panel"
         self.theme.search_message_matches.return_value = "matches_panel"
@@ -896,7 +896,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.console.status.return_value = status_cm
         self.theme = MagicMock()
         self.theme._ = lambda s: s
-        self.theme.icons = {"user_input": ">", "agent_output": "<"}
+        self.theme._icons = {"user_input": ">", "agent_output": "<"}
         self.theme.get_spinner.return_value = "sp"
         self.theme.agent.return_value = "agent_panel"
         self.theme.recent_messages.return_value = "recent_panel"
@@ -2467,7 +2467,7 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
         self.console.status.return_value = status_cm
         self.theme = MagicMock()
         self.theme._ = lambda s: s
-        self.theme.icons = {"user_input": ">", "agent_output": "<"}
+        self.theme._icons = {"user_input": ">", "agent_output": "<"}
         self.theme.get_spinner.return_value = "sp"
         self.theme.agent.return_value = "agent_panel"
         self.theme.recent_messages.return_value = "recent_panel"

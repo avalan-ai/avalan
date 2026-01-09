@@ -3,7 +3,6 @@ from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
 from ..memory.permanent import (
     Memory,
-    PermanentMemoryPartition,
     PermanentMemoryStore,
     VectorFunction,
 )
@@ -30,7 +29,9 @@ class MessageReadTool(Tool):
         self._memory_manager = memory_manager
         self.__name__ = "message.read"
 
-    async def __call__(self, search: str, context: ToolCallContext) -> str:
+    async def __call__(  # type: ignore[override]
+        self, search: str, context: ToolCallContext
+    ) -> str:
         if (
             not context.agent_id
             or not context.session_id
@@ -48,7 +49,10 @@ class MessageReadTool(Tool):
             limit=1,
         )
         if results and results[0].message:
-            return results[0].message.content
+            content = results[0].message.content
+            if isinstance(content, str):
+                return content
+            return MessageReadTool._NOT_FOUND
 
         return MessageReadTool._NOT_FOUND
 
@@ -78,13 +82,13 @@ class MemoryReadTool(Tool):
         self._function = function
         self.__name__ = "read"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         namespace: str,
         search: str,
         *,
         context: ToolCallContext,
-    ) -> list[PermanentMemoryPartition]:
+    ) -> list[str]:
         """Return memory partitions that match the search query."""
         if (
             not namespace
@@ -126,7 +130,7 @@ class MemoryListTool(Tool):
         self._memory_manager = memory_manager
         self.__name__ = "list"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         namespace: str,
         *,
@@ -160,7 +164,7 @@ class MemoryStoresTool(Tool):
         self._memory_manager = memory_manager
         self.__name__ = "stores"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         *,
         context: ToolCallContext,

@@ -20,6 +20,7 @@ from . import (
 from .settings import DatabaseToolSettings
 
 from contextlib import AsyncExitStack
+from types import TracebackType
 
 
 class DatabaseToolSet(ToolSet):
@@ -131,11 +132,11 @@ class DatabaseToolSet(ToolSet):
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: BaseException | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool:
         try:
             if self._engine is not None:
                 await self._engine.dispose()
         finally:
-            return await super().__aexit__(exc_type, exc, tb)
+            return await super().__aexit__(exc_type, exc_value, traceback)

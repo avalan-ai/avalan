@@ -1,5 +1,11 @@
 from ...agent.orchestrator import Orchestrator
-from ...entities import MessageRole, ReasoningToken, ToolCallToken
+from ...entities import (
+    MessageRole,
+    ReasoningToken,
+    Token,
+    TokenDetail,
+    ToolCallToken,
+)
 from ...event import Event
 from ...server.entities import (
     ChatCompletionChoice,
@@ -31,7 +37,7 @@ async def create_chat_completion(
     request: ChatCompletionRequest,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
-):
+) -> ChatCompletionResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
@@ -60,11 +66,16 @@ async def create_chat_completion(
             async for token in response:
                 if isinstance(token, Event):
                     continue
-                elif isinstance(token, (ReasoningToken, ToolCallToken)):
-                    token = token.token
+                token_text: str
+                if isinstance(token, (ReasoningToken, ToolCallToken)):
+                    token_text = token.token
+                elif isinstance(token, (Token, TokenDetail)):
+                    token_text = token.token
+                else:
+                    token_text = str(token)
 
                 choice = ChatCompletionChunkChoice(
-                    delta=ChatCompletionChunkChoiceDelta(content=token)
+                    delta=ChatCompletionChunkChoiceDelta(content=token_text)
                 )
                 chunk = ChatCompletionChunk(
                     id=str(response_id),
@@ -92,13 +103,13 @@ async def create_chat_completion(
     choices = [
         ChatCompletionChoice(
             index=i,
-            message=ChatMessage(role=str(MessageRole.ASSISTANT), content=text),
+            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
             finish_reason="stop",
         )
         for i in range(request.n or 1)
     ]
     usage = ChatCompletionUsage()
-    response = ChatCompletionResponse(
+    chat_response = ChatCompletionResponse(
         id=str(response_id),
         created=timestamp,
         model=request.model,
@@ -106,9 +117,9 @@ async def create_chat_completion(
         usage=usage,
     )
     logger.debug(
-        "Generated chat completion response #%s %r", response_id, response
+        "Generated chat completion response #%s %r", response_id, chat_response
     )
 
     await orchestrator.sync_messages()
 
-    return response
+    return chat_response

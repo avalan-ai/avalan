@@ -7,7 +7,8 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
 from io import BytesIO, TextIOBase
-from typing import TYPE_CHECKING, Literal, final
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Literal, final
 
 if TYPE_CHECKING:
     from faiss import IndexFlatL2
@@ -117,7 +118,9 @@ class BrowserTool(Tool):
         self._partitioner = partitioner
         self.__name__ = "open"
 
-    async def __call__(self, url: str, *, context: ToolCallContext) -> str:
+    async def __call__(  # type: ignore[override]
+        self, url: str, *, context: ToolCallContext
+    ) -> str:
         content = await self._read(url)
 
         if (
@@ -185,9 +188,9 @@ class BrowserTool(Tool):
                     else knowledge_chunk
                 )
 
-                content = knowledge_match
+                content = str(knowledge_match) if knowledge_match else ""
 
-        return content
+        return str(content)
 
     async def _read(self, url: str) -> str:
         if (
@@ -201,14 +204,15 @@ class BrowserTool(Tool):
             return content
 
         if not self._browser:
+            client: Any = self._client
             browser_type = (
-                self._client.chromium
+                client.chromium
                 if self._settings.engine == "chromium"
                 else (
-                    self._client.firefox
+                    client.firefox
                     if self._settings.engine == "firefox"
                     else (
-                        self._client.webkit
+                        client.webkit
                         if self._settings.engine == "webkit"
                         else None
                     )
@@ -254,6 +258,7 @@ class BrowserTool(Tool):
             )
 
         response = await self._page.goto(url)
+        assert response is not None, f"Failed to load {url}"
         contents: str = await self._page.content()
         content_type_header = response.headers.get("content-type", None)
         assert content_type_header
@@ -262,12 +267,18 @@ class BrowserTool(Tool):
         m["content-type"] = content_type_header
         maintype = m.get_content_maintype() or "text"
         assert maintype == "text"
-        encoding = (m.get_param("charset") or "utf-8").lower()
+        charset_param = m.get_param("charset")
+        encoding = (
+            str(charset_param).lower()
+            if charset_param and not isinstance(charset_param, tuple)
+            else "utf-8"
+        )
         mime_type = m.get_content_type()
         byte_stream = BytesIO(contents.encode(encoding))
-        result = self._md.convert_stream(byte_stream, mime_type=mime_type)
-        content = result.text_content
-        return content
+        assert self._md is not None, "MarkItDown must be initialized"
+        md_result = self._md.convert_stream(byte_stream, mime_type=mime_type)
+        page_content: str = md_result.text_content or ""
+        return page_content
 
     def with_client(self, client: "PlaywrightContextManager") -> "BrowserTool":
         self._client = client
@@ -278,7 +289,7 @@ class BrowserTool(Tool):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool:
         if self._page:
             await self._page.close()
@@ -313,13 +324,20 @@ class BrowserToolSet(ToolSet):
         self._client = async_playwright()
 
         tools = [BrowserTool(settings, self._client, partitioner=partitioner)]
-        return super().__init__(
+        super().__init__(
             exit_stack=exit_stack, namespace=namespace, tools=tools
         )
 
     @override
     async def __aenter__(self) -> "BrowserToolSet":
-        self._client = await self._exit_stack.enter_async_context(self._client)
+        assert (
+            self._client is not None
+        ), "Playwright client must be initialized"
+        playwright_instance: Any = await self._exit_stack.enter_async_context(
+            self._client
+        )
         for i, tool in enumerate(self._tools):
-            self._tools[i] = tool.with_client(self._client)
-        return await super().__aenter__()
+            if hasattr(tool, "with_client"):
+                self._tools[i] = tool.with_client(playwright_instance)
+        await super().__aenter__()
+        return self

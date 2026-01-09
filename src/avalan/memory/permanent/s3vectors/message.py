@@ -60,14 +60,14 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
             sentence_model=sentence_model,
         )
 
-    async def create_session(
-        self, *, agent_id: UUID, participant_id: UUID
+    async def create_session(  # type: ignore[override]
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         return uuid4()
 
     async def continue_session_and_get_id(
         self,
-        *,
+        *args: object,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
@@ -77,7 +77,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *,
+        *args: object,
         partitions: list[TextPartition],
     ) -> None:
         assert engine_message and partitions
@@ -131,7 +131,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
         self,
         session_id: UUID,
         participant_id: UUID,
-        *,
+        *args: object,
         limit: int | None = None,
     ) -> list[EngineMessage]:
         prefix = f"{self._collection}/{session_id}/"
@@ -157,9 +157,9 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
             )
         return messages
 
-    async def search_messages(
+    async def search_messages(  # type: ignore[override]
         self,
-        *,
+        *args: object,
         agent_id: UUID,
         function: VectorFunction,
         limit: int | None = None,

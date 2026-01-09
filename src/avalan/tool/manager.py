@@ -13,6 +13,8 @@ from .parser import ToolCallParser
 
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, ContextDecorator
+from types import TracebackType
+from typing import Any
 from uuid import uuid4
 
 
@@ -60,10 +62,13 @@ class ToolManager(ContextDecorator):
         """Return the tool format configured for this manager."""
         return self._parser.tool_format
 
-    def json_schemas(self) -> list[dict] | None:
-        schemas = []
-        for toolset in self._toolsets:
-            schemas.extend(toolset.json_schemas())
+    def json_schemas(self) -> list[dict[str, Any]] | None:
+        schemas: list[dict[str, Any]] = []
+        if self._toolsets:
+            for toolset in self._toolsets:
+                toolset_schemas = toolset.json_schemas()
+                if toolset_schemas:
+                    schemas.extend(toolset_schemas)
         return schemas
 
     def __init__(
@@ -110,24 +115,33 @@ class ToolManager(ContextDecorator):
         return self._parser.tool_call_status(buffer)
 
     def get_calls(self, text: str) -> list[ToolCall] | None:
-        return self._parser(text)
+        result = self._parser(text)
+        if result is None:
+            return None
+        if isinstance(result, list):
+            return result
+        name, arguments = result
+        return [ToolCall(id=uuid4(), name=name, arguments=arguments)]
 
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
-            for i, toolset in enumerate(self._toolsets):
-                toolset = await self._stack.enter_async_context(toolset)
-                self._toolsets[i] = toolset
-        return self
+            entered_toolsets: list[ToolSet] = []
+            for toolset in self._toolsets:
+                entered = await self._stack.enter_async_context(toolset)
+                entered_toolsets.append(entered)
+            self._toolsets = entered_toolsets
+        return self  # type: ignore[return-value]
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool:
-        return await self._stack.__aexit__(exc_type, exc_value, traceback)
+        result = await self._stack.__aexit__(exc_type, exc_value, traceback)
+        return result if result is not None else False
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self, call: ToolCall, context: ToolCallContext
     ) -> ToolCallResult | ToolCallError | None:
         """Execute a single tool call and return the result."""
@@ -153,10 +167,10 @@ class ToolManager(ContextDecorator):
 
         if self._settings.filters:
             for f in self._settings.filters:
-                namespace = None
-                func = f
+                namespace: str | None = None
+                func: Callable[[ToolCall, ToolCallContext], Any] = f  # type: ignore[assignment]
                 if isinstance(f, ToolFilter):
-                    func = f.func
+                    func = f.func  # type: ignore[assignment]
                     namespace = f.namespace
                 if not self._matches_namespace(call.name, namespace):
                     continue
@@ -184,14 +198,14 @@ class ToolManager(ContextDecorator):
 
             if self._settings.transformers:
                 for t in self._settings.transformers:
-                    namespace = None
-                    func = t
+                    t_namespace: str | None = None
+                    t_func: Callable[..., Any] = t  # type: ignore[assignment]
                     if isinstance(t, ToolTransformer):
-                        func = t.func
-                        namespace = t.namespace
-                    if not self._matches_namespace(call.name, namespace):
+                        t_func = t.func  # type: ignore[assignment]
+                        t_namespace = t.namespace
+                    if not self._matches_namespace(call.name, t_namespace):
                         continue
-                    transformed = func(call, context, result)
+                    transformed = t_func(call, context, result)
                     if transformed is not None:
                         result = transformed
 

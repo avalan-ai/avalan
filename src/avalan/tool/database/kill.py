@@ -35,7 +35,7 @@ class DatabaseKillTool(DatabaseTool):
         )
         self.__name__ = "kill"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         task_id: str,
         *,

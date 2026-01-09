@@ -24,7 +24,7 @@ from contextlib import AsyncExitStack
 from json import dumps
 from typing import Any, AsyncIterator
 
-from aioboto3 import Session as Boto3Session
+from aioboto3 import Session as Boto3Session  # type: ignore[import-not-found]
 from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
 
@@ -49,7 +49,7 @@ def _string(value: Any) -> str | None:
 
 
 class BedrockStream(TextGenerationVendorStream):
-    def __init__(self, events: AsyncIterator):
+    def __init__(self, events: AsyncIterator) -> None:  # type: ignore[type-arg]
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
 
@@ -153,10 +153,12 @@ class BedrockStream(TextGenerationVendorStream):
                 if _get(event, "messageStop"):
                     break
 
-        super().__init__(generator())
+        super().__init__(generator())  # type: ignore[arg-type]
 
     async def __anext__(self) -> Token | TokenDetail | str:
-        return await self._generator.__anext__()
+        result = await self._generator.__anext__()
+        assert isinstance(result, (Token, TokenDetail, str))
+        return result
 
 
 class BedrockClient(TextGenerationVendor):
@@ -192,7 +194,7 @@ class BedrockClient(TextGenerationVendor):
         return self._client
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         model_id: str,
         messages: list[Message],
@@ -278,7 +280,7 @@ class BedrockClient(TextGenerationVendor):
                 parts.append(text_value)
         return "".join(parts)
 
-    def _template_messages(
+    def _template_messages(  # type: ignore[override]
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,

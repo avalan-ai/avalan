@@ -56,10 +56,9 @@ class Renderer:
         self,
         template: str,
         template_vars: dict | None = None,
-        encoding: str = "utf-8",
     ) -> str:
         return (
-            Template(template).render(**template_vars).encode(encoding)
+            Template(template).render(**template_vars)
             if template_vars
             else template
         )

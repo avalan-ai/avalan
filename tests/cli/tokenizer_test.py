@@ -1,7 +1,6 @@
 import importlib
 import sys
 from argparse import Namespace
-from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, call, patch
@@ -17,39 +16,15 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         cls._saved_modules = {
             name: sys.modules.get(name)
             for name in [
-                "avalan.entities",
                 "avalan.model.hubs.huggingface",
                 "avalan.model.nlp.text.generation",
             ]
         }
 
-        # Stub avalan.entities
-        entities = ModuleType("avalan.entities")
+        # Import real entities for TransformerEngineSettings
+        from avalan.entities import TransformerEngineSettings
 
-        @dataclass(frozen=True, kw_only=True)
-        class Token:
-            id: int
-            token: str
-            probability: float | None = None
-
-        class TransformerEngineSettings:
-            def __init__(
-                self,
-                device=None,
-                cache_dir=None,
-                **kwargs,
-            ) -> None:
-                self.device = device
-                self.cache_dir = cache_dir
-                self.distributed_config = None
-                for key, value in kwargs.items():
-                    setattr(self, key, value)
-
-            backend = "transformers"
-
-        entities.Token = Token
-        entities.TransformerEngineSettings = TransformerEngineSettings
-        sys.modules["avalan.entities"] = entities
+        cls.TransformerEngineSettings = TransformerEngineSettings
 
         # Stub avalan.model.hubs.huggingface
         hubs = ModuleType("avalan.model.hubs.huggingface")
@@ -93,7 +68,6 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         cls.tokenizer_mod = importlib.import_module(
             "avalan.cli.commands.tokenizer"
         )
-        cls.TransformerEngineSettings = TransformerEngineSettings
 
     @classmethod
     def tearDownClass(cls):
@@ -124,7 +98,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         self.theme = MagicMock()
         self.theme._ = lambda s: s
         self.theme._n = lambda s, p, n: s if n == 1 else p
-        self.theme.icons = {"user_input": ">"}
+        self.theme._icons = {"user_input": ">"}
         self.theme.tokenizer_config.return_value = "cfg_panel"
         self.theme.saved_tokenizer_files.return_value = "save_panel"
         self.theme.tokenizer_tokens.return_value = "tokens_panel"
@@ -199,7 +173,7 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
         dummy_model.tokenize.assert_called_once_with("hello")
         get_input.assert_called_once_with(
             self.console,
-            self.theme.icons["user_input"] + " ",
+            self.theme._icons["user_input"] + " ",
             echo_stdin=not args.no_repl,
             is_quiet=args.quiet,
             tty_path="/dev/tty",

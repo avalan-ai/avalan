@@ -149,12 +149,11 @@ class TextGenerationModelMethodsTestCase(TestCase):
             lambda i, skip_special_tokens=False: f"t{i}"
         )
         self.model._loaded_tokenizer = False
-        self.model.load = MagicMock()
+        self.model._load = MagicMock()
 
         result = self.model.tokenize("hi")
 
-        self.model.load.assert_called_once_with(
-            load_model=False,
+        self.model._load.assert_called_once_with(
             load_tokenizer=True,
             tokenizer_name_or_path=None,
         )

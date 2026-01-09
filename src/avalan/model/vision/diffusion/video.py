@@ -6,6 +6,7 @@ from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
 from logging import Logger, getLogger
+from typing import Any
 
 from diffusers import DiffusionPipeline
 from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
@@ -32,7 +33,7 @@ class TextToVideoModel(BaseVisionModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         dtype = Engine.weight(self._settings.weight_type)
-        base_pipe = DiffusionPipeline.from_pretrained(
+        base_pipe: Any = DiffusionPipeline.from_pretrained(
             self._model_id,
             torch_dtype=dtype,
         ).to(self._device)
@@ -42,10 +43,10 @@ class TextToVideoModel(BaseVisionModel):
             torch_dtype=dtype,
         ).to(self._device)
         base_pipe.vae.enable_tiling()
-        return base_pipe
+        return base_pipe  # type: ignore[no-any-return]
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         input: Input,
         negative_prompt: str,
@@ -63,22 +64,24 @@ class TextToVideoModel(BaseVisionModel):
         width: int = 832,
         steps: int = 30,
     ) -> str:
+        assert self._model is not None, "Model must be loaded"
         image = load_image(reference_path)
         video = load_video(export_to_video([image]))
         condition = LTXVideoCondition(video=video, frame_index=0)
 
+        model: Any = self._model
         down_h = int(height * downscale)
         down_w = int(width * downscale)
         down_h, down_w = (
             TextToVideoModel._round_to_nearest_resolution_acceptable_by_vae(
                 down_h,
                 down_w,
-                ratio=self._model.vae_spatial_compression_ratio,
+                ratio=model.vae_spatial_compression_ratio,
             )
         )
 
         with inference_mode():
-            latents = self._model(
+            latents = model(
                 conditions=[condition],
                 prompt=input if isinstance(input, str) else str(input),
                 negative_prompt=negative_prompt,
@@ -91,11 +94,12 @@ class TextToVideoModel(BaseVisionModel):
             ).frames
 
             upscaled_h, upscaled_w = down_h * 2, down_w * 2
-            upscaled_latents = self._upsampler_pipe(
+            upsampler: Any = self._upsampler_pipe
+            upscaled_latents = upsampler(
                 latents=latents, output_type="latent"
             ).frames
 
-            video = self._model(
+            video = model(
                 conditions=[condition],
                 prompt=input if isinstance(input, str) else str(input),
                 negative_prompt=negative_prompt,

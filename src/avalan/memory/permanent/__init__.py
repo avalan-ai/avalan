@@ -175,7 +175,7 @@ class PermanentMessageMemory(MessageMemory):
     def session_id(self) -> UUID | None:
         return self._session_id
 
-    def reset(self) -> None:
+    def reset(self) -> None:  # type: ignore[override]
         raise NotImplementedError()
 
     async def reset_session(
@@ -198,7 +198,7 @@ class PermanentMessageMemory(MessageMemory):
         )
 
     @override
-    def append(self, data: EngineMessage) -> None:
+    def append(self, data: EngineMessage) -> None:  # type: ignore[override]
         raise NotImplementedError()
 
     @abstractmethod
@@ -263,15 +263,14 @@ class PermanentMessageMemory(MessageMemory):
         if message_id is None:
             message_id = uuid4()
         content = engine_message.message.content
-        data = (
-            content.text
-            if isinstance(content, MessageContentText)
-            else (
-                content.image_url
-                if isinstance(content, MessageContentImage)
-                else str(content)
-            )
-        )
+        if isinstance(content, MessageContentText):
+            data = content.text
+        elif isinstance(content, MessageContentImage):
+            data = str(content.image_url)
+        elif content is None:
+            data = ""
+        else:
+            data = str(content)
 
         message = PermanentMessage(
             id=message_id,
@@ -326,10 +325,10 @@ class PermanentMemory(MemoryStoreBase[Memory]):
         super().__init__(**kwargs)
 
     @override
-    def append(self, data: EngineMessage) -> None:
+    def append(self, data: EngineMessage) -> None:  # type: ignore[override]
         raise NotImplementedError()
 
-    def reset(self) -> None:
+    def reset(self) -> None:  # type: ignore[override]
         raise NotImplementedError()
 
     @abstractmethod

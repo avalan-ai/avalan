@@ -1,5 +1,4 @@
 from logging import Logger
-from typing import Literal
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
@@ -12,21 +11,17 @@ class DummyAudioModel(BaseAudioModel):
     def _load_model(self):
         return MagicMock()
 
-    async def __call__(
-        self, image_source: str | object, tensor_format: Literal["pt"] = "pt"
-    ) -> str:
-        return await super().__call__(image_source, tensor_format)
+    async def __call__(self, path: str) -> str:
+        return path
 
 
 class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
-    async def test_base_methods_raise(self):
+    async def test_tokenizer_methods_raise(self):
         model = DummyAudioModel(
             None,
             EngineSettings(auto_load_model=False),
             logger=MagicMock(spec=Logger),
         )
-        with self.assertRaises(NotImplementedError):
-            await model("img")
         with self.assertRaises(TokenizerNotSupportedException):
             model._load_tokenizer(None)
         with self.assertRaises(TokenizerNotSupportedException):

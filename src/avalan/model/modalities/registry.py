@@ -6,6 +6,7 @@ from ...entities import (
     Input,
     Modality,
     Operation,
+    OperationParameters,
     ReasoningSettings,
     ReasoningTag,
     TransformerEngineSettings,
@@ -15,12 +16,13 @@ from ...tool.manager import ToolManager
 from argparse import Namespace
 from collections.abc import Callable
 from contextlib import AsyncExitStack
-from inspect import isclass
 from logging import Logger
 from typing import Any, Protocol
 
 
 class ModalityHandler(Protocol):
+    """Protocol for modality handler implementations."""
+
     async def __call__(
         self,
         engine_uri: EngineUri,
@@ -46,16 +48,18 @@ class ModalityHandler(Protocol):
 
 
 class ModalityRegistry:
+    """Registry for modality handlers."""
+
     _handlers: dict[Modality, ModalityHandler] = {}
 
     @classmethod
     def register(
         cls, modality: Modality
-    ) -> Callable[[ModalityHandler | type], ModalityHandler]:
-        def decorator(handler: ModalityHandler | type) -> ModalityHandler:
-            cls._handlers[modality] = (
-                handler() if isclass(handler) else handler
-            )
+    ) -> Callable[[type[ModalityHandler]], type[ModalityHandler]]:
+        def decorator(
+            handler: type[ModalityHandler],
+        ) -> type[ModalityHandler]:
+            cls._handlers[modality] = handler()
             return handler
 
         return decorator
@@ -130,11 +134,12 @@ class ModalityRegistry:
         try:
             handler = cls.get(modality)
         except NotImplementedError:
+            empty_params: OperationParameters = {}
             return Operation(
                 generation_settings=settings,
                 input=input_string,
                 modality=modality,
-                parameters=None,
+                parameters=empty_params,
                 requires_input=False,
             )
         return handler.get_operation_from_arguments(

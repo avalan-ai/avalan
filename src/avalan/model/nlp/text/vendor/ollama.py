@@ -6,29 +6,30 @@ from .....entities import (
     TokenDetail,
     TransformerEngineSettings,
 )
-from .....model.nlp.text.generation import TextGenerationModel
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from logging import Logger, getLogger
 from typing import AsyncIterator
 
 try:
-    from ollama import AsyncClient
+    from ollama import AsyncClient  # type: ignore[import-not-found]
 except Exception:  # pragma: no cover - ollama may not be installed
-    AsyncClient = None
+    AsyncClient = None  # type: ignore[misc, assignment]
 
 
 class OllamaStream(TextGenerationVendorStream):
-    def __init__(self, stream: AsyncIterator[dict]):
-        super().__init__(stream)
+    def __init__(self, stream: AsyncIterator[dict]) -> None:  # type: ignore[type-arg]
+        super().__init__(stream)  # type: ignore[arg-type]
 
     async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
         message = chunk.get("message", {}) if isinstance(chunk, dict) else {}
-        return message.get("content", "")
+        content: str = message.get("content", "")
+        return content
 
 
 class OllamaClient(TextGenerationVendor):
@@ -41,7 +42,7 @@ class OllamaClient(TextGenerationVendor):
         )
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         model_id: str,
         messages: list[Message],
@@ -65,7 +66,7 @@ class OllamaClient(TextGenerationVendor):
                 stream=False,
             )
 
-            async def single_gen():
+            async def single_gen() -> AsyncIterator[Token | TokenDetail | str]:
                 yield response["message"]["content"]
 
             return single_gen()
@@ -77,10 +78,12 @@ class OllamaModel(TextGenerationVendorModel):
         model_id: str,
         settings: TransformerEngineSettings | None = None,
         logger: Logger = getLogger(__name__),
+        *,
+        exit_stack: AsyncExitStack | None = None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
         settings = replace(settings, enable_eval=False)
-        TextGenerationModel.__init__(self, model_id, settings, logger)
+        super().__init__(model_id, settings, logger, exit_stack=exit_stack)
 
     def _load_model(self):
         return OllamaClient(base_url=self._settings.base_url)

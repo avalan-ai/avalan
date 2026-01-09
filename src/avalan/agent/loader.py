@@ -63,6 +63,7 @@ class OrchestratorLoader:
     )
     _OPENAI_RESPONSES_ALIASES = frozenset({"response", "responses"})
 
+    _event_manager: EventManager
     _hub: HuggingfaceHub
     _logger: Logger
     _participant_id: UUID
@@ -75,11 +76,18 @@ class OrchestratorLoader:
         logger: Logger,
         participant_id: UUID,
         stack: AsyncExitStack,
+        event_manager: EventManager | None = None,
     ) -> None:
+        self._event_manager = event_manager or EventManager()
         self._hub = hub
         self._logger = logger
         self._participant_id = participant_id
         self._stack = stack
+
+    @property
+    def event_manager(self) -> EventManager:
+        """Return the event manager instance."""
+        return self._event_manager
 
     @staticmethod
     def parse_permanent_store_value(
@@ -372,7 +380,7 @@ class OrchestratorLoader:
                 agent_config=agent_config,
                 uri=uri,
                 engine_config=engine_config,
-                tools=enable_tools,
+                tools=enable_tools or [],
                 call_options=call_options,
                 template_vars=template_vars,
                 memory_permanent_message=memory_permanent_message,
@@ -495,7 +503,7 @@ class OrchestratorLoader:
 
         _l("Loading event manager")
 
-        event_manager = EventManager()
+        event_manager = self._event_manager
         if settings.log_events:
 
             def _log_event(event: Event) -> None:
@@ -607,6 +615,7 @@ class OrchestratorLoader:
 
         assert settings.agent_id
 
+        agent: Orchestrator
         if settings.orchestrator_type == "json":
             assert settings.json_config is not None
             agent = self._load_json_orchestrator(

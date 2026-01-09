@@ -5,6 +5,7 @@ from . import Tool, ToolSet
 from asyncio import create_subprocess_exec
 from asyncio.subprocess import PIPE
 from contextlib import AsyncExitStack
+from typing import Any
 
 try:
     from RestrictedPython import (
@@ -37,10 +38,10 @@ class CodeTool(Tool):
         super().__init__()
         self.__name__ = "run"
 
-    async def __call__(
-        self, code: str, *args: any, context: ToolCallContext, **kwargs: any
+    async def __call__(  # type: ignore[override]
+        self, code: str, *args: Any, context: ToolCallContext, **kwargs: Any
     ) -> str:
-        locals_dict = {}
+        locals_dict: dict[str, Any] = {}
         byte_code = compile_restricted(
             code,
             filename="<avalan:tool:code>",
@@ -90,7 +91,7 @@ class AstGrepTool(Tool):
         super().__init__()
         self.__name__ = "search.ast.grep"
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         pattern: str,
         *,

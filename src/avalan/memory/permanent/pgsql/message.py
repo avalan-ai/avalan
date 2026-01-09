@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from pgvector.psycopg import Vector
 
 
-class PgsqlMessageMemory(
+class PgsqlMessageMemory(  # type: ignore[misc]
     PgsqlMemory[PermanentMessage], PermanentMessageMemory
 ):
     """PostgreSQL-backed implementation of :class:`PermanentMessageMemory`."""
@@ -44,8 +44,8 @@ class PgsqlMessageMemory(
             await memory.open()
         return memory
 
-    async def create_session(
-        self, *args, agent_id: UUID, participant_id: UUID
+    async def create_session(  # type: ignore[override]
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         """Create a new session for a participant."""
         now_utc = datetime.now(timezone.utc)
@@ -81,13 +81,13 @@ class PgsqlMessageMemory(
 
     async def continue_session_and_get_id(
         self,
-        *args,
+        *args: object,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
         """Continue an existing session if it belongs to the participant."""
-        session_id = await self._fetch_field(
+        fetched_session_id = await self._fetch_field(
             "id",
             """
             SELECT "sessions"."id"
@@ -99,13 +99,15 @@ class PgsqlMessageMemory(
         """,
             (str(agent_id), str(participant_id), str(session_id)),
         )
-        assert session_id
-        return session_id if isinstance(session_id, UUID) else UUID(session_id)
+        assert fetched_session_id is not None
+        if isinstance(fetched_session_id, UUID):
+            return fetched_session_id
+        return UUID(fetched_session_id)
 
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *args,
+        *args: object,
         partitions: list[TextPartition],
     ) -> None:
         """Persist a message and its partitions."""
@@ -197,7 +199,7 @@ class PgsqlMessageMemory(
         self,
         session_id: UUID,
         participant_id: UUID,
-        *args,
+        *args: object,
         limit: int | None = None,
     ) -> list[EngineMessage]:
         """Retrieve recent messages for a session."""
@@ -227,11 +229,12 @@ class PgsqlMessageMemory(
         engine_messages = self._to_engine_messages(
             messages, limit=limit_value, reverse=True
         )
-        return engine_messages
+        assert isinstance(engine_messages, list)
+        return engine_messages  # type: ignore[return-value]
 
-    async def search_messages(
+    async def search_messages(  # type: ignore[override]
         self,
-        *args,
+        *args: object,
         agent_id: UUID,
         function: VectorFunction,
         limit: int | None = None,
@@ -297,4 +300,5 @@ class PgsqlMessageMemory(
             limit=limit_value,
             scored=True,
         )
-        return engine_messages
+        assert isinstance(engine_messages, list)
+        return engine_messages  # type: ignore[return-value]

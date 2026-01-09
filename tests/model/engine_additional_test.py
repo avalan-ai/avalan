@@ -6,6 +6,7 @@ from avalan.model.engine import Engine, TokenizerNotSupportedException
 
 
 class DummyEngine(Engine):
+    @property
     def uses_tokenizer(self) -> bool:
         return False
 

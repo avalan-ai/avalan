@@ -12,8 +12,8 @@ from transformers import PreTrainedModel
 
 
 class LiteLLMStream(TextGenerationVendorStream):
-    def __init__(self, stream: AsyncIterator):
-        super().__init__(stream.__aiter__())
+    def __init__(self, stream: AsyncIterator) -> None:  # type: ignore[type-arg]
+        super().__init__(stream.__aiter__())  # type: ignore[arg-type]
 
     async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
@@ -21,7 +21,7 @@ class LiteLLMStream(TextGenerationVendorStream):
         if isinstance(chunk, dict):
             choice = chunk.get("choices", [{}])[0]
             delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
-            text = delta.get("content", "")
+            text: str = delta.get("content", "")
         else:
             choice = chunk.choices[0]
             delta = getattr(choice, "delta", None)
@@ -40,7 +40,7 @@ class LiteLLMClient(TextGenerationVendor):
         self._base_url = base_url or "http://localhost:4000"
 
     @override
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         model_id: str,
         messages: list[Message],
@@ -62,7 +62,7 @@ class LiteLLMClient(TextGenerationVendor):
         if use_async_generator:
             return LiteLLMStream(result)
 
-        async def single_gen():
+        async def single_gen() -> AsyncIterator[Token | TokenDetail | str]:
             if isinstance(result, dict):
                 yield result["choices"][0]["message"]["content"]
             else:

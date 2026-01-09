@@ -41,7 +41,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             client=client,
             logger=logger,
         )
-        PermanentMemory.__init__(self, sentence_model=None)
+        PermanentMemory.__init__(self, sentence_model=None)  # type: ignore[arg-type]
 
     @classmethod
     async def create_instance(
@@ -62,11 +62,11 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         )
         return memory
 
-    async def append_with_partitions(
+    async def append_with_partitions(  # type: ignore[override]
         self,
         namespace: str,
         participant_id: UUID,
-        *,
+        *args: object,
         memory_type: MemoryType,
         data: str,
         identifier: str,
@@ -131,9 +131,9 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
                 },
             )
 
-    async def search_memories(
+    async def search_memories(  # type: ignore[override]
         self,
-        *,
+        *args: object,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -230,7 +230,7 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             )
         return memories
 
-    async def search(
+    async def search(  # type: ignore[override]
         self, query: str
     ) -> list[PermanentMemoryPartition] | None:
         raise NotImplementedError()

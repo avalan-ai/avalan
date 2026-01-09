@@ -9,7 +9,7 @@ from ....memory.permanent import (
 
 from logging import Logger
 from time import perf_counter
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pgvector.psycopg import register_vector_async
 from psycopg import AsyncConnection, AsyncCursor
@@ -18,10 +18,11 @@ from psycopg.types import TypeInfo
 from psycopg_pool import AsyncConnectionPool
 
 T = TypeVar("T")
+E = TypeVar("E")
 
 
 class BasePgsqlMemory(MemoryStore[T]):
-    _database: AsyncConnection
+    _database: AsyncConnectionPool
     _logger: Logger
 
     def __init__(self, database: AsyncConnectionPool, logger: Logger):
@@ -45,8 +46,8 @@ class BasePgsqlMemory(MemoryStore[T]):
         )
 
     async def _fetch_all(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> list[T]:
+        self, entity: type[E], query: str, parameters: tuple
+    ) -> list[E]:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
@@ -59,8 +60,8 @@ class BasePgsqlMemory(MemoryStore[T]):
                 )
 
     async def _fetch_one(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> T:
+        self, entity: type[E], query: str, parameters: tuple
+    ) -> E:
         result = await self._try_fetch_one(entity, query, parameters)
         if result is None:
             raise RecordNotFoundException()
@@ -86,8 +87,8 @@ class BasePgsqlMemory(MemoryStore[T]):
                 return result is not None
 
     async def _try_fetch_one(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> T | None:
+        self, entity: type[E], query: str, parameters: tuple
+    ) -> E | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
@@ -96,8 +97,8 @@ class BasePgsqlMemory(MemoryStore[T]):
                 return entity(**dict(result)) if result is not None else None
 
     async def _update_and_fetch_one(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> T:
+        self, entity: type[E], query: str, parameters: tuple
+    ) -> E:
         row = await self._update_and_fetch_row(query, parameters)
         return entity(**row)
 
@@ -105,7 +106,9 @@ class BasePgsqlMemory(MemoryStore[T]):
         self, field: str, query: str, parameters: tuple
     ) -> str:
         row = await self._update_and_fetch_row(query, parameters)
-        return row[field]
+        value = row[field]
+        assert isinstance(value, str)
+        return value
 
     async def _update_and_fetch_row(
         self, query: str, parameters: tuple
@@ -135,33 +138,29 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         pool: AsyncConnectionPool,
         *,
         logger: Logger,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> "PgsqlMemory[T]":
         memory = cls(dsn=None, pool=pool, logger=logger, **kwargs)
         return memory
 
     def __init__(
         self,
         dsn: str | None,
-        *args,
+        *args: object,
         pool: AsyncConnectionPool | None = None,
         composite_types: list[str] | None = None,
         pool_minimum: int | None = None,
         pool_maximum: int | None = None,
         logger: Logger,
-        **kwargs,
+        **kwargs: object,
     ):
-        assert pool or (
-            dsn
-            and pool_minimum
-            and pool_minimum
-            and pool_minimum > 0
-            and pool_maximum > pool_minimum
-        )
-
         if pool:
             super().__init__(database=pool, logger=logger, **kwargs)
         else:
+            assert dsn is not None
+            assert pool_minimum is not None and pool_minimum > 0
+            assert pool_maximum is not None and pool_maximum > pool_minimum
+
             self._composite_types = composite_types
 
             if "//" not in dsn:
@@ -176,8 +175,8 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
             )
             super().__init__(database=database, logger=logger, **kwargs)
 
-    async def _configure_connection(self, connection: AsyncConnection):
-        connection.row_factory = dict_row
+    async def _configure_connection(self, connection: AsyncConnection) -> None:
+        connection.row_factory = dict_row  # type: ignore[assignment]
         await connection.set_autocommit(True)
         if self._composite_types:
             for composite_type_name in self._composite_types:
@@ -191,28 +190,33 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
     @staticmethod
     def _to_engine_messages(
         messages: list[PermanentMessage] | list[PermanentMessageScored],
-        *args,
+        *args: object,
         limit: int | None,
         reverse: bool = False,
         scored: bool = False,
     ) -> list[EngineMessage] | list[EngineMessageScored]:
-        engine_messages = [
-            (
+        engine_messages: list[EngineMessage] | list[EngineMessageScored]
+        if scored:
+            scored_messages: list[EngineMessageScored] = [
                 EngineMessageScored(
                     agent_id=m.agent_id,
                     model_id=m.model_id,
                     message=Message(role=m.author, content=m.data),
-                    score=m.score,
+                    score=m.score,  # type: ignore[attr-defined, union-attr]
                 )
-                if scored
-                else EngineMessage(
+                for m in messages
+            ]
+            engine_messages = scored_messages
+        else:
+            unscored_messages: list[EngineMessage] = [
+                EngineMessage(
                     agent_id=m.agent_id,
                     model_id=m.model_id,
                     message=Message(role=m.author, content=m.data),
                 )
-            )
-            for m in messages
-        ]
+                for m in messages
+            ]
+            engine_messages = unscored_messages
         if reverse:
             engine_messages.reverse()
         if limit and len(engine_messages) > limit:

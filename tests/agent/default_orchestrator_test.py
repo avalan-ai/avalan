@@ -6,7 +6,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from avalan.agent import Goal, InputType, OutputType, Specification
+from avalan.agent import Goal, InputType, OutputType, Role, Specification
 from avalan.agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
@@ -69,7 +69,7 @@ class DefaultOrchestratorInitTestCase(TestCase):
         op = orch.operations[0]
         self.assertIs(op.environment.engine_uri, engine_uri)
         self.assertIs(op.environment.settings, settings)
-        self.assertEqual(op.specification.role, "assistant")
+        self.assertEqual(op.specification.role, Role(persona=["assistant"]))
         self.assertEqual(op.specification.goal.task, "do")
         self.assertEqual(op.specification.goal.instructions, ["something"])
         self.assertEqual(op.specification.rules, ["a", "b"])
@@ -206,7 +206,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             context.specification,
             Specification(
-                role="assistant",
+                role=Role(persona=["assistant"]),
                 goal=Goal(task="do", instructions=["something"]),
                 rules=None,
                 input_type=InputType.TEXT,
@@ -309,7 +309,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
 
         context = agent_mock.await_args.args[0]
         self.assertIsInstance(context.input, Message)
-        self.assertEqual(context.input.content, b"hello world Bob")
+        self.assertEqual(context.input.content, "hello world Bob")
 
     async def test_user_template_rendering(self):
         with TemporaryDirectory() as tmp:
