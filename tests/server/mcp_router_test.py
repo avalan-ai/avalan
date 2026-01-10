@@ -337,6 +337,13 @@ class MCPUtilityTestCase(TestCase):
         dict_item = mcp_router._tool_call_event_item(dict_event)
         self.assertEqual(dict_item["name"], "run")
 
+        dict_calls_event = Event(
+            type=EventType.TOOL_PROCESS,
+            payload={"calls": [call]},
+        )
+        dict_calls_item = mcp_router._tool_call_event_item(dict_calls_event)
+        self.assertEqual(dict_calls_item["id"], "c1")
+
         none_event = Event(type=EventType.TOOL_PROCESS, payload=None)
         self.assertIsNone(mcp_router._tool_call_event_item(none_event))
 

@@ -1054,12 +1054,14 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
             }
     if isinstance(event.payload, list) and event.payload:
         call = event.payload[0]
+    elif isinstance(event.payload, dict):
+        calls = event.payload.get("calls")
+        if isinstance(calls, list) and calls:
+            call = calls[0]
+        else:
+            call = event.payload.get("call")
     else:
-        call = (
-            event.payload.get("call")
-            if isinstance(event.payload, dict)
-            else None
-        )
+        call = None
     if call is None:
         return None
     return {
