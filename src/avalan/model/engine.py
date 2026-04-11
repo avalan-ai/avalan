@@ -339,7 +339,7 @@ class Engine(ABC):
             if not isinstance(self._model, PreTrainedModel) and not isinstance(
                 self._model, TextGenerationVendor
             ):
-                if find_spec("mlx"):
+                if find_spec("mlx.nn"):
                     from mlx.nn import Module
 
                     is_mlx = isinstance(self._model, Module)

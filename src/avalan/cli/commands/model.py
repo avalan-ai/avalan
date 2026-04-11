@@ -44,6 +44,8 @@ from rich.prompt import Prompt
 from rich.spinner import Spinner
 from rich.theme import Theme
 
+_HAS_INPUT = has_input
+
 
 def model_display(
     args: Namespace,
@@ -184,7 +186,7 @@ async def model_run(
 
             tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
-            if operation.requires_input or has_input(console):
+            if operation.requires_input:
                 input_string = get_input(
                     console,
                     _i["user_input"] + " ",
