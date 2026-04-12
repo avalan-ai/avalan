@@ -232,12 +232,15 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
   "a2a",
+  "aioboto3",
   "anyio",
   "boto3",
   "boto3.*",
   "botocore",
   "botocore.*",
   "bs4",
+  "entmax",
+  "faiss",
   "fastapi",
   "fastapi.*",
   "huggingface_hub",
@@ -248,9 +251,16 @@ module = [
   "keyring.*",
   "markitdown",
   "numpy",
+  "pgvector.*",
+  "psutil",
   "pypdf",
   "rich",
   "rich.*",
+  "tokenizers",
+  "tiktoken",
+  "tiktoken.*",
+  "torchaudio",
+  "torchaudio.*",
   "torch",
   "torch.*",
   "tqdm",
@@ -260,3 +270,7 @@ module = [
   "uvicorn",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tiktoken", "tiktoken.*"]
+follow_imports = "skip"
