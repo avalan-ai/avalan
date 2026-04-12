@@ -1,11 +1,12 @@
 from importlib.metadata import metadata
 from importlib.metadata import version as metadata_version
+from typing import Any
 from urllib.parse import ParseResult, urlparse
 
 from packaging.version import Version, parse
 
 
-def _config() -> dict:
+def _config() -> dict[str, Any]:
     config = metadata("avalan")
     package_version = metadata_version("avalan")
     return {
@@ -21,19 +22,19 @@ config = _config()
 
 def license() -> str:
     assert "license" in config
-    return config["license"]
+    return str(config["license"])
 
 
 def name() -> str:
     assert "name" in config
-    return config["name"]
+    return str(config["name"])
 
 
 def version() -> Version:
     assert "version" in config
-    return parse(config["version"])
+    return parse(str(config["version"]))
 
 
 def site() -> ParseResult:
     assert "url" in config
-    return urlparse(config["url"])
+    return urlparse(str(config["url"]))

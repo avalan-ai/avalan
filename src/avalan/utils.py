@@ -2,16 +2,18 @@ from dataclasses import asdict, is_dataclass
 from decimal import Decimal
 from json import dumps
 from logging import Logger, getLogger
-from typing import Any
+from typing import Any, Sequence, TypeVar
 from uuid import UUID
 
-
-def _lf(items: list) -> list:
-    return list(filter(None, items))
+T = TypeVar("T")
 
 
-def _j(sep: str, items: list[str], *args, empty: str = "") -> str:
-    real_items = _lf(items)
+def _lf(items: Sequence[T | None]) -> list[T]:
+    return [item for item in items if item]
+
+
+def _j(sep: str, items: list[str], *args: str, empty: str = "") -> str:
+    real_items = _lf(items + list(args))
     return sep.join(real_items) if real_items else empty
 
 
@@ -28,8 +30,9 @@ def logger_replace(logger: Logger, logger_names: list[str]) -> None:
 
 
 def to_json(item: Any) -> str:
-    def _default(o):
+    def _default(o: Any) -> str | dict[str, Any]:
         if is_dataclass(o):
+            assert not isinstance(o, type)
             return asdict(o)
         elif isinstance(o, (Decimal, UUID)):
             return str(o)

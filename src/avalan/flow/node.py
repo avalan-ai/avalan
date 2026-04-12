@@ -60,7 +60,7 @@ class Node:
             try:
                 output = self.func(inputs)
             except TypeError:
-                output = self.func(*inputs.values())  # type: ignore
+                output = self.func(*inputs.values())
         else:
             if not inputs:
                 output = None
