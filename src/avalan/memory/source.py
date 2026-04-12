@@ -89,10 +89,13 @@ class MemorySource:
 
         if self._is_pdf(url, content_type, data):
             metadata = PdfReader(BytesIO(data)).metadata
-            metadata_title = (
+            metadata_title_raw = (
                 metadata["/Title"]
                 if metadata and "/Title" in metadata
                 else None
+            )
+            metadata_title = (
+                str(metadata_title_raw) if metadata_title_raw else None
             )
             title = metadata_title or title or self._markdown_title(markdown)
             description = description or self._markdown_description(markdown)
