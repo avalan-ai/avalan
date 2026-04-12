@@ -14,8 +14,8 @@ from ..model import (
     TokenizerNotSupportedException,
 )
 from ..model.vendor import TextGenerationVendor
+from .exit_stack import close_async_exit_stack
 
-import asyncio
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
@@ -278,12 +278,7 @@ class Engine(ABC):
                 "Restored transformers logging level to %s",
                 self._transformers_logging_level,
             )
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(self._exit_stack.aclose())
-        else:
-            loop.create_task(self._exit_stack.aclose())
+        close_async_exit_stack(self._exit_stack)
         return False
 
     def _load(

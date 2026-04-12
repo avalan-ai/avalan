@@ -39,9 +39,9 @@ from ..model.vision.segmentation import SemanticSegmentationModel
 from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
 from .call import ModelCall
+from .exit_stack import close_async_exit_stack
 from .modalities import ModalityRegistry
 
-import asyncio
 from argparse import Namespace
 from contextlib import AsyncExitStack, ContextDecorator
 from logging import Logger
@@ -107,12 +107,7 @@ class ModelManager(ContextDecorator):
         exc_value: BaseException | None,
         traceback: Any | None,
     ):
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(self._stack.aclose())
-        else:
-            loop.create_task(self._stack.aclose())
+        close_async_exit_stack(self._stack)
         return False
 
     async def __aenter__(self) -> "ModelManager":
