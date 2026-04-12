@@ -2,7 +2,7 @@ from ..entities import MessageRole, OrchestratorSettings
 from ..tool.context import ToolSettingsContext
 
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -157,7 +157,9 @@ class ChatCompletionRequest(BaseModel):
         None, description="Format to use for model response"
     )
     tools: list[Tool] | None = None
-    tool_choice: Literal["auto", "none", "required"] | str | dict | None = None
+    tool_choice: (
+        Literal["auto", "none", "required"] | str | dict[str, object] | None
+    ) = None
 
 
 class ResponsesRequest(BaseModel):
@@ -172,7 +174,7 @@ class ResponsesRequest(BaseModel):
     response_format: ResponseFormat | None = None
 
     @property
-    def messages(self) -> list[ChatMessage]:  # type: ignore[override]
+    def messages(self) -> list[ChatMessage]:
         return self.input
 
 
@@ -225,7 +227,7 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int
     owned_by: str
-    permission: list[dict]
+    permission: list[dict[str, Any]]
 
 
 class ModelList(BaseModel):

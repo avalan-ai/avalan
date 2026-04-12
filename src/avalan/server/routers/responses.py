@@ -16,6 +16,7 @@ from . import orchestrate
 
 from enum import Enum, auto
 from logging import Logger
+from typing import Any, AsyncIterator, cast
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -30,12 +31,12 @@ class ResponseState(Enum):
 router = APIRouter(tags=["responses"])
 
 
-@router.post("/responses")
+@router.post("/responses", response_model=None)
 async def create_response(
     request: ResponsesRequest,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
-):
+) -> dict[str, Any] | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
@@ -46,22 +47,20 @@ async def create_response(
 
     if request.stream:
 
-        async def generate():
+        async def generate() -> AsyncIterator[str]:
             seq = 0
 
             yield sse_message(
-                to_json(
-                    {
-                        "type": "response.created",
-                        "response": {
-                            "id": str(response_id),
-                            "created_at": timestamp,
-                            "model": request.model,
-                            "type": "response",
-                            "status": "in_progress",
-                        },
-                    }
-                ),
+                to_json({
+                    "type": "response.created",
+                    "response": {
+                        "id": str(response_id),
+                        "created_at": timestamp,
+                        "model": request.model,
+                        "type": "response",
+                        "status": "in_progress",
+                    },
+                }),
                 event="response.created",
             )
 
@@ -69,18 +68,13 @@ async def create_response(
             tool_call_id: str | None = None
 
             async for token in response:
-                is_event = isinstance(token, Event)
-                if is_event and token.type not in (
-                    EventType.TOOL_PROCESS,
-                    EventType.TOOL_RESULT,
-                ):
-                    continue
-
                 call_id: str | None = None
-                if is_event and token.type in (
-                    EventType.TOOL_PROCESS,
-                    EventType.TOOL_RESULT,
-                ):
+                if isinstance(token, Event):
+                    if token.type not in (
+                        EventType.TOOL_PROCESS,
+                        EventType.TOOL_RESULT,
+                    ):
+                        continue
                     call_id = _tool_call_event_item(token)["id"]
                 elif (
                     isinstance(token, ToolCallToken) and token.call is not None
@@ -149,15 +143,13 @@ def _token_to_sse(
     if isinstance(token, ReasoningToken):
         events.append(
             sse_message(
-                to_json(
-                    {
-                        "type": "response.reasoning_text.delta",
-                        "delta": token.token,
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    }
-                ),
+                to_json({
+                    "type": "response.reasoning_text.delta",
+                    "delta": token.token,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                }),
                 event="response.reasoning_text.delta",
             )
         )
@@ -180,17 +172,15 @@ def _token_to_sse(
 
         events.append(
             sse_message(
-                to_json(
-                    {
-                        **delta_obj,
-                        "type": "response.function_call_arguments.delta",
-                        "delta": to_json(delta_obj),
-                        "id": item["id"],
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    }
-                ),
+                to_json({
+                    **delta_obj,
+                    "type": "response.function_call_arguments.delta",
+                    "delta": to_json(delta_obj),
+                    "id": item["id"],
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                }),
                 event="response.function_call_arguments.delta",
             )
         )
@@ -203,50 +193,42 @@ def _token_to_sse(
             }
             events.append(
                 sse_message(
-                    to_json(
-                        {
-                            "type": "response.function_call_arguments.delta",
-                            "delta": to_json(delta_obj),
-                            "id": str(token.call.id),
-                            "output_index": 0,
-                            "content_index": 0,
-                            "sequence_number": seq,
-                        }
-                    ),
+                    to_json({
+                        "type": "response.function_call_arguments.delta",
+                        "delta": to_json(delta_obj),
+                        "id": str(token.call.id),
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }),
                     event="response.function_call_arguments.delta",
                 )
             )
         else:
             events.append(
                 sse_message(
-                    to_json(
-                        {
-                            "type": "response.custom_tool_call_input.delta",
-                            "delta": token.token,
-                            "output_index": 0,
-                            "content_index": 0,
-                            "sequence_number": seq,
-                        }
-                    ),
+                    to_json({
+                        "type": "response.custom_tool_call_input.delta",
+                        "delta": token.token,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }),
                     event="response.custom_tool_call_input.delta",
                 )
             )
     else:
         events.append(
             sse_message(
-                to_json(
-                    {
-                        "type": "response.output_text.delta",
-                        "delta": (
-                            token.token
-                            if isinstance(token, Token)
-                            else str(token)
-                        ),
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    }
-                ),
+                to_json({
+                    "type": "response.output_text.delta",
+                    "delta": (
+                        token.token if isinstance(token, Token) else str(token)
+                    ),
+                    "output_index": 0,
+                    "content_index": 0,
+                    "sequence_number": seq,
+                }),
                 event="response.output_text.delta",
             )
         )
@@ -259,8 +241,6 @@ def _switch_state(
     current_tool_call_id: str | None,
     new_tool_call_id: str | None,
 ) -> list[str]:
-    new_state: ResponseState | None
-
     events: list[str] = []
     changed = state is not new_state or (
         state is ResponseState.TOOL_CALLING
@@ -295,7 +275,13 @@ def _switch_state(
 
 
 def _new_state(
-    token: ReasoningToken | ToolCallToken | Token | TokenDetail | str | None,
+    token: ReasoningToken
+    | ToolCallToken
+    | Token
+    | TokenDetail
+    | Event
+    | str
+    | None,
 ) -> ResponseState | None:
     if isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
@@ -321,13 +307,11 @@ def _output_item_added(state: ResponseState, id: str | None = None) -> str:
     if id is not None:
         item["id"] = id
     return sse_message(
-        to_json(
-            {
-                "type": "response.output_item.added",
-                "output_index": 0,
-                "item": item,
-            }
-        ),
+        to_json({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": item,
+        }),
         event="response.output_item.added",
     )
 
@@ -341,13 +325,11 @@ def _output_item_done(id: str | None = None) -> str:
 
 def _reasoning_text_done() -> str:
     return sse_message(
-        to_json(
-            {
-                "type": "response.reasoning_text.done",
-                "output_index": 0,
-                "content_index": 0,
-            }
-        ),
+        to_json({
+            "type": "response.reasoning_text.done",
+            "output_index": 0,
+            "content_index": 0,
+        }),
         event="response.reasoning_text.done",
     )
 
@@ -368,13 +350,11 @@ def _custom_tool_call_input_done(id: str | None = None) -> str:
 
 def _output_text_done() -> str:
     return sse_message(
-        to_json(
-            {
-                "type": "response.output_text.done",
-                "output_index": 0,
-                "content_index": 0,
-            }
-        ),
+        to_json({
+            "type": "response.output_text.done",
+            "output_index": 0,
+            "content_index": 0,
+        }),
         event="response.output_text.done",
     )
 
@@ -384,14 +364,12 @@ def _content_part_added(part_type: str, id: str | None = None) -> str:
     if id is not None:
         part["id"] = id
     return sse_message(
-        to_json(
-            {
-                "type": "response.content_part.added",
-                "output_index": 0,
-                "content_index": 0,
-                "part": part,
-            }
-        ),
+        to_json({
+            "type": "response.content_part.added",
+            "output_index": 0,
+            "content_index": 0,
+            "part": part,
+        }),
         event="response.content_part.added",
     )
 
@@ -407,15 +385,21 @@ def _content_part_done(id: str | None = None) -> str:
     return sse_message(to_json(data), event="response.content_part.done")
 
 
-def _tool_call_event_item(event: Event) -> dict:
+def _tool_call_event_item(event: Event) -> dict[str, Any]:
+    payload = cast(Any, event.payload)
     tool_result = (
-        event.payload["result"]
-        if event.type == EventType.TOOL_RESULT and "result" in event.payload
+        payload["result"]
+        if event.type == EventType.TOOL_RESULT
+        and isinstance(payload, dict)
+        and "result" in payload
         else None
     )
-    tool_call = (
-        tool_result.call if tool_result is not None else event.payload[0]
-    )
+    if tool_result is not None:
+        tool_call = tool_result.call
+    elif isinstance(payload, list):
+        tool_call = payload[0]
+    else:
+        tool_call = cast(dict[Any, Any], payload)[0]
     item = {
         "type": "function_call",
         "id": str(tool_call.id),

@@ -16,6 +16,7 @@ from ..sse import sse_headers, sse_message
 from . import orchestrate
 
 from logging import Logger
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -31,7 +32,7 @@ async def create_chat_completion(
     request: ChatCompletionRequest,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
-):
+) -> ChatCompletionResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
@@ -56,18 +57,20 @@ async def create_chat_completion(
     # Streaming through SSE (server-sent events with text/event-stream)
     if request.stream:
 
-        async def generate_chunks():
+        async def generate_chunks() -> AsyncIterator[str]:
             async for token in response:
                 if isinstance(token, Event):
                     continue
-                elif isinstance(token, (ReasoningToken, ToolCallToken)):
-                    token = token.token
+                if isinstance(token, (ReasoningToken, ToolCallToken)):
+                    token_text = token.token
+                else:
+                    token_text = str(token)
 
                 choice = ChatCompletionChunkChoice(
-                    delta=ChatCompletionChunkChoiceDelta(content=token)
+                    delta=ChatCompletionChunkChoiceDelta(content=token_text)
                 )
                 chunk = ChatCompletionChunk(
-                    id=str(response_id),
+                    id=response_id,
                     created=timestamp,
                     model=request.model,
                     choices=[choice],
@@ -78,7 +81,7 @@ async def create_chat_completion(
             await orchestrator.sync_messages()
 
         logger.debug(
-            f"Generating event-stream stream for response {response_id}"
+            "Generating event-stream stream for response %s", response_id
         )
 
         return StreamingResponse(
@@ -98,17 +101,19 @@ async def create_chat_completion(
         for i in range(request.n or 1)
     ]
     usage = ChatCompletionUsage()
-    response = ChatCompletionResponse(
-        id=str(response_id),
+    final_response = ChatCompletionResponse(
+        id=response_id,
         created=timestamp,
         model=request.model,
         choices=choices,
         usage=usage,
     )
     logger.debug(
-        "Generated chat completion response #%s %r", response_id, response
+        "Generated chat completion response #%s %r",
+        response_id,
+        final_response,
     )
 
     await orchestrator.sync_messages()
 
-    return response
+    return final_response
