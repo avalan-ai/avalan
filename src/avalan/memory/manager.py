@@ -14,7 +14,7 @@ from ..memory.permanent import (
 
 from logging import Logger
 from time import perf_counter
-from typing import Any
+from types import TracebackType
 from uuid import UUID
 
 
@@ -31,7 +31,7 @@ class MemoryManager:
     @classmethod
     async def create_instance(
         cls,
-        *args,
+        *args: object,
         agent_id: UUID,
         participant_id: UUID,
         text_partitioner: TextPartitioner,
@@ -39,7 +39,7 @@ class MemoryManager:
         with_permanent_message_memory: str | None = None,
         with_recent_message_memory: bool = True,
         event_manager: EventManager | None = None,
-    ):
+    ) -> "MemoryManager":
         permanent_memory: PermanentMessageMemory | None = None
         if with_permanent_message_memory:
             from .permanent.pgsql.message import PgsqlMessageMemory
@@ -65,7 +65,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        *args,
+        *args: object,
         agent_id: UUID,
         participant_id: UUID,
         permanent_message_memory: PermanentMessageMemory | None,
@@ -126,10 +126,12 @@ class MemoryManager:
             else None
         )
 
-    def add_recent_message_memory(self, memory: RecentMessageMemory):
+    def add_recent_message_memory(self, memory: RecentMessageMemory) -> None:
         self._recent_message_memory = memory
 
-    def add_permanent_message_memory(self, memory: PermanentMessageMemory):
+    def add_permanent_message_memory(
+        self, memory: PermanentMessageMemory
+    ) -> None:
         self._permanent_message_memory = memory
 
     def add_permanent_memory(
@@ -230,7 +232,7 @@ class MemoryManager:
     async def continue_session(
         self,
         session_id: UUID,
-        *args,
+        *args: object,
         load_recent_messages: bool = True,
         load_recent_messages_limit: int | None = None,
     ) -> None:
@@ -328,7 +330,7 @@ class MemoryManager:
         search: str,
         agent_id: UUID,
         participant_id: UUID,
-        *args,
+        *args: object,
         function: VectorFunction,
         limit: int | None = None,
         search_user_messages: bool = False,
@@ -392,6 +394,6 @@ class MemoryManager:
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: Any | None,
-    ):
+        traceback: TracebackType | None,
+    ) -> None:
         pass
