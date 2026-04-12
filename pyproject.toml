@@ -222,7 +222,6 @@ python_version = "3.11"
 module = [
   "avalan.agent.*",
   "avalan.cli.*",
-  "avalan.deploy.*",
   "avalan.memory.*",
   "avalan.model.*",
   "avalan.server.*",
@@ -235,6 +234,9 @@ module = [
   "a2a",
   "anyio",
   "boto3",
+  "boto3.*",
+  "botocore",
+  "botocore.*",
   "bs4",
   "fastapi",
   "fastapi.*",
