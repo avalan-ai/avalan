@@ -70,6 +70,7 @@ class Engine(ABC):
     _parameter_types: set[str] | None = None
     _parameter_count: int | None = None
     _exit_stack: AsyncExitStack = AsyncExitStack()
+    _pending_exit_task: asyncio.Task[None] | None = None
 
     DTYPE_SIZES: dict[str, int] = {
         "bool": 1,
@@ -283,8 +284,17 @@ class Engine(ABC):
         except RuntimeError:
             asyncio.run(self._exit_stack.aclose())
         else:
-            loop.create_task(self._exit_stack.aclose())
+            self._pending_exit_task = loop.create_task(
+                self._exit_stack.aclose()
+            )
         return False
+
+    async def wait_closed(self) -> None:
+        """Wait for any asynchronous close task scheduled by __exit__."""
+        if self._pending_exit_task is None:
+            return
+        await self._pending_exit_task
+        self._pending_exit_task = None
 
     def _load(
         self, *args, load_tokenizer: bool, tokenizer_name_or_path: str | None
