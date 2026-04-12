@@ -12,14 +12,19 @@ from .....tool.manager import ToolManager
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import replace
+from importlib import import_module
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Literal, Protocol
 
 from diffusers import DiffusionPipeline
-from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
+
+
+class _TiktokenEncoding(Protocol):
+    def encode(self, text: str) -> list[int]:
+        """Encode the provided text into token IDs."""
 
 
 class TextGenerationVendorModel(TextGenerationModel, ABC):
@@ -68,16 +73,27 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
+    @staticmethod
+    def _resolve_encoding(
+        model_id: str, default_model: str
+    ) -> _TiktokenEncoding:
+        tiktoken = import_module("tiktoken")
+        encoding_for_model = getattr(tiktoken, "encoding_for_model")
+        get_encoding = getattr(tiktoken, "get_encoding")
+        try:
+            return encoding_for_model(model_id)
+        except KeyError:
+            return get_encoding(default_model)
+
     def input_token_count(
         self,
         input: Input,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
     ) -> int:
-        try:
-            encoding = encoding_for_model(self._model_id)
-        except KeyError:
-            encoding = get_encoding(self._TIKTOKEN_DEFAULT_MODEL)
+        encoding = self._resolve_encoding(
+            self._model_id, self._TIKTOKEN_DEFAULT_MODEL
+        )
 
         messages = self._messages(
             input, system_prompt, developer_prompt, tool=None
