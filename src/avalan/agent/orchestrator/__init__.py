@@ -28,6 +28,7 @@ from .response.orchestrator_response import OrchestratorResponse
 
 from contextlib import ExitStack
 from dataclasses import asdict
+from inspect import isawaitable
 from json import dumps
 from logging import Logger
 from time import perf_counter
@@ -48,6 +49,7 @@ class Orchestrator:
     _event_manager: EventManager
     _engine_agents: dict[EngineEnvironment, EngineAgent] = {}
     _engines_stack: ExitStack = ExitStack()
+    _engines: list[Engine]
     _operation_step: int | None = None
     _model_ids: set[str] = set()
     _call_options: dict | None = None
@@ -92,6 +94,7 @@ class Orchestrator:
         self._call_options = call_options
         self._user = user
         self._user_template = user_template
+        self._engines = []
 
     @property
     def engine_agent(self) -> EngineAgent | None:
@@ -274,6 +277,7 @@ class Orchestrator:
                     raise NotImplementedError()
 
                 self._engines_stack.enter_context(engine)
+                self._engines.append(engine)
                 agent = TemplateEngineAgent(
                     engine,
                     self._memory,
@@ -304,7 +308,15 @@ class Orchestrator:
         if self._exit_memory:
             self._memory.__exit__(exc_type, exc_value, traceback)
 
-        return self._engines_stack.__exit__(exc_type, exc_value, traceback)
+        result = self._engines_stack.__exit__(exc_type, exc_value, traceback)
+        for engine in self._engines:
+            wait_closed = getattr(engine, "wait_closed", None)
+            if wait_closed:
+                close_result = wait_closed()
+                if isawaitable(close_result):
+                    await close_result
+        self._engines.clear()
+        return result
 
     async def sync_messages(self) -> None:
         if self._last_engine_agent:

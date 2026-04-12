@@ -85,6 +85,7 @@ class ModelManager(ContextDecorator):
     _logger: Logger
     _secrets: KeyringSecrets
     _event_manager: EventManager | None
+    _pending_exit_task: asyncio.Task[None] | None
 
     def __init__(
         self,
@@ -97,6 +98,7 @@ class ModelManager(ContextDecorator):
         self._stack = AsyncExitStack()
         self._secrets = secrets or KeyringSecrets()
         self._event_manager = event_manager
+        self._pending_exit_task = None
 
     def __enter__(self):
         return self
@@ -112,7 +114,7 @@ class ModelManager(ContextDecorator):
         except RuntimeError:
             asyncio.run(self._stack.aclose())
         else:
-            loop.create_task(self._stack.aclose())
+            self._pending_exit_task = loop.create_task(self._stack.aclose())
         return False
 
     async def __aenter__(self) -> "ModelManager":
@@ -124,6 +126,9 @@ class ModelManager(ContextDecorator):
         exc_value: BaseException | None,
         traceback: Any | None,
     ) -> bool:
+        if self._pending_exit_task is not None:
+            await self._pending_exit_task
+            self._pending_exit_task = None
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
     async def __call__(
