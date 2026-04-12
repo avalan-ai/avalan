@@ -12,22 +12,28 @@ from avalan.model.response.text import TextGenerationResponse
 
 class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
     async def test_stream_iteration(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
         from avalan.model.nlp.text import generation as gen_mod
 
         sys.modules["avalan.model"].TextGenerationModel = (
             gen_mod.TextGenerationModel
         )
-        from avalan.model.nlp.text.mlxlm import MlxLmStream
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
 
-        async def agen():
-            yield "a"
-            yield "b"
-
-        stream = MlxLmStream(iter(["a", "b"]))
-        self.assertEqual(await stream.__anext__(), "a")
-        self.assertEqual(await stream.__anext__(), "b")
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            stream = MlxLmStream(iter(["a", "b"]))
+            self.assertEqual(await stream.__anext__(), "a")
+            self.assertEqual(await stream.__anext__(), "b")
+            with self.assertRaises(StopAsyncIteration):
+                await stream.__anext__()
         del sys.modules["avalan.model"].TextGenerationModel
 
 

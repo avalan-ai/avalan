@@ -44,6 +44,14 @@ from rich.prompt import Prompt
 from rich.spinner import Spinner
 from rich.theme import Theme
 
+_HAS_INPUT = has_input
+
+
+def _supports_optional_stdin(modality: Modality) -> bool:
+    return modality in {
+        Modality.VISION_ENCODER_DECODER,
+    }
+
 
 def model_display(
     args: Namespace,
@@ -184,7 +192,11 @@ async def model_run(
 
             tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
-            if operation.requires_input or has_input(console):
+            should_read_input = operation.requires_input or (
+                _supports_optional_stdin(operation.modality)
+                and has_input(console)
+            )
+            if should_read_input:
                 input_string = get_input(
                     console,
                     _i["user_input"] + " ",
@@ -192,10 +204,11 @@ async def model_run(
                     is_quiet=args.quiet,
                     tty_path=tty_path,
                 )
-                if not input_string:
+                if operation.requires_input and not input_string:
                     return
 
-                operation = replace(operation, input=input_string)
+                if input_string:
+                    operation = replace(operation, input=input_string)
 
             context = ModelCallContext(
                 specification=Specification(role=None, goal=None),

@@ -437,15 +437,15 @@ poetry install avalan
 > for example with:
 >
 > ```
-> poetry install avalan --extras 'agent audio cpu memory secrets server test translation
-vision'
+> poetry install avalan --extras 'agent audio memory secrets server tool translation
+vision vendors'
 >
 > ```
 >
 > Or you can install all extras at once with:
 >
 > ```
-> poetry install avalan --extras all
+> poetry install --all-extras
 >
 > ```
 
@@ -773,4 +773,3 @@ Error logging](https://getsentry.com/for/python)
 StatusPage
 
 Status page](https://statuspage.io)
-

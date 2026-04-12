@@ -103,16 +103,11 @@ gh release create vX.Y.Z \
 
 ## Running tests
 
-If you want to run the tests, install the `tests` extra packages:
+If you want to run the tests with the supported contributor dependency set,
+use:
 
 ```bash
-poetry install --extras test
-```
-
-You can run the tests with:
-
-```bash
-poetry run pytest --verbose
+make test
 ```
 
 ## Translations

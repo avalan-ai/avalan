@@ -286,15 +286,23 @@ class EngineLoadTestCase(TestCase):
         engine._loaded_model = False
         engine._model = None
         engine._config = None
-        with patch("importlib.util.find_spec", return_value=True):
-            module = types.SimpleNamespace(
-                SentenceTransformer=DummyST,
-                __spec__=importlib.machinery.ModuleSpec(
-                    "sentence_transformers", None
-                ),
-            )
-            with patch.dict("sys.modules", {"sentence_transformers": module}):
-                engine._load(load_tokenizer=False, tokenizer_name_or_path=None)
+        module = types.SimpleNamespace(
+            SentenceTransformer=DummyST,
+            __spec__=importlib.machinery.ModuleSpec(
+                "sentence_transformers", None
+            ),
+        )
+
+        def fake_find_spec(name: str):
+            if name == "sentence_transformers":
+                return module.__spec__
+            return None
+
+        with (
+            patch("avalan.model.engine.find_spec", side_effect=fake_find_spec),
+            patch.dict("sys.modules", {"sentence_transformers": module}),
+        ):
+            engine._load(load_tokenizer=False, tokenizer_name_or_path=None)
         self.assertIsInstance(engine._config, SentenceTransformerModelConfig)
 
 

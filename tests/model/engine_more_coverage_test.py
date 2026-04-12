@@ -100,6 +100,7 @@ class ContextAsyncExitTestCase(IsolatedAsyncioTestCase):
 class MlxLoadTestCase(TestCase):
     def test_mlx_branch(self) -> None:
         module_nn = types.ModuleType("mlx.nn")
+        module_nn.__spec__ = importlib.machinery.ModuleSpec("mlx.nn", None)
 
         class Module:
             pass
@@ -110,7 +111,11 @@ class MlxLoadTestCase(TestCase):
         module_mlx.__spec__ = importlib.machinery.ModuleSpec("mlx", None)
 
         def fake_find_spec(name: str):
-            return module_mlx.__spec__ if name == "mlx" else None
+            if name == "mlx":
+                return module_mlx.__spec__
+            if name == "mlx.nn":
+                return module_nn.__spec__
+            return None
 
         sys_modules = {"mlx": module_mlx, "mlx.nn": module_nn}
         with patch.dict(sys.modules, sys_modules):
@@ -149,3 +154,46 @@ class MlxLoadTestCase(TestCase):
 
                 engine = DummyEngine()
                 self.assertTrue(engine._loaded_model)
+
+    def test_missing_mlx_nn_namespace_is_ignored(self) -> None:
+        module_mlx = types.ModuleType("mlx")
+        module_mlx.__spec__ = importlib.machinery.ModuleSpec("mlx", None)
+
+        def fake_find_spec(name: str):
+            return module_mlx.__spec__ if name == "mlx" else None
+
+        class DummyPipeline:
+            def eval(self) -> None:
+                pass
+
+            def parameters(self) -> list[object]:
+                return []
+
+            def resize_token_embeddings(self, *_: object) -> None:
+                pass
+
+        class DummyEngine(Engine):
+            def __init__(self) -> None:
+                self.fake_model = DummyPipeline()
+                super().__init__(
+                    "id",
+                    EngineSettings(
+                        auto_load_model=True, auto_load_tokenizer=False
+                    ),
+                )
+
+            async def __call__(self, input, **kwargs):
+                return "out"
+
+            def _load_model(self):
+                return self.fake_model
+
+        with patch.dict(sys.modules, {"mlx": module_mlx}):
+            with patch(
+                "avalan.model.engine.find_spec", side_effect=fake_find_spec
+            ):
+                with patch(
+                    "avalan.model.engine.DiffusionPipeline", DummyPipeline
+                ):
+                    engine = DummyEngine()
+                    self.assertTrue(engine._loaded_model)
