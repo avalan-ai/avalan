@@ -84,17 +84,9 @@ class ContextAsyncExitTestCase(IsolatedAsyncioTestCase):
             EngineSettings(auto_load_model=False, auto_load_tokenizer=False),
         )
         engine._exit_stack = AsyncMock()
-        loop = asyncio.get_running_loop()
-
-        def fake_create_task(coro: object) -> None:
-            assert isinstance(coro, object)
-            coro.close()  # type: ignore[attr-defined]
-
-        with patch.object(
-            loop, "create_task", side_effect=fake_create_task
-        ) as ct:
-            engine.__exit__(None, None, None)
-            ct.assert_called_once()
+        engine.__exit__(None, None, None)
+        await asyncio.sleep(0)
+        engine._exit_stack.aclose.assert_awaited_once()
 
 
 class MlxLoadTestCase(TestCase):

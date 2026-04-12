@@ -1,8 +1,8 @@
 from ..flow.connection import Connection
 from ..flow.node import Node
 
-from collections import deque
 import re
+from collections import deque
 from typing import Any, Callable
 
 

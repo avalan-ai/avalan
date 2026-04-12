@@ -140,8 +140,12 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.memory.has_permanent_message = True
         self.memory.has_recent_message = False
         self.orch._engines_stack.__exit__ = MagicMock(return_value="done")
+        engine = MagicMock()
+        engine.wait_closed = AsyncMock()
+        self.orch._engines = [engine]
         result = await self.orch.__aexit__(None, None, None)
         self.memory.__exit__.assert_called_once_with(None, None, None)
+        engine.wait_closed.assert_awaited_once()
         self.assertEqual(result, "done")
 
 

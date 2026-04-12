@@ -1,5 +1,4 @@
 import typing
-
 from typing import Callable, TypeVar
 
 T = TypeVar("T", bound=Callable[..., object])
