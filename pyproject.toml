@@ -220,6 +220,18 @@ python_version = "3.11"
 
 [[tool.mypy.overrides]]
 module = [
+  "avalan.agent.*",
+  "avalan.cli.*",
+  "avalan.deploy.*",
+  "avalan.memory.*",
+  "avalan.model.*",
+  "avalan.server.*",
+  "avalan.tool.*",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
   "a2a",
   "anyio",
   "boto3",
@@ -246,16 +258,3 @@ module = [
   "uvicorn",
 ]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-  "avalan.agent.*",
-  "avalan.cli.*",
-  "avalan.deploy.*",
-  "avalan.memory.*",
-  "avalan.model.*",
-  "avalan.secrets.*",
-  "avalan.server.*",
-  "avalan.tool.*",
-]
-ignore_errors = true

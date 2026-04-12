@@ -4,6 +4,7 @@ from unittest import TestCase, main
 from unittest.mock import MagicMock, patch
 
 import avalan.secrets as secrets
+from avalan.secrets import keyring as keyring_module
 
 
 class SecretsBaseTest(TestCase):
@@ -30,7 +31,7 @@ class SecretsBaseTest(TestCase):
 class KeyringSecretsInitTest(TestCase):
     def test_init_uses_get_keyring_and_delete_handles_errors(self) -> None:
         ring = MagicMock()
-        with patch("avalan.secrets.keyring.get_keyring", return_value=ring):
+        with patch("avalan.secrets.keyring._get_keyring", return_value=ring):
             sec = secrets.KeyringSecrets()
         self.assertIs(sec._ring, ring)
 
@@ -41,8 +42,15 @@ class KeyringSecretsInitTest(TestCase):
         sec.write("key", "secret")
         ring.set_password.assert_called_once_with("avalan", "key", "secret")
 
-        ring.delete_password.side_effect = Exception()
-        sec.delete("key")  # should not raise
+        if keyring_module._password_delete_error is None:
+            ring.delete_password.side_effect = RuntimeError()
+            with self.assertRaises(RuntimeError):
+                sec.delete("key")
+        else:
+            ring.delete_password.side_effect = (
+                keyring_module._password_delete_error()
+            )
+            sec.delete("key")
         ring.delete_password.assert_called_once_with("avalan", "key")
 
 
