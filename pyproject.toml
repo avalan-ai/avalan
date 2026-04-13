@@ -222,7 +222,6 @@ python_version = "3.11"
 module = [
   "avalan.agent.*",
   "avalan.cli.*",
-  "avalan.memory.*",
   "avalan.model.*",
   "avalan.tool.*",
 ]

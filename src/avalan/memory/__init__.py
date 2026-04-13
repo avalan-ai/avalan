@@ -1,4 +1,3 @@
-from ..compat import override
 from ..entities import EngineMessage
 
 from abc import ABC, abstractmethod
@@ -32,7 +31,7 @@ class MemoryStore(ABC, Generic[T]):
 
 
 class MessageMemory(MemoryStore[EngineMessage], ABC):
-    def search(self, query: str) -> list[EngineMessage] | None:
+    async def search(self, query: str) -> list[EngineMessage] | None:
         raise NotImplementedError()
 
 
@@ -40,19 +39,24 @@ class RecentMessageMemory(MessageMemory):
     _lock: Lock
     _data: list[EngineMessage]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self) -> None:
         self._lock = Lock()
-        self.reset()
-        super().__init__(**kwargs)
+        self._data = []
+        super().__init__()
 
-    @override
-    def append(self, data: EngineMessage) -> None:
+    async def append(self, agent_id: UUID, data: EngineMessage) -> None:
+        del agent_id
         with self._lock:
             self._data.append(data)
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         with self._lock:
             self._data = []
+
+    async def search(self, query: str) -> list[EngineMessage] | None:
+        del query
+        with self._lock:
+            return list(self._data)
 
     @property
     def size(self) -> int:

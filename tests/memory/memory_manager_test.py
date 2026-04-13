@@ -304,7 +304,7 @@ class MemoryManagerInitTestCase(IsolatedAsyncioTestCase):
 
 
 class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
-    def test_recent_messages_property(self):
+    async def test_recent_messages_property(self):
         tp = AsyncMock()
         rm = RecentMessageMemory()
         msg = EngineMessage(
@@ -312,7 +312,7 @@ class MemoryManagerPropertyTestCase(IsolatedAsyncioTestCase):
             model_id="m",
             message=Message(role=MessageRole.USER, content="hi"),
         )
-        rm.append(msg)
+        await rm.append(msg.agent_id, msg)
         manager = MemoryManager(
             agent_id=uuid4(),
             participant_id=uuid4(),
