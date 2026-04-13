@@ -224,7 +224,6 @@ module = [
   "avalan.cli.*",
   "avalan.memory.*",
   "avalan.model.*",
-  "avalan.server.routers.mcp",
   "avalan.tool.*",
 ]
 ignore_errors = true
