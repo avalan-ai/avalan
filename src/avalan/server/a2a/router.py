@@ -643,11 +643,12 @@ class A2AResponseTranslator:
 
     async def _handle_tool_process(self, event: Event) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        payload = event.payload or []
+        payload: dict[str, Any] | list[Any] = event.payload or []
         if isinstance(payload, dict):
-            calls: Iterable[ToolCall] = payload.get("calls", [])  # type: ignore[assignment]
+            raw_calls = payload.get("calls", [])
+            calls = raw_calls if isinstance(raw_calls, list) else []
         else:
-            calls = payload  # type: ignore[assignment]
+            calls = payload
         for call in calls:
             if not isinstance(call, ToolCall):
                 continue
@@ -908,11 +909,12 @@ class A2AStreamEventConverter:
             overview = await self._store.get_task_overview(self._task_id)
             metadata = overview.get("metadata") or {}
             self._cached_response_id = metadata.get("jsonrpc_id")
-        return (
-            None
-            if self._cached_response_id is _STREAM_RESPONSE_ID_UNSET
-            else self._cached_response_id
-        )
+        if self._cached_response_id is _STREAM_RESPONSE_ID_UNSET:
+            return None
+        response_id = self._cached_response_id
+        if isinstance(response_id, (str, int)):
+            return response_id
+        return None
 
     async def _task_result(self, event: dict[str, Any]) -> a2a_types.Task:
         overview = await self._store.get_task_overview(self._task_id)
@@ -1105,7 +1107,7 @@ async def create_task(
     logger: Logger = Depends(_di_get_logger),
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
     store: TaskStore = Depends(di_get_task_store),
-):
+) -> Any:
     try:
         raw_payload = await request.json()
     except (JSONDecodeError, ValueError) as exc:
@@ -1238,7 +1240,7 @@ async def create_task(
 async def get_task(
     task_id: str,
     store: TaskStore = Depends(di_get_task_store),
-):
+) -> Any:
     task = await store.get_task(task_id)
     return _coerce("Task", task)
 
@@ -1248,7 +1250,7 @@ async def list_task_events(
     task_id: str,
     after: int | None = Query(None),
     store: TaskStore = Depends(di_get_task_store),
-):
+) -> Any:
     events = await store.get_events(task_id, after=after)
     return _coerce_list("TaskEvent", events)
 
@@ -1258,7 +1260,7 @@ async def get_artifact(
     task_id: str,
     artifact_id: str,
     store: TaskStore = Depends(di_get_task_store),
-):
+) -> Any:
     artifact = await store.get_artifact(task_id, artifact_id)
     return _coerce("TaskArtifact", artifact)
 
@@ -1267,7 +1269,7 @@ async def get_artifact(
 async def agent_card(
     request: Request,
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
-):
+) -> Any:
     interface_url = str(request.url_for("create_task"))
     card = _build_agent_card(
         orchestrator,
@@ -1282,7 +1284,7 @@ async def agent_card(
 async def well_known_agent_card(
     request: Request,
     orchestrator: Orchestrator = Depends(_di_get_orchestrator),
-):
+) -> Any:
     interface_url = str(request.url_for("create_task"))
     card = _build_agent_card(
         orchestrator,
@@ -1315,12 +1317,12 @@ def _call_identifier(item: Token | TokenDetail | Event | str) -> str | None:
         return str(item.call.id)
     if isinstance(item, Event):
         if item.type is EventType.TOOL_PROCESS:
-            payload = item.payload or []
+            payload: dict[str, Any] | list[Any] = item.payload or []
             if isinstance(payload, dict):
                 candidates = payload.get("calls", [])
             else:
                 candidates = payload
-            if candidates:
+            if isinstance(candidates, list) and candidates:
                 call = candidates[0]
                 if isinstance(call, ToolCall):
                     return str(call.id)
