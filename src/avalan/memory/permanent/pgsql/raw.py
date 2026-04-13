@@ -10,10 +10,12 @@ from ....memory.permanent import (
 )
 from ....memory.permanent.pgsql import PgsqlMemory
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from json import dumps
 from logging import Logger
+from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.psycopg import Vector
@@ -24,13 +26,12 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
     async def create_instance(
         cls,
         dsn: str,
-        *args,
         logger: Logger,
         pool_minimum: int = 1,
         pool_maximum: int = 10,
         pool_open: bool = True,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> "PgsqlRawMemory":
         memory = cls(
             dsn=dsn,
             logger=logger,
@@ -46,12 +47,11 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         self,
         namespace: str,
         participant_id: UUID,
-        *args,
         memory_type: MemoryType,
         data: str,
         identifier: str,
         partitions: list[TextPartition],
-        symbols: dict | None = None,
+        symbols: Mapping[str, Any] | None = None,
         model_id: str | None = None,
         title: str | None = None,
         description: str | None = None,
@@ -154,7 +154,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
         namespace: str
         identifier: str
         partitions: int
-        symbols: dict | None
+        symbols: dict[str, Any] | None
         created_at: datetime
         title: str | None
         description: str | None
@@ -216,7 +216,6 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
 
     async def search_memories(
         self,
-        *args,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -403,4 +402,5 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                         ),
                     )
                     await cursor.close()
-        return UUID(entity_id) if isinstance(entity_id, str) else entity_id
+        assert entity_id is not None
+        return entity_id if isinstance(entity_id, UUID) else UUID(entity_id)
