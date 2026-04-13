@@ -3,8 +3,8 @@ from ....entities import (
     EngineMessageScored,
     Message,
     MessageRole,
+    TextPartition,
 )
-from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     PermanentMessageMemory,
     VectorFunction,
@@ -178,12 +178,12 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         *,
         agent_id: UUID,
         function: VectorFunction,
-        limit: int | None = None,
         participant_id: UUID,
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
         exclude_session_id: UUID | None,
+        limit: int | None = None,
     ) -> list[EngineMessageScored]:
         assert agent_id and participant_id and search_partitions
         query = search_partitions[0].embeddings.tolist()
