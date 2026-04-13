@@ -1,5 +1,5 @@
 from ....entities import EngineMessage, EngineMessageScored, Message
-from ....memory import MemoryChunk, MemoryStore
+from ....memory import MemoryStore
 from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageScored,
@@ -9,7 +9,7 @@ from ....memory.permanent import (
 
 from logging import Logger
 from time import perf_counter
-from typing import TypeVar
+from typing import Any, Literal, TypeVar, cast, overload
 
 from pgvector.psycopg import register_vector_async
 from psycopg import AsyncConnection, AsyncCursor
@@ -18,13 +18,17 @@ from psycopg.types import TypeInfo
 from psycopg_pool import AsyncConnectionPool
 
 T = TypeVar("T")
+U = TypeVar("U")
+QueryParams = tuple[object, ...]
 
 
 class BasePgsqlMemory(MemoryStore[T]):
-    _database: AsyncConnection
+    _database: AsyncConnectionPool[Any]
     _logger: Logger
 
-    def __init__(self, database: AsyncConnectionPool, logger: Logger):
+    def __init__(
+        self, database: AsyncConnectionPool[Any], logger: Logger
+    ) -> None:
         self._database = database
         self._logger = logger
 
@@ -35,7 +39,10 @@ class BasePgsqlMemory(MemoryStore[T]):
         raise NotImplementedError()
 
     async def _execute(
-        self, cursor: AsyncCursor, query: str, parameters: tuple | None
+        self,
+        cursor: AsyncCursor[Any],
+        query: str,
+        parameters: QueryParams | None,
     ) -> None:
         self._logger.debug("Executing query: %s with %s", query, parameters)
         start = perf_counter()
@@ -45,8 +52,8 @@ class BasePgsqlMemory(MemoryStore[T]):
         )
 
     async def _fetch_all(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> list[T]:
+        self, entity: type[U], query: str, parameters: QueryParams
+    ) -> list[U]:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
@@ -59,15 +66,18 @@ class BasePgsqlMemory(MemoryStore[T]):
                 )
 
     async def _fetch_one(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> T:
+        self, entity: type[U], query: str, parameters: QueryParams
+    ) -> U:
         result = await self._try_fetch_one(entity, query, parameters)
         if result is None:
             raise RecordNotFoundException()
         return result
 
     async def _fetch_field(
-        self, field: str, query: str, parameters: tuple | None = None
+        self,
+        field: str,
+        query: str,
+        parameters: QueryParams | None = None,
     ) -> str | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
@@ -77,7 +87,7 @@ class BasePgsqlMemory(MemoryStore[T]):
                 row = dict(result) if result is not None else None
                 return row[field] if row else None
 
-    async def _has_one(self, query: str, parameters: tuple) -> bool:
+    async def _has_one(self, query: str, parameters: QueryParams) -> bool:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
@@ -86,8 +96,8 @@ class BasePgsqlMemory(MemoryStore[T]):
                 return result is not None
 
     async def _try_fetch_one(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> T | None:
+        self, entity: type[U], query: str, parameters: QueryParams
+    ) -> U | None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
@@ -96,20 +106,21 @@ class BasePgsqlMemory(MemoryStore[T]):
                 return entity(**dict(result)) if result is not None else None
 
     async def _update_and_fetch_one(
-        self, entity: type[T], query: str, parameters: tuple
-    ) -> T:
+        self, entity: type[U], query: str, parameters: QueryParams
+    ) -> U:
         row = await self._update_and_fetch_row(query, parameters)
         return entity(**row)
 
     async def _update_and_fetch_field(
-        self, field: str, query: str, parameters: tuple
+        self, field: str, query: str, parameters: QueryParams
     ) -> str:
         row = await self._update_and_fetch_row(query, parameters)
-        return row[field]
+        value = row[field]
+        return value if isinstance(value, str) else str(value)
 
     async def _update_and_fetch_row(
-        self, query: str, parameters: tuple
-    ) -> dict:
+        self, query: str, parameters: QueryParams
+    ) -> dict[str, Any]:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
@@ -119,51 +130,51 @@ class BasePgsqlMemory(MemoryStore[T]):
                     raise RecordNotSavedException()
                 return dict(result)
 
-    async def _update(self, query: str, parameters: tuple) -> None:
+    async def _update(self, query: str, parameters: QueryParams) -> None:
         async with self._database.connection() as connection:
             async with connection.cursor() as cursor:
                 await self._execute(cursor, query, parameters)
                 await cursor.close()
 
 
-class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
+class PgsqlMemory(BasePgsqlMemory[T]):
     _composite_types: list[str] | None
 
     @classmethod
     async def create_instance_from_pool(
         cls,
-        pool: AsyncConnectionPool,
+        pool: AsyncConnectionPool[Any],
         *,
         logger: Logger,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> "PgsqlMemory[T]":
         memory = cls(dsn=None, pool=pool, logger=logger, **kwargs)
         return memory
 
     def __init__(
         self,
         dsn: str | None,
-        *args,
-        pool: AsyncConnectionPool | None = None,
+        logger: Logger,
+        pool: AsyncConnectionPool[Any] | None = None,
         composite_types: list[str] | None = None,
         pool_minimum: int | None = None,
         pool_maximum: int | None = None,
-        logger: Logger,
-        **kwargs,
-    ):
-        assert pool or (
-            dsn
-            and pool_minimum
-            and pool_minimum
-            and pool_minimum > 0
-            and pool_maximum > pool_minimum
-        )
+        **kwargs: Any,
+    ) -> None:
+        self._composite_types = composite_types
+        if pool is None:
+            assert dsn is not None
+            assert pool_minimum is not None
+            assert pool_maximum is not None
+            assert pool_minimum > 0
+            assert pool_maximum > pool_minimum
 
         if pool:
-            super().__init__(database=pool, logger=logger, **kwargs)
+            super().__init__(database=pool, logger=logger)
         else:
-            self._composite_types = composite_types
-
+            assert dsn is not None
+            assert pool_minimum is not None
+            assert pool_maximum is not None
             if "//" not in dsn:
                 dsn = f"postgresql://{dsn}"
 
@@ -174,10 +185,12 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
                 configure=self._configure_connection,
                 open=False,
             )
-            super().__init__(database=database, logger=logger, **kwargs)
+            super().__init__(database=database, logger=logger)
 
-    async def _configure_connection(self, connection: AsyncConnection):
-        connection.row_factory = dict_row
+    async def _configure_connection(
+        self, connection: AsyncConnection[Any]
+    ) -> None:
+        connection.row_factory = cast(Any, dict_row)
         await connection.set_autocommit(True)
         if self._composite_types:
             for composite_type_name in self._composite_types:
@@ -189,27 +202,55 @@ class PgsqlMemory(BasePgsqlMemory[MemoryChunk[T]]):
         await register_vector_async(connection)
 
     @staticmethod
+    @overload
+    def _to_engine_messages(
+        messages: list[PermanentMessage],
+        *,
+        limit: int | None,
+        reverse: bool = False,
+        scored: Literal[False] = False,
+    ) -> list[EngineMessage]: ...
+
+    @staticmethod
+    @overload
+    def _to_engine_messages(
+        messages: list[PermanentMessageScored],
+        *,
+        limit: int | None,
+        reverse: bool = False,
+        scored: Literal[True],
+    ) -> list[EngineMessageScored]: ...
+
+    @staticmethod
     def _to_engine_messages(
         messages: list[PermanentMessage] | list[PermanentMessageScored],
-        *args,
+        *,
         limit: int | None,
         reverse: bool = False,
         scored: bool = False,
     ) -> list[EngineMessage] | list[EngineMessageScored]:
-        engine_messages = [
-            (
+        if scored:
+            scored_messages = cast(list[PermanentMessageScored], messages)
+            engine_messages_scored: list[EngineMessageScored] = [
                 EngineMessageScored(
                     agent_id=m.agent_id,
                     model_id=m.model_id,
                     message=Message(role=m.author, content=m.data),
                     score=m.score,
                 )
-                if scored
-                else EngineMessage(
-                    agent_id=m.agent_id,
-                    model_id=m.model_id,
-                    message=Message(role=m.author, content=m.data),
-                )
+                for m in scored_messages
+            ]
+            if reverse:
+                engine_messages_scored.reverse()
+            if limit and len(engine_messages_scored) > limit:
+                engine_messages_scored = engine_messages_scored[:limit]
+            return engine_messages_scored
+
+        engine_messages = [
+            EngineMessage(
+                agent_id=m.agent_id,
+                model_id=m.model_id,
+                message=Message(role=m.author, content=m.data),
             )
             for m in messages
         ]
