@@ -225,7 +225,9 @@ class MemoryManager:
                 )
 
         if self._recent_message_memory:
-            self._recent_message_memory.append(engine_message)
+            await self._recent_message_memory.append(
+                self._agent_id, engine_message
+            )
 
         self._logger.debug("<Memory> Message appended")
 
@@ -268,9 +270,11 @@ class MemoryManager:
                     limit=load_recent_messages_limit,
                 )
             )
-            self._recent_message_memory.reset()
+            await self._recent_message_memory.reset()
             for message in messages:
-                self._recent_message_memory.append(message)
+                await self._recent_message_memory.append(
+                    self._agent_id, message
+                )
 
         self._logger.debug("Session %s continued", session_id)
         if self._permanent_message_memory and self._event_manager:
@@ -305,7 +309,7 @@ class MemoryManager:
             )
 
         if self._recent_message_memory:
-            self._recent_message_memory.reset()
+            await self._recent_message_memory.reset()
 
         self._logger.debug("Session started")
         if self._permanent_message_memory and self._event_manager:
