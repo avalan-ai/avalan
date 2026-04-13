@@ -11,7 +11,7 @@ def get_model_settings(
     logger: Logger,
     engine_uri: EngineUri,
     modality: Modality | None = None,
-) -> dict:
+) -> dict[str, object]:
     """Return settings used to load a model."""
     modality = (
         modality

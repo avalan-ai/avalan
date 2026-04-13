@@ -6,6 +6,7 @@ from io import UnsupportedOperation
 from json import dumps
 from select import select
 from sys import stdin
+from typing import TextIO
 
 from rich.console import Console
 from rich.live import Live
@@ -48,13 +49,11 @@ def confirm_tool_call(
     live: Live | None = None,
 ) -> str:
     prompt = "Execute tool call?"
-    options = {
-        "choices": ["y", "a", "n"],
-        "default": "n",
-        "console": console,
-        "show_choices": True,
-        "show_default": True,
-    }
+    choices = ["y", "a", "n"]
+    default = "n"
+    show_choices = True
+    show_default = True
+    stream: TextIO | None = None
 
     with _pause_live(live) if live else nullcontext():
         call_element = Syntax(
@@ -65,22 +64,39 @@ def confirm_tool_call(
         if live:
             prompt_element = Text.from_markup(prompt, style="prompt")
             prompt_element.end = ""
-            choices = "/".join(options["choices"])
+            choices_display = "/".join(choices)
             prompt_element.append(" ")
-            prompt_element.append(f"[{choices}]", "prompt.choices")
+            prompt_element.append(f"[{choices_display}]", "prompt.choices")
 
-            if options["show_default"]:
-                default = Text(f"({options['default']})", "prompt.default")
+            if show_default:
+                default_element = Text(f"({default})", "prompt.default")
                 prompt_element.append(" ")
-                prompt_element.append(default)
+                prompt_element.append(default_element)
 
             console.print(prompt_element)
 
         stdin_is_tty = stdin.isatty()
         with open(tty_path) if not stdin_is_tty else nullcontext() as tty:
             if not stdin_is_tty:
-                options["stream"] = tty
-            return Prompt.ask(prompt, **options)
+                stream = tty
+            if stream is not None:
+                return Prompt.ask(
+                    prompt,
+                    choices=choices,
+                    default=default,
+                    console=console,
+                    show_choices=show_choices,
+                    show_default=show_default,
+                    stream=stream,
+                )
+            return Prompt.ask(
+                prompt,
+                choices=choices,
+                default=default,
+                console=console,
+                show_choices=show_choices,
+                show_default=show_default,
+            )
 
 
 def has_input(console: Console) -> bool:
@@ -123,10 +139,15 @@ def get_input(
                 if is_input_available and force_prompt
                 else nullcontext()
             ) as tty:
-                kwargs = {}
+                input_stream: TextIO | None = None
                 if is_input_available and force_prompt:
-                    kwargs["stream"] = tty
-                input_string = PromptWithoutPrefix.ask(full_prompt, **kwargs)
+                    input_stream = tty
+                if input_stream is not None:
+                    input_string = PromptWithoutPrefix.ask(
+                        full_prompt, stream=input_stream
+                    )
+                else:
+                    input_string = PromptWithoutPrefix.ask(full_prompt)
             if strip_prompt:
                 input_string = input_string.strip()
         except EOFError:
