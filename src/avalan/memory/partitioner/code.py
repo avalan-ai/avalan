@@ -74,9 +74,6 @@ class CodePartitioner:
         tree = parser.parse(input.encode(encoding), encoding=encoding)
         root_node = tree.root_node
 
-        self._logger.debug("Parsing %s code for functions", language_name)
-        functions = self._get_functions(namespace, root_node, encoding)
-
         if root_node.children and root_node.children[0].is_error:
             error_node = root_node.children[0]
             error_name = error_node.grammar_name
@@ -87,6 +84,9 @@ class CodePartitioner:
                 f'{error_name}: "{error_message}" at'
                 f" {error_row},{error_column}"
             )
+
+        self._logger.debug("Parsing %s code for functions", language_name)
+        functions = self._get_functions(namespace, root_node, encoding)
 
         self._logger.debug("Partitioning %s code", language_name)
         partitions = self._partition(
@@ -134,8 +134,11 @@ class CodePartitioner:
         for child_node in node.children:
             if child_node.type == "class_definition":
                 class_name_node = child_node.child_by_field_name("name")
-                assert class_name_node and class_name_node.text is not None
-                current_class_name = class_name_node.text.decode(encoding)
+                current_class_name = (
+                    class_name_node.text.decode(encoding)
+                    if class_name_node and class_name_node.text is not None
+                    else None
+                )
                 class_id = _j(
                     ".",
                     [
@@ -220,8 +223,11 @@ class CodePartitioner:
         results = []
         if node.type == "class_definition":
             class_name_node = node.child_by_field_name("name")
-            assert class_name_node and class_name_node.text is not None
-            class_name = class_name_node.text.decode(encoding)
+            class_name = (
+                class_name_node.text.decode(encoding)
+                if class_name_node and class_name_node.text is not None
+                else current_class_name
+            )
             for child in node.children:
                 functs = cls._get_functions(
                     current_namespace,
