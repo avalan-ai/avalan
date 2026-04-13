@@ -8,11 +8,15 @@ from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 
 from collections.abc import AsyncIterator, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+)
 from importlib import import_module
 from importlib.util import find_spec
 from logging import Logger
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Mapping, cast
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
@@ -91,9 +95,9 @@ def _create_lifespan(
     selected_protocols: Mapping[str, set[str]],
     agent_id: UUID | None,
     participant_id: UUID | None,
-) -> Callable[[FastAPI], AsyncIterator[None]]:
+) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Initializing app lifespan")
         from os import environ
 
@@ -199,7 +203,8 @@ def _include_protocol_routers(
 
 
 def _attach_lifespan(
-    app: FastAPI, lifespan: Callable[[FastAPI], AsyncIterator[None]]
+    app: FastAPI,
+    lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]],
 ) -> None:
     existing = app.router.lifespan_context
 
@@ -208,7 +213,7 @@ def _attach_lifespan(
         return
 
     @asynccontextmanager
-    async def combined(app_: FastAPI):
+    async def combined(app_: FastAPI) -> AsyncIterator[None]:
         async with existing(app_):
             async with lifespan(app_):
                 yield
@@ -404,6 +409,4 @@ async def di_get_orchestrator(request: Request) -> Orchestrator:
         orchestrator = await stack.enter_async_context(orchestrator_cm)
         request.app.state.orchestrator = orchestrator
         request.app.state.agent_id = orchestrator.id
-    orchestrator = request.app.state.orchestrator
-    assert orchestrator is not None
-    return orchestrator
+    return cast(Orchestrator, request.app.state.orchestrator)
