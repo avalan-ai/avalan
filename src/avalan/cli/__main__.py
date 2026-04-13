@@ -23,6 +23,7 @@ from ..cli.commands.model import (
     model_uninstall,
 )
 from ..cli.commands.tokenizer import tokenize
+from ..cli.theme import Theme
 from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
@@ -81,7 +82,7 @@ from warnings import filterwarnings
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
-from rich.theme import Theme
+from rich.theme import Theme as RichTheme
 from torch.cuda import device_count, is_available, set_device
 from torch.distributed import destroy_process_group
 from transformers.utils import (
@@ -1980,7 +1981,7 @@ class CLI:
         theme = FancyTheme(translator.gettext, translator.ngettext)
         _ = theme._
         console = Console(
-            theme=Theme(styles=theme.get_styles()), record=args.record
+            theme=RichTheme(styles=theme.get_styles()), record=args.record
         )
 
         if args.help_full:

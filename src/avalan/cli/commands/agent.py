@@ -5,6 +5,7 @@ from ...agent.orchestrator.response.orchestrator_response import (
 )
 from ...cli import confirm_tool_call, get_input, has_input
 from ...cli.commands.model import token_generation
+from ...cli.theme import Theme
 from ...entities import (
     Backend,
     GenerationCacheStrategy,
@@ -34,7 +35,6 @@ from rich.console import Console
 from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
-from rich.theme import Theme
 
 
 def _parse_permanent_memory_items(

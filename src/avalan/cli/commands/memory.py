@@ -1,6 +1,7 @@
 from ...cli import get_input
 from ...cli.commands import get_model_settings
 from ...cli.commands.model import model_display
+from ...cli.theme import Theme
 from ...entities import DistanceType, Modality, SearchMatch, Similarity
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.partitioner.text import TextPartition, TextPartitioner
@@ -23,7 +24,6 @@ from markitdown import DocumentConverterResult, MarkItDown
 from numpy import abs, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from rich.console import Console
-from rich.theme import Theme
 
 
 async def memory_document_index(
