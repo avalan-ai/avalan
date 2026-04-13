@@ -8,6 +8,7 @@ from ....memory.permanent import (
 )
 from . import ElasticsearchMemory, to_thread  # noqa: F401
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from logging import Logger
 from typing import Any
@@ -51,12 +52,11 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
         self,
         namespace: str,
         participant_id: UUID,
-        *,
         memory_type: MemoryType,
         data: str,
         identifier: str,
         partitions: list[TextPartition],
-        symbols: dict | None = None,
+        symbols: Mapping[str, Any] | None = None,
         model_id: str | None = None,
         title: str | None = None,
         description: str | None = None,
@@ -115,7 +115,6 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
 
     async def search_memories(
         self,
-        *,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -212,7 +211,5 @@ class ElasticsearchRawMemory(ElasticsearchMemory, PermanentMemory):
             )
         return memories
 
-    async def search(
-        self, query: str
-    ) -> list[PermanentMemoryPartition] | None:
+    async def search(self, query: str) -> list[Memory] | None:
         raise NotImplementedError()

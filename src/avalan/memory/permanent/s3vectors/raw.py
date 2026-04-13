@@ -10,6 +10,7 @@ from ....memory.permanent import (
 from . import S3VectorsMemory
 
 from asyncio import to_thread  # noqa: F401
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from json import dumps, loads
 from logging import Logger
@@ -66,12 +67,11 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         self,
         namespace: str,
         participant_id: UUID,
-        *,
         memory_type: MemoryType,
         data: str,
         identifier: str,
         partitions: list[TextPartition],
-        symbols: dict | None = None,
+        symbols: Mapping[str, Any] | None = None,
         model_id: str | None = None,
         title: str | None = None,
         description: str | None = None,
@@ -97,22 +97,20 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         await self._put_object(
             Bucket=self._bucket,
             Key=f"{self._collection}/{entry.id}.json",
-            Body=dumps(
-                {
-                    "id": str(entry.id),
-                    "model_id": entry.model_id,
-                    "type": str(entry.type),
-                    "participant_id": str(entry.participant_id),
-                    "namespace": entry.namespace,
-                    "identifier": entry.identifier,
-                    "data": entry.data,
-                    "partitions": entry.partitions,
-                    "symbols": entry.symbols,
-                    "created_at": entry.created_at.isoformat(),
-                    "title": entry.title,
-                    "description": entry.description,
-                }
-            ).encode(),
+            Body=dumps({
+                "id": str(entry.id),
+                "model_id": entry.model_id,
+                "type": str(entry.type),
+                "participant_id": str(entry.participant_id),
+                "namespace": entry.namespace,
+                "identifier": entry.identifier,
+                "data": entry.data,
+                "partitions": entry.partitions,
+                "symbols": entry.symbols,
+                "created_at": entry.created_at.isoformat(),
+                "title": entry.title,
+                "description": entry.description,
+            }).encode(),
         )
         for row in partition_rows:
             await self._put_vector(
@@ -133,7 +131,6 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
 
     async def search_memories(
         self,
-        *,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -230,7 +227,5 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             )
         return memories
 
-    async def search(
-        self, query: str
-    ) -> list[PermanentMemoryPartition] | None:
+    async def search(self, query: str) -> list[Memory] | None:
         raise NotImplementedError()
