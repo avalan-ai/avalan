@@ -1,5 +1,5 @@
 from ....deploy.aws import AsyncClient
-from ....memory.partitioner.text import TextPartition
+from ....entities import TextPartition
 from ....memory.permanent import (
     Memory,
     MemoryType,

@@ -43,14 +43,6 @@ class PermanentMessageMemorySyncTestCase(TestCase):
         self.assertTrue(self.memory.has_session)
         self.assertEqual(self.memory.session_id, sid)
 
-    def test_reset_raises(self):
-        with self.assertRaises(NotImplementedError):
-            self.memory.reset()
-
-    def test_append_raises(self):
-        with self.assertRaises(NotImplementedError):
-            self.memory.append(MagicMock())
-
 
 class PermanentMessageMemoryAsyncTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -100,6 +92,18 @@ class PermanentMessageMemoryAsyncTestCase(IsolatedAsyncioTestCase):
                 self.memory, msg, partitions=[]
             )
 
+    async def test_append_not_implemented(self):
+        with self.assertRaises(NotImplementedError):
+            await PermanentMessageMemory.append(
+                self.memory,
+                agent_id=uuid4(),
+                data=MagicMock(spec=EngineMessage),
+            )
+
+    async def test_reset_not_implemented(self):
+        with self.assertRaises(NotImplementedError):
+            await PermanentMessageMemory.reset(self.memory)
+
     async def test_get_recent_messages_not_implemented(self):
         with self.assertRaises(NotImplementedError):
             await PermanentMessageMemory.get_recent_messages(
@@ -131,13 +135,17 @@ class PermanentMemoryTestCase(IsolatedAsyncioTestCase):
     def test_init(self):
         self.assertIs(self.memory._sentence_model, self.model)
 
-    def test_append_raises(self):
+    async def test_append_not_implemented(self):
         with self.assertRaises(NotImplementedError):
-            self.memory.append(MagicMock())
+            await PermanentMemory.append(
+                self.memory,
+                agent_id=uuid4(),
+                data=MagicMock(),
+            )
 
-    def test_reset_raises(self):
+    async def test_reset_not_implemented(self):
         with self.assertRaises(NotImplementedError):
-            self.memory.reset()
+            await PermanentMemory.reset(self.memory)
 
     async def test_append_with_partitions_not_implemented(self):
         part = TextPartition(

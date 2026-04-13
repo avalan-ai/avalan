@@ -1,5 +1,4 @@
-from ....entities import EngineMessage, EngineMessageScored
-from ....memory.partitioner.text import TextPartition
+from ....entities import EngineMessage, EngineMessageScored, TextPartition
 from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageMemory,

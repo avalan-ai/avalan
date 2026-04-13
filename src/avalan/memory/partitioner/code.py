@@ -3,7 +3,7 @@ from ...utils import _j
 
 from dataclasses import dataclass
 from logging import Logger
-from typing import Literal
+from typing import Literal, cast
 
 from tree_sitter import Language, Node, Parser
 from tree_sitter_python import language as python
@@ -74,18 +74,19 @@ class CodePartitioner:
         tree = parser.parse(input.encode(encoding), encoding=encoding)
         root_node = tree.root_node
 
-        self._logger.debug("Parsing %s code for functions", language_name)
-        functions = self._get_functions(namespace, root_node, encoding)
-
         if root_node.children and root_node.children[0].is_error:
             error_node = root_node.children[0]
             error_name = error_node.grammar_name
+            assert error_node.text is not None
             error_message = error_node.text.decode(encoding)
             error_row, error_column = error_node.start_point
             raise PartitionerException(
                 f'{error_name}: "{error_message}" at'
                 f" {error_row},{error_column}"
             )
+
+        self._logger.debug("Parsing %s code for functions", language_name)
+        functions = self._get_functions(namespace, root_node, encoding)
 
         self._logger.debug("Partitioning %s code", language_name)
         partitions = self._partition(
@@ -135,10 +136,17 @@ class CodePartitioner:
                 class_name_node = child_node.child_by_field_name("name")
                 current_class_name = (
                     class_name_node.text.decode(encoding)
-                    if class_name_node
+                    if class_name_node and class_name_node.text is not None
                     else None
                 )
-                class_id = _j(".", [current_namespace, current_class_name])
+                class_id = _j(
+                    ".",
+                    [
+                        part
+                        for part in (current_namespace, current_class_name)
+                        if part is not None
+                    ],
+                )
                 child_symbols = current_symbols + [
                     Symbol(symbol_type="class", id=class_id)
                 ]
@@ -217,8 +225,8 @@ class CodePartitioner:
             class_name_node = node.child_by_field_name("name")
             class_name = (
                 class_name_node.text.decode(encoding)
-                if class_name_node
-                else None
+                if class_name_node and class_name_node.text is not None
+                else current_class_name
             )
             for child in node.children:
                 functs = cls._get_functions(
@@ -262,6 +270,10 @@ class CodePartitioner:
         )
         params_node = node.child_by_field_name("parameters")
         return_type_node = node.child_by_field_name("return_type")
+        return_type: str | None = None
+        if return_type_node:
+            assert return_type_node.text is not None
+            return_type = return_type_node.text.decode(encoding)
         return Function(
             id=function_id,
             namespace=current_namespace,
@@ -272,11 +284,7 @@ class CodePartitioner:
                 if params_node
                 else None
             ),
-            return_type=(
-                return_type_node.text.decode(encoding)
-                if return_type_node
-                else None
-            ),
+            return_type=return_type,
         )
 
     @staticmethod
@@ -291,38 +299,47 @@ class CodePartitioner:
             "async_function_definition",
         )
         function_name_node = node.child_by_field_name("name")
-        assert function_name_node
+        assert function_name_node and function_name_node.text is not None
         function_name = function_name_node.text.decode(encoding)
         assert function_name
         function_id = _j(
-            ".", [current_namespace, current_class_name, function_name]
+            ".",
+            [
+                part
+                for part in (
+                    current_namespace,
+                    current_class_name,
+                    function_name,
+                )
+                if part is not None
+            ],
         )
         return function_id, function_name
 
     @staticmethod
-    def _get_parameters(
-        node: Node, encoding: Encoding
-    ) -> list[dict[str, str | None]]:
+    def _get_parameters(node: Node, encoding: Encoding) -> list[Parameter]:
         assert node
-        parameters = []
+        parameters: list[Parameter] = []
         for child in node.children:
             if child.type in (
                 "default_parameter",
                 "typed_default_parameter",
                 "typed_parameter",
             ):
-                param_type = child.child_by_field_name("type").text.decode(
-                    encoding
-                )
-                param_name = None
+                type_node = child.child_by_field_name("type")
+                assert type_node and type_node.text is not None
+                param_type = type_node.text.decode(encoding)
+                param_name: str | None = None
                 if child.named_child_count:
                     for parameter_child in child.children:
                         if parameter_child.type == "identifier":
+                            assert parameter_child.text is not None
                             param_name = parameter_child.text.decode(encoding)
                             break
+                assert param_name is not None
                 parameters.append(
                     Parameter(
-                        parameter_type=child.type,
+                        parameter_type=cast(ParameterType, child.type),
                         name=param_name,
                         type=param_type,
                     )
@@ -332,9 +349,10 @@ class CodePartitioner:
                 "identifier",
                 "keyword_separator",
             ):
+                assert child.text is not None
                 parameters.append(
                     Parameter(
-                        parameter_type=child.type,
+                        parameter_type=cast(ParameterType, child.type),
                         name=child.text.decode(encoding),
                         type=None,
                     )
