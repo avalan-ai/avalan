@@ -2,9 +2,15 @@ from ...cli import get_input
 from ...cli.commands import get_model_settings
 from ...cli.commands.model import model_display
 from ...cli.theme import Theme
-from ...entities import DistanceType, Modality, SearchMatch, Similarity
+from ...entities import (
+    DistanceType,
+    Modality,
+    SearchMatch,
+    Similarity,
+    TextPartition,
+)
 from ...memory.partitioner.code import CodePartitioner
-from ...memory.partitioner.text import TextPartition, TextPartitioner
+from ...memory.partitioner.text import TextPartitioner
 from ...memory.permanent import MemoryType
 from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from ...memory.source import MemorySource
@@ -13,6 +19,7 @@ from ...model.manager import ModelManager
 
 from argparse import Namespace
 from asyncio import to_thread
+from collections.abc import Callable
 from io import BytesIO
 from logging import Logger
 from pathlib import Path
@@ -121,6 +128,7 @@ async def memory_document_index(
                 else:
                     title = Path(source).name
 
+            partitions: list[TextPartition]
             if is_url or args.partitioner == "text":
                 partitioner = TextPartitioner(
                     stm,
@@ -139,7 +147,7 @@ async def memory_document_index(
                     args.encoding,
                     args.partition_max_tokens,
                 )
-                partitions: list[TextPartition] = []
+                partitions = []
                 for cp in code_partitions:
                     embeddings = await stm(cp.data)
                     tokens = stm.token_count(cp.data)
@@ -195,7 +203,7 @@ async def memory_embeddings(
     sort_by: DistanceType = args.sort or DistanceType.L2
     tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
 
-    sort_key = {
+    sort_key: Callable[[Similarity], float] = {
         DistanceType.COSINE: lambda s: s.cosine_distance,
         DistanceType.DOT: lambda s: s.inner_product,
         DistanceType.L1: lambda s: s.l1_distance,
@@ -358,6 +366,7 @@ async def memory_embeddings(
                 index = IndexFlatL2(input_string_embeddings.shape[0])
 
                 if partitioner:
+                    assert knowledge_partitions is not None
                     knowledge_stack = vstack(
                         [kp.embeddings for kp in knowledge_partitions]
                     ).astype("float32", copy=False)
