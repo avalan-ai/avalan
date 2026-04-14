@@ -1,5 +1,6 @@
 from ...cli import confirm
 from ...cli.download import create_live_tqdm_class
+from ...cli.theme import Theme
 from ...model.hubs import HubAccessDeniedException
 from ...model.hubs.huggingface import HuggingfaceHub
 
@@ -7,7 +8,6 @@ from argparse import Namespace
 
 from rich.console import Console
 from rich.padding import Padding
-from rich.theme import Theme
 
 
 def cache_delete(

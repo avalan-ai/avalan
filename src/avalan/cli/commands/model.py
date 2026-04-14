@@ -2,6 +2,7 @@ from ...agent import Specification
 from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
+from ...cli.theme import Theme
 from ...entities import (
     GenerationSettings,  # noqa: F401
     Modality,
@@ -42,7 +43,6 @@ from rich.live import Live
 from rich.padding import Padding
 from rich.prompt import Prompt
 from rich.spinner import Spinner
-from rich.theme import Theme
 
 _HAS_INPUT = has_input
 
