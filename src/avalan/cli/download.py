@@ -1,8 +1,8 @@
-from typing import Any
-
 from rich.console import RenderableType
 from rich.progress import Progress
-from tqdm.std import tqdm as std_tqdm
+from tqdm.std import tqdm
+
+std_tqdm = tqdm
 
 
 def create_live_tqdm_class(
@@ -21,8 +21,8 @@ def create_live_tqdm_class(
     https://github.com/tqdm/tqdm/blob/master/tqdm/rich.py """
 
 
-class tqdm_rich_progress(std_tqdm):  # type: ignore[misc]
-    def __init__(self, *args: object, **kwargs: Any) -> None:
+class tqdm_rich_progress(tqdm):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         sanitized_kwargs = {**kwargs}
         sanitized_kwargs.pop("progress", None)
         sanitized_kwargs.pop("options", None)
@@ -39,7 +39,7 @@ class tqdm_rich_progress(std_tqdm):  # type: ignore[misc]
         assert raw_progress_options is None or isinstance(
             raw_progress_options, dict
         )
-        progress_options: dict[str, Any] = {
+        progress_options: dict[str, object] = {
             "transient": not self.leave,
             **(raw_progress_options or {}),
         }
