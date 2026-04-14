@@ -27,7 +27,7 @@ from logging import Logger
 from math import ceil, inf
 from re import sub
 from textwrap import wrap
-from typing import Callable, Generator
+from typing import Any, AsyncGenerator, Callable
 from uuid import UUID
 
 from humanize import (
@@ -171,26 +171,24 @@ class FancyTheme(Theme):
         return Panel.fit(
             Padding(
                 Group(
-                    *_lf(
-                        [
-                            (
-                                f"[{description_color}]"
-                                f"{description}[/{description_color}]"
-                            ),
-                            (
-                                _i["author"]
-                                + (
-                                    f" [bright_black]{author}[/bright_black]"
-                                    + " · "
-                                    + _i["library_name"]
-                                    + f" [bright_black]{library_name}"
-                                    + "[/bright_black]"
-                                )
-                                if highlight
-                                else None
-                            ),
-                        ]
-                    )
+                    *_lf([
+                        (
+                            f"[{description_color}]"
+                            f"{description}[/{description_color}]"
+                        ),
+                        (
+                            _i["author"]
+                            + (
+                                f" [bright_black]{author}[/bright_black]"
+                                + " · "
+                                + _i["library_name"]
+                                + f" [bright_black]{library_name}"
+                                + "[/bright_black]"
+                            )
+                            if highlight
+                            else None
+                        ),
+                    ])
                 )
             ),
             title=_i["task_id"] + f" [cyan]{name}[/cyan]",
@@ -202,81 +200,72 @@ class FancyTheme(Theme):
     def agent(
         self,
         agent: Orchestrator,
-        *args,
+        *args: object,
         models: list[Model | str],
-        can_access: bool | None,
+        cans_access: bool | None = None,
+        can_access: bool | None = None,
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         models_group = Group(
-            *_lf(
-                [
-                    _i["model_id"]
-                    + " "
-                    + ", ".join(
-                        [
-                            (
-                                _("{model_id} ({parameters})").format(
-                                    model_id=_f(
-                                        "model_id", model.id, icon=False
-                                    ),
-                                    parameters=_f(
-                                        "parameters",
-                                        _("{n} params").format(
-                                            n=self._parameter_count(
-                                                model.parameters
-                                            )
-                                        ),
-                                        icon=False,
-                                    ),
-                                )
-                                if isinstance(model, Model)
-                                else str(model)
-                            )
-                            for model in models
-                        ]
-                    ),
-                    _f(
-                        "memory",
-                        _j(
-                            ", ",
-                            [
-                                (
-                                    _("short-term message")
-                                    if agent.memory.has_recent_message
-                                    else None
-                                ),
-                                (
-                                    _("long-term message ({driver})").format(
-                                        driver=type(
-                                            agent.memory.permanent_message
-                                        ).__name__
-                                    )
-                                    if agent.memory.has_permanent_message
-                                    else None
-                                ),
-                            ],
-                            empty=_("stateless"),
-                        ),
-                    ),
+            *_lf([
+                _i["model_id"]
+                + " "
+                + ", ".join([
                     (
-                        _f(
-                            "session",
-                            " "
-                            + _("session: {session_id}").format(
-                                session_id=_f(
-                                    "session_id",
-                                    str(
-                                        agent.memory.permanent_message.session_id
-                                    ),
-                                )
+                        _("{model_id} ({parameters})").format(
+                            model_id=_f("model_id", model.id, icon=False),
+                            parameters=_f(
+                                "parameters",
+                                _("{n} params").format(
+                                    n=self._parameter_count(model.parameters)
+                                ),
+                                icon=False,
                             ),
                         )
-                        if agent.memory.has_permanent_message
-                        and agent.memory.permanent_message.has_session
-                        else None
+                        if isinstance(model, Model)
+                        else str(model)
+                    )
+                    for model in models
+                ]),
+                _f(
+                    "memory",
+                    _j(
+                        ", ",
+                        [
+                            (
+                                _("short-term message")
+                                if agent.memory.has_recent_message
+                                else None
+                            ),
+                            (
+                                _("long-term message ({driver})").format(
+                                    driver=type(
+                                        agent.memory.permanent_message
+                                    ).__name__
+                                )
+                                if agent.memory.has_permanent_message
+                                else None
+                            ),
+                        ],
+                        empty=_("stateless"),
                     ),
-                ]
-            )
+                ),
+                (
+                    _f(
+                        "session",
+                        " "
+                        + _("session: {session_id}").format(
+                            session_id=_f(
+                                "session_id",
+                                str(agent.memory.permanent_message.session_id),
+                            )
+                        ),
+                    )
+                    if agent.memory.has_permanent_message
+                    and agent.memory.permanent_message.has_session
+                    else None
+                ),
+            ])
         )
         return Panel(
             models_group,
@@ -359,9 +348,9 @@ class FancyTheme(Theme):
             ]:
                 if deletable_paths:
                     panel = Panel(
-                        Group(
-                            *[_f(field_name, path) for path in deletable_paths]
-                        ),
+                        Group(*[
+                            _f(field_name, path) for path in deletable_paths
+                        ]),
                         title=title,
                     )
                     elements.append(Padding(panel, pad=(1, 0, 0, 0)))
@@ -492,32 +481,27 @@ class FancyTheme(Theme):
     ) -> RenderableType:
         _, _i = self._, self._icons
         return Group(
-            *_lf(
-                [
-                    Padding(
-                        " ".join(
-                            [
-                                "[bold red]"
-                                + _i["download_access_denied"]
-                                + "[/bold red]",
-                                "[red]"
-                                + _(
-                                    "Access denied while trying to download"
-                                    " {model_id}"
-                                ).format(model_id=model_id)
-                                + "[/red]",
-                            ]
-                        )
-                    ),
-                    Padding(
-                        _(
-                            "Ensure you accepted {model_id} license terms:"
-                            " {model_url}"
-                        ).format(model_id=model_id, model_url=model_url),
-                        pad=(1, 0, 0, 0),
-                    ),
-                ]
-            )
+            *_lf([
+                Padding(
+                    " ".join([
+                        "[bold red]"
+                        + _i["download_access_denied"]
+                        + "[/bold red]",
+                        "[red]"
+                        + _(
+                            "Access denied while trying to download {model_id}"
+                        ).format(model_id=model_id)
+                        + "[/red]",
+                    ])
+                ),
+                Padding(
+                    _(
+                        "Ensure you accepted {model_id} license terms:"
+                        " {model_url}"
+                    ).format(model_id=model_id, model_url=model_url),
+                    pad=(1, 0, 0, 0),
+                ),
+            ])
         )
 
     def download_start(self, model_id: str) -> RenderableType:
@@ -548,14 +532,12 @@ class FancyTheme(Theme):
     def download_finished(self, model_id: str, path: str) -> RenderableType:
         _, _i = self._, self._icons
         return Padding(
-            " ".join(
-                [
-                    "[bold green]" + _i["download_finished"] + "[/bold green]",
-                    _("Downloaded model {model_id} to {path}").format(
-                        model_id=model_id, path=path
-                    ),
-                ]
-            )
+            " ".join([
+                "[bold green]" + _i["download_finished"] + "[/bold green]",
+                _("Downloaded model {model_id} to {path}").format(
+                    model_id=model_id, path=path
+                ),
+            ])
         )
 
     def events(
@@ -604,8 +586,8 @@ class FancyTheme(Theme):
     def memory_embeddings(
         self,
         input_string: str,
-        embeddings: ndarray,
-        *args,
+        embeddings: ndarray[Any, Any],
+        *args: object,
         total_tokens: int,
         minv: float,
         maxv: float,
@@ -727,12 +709,10 @@ class FancyTheme(Theme):
         assert peek_table or stats
 
         return Group(
-            *_lf(
-                [
-                    Align(peek_table, align="center") if peek_table else None,
-                    Align(stats, align="center") if stats else None,
-                ]
-            )
+            *_lf([
+                Align(peek_table, align="center") if peek_table else None,
+                Align(stats, align="center") if stats else None,
+            ])
         )
 
     def memory_embeddings_comparison(
@@ -802,7 +782,7 @@ class FancyTheme(Theme):
     def memory_embeddings_search(
         self,
         matches: list[SearchMatch],
-        *args,
+        *args: object,
         match_preview_length: int = 300,
     ) -> RenderableType:
         assert matches
@@ -852,7 +832,10 @@ class FancyTheme(Theme):
         return Align(table, align="center")
 
     def memory_partitions(
-        self, partitions: list[TextPartition], *args, display_partitions: int
+        self,
+        partitions: list[TextPartition],
+        *args: object,
+        display_partitions: int,
     ) -> RenderableType:
         _ = self._
         total_partitions = len(partitions)
@@ -914,141 +897,135 @@ class FancyTheme(Theme):
         expand: bool = False,
         summary: bool = False,
     ) -> RenderableType:
-        assert (not expand and not summary) or (
-            expand ^ summary
-        ), "From expand and summary, only one can be set"
+        assert (not expand and not summary) or (expand ^ summary), (
+            "From expand and summary, only one can be set"
+        )
         _, _f, _i = self._, self._f, self._icons
 
         return Panel(
             Group(
-                *_lf(
-                    [
-                        _j(
-                            " · ",
-                            [
-                                _j(
-                                    " ",
-                                    [
-                                        (
-                                            _f(
-                                                "checking_access",
-                                                _("checking access"),
-                                            )
-                                            if can_access is None
-                                            else (
-                                                _f(
-                                                    "can_access",
-                                                    _("access granted"),
-                                                )
-                                                if can_access
-                                                else _f(
-                                                    "no_access",
-                                                    _("access denied"),
-                                                )
-                                            )
-                                        ),
-                                        _f("author", model.author),
-                                        (
-                                            _f("license", model.license)
-                                            if expand and model.license
-                                            else None
-                                        ),
-                                        (
-                                            _f("gated", _("gated"))
-                                            if model.gated
-                                            else None
-                                        ),
-                                        (
-                                            _f("private", _("private"))
-                                            if model.private
-                                            else None
-                                        ),
-                                        (
-                                            _f("disabled", _("disabled"))
-                                            if model.disabled
-                                            else None
-                                        ),
-                                    ],
-                                ),
-                                (
-                                    (
-                                        _i["created_at"]
-                                        + " "
-                                        + _j(
-                                            ", ",
-                                            [
-                                                (
-                                                    _f(
-                                                        "created_at",
-                                                        model.created_at,
-                                                        _("created: "),
-                                                        icon=False,
-                                                    )
-                                                    if expand
-                                                    else None
-                                                ),
-                                                _f(
-                                                    "updated_at",
-                                                    model.updated_at,
-                                                    _("updated: "),
-                                                    icon=False,
-                                                ),
-                                            ],
-                                        )
-                                    )
-                                    if not summary
-                                    else None
-                                ),
-                            ],
-                        ),
-                        (
+                *_lf([
+                    _j(
+                        " · ",
+                        [
                             _j(
-                                " · ",
+                                " ",
                                 [
                                     (
-                                        _f("model_type", model.model_type)
-                                        + (
-                                            " ("
-                                            + ", ".join(model.architectures)
-                                            + ")"
-                                            if expand and model.architectures
-                                            else ""
+                                        _f(
+                                            "checking_access",
+                                            _("checking access"),
                                         )
-                                        if model.model_type
+                                        if can_access is None
+                                        else (
+                                            _f(
+                                                "can_access",
+                                                _("access granted"),
+                                            )
+                                            if can_access
+                                            else _f(
+                                                "no_access",
+                                                _("access denied"),
+                                            )
+                                        )
+                                    ),
+                                    _f("author", model.author),
+                                    (
+                                        _f("license", model.license)
+                                        if expand and model.license
                                         else None
                                     ),
                                     (
-                                        _f("library_name", model.library_name)
-                                        if model.library_name
+                                        _f("gated", _("gated"))
+                                        if model.gated
                                         else None
                                     ),
                                     (
-                                        _f("inference", model.inference)
-                                        if expand and model.inference
+                                        _f("private", _("private"))
+                                        if model.private
                                         else None
                                     ),
                                     (
-                                        _f("pipeline_tag", model.pipeline_tag)
-                                        if model.pipeline_tag
+                                        _f("disabled", _("disabled"))
+                                        if model.disabled
                                         else None
                                     ),
                                 ],
-                            )
-                            if not summary
-                            else None
-                        ),
-                        (
-                            Rule(style="gray30")
-                            if expand and model.tags
-                            else None
-                        ),
-                        (
-                            _f("tags", " " + ", ".join(model.tags))
-                            if expand and model.tags
-                            else None
-                        ),
-                    ]
-                )
+                            ),
+                            (
+                                (
+                                    _i["created_at"]
+                                    + " "
+                                    + _j(
+                                        ", ",
+                                        [
+                                            (
+                                                _f(
+                                                    "created_at",
+                                                    model.created_at,
+                                                    _("created: "),
+                                                    icon=False,
+                                                )
+                                                if expand
+                                                else None
+                                            ),
+                                            _f(
+                                                "updated_at",
+                                                model.updated_at,
+                                                _("updated: "),
+                                                icon=False,
+                                            ),
+                                        ],
+                                    )
+                                )
+                                if not summary
+                                else None
+                            ),
+                        ],
+                    ),
+                    (
+                        _j(
+                            " · ",
+                            [
+                                (
+                                    _f("model_type", model.model_type)
+                                    + (
+                                        " ("
+                                        + ", ".join(model.architectures)
+                                        + ")"
+                                        if expand and model.architectures
+                                        else ""
+                                    )
+                                    if model.model_type
+                                    else None
+                                ),
+                                (
+                                    _f("library_name", model.library_name)
+                                    if model.library_name
+                                    else None
+                                ),
+                                (
+                                    _f("inference", model.inference)
+                                    if expand and model.inference
+                                    else None
+                                ),
+                                (
+                                    _f("pipeline_tag", model.pipeline_tag)
+                                    if model.pipeline_tag
+                                    else None
+                                ),
+                            ],
+                        )
+                        if not summary
+                        else None
+                    ),
+                    (Rule(style="gray30") if expand and model.tags else None),
+                    (
+                        _f("tags", " " + ", ".join(model.tags))
+                        if expand and model.tags
+                        else None
+                    ),
+                ])
             ),
             # Model ID
             title=(
@@ -1104,50 +1081,48 @@ class FancyTheme(Theme):
     def model_display(
         self,
         model_config: ModelConfig | SentenceTransformerModelConfig | None,
-        tokenizer_config: TokenizerConfig,
-        *args,
+        tokenizer_config: TokenizerConfig | None,
+        *args: object,
         is_runnable: bool | None = None,
         summary: bool = False,
     ) -> RenderableType:
         _ = self._
         return Group(
-            *_lf(
-                [
-                    (
-                        Padding(
-                            (
-                                self._sentence_transformer_model_config(
-                                    model_config,
-                                    is_runnable=is_runnable,
-                                    summary=summary,
-                                )
-                                if isinstance(
-                                    model_config,
-                                    SentenceTransformerModelConfig,
-                                )
-                                else self._model_config(
-                                    model_config,
-                                    is_runnable=is_runnable,
-                                    summary=summary,
-                                )
-                            ),
-                            pad=(0, 0, 0, 0),
-                        )
-                        if model_config
-                        else None
-                    ),
+            *_lf([
+                (
                     Padding(
-                        Panel(
-                            self.tokenizer_config(
-                                tokenizer_config, summary=summary
-                            ),
-                            title=_("Tokenizer settings"),
-                            border_style="bright_black",
+                        (
+                            self._sentence_transformer_model_config(
+                                model_config,
+                                is_runnable=is_runnable,
+                                summary=summary,
+                            )
+                            if isinstance(
+                                model_config,
+                                SentenceTransformerModelConfig,
+                            )
+                            else self._model_config(
+                                model_config,
+                                is_runnable=is_runnable,
+                                summary=summary,
+                            )
                         ),
                         pad=(0, 0, 0, 0),
+                    )
+                    if model_config
+                    else None
+                ),
+                Padding(
+                    Panel(
+                        self.tokenizer_config(
+                            tokenizer_config, summary=summary
+                        ),
+                        title=_("Tokenizer settings"),
+                        border_style="bright_black",
                     ),
-                ]
-            )
+                    pad=(0, 0, 0, 0),
+                ),
+            ])
         )
 
     def _sentence_transformer_model_config(
@@ -1335,31 +1310,38 @@ class FancyTheme(Theme):
     ):
         _, _f, _i = self._, self._f, self._icons
         group = Group(
-            *_lf(
-                [
-                    Panel(
-                        engine_message.message.content,
-                        title=(
-                            _i["agent_output"] + " " + _f("id", agent.name)
-                            if engine_message.is_from_agent
-                            else _i["user_input"]
-                            + "  "
-                            + _f("participant_id", participant_id)
-                        ),
-                        title_align="left",
-                        expand=True,
-                        box=box.SQUARE,
-                    )
-                    for engine_message in messages
-                ]
-            )
+            *_lf([
+                Panel(
+                    engine_message.message.content,
+                    title=(
+                        _i["agent_output"] + " " + _f("id", agent.name)
+                        if engine_message.is_from_agent
+                        else _i["user_input"]
+                        + "  "
+                        + _f("participant_id", participant_id)
+                    ),
+                    title_align="left",
+                    expand=True,
+                    box=box.SQUARE,
+                )
+                for engine_message in messages
+            ])
         )
         return group
 
     def saved_tokenizer_files(
-        self, directory_path: str, total_files: int
+        self,
+        directory_path_or_total: str | int,
+        total_files: int | None = None,
     ) -> RenderableType:
         _n = self._n
+        if isinstance(directory_path_or_total, int):
+            assert total_files is None
+            total_files = directory_path_or_total
+            directory_path = "."
+        else:
+            directory_path = directory_path_or_total
+            assert total_files is not None
         return Padding(
             _n(
                 "Saved {total_files} tokenizer file to {directory_path}",
@@ -1374,36 +1356,34 @@ class FancyTheme(Theme):
         participant_id: UUID,
         agent: Orchestrator,
         messages: list[EngineMessageScored],
-    ):
+    ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         group = Group(
-            *_lf(
-                [
-                    Panel(
-                        engine_message.message.content,
-                        title=(
-                            _i["agent_output"]
-                            + " "
-                            + _f("id", agent.name or str(agent.id))
-                            if engine_message.is_from_agent
-                            else _i["user_input"]
-                            + "  "
-                            + _f("participant_id", participant_id)
-                        ),
-                        title_align="left",
-                        subtitle=_("Matching score: {score}").format(
-                            score=_f(
-                                "score",
-                                clamp(engine_message.score, format="{:.8g}"),
-                            )
-                        ),
-                        subtitle_align="left",
-                        expand=True,
-                        box=box.SQUARE,
-                    )
-                    for engine_message in messages
-                ]
-            )
+            *_lf([
+                Panel(
+                    engine_message.message.content,
+                    title=(
+                        _i["agent_output"]
+                        + " "
+                        + _f("id", agent.name or str(agent.id))
+                        if engine_message.is_from_agent
+                        else _i["user_input"]
+                        + "  "
+                        + _f("participant_id", participant_id)
+                    ),
+                    title_align="left",
+                    subtitle=_("Matching score: {score}").format(
+                        score=_f(
+                            "score",
+                            clamp(engine_message.score, format="{:.8g}"),
+                        )
+                    ),
+                    subtitle_align="left",
+                    expand=True,
+                    box=box.SQUARE,
+                )
+                for engine_message in messages
+            ])
         )
         return group
 
@@ -1415,33 +1395,27 @@ class FancyTheme(Theme):
     ) -> RenderableType:
         _, _f, _i = self._, self._f, self._icons
         group = Group(
-            *_lf(
-                [
-                    Panel(
-                        memory.data,
-                        title=(
-                            _i["memory"]
-                            + " "
-                            + _f("id", str(memory.memory_id))
-                        ),
-                        title_align="left",
-                        subtitle=_(
-                            "Participant: {participant} – Namespace: {ns} –"
-                            " Partition: {partition}"
-                        ).format(
-                            participant=_f(
-                                "participant_id", str(participant_id)
-                            ),
-                            ns=_f("id", namespace),
-                            partition=_f("number", memory.partition),
-                        ),
-                        subtitle_align="left",
-                        expand=True,
-                        box=box.SQUARE,
-                    )
-                    for memory in memories
-                ]
-            )
+            *_lf([
+                Panel(
+                    memory.data,
+                    title=(
+                        _i["memory"] + " " + _f("id", str(memory.memory_id))
+                    ),
+                    title_align="left",
+                    subtitle=_(
+                        "Participant: {participant} – Namespace: {ns} –"
+                        " Partition: {partition}"
+                    ).format(
+                        participant=_f("participant_id", str(participant_id)),
+                        ns=_f("id", namespace),
+                        partition=_f("number", memory.partition),
+                    ),
+                    subtitle_align="left",
+                    expand=True,
+                    box=box.SQUARE,
+                )
+                for memory in memories
+            ])
         )
         return group
 
@@ -1471,9 +1445,9 @@ class FancyTheme(Theme):
                 )
             config_table.add_row(
                 _("Special tokens"),
-                ", ".join(
-                    [f"[cyan]{t}[/cyan]" for t in config.special_tokens]
-                ),
+                ", ".join([
+                    f"[cyan]{t}[/cyan]" for t in config.special_tokens
+                ]),
             )
         config_table.add_row(
             _("Maximum sequence length"),
@@ -1493,7 +1467,7 @@ class FancyTheme(Theme):
         special_tokens: list[str] | None,
         display_details: bool = False,
         current_dtoken: Token | None = None,
-        dtokens_selected: list[Token] = [],
+        dtokens_selected: list[Token] | None = None,
     ) -> RenderableType:
         # Build token panels
         compact_dtokens = True  # For future configurability
@@ -1520,7 +1494,7 @@ class FancyTheme(Theme):
                     if current_dtoken and dtoken == current_dtoken
                     else (
                         "cyan"
-                        if dtoken in dtokens_selected
+                        if dtokens_selected and dtoken in dtokens_selected
                         else (
                             "magenta"
                             if (
@@ -1687,7 +1661,7 @@ class FancyTheme(Theme):
         limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[tuple[Token | None, RenderableType], None, None]:
+    ) -> AsyncGenerator[tuple[Token | None, RenderableType], None]:
         _, _n, _f, _l = self._, self._n, self._f, logger.debug
 
         pick_first = ceil(pick / 2) if pick > 1 else pick
@@ -1745,104 +1719,98 @@ class FancyTheme(Theme):
 
         # Build think and, EventStats answer panels
         progress_title = " · ".join(
-            _lf(
-                [
+            _lf([
+                _f(
+                    "input_token_count",
+                    _n(
+                        "{total_tokens} token in",
+                        "{total_tokens} tokens in",
+                        input_token_count,
+                    ).format(total_tokens=input_token_count),
+                ),
+                _f(
+                    "total_tokens",
+                    _n(
+                        "{total_tokens} token out",
+                        "{total_tokens} tokens out",
+                        total_tokens,
+                    ).format(total_tokens=total_tokens),
+                ),
+                (
                     _f(
-                        "input_token_count",
+                        "ttft",
+                        _("ttft: {ttft} s").format(ttft=f"{ttft:.2f}"),
+                    )
+                    if ttft
+                    else None
+                ),
+                (
+                    _f(
+                        "ttnt",
+                        _("ttnt: {ttnt} s").format(ttnt=f"{ttnt:.1f}"),
+                    )
+                    if ttnt
+                    else None
+                ),
+                (
+                    _f(
+                        "ttsr",
+                        _("rt: {ttsr} s").format(ttsr=f"{ttsr:.1f}"),
+                    )
+                    if ttsr
+                    else None
+                ),
+                _f(
+                    "tokens_rate",
+                    _("{tokens_rate} t/s").format(
+                        tokens_rate=f"{total_tokens / elapsed:.2f}"
+                    ),
+                ),
+                (
+                    _f(
+                        "events",
                         _n(
-                            "{total_tokens} token in",
-                            "{total_tokens} tokens in",
-                            input_token_count,
-                        ).format(total_tokens=input_token_count),
-                    ),
+                            "{total} event",
+                            "{total} events",
+                            event_stats.total_triggers,
+                        ).format(total=event_stats.total_triggers),
+                    )
+                    if event_stats
+                    else None
+                ),
+                (
                     _f(
-                        "total_tokens",
+                        "tool_calls",
                         _n(
-                            "{total_tokens} token out",
-                            "{total_tokens} tokens out",
-                            total_tokens,
-                        ).format(total_tokens=total_tokens),
-                    ),
-                    (
-                        _f(
-                            "ttft",
-                            _("ttft: {ttft} s").format(ttft=f"{ttft:.2f}"),
-                        )
-                        if ttft
-                        else None
-                    ),
-                    (
-                        _f(
-                            "ttnt",
-                            _("ttnt: {ttnt} s").format(ttnt=f"{ttnt:.1f}"),
-                        )
-                        if ttnt
-                        else None
-                    ),
-                    (
-                        _f(
-                            "ttsr",
-                            _("rt: {ttsr} s").format(ttsr=f"{ttsr:.1f}"),
-                        )
-                        if ttsr
-                        else None
-                    ),
-                    _f(
-                        "tokens_rate",
-                        _("{tokens_rate} t/s").format(
-                            tokens_rate=f"{total_tokens / elapsed:.2f}"
+                            "{total} tool call",
+                            "{total} tool calls",
+                            event_stats.triggers[EventType.TOOL_EXECUTE],
+                        ).format(
+                            total=event_stats.triggers[EventType.TOOL_EXECUTE]
                         ),
-                    ),
-                    (
-                        _f(
-                            "events",
-                            _n(
-                                "{total} event",
-                                "{total} events",
-                                event_stats.total_triggers,
-                            ).format(total=event_stats.total_triggers),
-                        )
-                        if event_stats
-                        else None
-                    ),
-                    (
-                        _f(
-                            "tool_calls",
-                            _n(
-                                "{total} tool call",
-                                "{total} tool calls",
-                                event_stats.triggers[EventType.TOOL_EXECUTE],
-                            ).format(
-                                total=event_stats.triggers[
-                                    EventType.TOOL_EXECUTE
-                                ]
-                            ),
-                        )
-                        if event_stats
-                        and EventType.TOOL_EXECUTE in event_stats.triggers
-                        and event_stats.triggers[EventType.TOOL_EXECUTE]
-                        else None
-                    ),
-                    (
-                        _f(
-                            "tool_call_results",
-                            _n(
-                                "{total} result",
-                                "{total} results",
-                                event_stats.triggers[EventType.TOOL_RESULT],
-                            ).format(
-                                total=event_stats.triggers[
-                                    EventType.TOOL_RESULT
-                                ]
-                            ),
-                        )
-                        if event_stats
-                        and EventType.TOOL_RESULT in event_stats.triggers
-                        and event_stats.triggers[EventType.TOOL_RESULT]
-                        else None
-                    ),
-                ]
-            )
+                    )
+                    if event_stats
+                    and EventType.TOOL_EXECUTE in event_stats.triggers
+                    and event_stats.triggers[EventType.TOOL_EXECUTE]
+                    else None
+                ),
+                (
+                    _f(
+                        "tool_call_results",
+                        _n(
+                            "{total} result",
+                            "{total} results",
+                            event_stats.triggers[EventType.TOOL_RESULT],
+                        ).format(
+                            total=event_stats.triggers[EventType.TOOL_RESULT]
+                        ),
+                    )
+                    if event_stats
+                    and EventType.TOOL_RESULT in event_stats.triggers
+                    and event_stats.triggers[EventType.TOOL_RESULT]
+                    else None
+                ),
+            ])
         )
         think_panel = (
             Panel(
@@ -1927,14 +1895,12 @@ class FancyTheme(Theme):
             yield (
                 None,
                 Group(
-                    *_lf(
-                        [
-                            think_panel or None,
-                            tool_panel or None,
-                            tool_running_panel or None,
-                            answer_panel or None,
-                        ]
-                    )
+                    *_lf([
+                        think_panel or None,
+                        tool_panel or None,
+                        tool_running_panel or None,
+                        answer_panel or None,
+                    ])
                 ),
             )
             return
@@ -2014,12 +1980,10 @@ class FancyTheme(Theme):
                         else None
                     )
                     labels = (
-                        " ".join(
-                            [
-                                f"{i + 1}"
-                                for i in range(len(current_symmetric_data))
-                            ]
-                        )
+                        " ".join([
+                            f"{i + 1}"
+                            for i in range(len(current_symmetric_data))
+                        ])
                         if current_symmetric_data
                         else " "
                     )
@@ -2032,13 +1996,11 @@ class FancyTheme(Theme):
                             0 for i in range(pick)
                         ]:
                             if value * chart_height >= level:
-                                chart_row += "".join(
-                                    [
-                                        "[green]",
-                                        "█ ",
-                                        "[/green]",
-                                    ]
-                                )
+                                chart_row += "".join([
+                                    "[green]",
+                                    "█ ",
+                                    "[/green]",
+                                ])
                             else:
                                 chart_row += "  "
                         chart_rows.append(chart_row)
@@ -2082,47 +2044,39 @@ class FancyTheme(Theme):
                 tokens_distribution_panel = Panel(
                     (
                         Group(
-                            *_lf(
-                                [
-                                    tokens_panel,
-                                    (
-                                        Align(
-                                            Panel.fit(
-                                                " [gray50]"
-                                                + f"#{current_dtoken.id}"
-                                                + "[/gray50]"
-                                                f" {current_dtoken.token} ",
-                                                border_style="green",
-                                                padding=0,
-                                            ),
-                                            align="center",
-                                        )
-                                        if current_dtoken
-                                        else None
-                                    ),
-                                    (
-                                        chart
-                                        if current_dtoken and chart
-                                        else None
-                                    ),
-                                    (
-                                        Align(
-                                            Columns(
-                                                _lf(
-                                                    [
-                                                        dbatch_first_table,
-                                                        dbatch_second_table,
-                                                    ]
-                                                )
-                                            ),
-                                            align="center",
-                                        )
-                                        if dbatch_first_table
-                                        or dbatch_second_table
-                                        else None
-                                    ),
-                                ]
-                            )
+                            *_lf([
+                                tokens_panel,
+                                (
+                                    Align(
+                                        Panel.fit(
+                                            " [gray50]"
+                                            + f"#{current_dtoken.id}"
+                                            + "[/gray50]"
+                                            f" {current_dtoken.token} ",
+                                            border_style="green",
+                                            padding=0,
+                                        ),
+                                        align="center",
+                                    )
+                                    if current_dtoken
+                                    else None
+                                ),
+                                (chart if current_dtoken and chart else None),
+                                (
+                                    Align(
+                                        Columns(
+                                            _lf([
+                                                dbatch_first_table,
+                                                dbatch_second_table,
+                                            ])
+                                        ),
+                                        align="center",
+                                    )
+                                    if dbatch_first_table
+                                    or dbatch_second_table
+                                    else None
+                                ),
+                            ])
                         )
                         if chart
                         else tokens_panel
@@ -2135,19 +2089,17 @@ class FancyTheme(Theme):
             yield (
                 current_dtoken,
                 Group(
-                    *_lf(
-                        [
-                            think_panel or None,
-                            tool_panel or None,
-                            tool_running_panel or None,
-                            answer_panel or None,
-                            (
-                                tokens_distribution_panel
-                                if tokens and tokens_distribution_panel
-                                else None
-                            ),
-                        ]
-                    )
+                    *_lf([
+                        think_panel or None,
+                        tool_panel or None,
+                        tool_running_panel or None,
+                        answer_panel or None,
+                        (
+                            tokens_distribution_panel
+                            if tokens and tokens_distribution_panel
+                            else None
+                        ),
+                    ])
                 ),
             )
 
@@ -2174,158 +2126,143 @@ class FancyTheme(Theme):
         if not events or events_limit == 0:
             return None
 
-        event_log: list[str] | None = _lf(
-            [
-                (
-                    _(
-                        "Executing tool {tool} call #{call_id} with"
-                        " {total_arguments} arguments: {arguments}."
-                    ).format(
-                        tool="[gray78]"
-                        + event.payload["call"].name
-                        + "[/gray78]",
-                        call_id="[gray78]"
-                        + str(event.payload["call"].id)[:8]
-                        + "[/gray78]",
-                        total_arguments=len(
-                            event.payload["call"].arguments or []
-                        ),
-                        arguments="[gray78]"
-                        + (
-                            s
-                            if len(s := str(event.payload["call"].arguments))
-                            <= 50
-                            else s[:47] + "..."
-                        )
-                        + "[/gray78]",
+        event_log: list[str] | None = _lf([
+            (
+                _(
+                    "Executing tool {tool} call #{call_id} with"
+                    " {total_arguments} arguments: {arguments}."
+                ).format(
+                    tool="[gray78]" + event.payload["call"].name + "[/gray78]",
+                    call_id="[gray78]"
+                    + str(event.payload["call"].id)[:8]
+                    + "[/gray78]",
+                    total_arguments=len(event.payload["call"].arguments or []),
+                    arguments="[gray78]"
+                    + (
+                        s
+                        if len(s := str(event.payload["call"].arguments)) <= 50
+                        else s[:47] + "..."
                     )
-                    if event.type == EventType.TOOL_EXECUTE
+                    + "[/gray78]",
+                )
+                if event.type == EventType.TOOL_EXECUTE
+                else (
+                    _n(
+                        "Running ReACT model {model_id} with"
+                        " {total_messages} message",
+                        "Running ReACT model {model_id} with"
+                        " {total_messages} messages",
+                        len(event.payload["messages"]),
+                    ).format(
+                        model_id=event.payload["model_id"],
+                        total_messages=len(event.payload["messages"]),
+                    )
+                    if event.type == EventType.TOOL_MODEL_RUN
                     else (
-                        _n(
-                            "Running ReACT model {model_id} with"
-                            " {total_messages} message",
-                            "Running ReACT model {model_id} with"
-                            " {total_messages} messages",
-                            len(event.payload["messages"]),
-                        ).format(
-                            model_id=event.payload["model_id"],
-                            total_messages=len(event.payload["messages"]),
+                        _("Got ReACT response from model {model_id}").format(
+                            model_id=event.payload["model_id"]
                         )
-                        if event.type == EventType.TOOL_MODEL_RUN
+                        if event.type == EventType.TOOL_MODEL_RESPONSE
                         else (
-                            _(
-                                "Got ReACT response from model {model_id}"
-                            ).format(model_id=event.payload["model_id"])
-                            if event.type == EventType.TOOL_MODEL_RESPONSE
+                            _n(
+                                "Executing {total_calls} tool: {calls}",
+                                "Executing {total_calls} tools: {calls}",
+                                len(event.payload),
+                            ).format(
+                                total_calls=len(event.payload),
+                                calls="[gray78]"
+                                + "[/gray78], [gray78]".join([
+                                    call.name for call in event.payload
+                                ])
+                                + "[/gray78]",
+                            )
+                            if event.type == EventType.TOOL_PROCESS
                             else (
-                                _n(
-                                    "Executing {total_calls} tool: {calls}",
-                                    "Executing {total_calls} tools: {calls}",
-                                    len(event.payload),
+                                _(
+                                    "Executed tool {tool} call #{call_id}"
+                                    " with {total_arguments} arguments."
+                                    ' Got result "{result}" in'
+                                    " {elapsed_with_unit}."
                                 ).format(
-                                    total_calls=len(event.payload),
-                                    calls="[gray78]"
-                                    + "[/gray78], [gray78]".join(
-                                        [call.name for call in event.payload]
+                                    tool="[gray78]"
+                                    + event.payload["result"].call.name
+                                    + "[/gray78]",
+                                    elapsed_with_unit="[gray78]"
+                                    + precisedelta(
+                                        event.elapsed,
+                                        minimum_unit="microseconds",
                                     )
                                     + "[/gray78]",
-                                )
-                                if event.type == EventType.TOOL_PROCESS
-                                else (
-                                    _(
-                                        "Executed tool {tool} call #{call_id}"
-                                        " with {total_arguments} arguments."
-                                        ' Got result "{result}" in'
-                                        " {elapsed_with_unit}."
-                                    ).format(
-                                        tool="[gray78]"
-                                        + event.payload["result"].call.name
-                                        + "[/gray78]",
-                                        elapsed_with_unit="[gray78]"
-                                        + precisedelta(
-                                            event.elapsed,
-                                            minimum_unit="microseconds",
+                                    call_id="[gray78]"
+                                    + str(event.payload["result"].call.id)[:8]
+                                    + "[/gray78]",
+                                    total_arguments=len(
+                                        event.payload["result"].call.arguments
+                                        or []
+                                    ),
+                                    result=(
+                                        (
+                                            "[red]"
+                                            + event.payload["result"].message
+                                            + "[/red]"
                                         )
-                                        + "[/gray78]",
-                                        call_id="[gray78]"
-                                        + str(event.payload["result"].call.id)[
-                                            :8
-                                        ]
-                                        + "[/gray78]",
-                                        total_arguments=len(
-                                            event.payload[
-                                                "result"
-                                            ].call.arguments
-                                            or []
-                                        ),
-                                        result=(
-                                            (
-                                                "[red]"
-                                                + event.payload[
-                                                    "result"
-                                                ].message
-                                                + "[/red]"
-                                            )
-                                            if isinstance(
-                                                event.payload["result"],
-                                                ToolCallError,
-                                            )
-                                            else (
-                                                "[spring_green3]"
-                                                + to_json(
-                                                    event.payload[
-                                                        "result"
-                                                    ].result
-                                                )
-                                                + "[/spring_green3]"
-                                            )
-                                        ),
-                                    )
-                                    if event.type == EventType.TOOL_RESULT
-                                    and event.payload["result"]
-                                    else (
-                                        f"[{precisedelta(event.elapsed)}]"
-                                        f" <{event.type}>: {event.payload}"
-                                        if event.payload and event.elapsed
+                                        if isinstance(
+                                            event.payload["result"],
+                                            ToolCallError,
+                                        )
                                         else (
-                                            f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
-                                            if event.payload and event.started
+                                            "[spring_green3]"
+                                            + to_json(
+                                                event.payload["result"].result
+                                            )
+                                            + "[/spring_green3]"
+                                        )
+                                    ),
+                                )
+                                if event.type == EventType.TOOL_RESULT
+                                and event.payload["result"]
+                                else (
+                                    f"[{precisedelta(event.elapsed)}]"
+                                    f" <{event.type}>: {event.payload}"
+                                    if event.payload and event.elapsed
+                                    else (
+                                        f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
+                                        if event.payload and event.started
+                                        else (
+                                            f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
+                                            if event.payload
                                             else (
-                                                f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
-                                                if event.payload
-                                                else (
-                                                    f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}]"  # noqa: E501
-                                                    f" <{event.type}>"
-                                                )
+                                                f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}]"  # noqa: E501
+                                                f" <{event.type}>"
                                             )
                                         )
                                     )
                                 )
                             )
                         )
-                    )  # noqa: E501
-                )
-                for event in events
-                if (
-                    (
-                        include_tools
-                        and event.type in TOOL_TYPES
-                        and (
-                            event.type != EventType.TOOL_DETECT
-                            or include_tool_detect
-                        )
                     )
-                    or (
-                        include_non_tools
-                        and event.type not in TOOL_TYPES
-                        and (
-                            event.type != EventType.TOKEN_GENERATED
-                            or include_tokens
-                        )
+                )  # noqa: E501
+            )
+            for event in events
+            if (
+                (
+                    include_tools
+                    and event.type in TOOL_TYPES
+                    and (
+                        event.type != EventType.TOOL_DETECT
+                        or include_tool_detect
                     )
                 )
-            ]
-        )
+                or (
+                    include_non_tools
+                    and event.type not in TOOL_TYPES
+                    and (
+                        event.type != EventType.TOKEN_GENERATED
+                        or include_tokens
+                    )
+                )
+            )
+        ])
 
         if event_log and events_limit:
             event_log = event_log[-events_limit:]
@@ -2362,7 +2299,9 @@ class FancyTheme(Theme):
                 else (
                     "green"
                     if is_current_token
-                    else "cyan" if is_max_dtoken else dtable_color
+                    else "cyan"
+                    if is_max_dtoken
+                    else dtable_color
                 )
             )
             table.add_row(
@@ -2388,16 +2327,13 @@ class FancyTheme(Theme):
                     _j(
                         " - ",
                         [
-                            " ".join(
-                                [
-                                    _i["avalan"]
-                                    + f" [link={url}]{name}[/link]",
-                                    f"[version]{version}[/version]",
-                                    "[bright_black]"
-                                    + _i["license"]
-                                    + f" {license_text}[/bright_black]",
-                                ]
-                            ),
+                            " ".join([
+                                _i["avalan"] + f" [link={url}]{name}[/link]",
+                                f"[version]{version}[/version]",
+                                "[bright_black]"
+                                + _i["license"]
+                                + f" {license_text}[/bright_black]",
+                            ]),
                             _f("user", user.name) if user else None,
                             (
                                 _f("access_token_name", user.access_token_name)
