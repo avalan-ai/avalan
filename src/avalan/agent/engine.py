@@ -21,8 +21,17 @@ from ..tool.manager import ToolManager
 
 from abc import ABC, abstractmethod
 from dataclasses import Field, fields, replace
-from typing import Any
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
+
+
+class InputTokenCountModel(Protocol):
+    def input_token_count(
+        self,
+        input: Input,
+        system_prompt: str | None = None,
+        developer_prompt: str | None = None,
+    ) -> int: ...
 
 
 class EngineAgent(ABC):
@@ -76,7 +85,8 @@ class EngineAgent(ABC):
                 },
             )
         )
-        count = self._model.input_token_count(
+        count_model = cast(InputTokenCountModel, self._model)
+        count = count_model.input_token_count(
             self._last_prompt[0],
             system_prompt=self._last_prompt[1],
             developer_prompt=self._last_prompt[2],
@@ -101,10 +111,10 @@ class EngineAgent(ABC):
         event_manager: EventManager,
         model_manager: ModelManager,
         engine_uri: EngineUri,
-        *args,
+        *args: object,
         name: str | None = None,
         id: UUID | None = None,
-    ):
+    ) -> None:
         self._id = id or uuid4()
         self._name = name
         self._model = model
@@ -158,6 +168,7 @@ class EngineAgent(ABC):
                 },
             )
         )
+        assert context.input is not None
         output = await self._run(context, context.input, **run_args)
         await self._event_manager.trigger(
             Event(
@@ -176,12 +187,12 @@ class EngineAgent(ABC):
         self,
         context: ModelCallContext,
         input: Input,
-        *args,
+        *args: object,
         settings: GenerationSettings | None = None,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
-        skip_special_tokens=True,
-        **kwargs,
+        skip_special_tokens: bool = True,
+        **kwargs: Any,
     ) -> TextGenerationResponse:
         input_value = input
         generation_fields = self._GENERATION_FIELDS
@@ -223,6 +234,15 @@ class EngineAgent(ABC):
 
         if isinstance(input_value, Message):
             input_value = [input_value]
+        if (
+            isinstance(input_value, list)
+            and input_value
+            and isinstance(input_value[0], str)
+        ):
+            input_value = [
+                Message(role=MessageRole.USER, content=item)
+                for item in input_value
+            ]
 
         # Transform input (by adding memory, if necessary)
         if (
@@ -250,6 +270,7 @@ class EngineAgent(ABC):
                 await self.sync_message(current_message)
 
             # Make recent memory the new model input
+            assert self._memory.recent_messages is not None
             input_value = [rm.message for rm in self._memory.recent_messages]
 
         # Have model generate output from input
@@ -289,7 +310,9 @@ class EngineAgent(ABC):
             tool=self._tool,
             context=context,
         )
-        output = await self._model_manager(model_task)
+        output = cast(
+            TextGenerationResponse, await self._model_manager(model_task)
+        )
         await self._event_manager.trigger(
             Event(
                 type=EventType.MODEL_EXECUTE_AFTER,
@@ -344,6 +367,7 @@ class EngineAgent(ABC):
                 },
             )
         )
+        assert self._model.model_id is not None
         await self._memory.append_message(
             EngineMessage(
                 agent_id=self._id,
