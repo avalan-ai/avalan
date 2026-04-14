@@ -1,8 +1,48 @@
-from rich.console import RenderableType
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypedDict, cast
+
+from rich.console import Console, RenderableType
 from rich.progress import Progress
 from tqdm.std import tqdm
 
 std_tqdm = tqdm
+
+
+class _ProgressOptions(TypedDict, total=False):
+    auto_refresh: bool
+    console: Console | None
+    expand: bool
+    get_time: Callable[[], float] | None
+    redirect_stderr: bool
+    redirect_stdout: bool
+    refresh_per_second: float
+    speed_estimate_period: float
+    transient: bool
+
+
+class _TaskOptions(TypedDict, total=False):
+    completed: int
+    total: float | None
+    visible: bool
+
+
+if TYPE_CHECKING:
+
+    class _TqdmBase:
+        disable: bool
+        leave: bool
+        desc: str | None
+        n: float
+        format_dict: dict[str, object]
+
+        def __init__(self, *args: object, **kwargs: object) -> None: ...
+
+        def close(self) -> None: ...
+
+        def reset(self, total: int | float | None = None) -> None: ...
+
+else:
+    _TqdmBase = tqdm
 
 
 def create_live_tqdm_class(
@@ -21,7 +61,7 @@ def create_live_tqdm_class(
     https://github.com/tqdm/tqdm/blob/master/tqdm/rich.py """
 
 
-class tqdm_rich_progress(tqdm):
+class tqdm_rich_progress(_TqdmBase):
     def __init__(self, *args: object, **kwargs: object) -> None:
         sanitized_kwargs = {**kwargs}
         sanitized_kwargs.pop("progress", None)
@@ -39,15 +79,25 @@ class tqdm_rich_progress(tqdm):
         assert raw_progress_options is None or isinstance(
             raw_progress_options, dict
         )
-        progress_options: dict[str, object] = {
-            "transient": not self.leave,
-            **(raw_progress_options or {}),
-        }
+        progress_options: _ProgressOptions = {"transient": not self.leave}
+        if raw_progress_options:
+            progress_options.update(
+                cast(_ProgressOptions, raw_progress_options)
+            )
 
         self._progress = Progress(*progress, **progress_options)
         self._progress.__enter__()
+        task_options: _TaskOptions = {}
+        task_total = self.format_dict.get("total")
+        if task_total is None:
+            task_options["total"] = None
+        elif isinstance(task_total, (int, float)):
+            task_options["total"] = float(task_total)
+        task_completed = self.format_dict.get("n")
+        if isinstance(task_completed, (int, float)):
+            task_options["completed"] = int(task_completed)
         self._task_id = self._progress.add_task(
-            self.desc or "", **self.format_dict
+            self.desc or "", **task_options
         )
 
     def close(self) -> None:

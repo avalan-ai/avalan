@@ -25,3 +25,49 @@ class DownloadTestCase(TestCase):
         prog.clear()
         prog.reset(1)
         prog.close()
+
+    def test_tqdm_rich_progress_builds_progress_and_task_options(self):
+        calls: dict[str, object] = {}
+
+        class DummyProgress:
+            def __init__(self, *progress_columns, **kwargs):
+                calls["progress_columns"] = progress_columns
+                calls["progress_kwargs"] = kwargs
+
+            def __enter__(self):
+                calls["entered"] = True
+                return self
+
+            def __exit__(self, *_):
+                calls["exited"] = True
+
+            def add_task(self, description: str, **kwargs) -> int:
+                calls["description"] = description
+                calls["task_kwargs"] = kwargs
+                return 1
+
+            def update(self, *_args, **_kwargs):
+                return None
+
+            def reset(self, *_args, **_kwargs):
+                return None
+
+        with patch.object(download, "Progress", DummyProgress):
+            prog = download.tqdm_rich_progress(
+                total=10,
+                disable=False,
+                progress=("col",),
+                options={"expand": True},
+            )
+            prog.close()
+
+        self.assertEqual(calls["progress_columns"], ("col",))
+        self.assertEqual(
+            calls["progress_kwargs"],
+            {"transient": False, "expand": True},
+        )
+        self.assertEqual(calls["description"], "")
+        self.assertEqual(
+            calls["task_kwargs"],
+            {"total": 10.0, "completed": 0},
+        )
