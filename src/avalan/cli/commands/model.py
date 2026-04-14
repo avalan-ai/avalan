@@ -38,12 +38,13 @@ from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
 from time import perf_counter
-from typing import AsyncGenerator, Awaitable, Literal, cast
+from typing import Any, AsyncGenerator, Awaitable, cast
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
 from rich.prompt import Prompt
+from rich.spinner import Spinner
 
 _HAS_INPUT = has_input
 
@@ -611,7 +612,7 @@ async def _token_stream(
     ttft: float | None = None
     ttnt: float | None = None
     last_current_dtoken: Token | None = None
-    tool_running_spinner: Literal["tool_running"] | None = None
+    tool_running_spinner: Spinner | None = None
 
     if start_thinking and response.can_think and not response.is_thinking:
         response.set_thinking(start_thinking)
@@ -670,7 +671,18 @@ async def _token_stream(
                 if str(getattr(c, "id", "")) not in completed_call_ids
             ]
             if tool_calling_names:
-                tool_running_spinner = "tool_running"
+                tool_running_spinner = Spinner(
+                    theme.get_spinner("tool_running") or "dots",
+                    text="[cyan]"
+                    + theme._n(
+                        "Running tool {tool_names}...",
+                        "Running tools {tool_names}...",
+                        len(tool_calling_names),
+                    ).format(tool_names=", ".join(tool_calling_names))
+                    + "[/cyan]",
+                    style="cyan",
+                    speed=1.0,
+                )
 
         elapsed = perf_counter() - start
         total_tokens += 1
@@ -741,7 +753,7 @@ async def _token_stream(
             tool_events,
             tool_event_calls,
             tool_event_results,
-            tool_running_spinner,
+            cast(Any, tool_running_spinner),
             ttft,
             ttnt,
             ttsr,
