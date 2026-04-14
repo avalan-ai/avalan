@@ -1942,23 +1942,26 @@ class CLI:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
         if command == "model" and (args.model_command or "display") == "run":
+            assert isinstance(args.model, str)
             engine_uri = ModelManager.parse_uri(args.model)
-            return engine_uri.is_local
+            return bool(engine_uri.is_local)
         if command == "agent" and (
             (args.agent_command or "run") in {"run", "serve", "proxy"}
         ):
             engine = getattr(args, "engine_uri", None)
             if engine:
+                assert isinstance(engine, str)
                 engine_uri = ModelManager.parse_uri(engine)
-                return engine_uri.is_local
+                return bool(engine_uri.is_local)
             specs = getattr(args, "specifications_file", None)
             if specs:
                 with open(specs, "rb") as file:
                     config = toml_load(file)
                 engine_uri_str = config.get("engine", {}).get("uri")
                 if engine_uri_str:
+                    assert isinstance(engine_uri_str, str)
                     engine_uri = ModelManager.parse_uri(engine_uri_str)
-                    return engine_uri.is_local
+                    return bool(engine_uri.is_local)
         return True
 
     async def __call__(self) -> None:

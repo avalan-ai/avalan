@@ -35,6 +35,7 @@ from asyncio import (
 )
 from dataclasses import replace
 from datetime import datetime, timezone
+from functools import partial
 from logging import Logger
 from time import perf_counter
 
@@ -59,7 +60,7 @@ def model_display(
     theme: Theme,
     hub: HuggingfaceHub,
     logger: Logger,
-    *vargs,
+    *vargs: object,
     modality: Modality | None = None,
     load: bool | None = None,
     model: SentenceTransformerModel | TextGenerationModel | None = None,
@@ -326,8 +327,11 @@ async def model_search(
         ]
 
     # Tasks to check model access
+    def _model_access_check(model_id: str) -> tuple[str, bool]:
+        return model_id, hub.can_access(model_id)
+
     tasks = [
-        create_task(to_thread(lambda id=model.id: (id, hub.can_access(id))))
+        create_task(to_thread(partial(_model_access_check, model.id)))
         for model in models
     ]
 
@@ -394,7 +398,7 @@ async def token_generation(
     tool_events_limit: int | None,
     with_stats: bool = True,
     live_container: dict[str, Live | None] | None = None,
-):
+) -> None:
     # If no statistics needed, return as early as possible
     if not with_stats:
         async for token in response:
@@ -577,7 +581,7 @@ async def _token_stream(
     start_thinking = (
         args.start_thinking if hasattr(args, "start_thinking") else False
     )
-    tokens = []
+    tokens: list[Token] = []
     answer_text_tokens: list[str] = []
     thinking_text_tokens: list[str] = []
     tool_text_tokens: list[str] = []
