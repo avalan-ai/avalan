@@ -2124,7 +2124,7 @@ class CLI:
         ):
             with console.status(
                 theme.logging_in(hub.domain),
-                spinner=(theme.get_spinner("connecting")),
+                spinner=(theme.get_spinner("connecting") or "dots"),
                 refresh_per_second=self._REFRESH_RATE,
             ):
                 hub.login()

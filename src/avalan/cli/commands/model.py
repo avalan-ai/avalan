@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
 from time import perf_counter
+from typing import Any, AsyncGenerator, Awaitable, cast
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -163,8 +164,7 @@ async def model_run(
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
         model_settings = get_model_settings(args, hub, logger, engine_uri)
-        modality = model_settings["modality"]
-        assert modality
+        modality = cast(Modality, model_settings["modality"])
 
         if not args.quiet:
             if engine_uri.is_local:
@@ -258,10 +258,15 @@ async def model_run(
                     orchestrator=None,
                     event_stats=None,
                     lm=model,
-                    input_string=operation.input,
+                    input_string=cast(str, operation.input),
                     refresh_per_second=refresh_per_second,
                     response=output,
-                    dtokens_pick=operation.parameters["text"].pick_tokens,
+                    dtokens_pick=(
+                        operation.parameters["text"].pick_tokens or 0
+                        if operation.parameters
+                        and operation.parameters["text"]
+                        else 0
+                    ),
                     display_tokens=args.display_tokens or 0,
                     with_stats=not args.quiet,
                     tool_events_limit=args.display_tools_events,
@@ -307,7 +312,7 @@ async def model_search(
     # Fetch matching models
     with console.status(
         _("Loading models..."),
-        spinner=theme.get_spinner("downloading"),
+        spinner=theme.get_spinner("downloading") or "dots",
         refresh_per_second=refresh_per_second,
     ):
         models = [
@@ -603,6 +608,7 @@ async def _token_stream(
             else lm.input_token_count(input_string)
         )
     )
+    assert lm.model_id is not None
     ttft: float | None = None
     ttnt: float | None = None
     last_current_dtoken: Token | None = None
@@ -626,13 +632,14 @@ async def _token_stream(
                 answer_text_tokens = []
                 tool_text_tokens = []
                 thinking_text_tokens = []
+                assert event.payload is not None
                 inner_response = event.payload["response"]
                 assert isinstance(inner_response, TextGenerationResponse)
                 if inner_response.input_token_count:
                     input_token_count = inner_response.input_token_count
             elif event.type == EventType.TOOL_RESULT:
                 tool_event_results.append(event)
-                if "call" in event.payload:
+                if event.payload and "call" in event.payload:
                     completed_call_ids.add(event.payload["call"].id)
             else:
                 tool_event_calls.append(event)
@@ -658,15 +665,14 @@ async def _token_stream(
         tool_running_spinner = None
         if tool_event_calls or tool_event_results:
             tool_calling_names = [
-                c.name
+                str(getattr(c, "name", ""))
                 for e in tool_event_calls
-                for c in e.payload
-                if c.id not in completed_call_ids
+                for c in cast(list[object], e.payload or [])
+                if str(getattr(c, "id", "")) not in completed_call_ids
             ]
-
-            tool_running_spinner = (
-                Spinner(
-                    theme.get_spinner("tool_running"),
+            if tool_calling_names:
+                tool_running_spinner = Spinner(
+                    theme.get_spinner("tool_running") or "dots",
                     text="[cyan]"
                     + theme._n(
                         "Running tool {tool_names}...",
@@ -677,9 +683,6 @@ async def _token_stream(
                     style="cyan",
                     speed=1.0,
                 )
-                if tool_calling_names
-                else None
-            )
 
         elapsed = perf_counter() - start
         total_tokens += 1
@@ -704,7 +707,7 @@ async def _token_stream(
         )
         answer_height = getattr(args, "display_answer_height", 12)
 
-        token_frames_promise = theme.tokens(
+        token_frames_result = theme.tokens(
             lm.model_id,
             lm.tokenizer_config.tokens if lm.tokenizer_config else None,
             (
@@ -718,12 +721,17 @@ async def _token_stream(
             # Which tokens to mark as interesting
             lambda dtoken: (
                 (
-                    dtoken.probability < args.display_probabilities_maximum
+                    dtoken.probability is not None
+                    and dtoken.probability < args.display_probabilities_maximum
                     or len(
                         [
                             t
-                            for t in dtoken.tokens
+                            for t in cast(
+                                list[Token],
+                                getattr(dtoken, "tokens", []) or [],
+                            )
                             if t.id != dtoken.id
+                            and t.probability is not None
                             and t.probability
                             >= args.display_probabilities_sample_minimum
                         ]
@@ -734,18 +742,18 @@ async def _token_stream(
                 and args.display_probabilities
                 and args.display_probabilities_maximum > 0
                 and args.display_probabilities_maximum > 0
-                else None
+                else False
             ),
             thinking_text_tokens,
             tool_text_tokens,
             answer_text_tokens,
             tokens or None,
-            input_token_count,
+            input_token_count or 0,
             total_tokens,
             tool_events,
             tool_event_calls,
             tool_event_results,
-            tool_running_spinner,
+            cast(Any, tool_running_spinner),
             ttft,
             ttnt,
             ttsr,
@@ -760,8 +768,24 @@ async def _token_stream(
             start_thinking=start_thinking,
         )
 
+        token_frames_stream: AsyncGenerator[
+            tuple[Token | None, RenderableType], None
+        ]
+        if isinstance(token_frames_result, Awaitable):
+            token_frames_stream = await cast(
+                Awaitable[
+                    AsyncGenerator[tuple[Token | None, RenderableType], None]
+                ],
+                token_frames_result,
+            )
+        else:
+            token_frames_stream = cast(
+                AsyncGenerator[tuple[Token | None, RenderableType], None],
+                token_frames_result,
+            )
+
         token_frame_list = [
-            token_frame async for token_frame in token_frames_promise
+            token_frame async for token_frame in token_frames_stream
         ]
 
         token_frames = [token_frame_list[0]]
