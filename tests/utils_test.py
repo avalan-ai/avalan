@@ -135,5 +135,5 @@ class CliDownloadTestCase(TestCase):
             super_close.assert_called_once()
 
             bar.reset(total=2)
-            bar._progress.reset.assert_called_once_with(total=2)
+            bar._progress.reset.assert_called_once_with(1, total=2)
             super_reset.assert_called_once_with(total=2)
