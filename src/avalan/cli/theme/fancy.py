@@ -11,13 +11,13 @@ from ...entities import (
     SearchMatch,
     SentenceTransformerModelConfig,
     Similarity,
+    TextPartition,
     Token,
     TokenizerConfig,
     ToolCallError,
     User,
 )
 from ...event import TOOL_TYPES, Event, EventStats, EventType
-from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import PermanentMemoryPartition
 from ...utils import _j, _lf, to_json
 

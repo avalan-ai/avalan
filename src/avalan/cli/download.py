@@ -69,8 +69,5 @@ class tqdm_rich_progress(std_tqdm):  # type: ignore[misc]
 
     def reset(self, total: int | float | None = None) -> None:
         if hasattr(self, "_progress"):
-            try:
-                self._progress.reset(self._task_id, total=total)
-            except TypeError:
-                self._progress.reset(total=total)
+            self._progress.reset(self._task_id, total=total)
         super().reset(total=total)
