@@ -22,7 +22,7 @@ from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...memory.permanent import PermanentMemoryPartition
 from ...utils import _j, _lf, to_json
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from locale import format_string
 from logging import Logger
 from math import ceil, inf
@@ -2301,7 +2301,7 @@ class FancyTheme(Theme):
                             tool="[gray78]" + result.call.name + "[/gray78]",
                             elapsed_with_unit="[gray78]"
                             + precisedelta(
-                                int(event.elapsed or 0),
+                                timedelta(seconds=event.elapsed or 0.0),
                                 minimum_unit="microseconds",
                             )
                             + "[/gray78]",
@@ -2323,8 +2323,11 @@ class FancyTheme(Theme):
                 else:
                     event_log.append(
                         (
-                            f"[{precisedelta(int(event.elapsed or 0))}]"
-                            f" <{event.type}>: {event.payload}"
+                            "["
+                            + precisedelta(
+                                timedelta(seconds=event.elapsed or 0.0)
+                            )
+                            + f"] <{event.type}>: {event.payload}"
                             if event.payload and event.elapsed
                             else (
                                 f"[{datetime.utcfromtimestamp(event.started).isoformat(sep=' ', timespec='seconds')}] <{event.type}>: {event.payload}"  # noqa: E501
