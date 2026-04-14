@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from logging import Logger
-from typing import Any, Callable, Generator, Literal, TypeAlias, cast
+from typing import Any, AsyncGenerator, Callable, Literal, TypeAlias, cast
 from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
@@ -32,9 +32,16 @@ from rich.console import RenderableType
 
 Formatter: TypeAlias = Callable[[datetime | float | int], str]
 Formatters = dict[Literal["datetime", "number", "quantity", "size"], Formatter]
-Spinner = Literal["cache_accessing", "connecting", "thinking", "downloading"]
+Spinner = Literal[
+    "agent_loading",
+    "cache_accessing",
+    "connecting",
+    "downloading",
+    "thinking",
+    "tool_running",
+]
 Data = str
-DataValue = datetime | float | int | str | None
+DataValue = datetime | float | int | str | UUID | None
 Styler: TypeAlias = Callable[[Data, DataValue, str | None, bool | str], str]
 Stylers = dict[Data, Styler]
 
@@ -43,7 +50,7 @@ class Theme(ABC):
     _all_spinners: dict[Spinner, str | None]
     _all_stylers: Stylers
     _all_styles: dict[str, str]
-    _icons: dict[Data, str | None]
+    _icons: dict[Data, str]
     _: Callable[[str], str]
 
     @property
@@ -51,7 +58,7 @@ class Theme(ABC):
         return {}
 
     @property
-    def icons(self) -> dict[str, str]:
+    def icons(self) -> dict[Data, str]:
         return {}
 
     @property
@@ -120,7 +127,9 @@ class Theme(ABC):
 
     @abstractmethod
     def cache_delete(
-        self, cache_deletion: HubCacheDeletion | None, deleted: bool
+        self,
+        cache_deletion: HubCacheDeletion | None,
+        deleted: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -145,7 +154,7 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def download_progress(self) -> tuple[str | RenderableType]:
+    def download_progress(self) -> tuple[str | RenderableType, ...]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -158,12 +167,13 @@ class Theme(ABC):
         events: list[Event],
         *,
         events_limit: int | None = None,
+        height: int | None = None,
         include_tokens: bool = True,
         include_tool_detect: bool = True,
         include_tools: bool = True,
         include_non_tools: bool = True,
         tool_view: bool = False,
-    ) -> RenderableType:
+    ) -> RenderableType | None:
         raise NotImplementedError()
 
     @abstractmethod
@@ -335,6 +345,7 @@ class Theme(ABC):
         tool_events: list[Event] | None,
         tool_event_calls: list[Event] | None,
         tool_event_results: list[Event] | None,
+        tool_running_spinner: Spinner | None,
         ttft: float,
         ttnt: float | None,
         ttsr: float | None,
@@ -356,7 +367,7 @@ class Theme(ABC):
         limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[tuple[Token | None, RenderableType], None, None]:
+    ) -> AsyncGenerator[tuple[Token | None, RenderableType], None]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -400,7 +411,7 @@ class Theme(ABC):
         }
 
         all_icons = {
-            **{data: None for data in data_keys},
+            **{data: "" for data in data_keys},
             **self.icons,
             **(icons or {}),
         }
@@ -410,10 +421,12 @@ class Theme(ABC):
 
         self._all_spinners = {
             **{
+                "agent_loading": None,
                 "cache_accessing": None,
                 "connecting": None,
                 "thinking": None,
                 "downloading": None,
+                "tool_running": None,
             },
             **self.spinners,
             **(spinners or {}),
@@ -427,37 +440,37 @@ class Theme(ABC):
                 prefix: str | None = None,
                 icon: bool | str = True,
             ) -> str:
-                return "".join(
-                    [
-                        prefix or "",
-                        (
-                            f"{all_icons[data]} "
-                            if isinstance(icon, bool)
-                            and icon
-                            and data in self._icons
-                            and all_icons[data]
-                            else icon if isinstance(icon, str) else ""
-                        ),
-                        f"[{data}]",
-                        (
-                            formatters["quantity"](cast(float | int, value))
-                            if data_key in quantity_keys
-                            else (
-                                formatters["datetime"](
-                                    cast(datetime | float | int, value)
-                                )
-                                if isinstance(value, datetime)
-                                else (
-                                    formatters["number"](value)
-                                    if isinstance(value, int)
-                                    or isinstance(value, float)
-                                    else str(value)
-                                )
+                return "".join([
+                    prefix or "",
+                    (
+                        f"{all_icons[data]} "
+                        if isinstance(icon, bool)
+                        and icon
+                        and data in self._icons
+                        and all_icons[data]
+                        else icon
+                        if isinstance(icon, str)
+                        else ""
+                    ),
+                    f"[{data}]",
+                    (
+                        formatters["quantity"](cast(float | int, value))
+                        if data_key in quantity_keys
+                        else (
+                            formatters["datetime"](
+                                cast(datetime | float | int, value)
                             )
-                        ),
-                        f"[/{data}]",
-                    ]
-                )
+                            if isinstance(value, datetime)
+                            else (
+                                formatters["number"](value)
+                                if isinstance(value, int)
+                                or isinstance(value, float)
+                                else str(value)
+                            )
+                        )
+                    ),
+                    f"[/{data}]",
+                ])
 
             return _styler
 
@@ -478,8 +491,8 @@ class Theme(ABC):
     def get_styles(self) -> dict[str, str]:
         return self._all_styles
 
-    def get_spinner(self, spinner_name: Spinner) -> str:
-        return cast(str, self._all_spinners[spinner_name])
+    def get_spinner(self, spinner_name: Spinner) -> str | None:
+        return self._all_spinners[spinner_name]
 
     def __call__(self, item: Model | str) -> RenderableType:
         return self.model(item) if isinstance(item, Model) else str(item)
