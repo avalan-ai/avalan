@@ -327,7 +327,7 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def tokens(
+    def tokens(
         self,
         model_id: str,
         added_tokens: list[str] | None,
@@ -440,37 +440,37 @@ class Theme(ABC):
                 prefix: str | None = None,
                 icon: bool | str = True,
             ) -> str:
-                return "".join([
-                    prefix or "",
-                    (
-                        f"{all_icons[data]} "
-                        if isinstance(icon, bool)
-                        and icon
-                        and data in self._icons
-                        and all_icons[data]
-                        else icon
-                        if isinstance(icon, str)
-                        else ""
-                    ),
-                    f"[{data}]",
-                    (
-                        formatters["quantity"](cast(float | int, value))
-                        if data_key in quantity_keys
-                        else (
-                            formatters["datetime"](
-                                cast(datetime | float | int, value)
-                            )
-                            if isinstance(value, datetime)
+                return "".join(
+                    [
+                        prefix or "",
+                        (
+                            f"{all_icons[data]} "
+                            if isinstance(icon, bool)
+                            and icon
+                            and data in self._icons
+                            and all_icons[data]
+                            else icon if isinstance(icon, str) else ""
+                        ),
+                        f"[{data}]",
+                        (
+                            formatters["quantity"](cast(float | int, value))
+                            if data_key in quantity_keys
                             else (
-                                formatters["number"](value)
-                                if isinstance(value, int)
-                                or isinstance(value, float)
-                                else str(value)
+                                formatters["datetime"](
+                                    cast(datetime | float | int, value)
+                                )
+                                if isinstance(value, datetime)
+                                else (
+                                    formatters["number"](value)
+                                    if isinstance(value, int)
+                                    or isinstance(value, float)
+                                    else str(value)
+                                )
                             )
-                        )
-                    ),
-                    f"[/{data}]",
-                ])
+                        ),
+                        f"[/{data}]",
+                    ]
+                )
 
             return _styler
 

@@ -779,10 +779,7 @@ async def _token_stream(
                 token_frames_result,
             )
         else:
-            token_frames_stream = cast(
-                AsyncGenerator[tuple[Token | None, RenderableType], None],
-                token_frames_result,
-            )
+            token_frames_stream = token_frames_result
 
         token_frame_list = [
             token_frame async for token_frame in token_frames_stream
