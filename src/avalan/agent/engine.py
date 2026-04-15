@@ -4,7 +4,6 @@ from ..entities import (
     GenerationSettings,
     Input,
     Message,
-    MessageContentText,
     MessageRole,
     Modality,
     Operation,
@@ -243,7 +242,7 @@ class EngineAgent(ABC):
                 input_messages.append(
                     Message(
                         role=MessageRole.USER,
-                        content=MessageContentText(type="text", text=item),
+                        content=item,
                     )
                 )
             input_value = input_messages

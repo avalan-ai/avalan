@@ -372,7 +372,7 @@ class OrchestratorLoader:
                 agent_config=agent_config,
                 uri=uri,
                 engine_config=engine_config,
-                tools=enable_tools or [],
+                tools=enable_tools,
                 call_options=call_options,
                 template_vars=template_vars,
                 memory_permanent_message=memory_permanent_message,
