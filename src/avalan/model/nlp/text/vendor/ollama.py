@@ -11,6 +11,7 @@ from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from logging import Logger, getLogger
 from typing import AsyncIterator
@@ -77,7 +78,9 @@ class OllamaModel(TextGenerationVendorModel):
         model_id: str,
         settings: TransformerEngineSettings | None = None,
         logger: Logger = getLogger(__name__),
+        exit_stack: AsyncExitStack | None = None,
     ) -> None:
+        _ = exit_stack
         settings = settings or TransformerEngineSettings()
         settings = replace(settings, enable_eval=False)
         TextGenerationModel.__init__(self, model_id, settings, logger)
