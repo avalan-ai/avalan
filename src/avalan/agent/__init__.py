@@ -8,6 +8,7 @@ from ..entities import (
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class NoOperationAvailableException(Exception):
@@ -45,7 +46,7 @@ class Specification:
     output_type: OutputType = OutputType.TEXT
     settings: GenerationSettings | None = None
     template_id: str | None = None
-    template_vars: dict | None = None
+    template_vars: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
