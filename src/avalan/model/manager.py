@@ -43,11 +43,20 @@ from .modalities import ModalityRegistry
 
 import asyncio
 from argparse import Namespace
-from contextlib import AsyncExitStack, ContextDecorator
+from contextlib import AsyncExitStack
 from logging import Logger
 from os import environ
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, TypeAlias, get_args
+from types import TracebackType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Mapping,
+    TypeAlias,
+    cast,
+    get_args,
+)
 from urllib.parse import parse_qsl, urlparse
 
 if TYPE_CHECKING:
@@ -79,7 +88,7 @@ ModelType: TypeAlias = (
 )
 
 
-class ModelManager(ContextDecorator):
+class ModelManager:
     _hub: HuggingfaceHub
     _stack: AsyncExitStack
     _logger: Logger
@@ -100,15 +109,15 @@ class ModelManager(ContextDecorator):
         self._event_manager = event_manager
         self._pending_exit_task = None
 
-    def __enter__(self):
+    def __enter__(self) -> "ModelManager":
         return self
 
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: Any | None,
-    ):
+        traceback: TracebackType | None,
+    ) -> Literal[False]:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -124,17 +133,19 @@ class ModelManager(ContextDecorator):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: Any | None,
+        traceback: TracebackType | None,
     ) -> bool:
         if self._pending_exit_task is not None:
             await self._pending_exit_task
             self._pending_exit_task = None
-        return await self._stack.__aexit__(exc_type, exc_value, traceback)
+        return bool(
+            await self._stack.__aexit__(exc_type, exc_value, traceback)
+        )
 
     async def __call__(
         self,
         model_task: ModelCall,
-    ):
+    ) -> object:
         modality = model_task.operation.modality
 
         self._logger.info("ModelManager call process started for %s", modality)
@@ -199,10 +210,10 @@ class ModelManager(ContextDecorator):
     def get_engine_settings(
         self,
         engine_uri: EngineUri,
-        settings: dict | None = None,
+        settings: Mapping[str, object] | None = None,
         modality: Modality | None = None,
     ) -> TransformerEngineSettings:
-        engine_settings_args = settings or {}
+        engine_settings_args: dict[str, Any] = dict(settings or {})
 
         if modality != Modality.EMBEDDING and not engine_uri.is_local:
             token = None
@@ -226,7 +237,7 @@ class ModelManager(ContextDecorator):
         self,
         engine_uri: EngineUri,
         modality: Modality = Modality.TEXT_GENERATION,
-        *args,
+        *args: object,
         attention: AttentionImplementation | None = None,
         base_url: str | None = None,
         device: str | None = None,
@@ -251,7 +262,9 @@ class ModelManager(ContextDecorator):
         weight_type: WeightType = "auto",
     ) -> ModelType:
         if "backend" in engine_uri.params:
-            backend = Backend(engine_uri.params["backend"])
+            backend_param = engine_uri.params["backend"]
+            assert isinstance(backend_param, str)
+            backend = Backend(backend_param)
         engine_settings_args = dict(
             base_url=base_url,
             cache_dir=self._hub.cache_dir,
@@ -299,6 +312,7 @@ class ModelManager(ContextDecorator):
         if modality is Modality.EMBEDDING:
             from ..model.nlp.sentence import SentenceTransformerModel
 
+            assert engine_uri.model_id is not None
             model = SentenceTransformerModel(
                 model_id=engine_uri.model_id,
                 settings=engine_settings,
@@ -355,7 +369,7 @@ class ModelManager(ContextDecorator):
             else ""
         ) + (parsed.path[1:] if path_prefixed else parsed.path)
         engine_uri = EngineUri(
-            vendor=vendor,
+            vendor=cast(Vendor | None, vendor),
             host=hostname if use_host else None,
             port=(parsed.port or None) if use_host else None,
             user=parsed.username or None,

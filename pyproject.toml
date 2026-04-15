@@ -220,13 +220,6 @@ python_version = "3.11"
 
 [[tool.mypy.overrides]]
 module = [
-  "avalan.model.*",
-  "avalan.tool.*",
-]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = [
   "a2a",
   "aioboto3",
   "anyio",
