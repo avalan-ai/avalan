@@ -69,3 +69,19 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
         response._prefetched_text = "cached"
         response._ensure_non_stream_prefetched()
         self.assertIn("TextGenerationResponse", str(response))
+
+    async def test_streaming_string_output_is_not_replayed_in_to_str(
+        self,
+    ) -> None:
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: "hi",
+            logger=getLogger("response-stream-string"),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=True,
+        )
+        response.__aiter__()
+        first = await response.__anext__()
+        self.assertEqual(first, "hi")
+        self.assertEqual(await response.to_str(), "hi")

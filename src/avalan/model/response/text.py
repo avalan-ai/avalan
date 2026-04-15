@@ -151,10 +151,14 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         # Create a fresh async generator each time we start iterating
         output = self._output_fn(*self._args, **self._kwargs)
         if isinstance(output, str):
-            self._output = TextGenerationSingleStream(output)
+            self._output = self._string_output_generator(output)
         else:
             self._output = output
         return self
+
+    @staticmethod
+    async def _string_output_generator(text: str) -> OutputGenerator:
+        yield text
 
     async def __anext__(self) -> Token | TokenDetail | str:
         assert self._output
