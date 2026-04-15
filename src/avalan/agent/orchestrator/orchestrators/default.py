@@ -1,12 +1,24 @@
-from ....agent import AgentOperation, EngineEnvironment, Goal, Specification
+from ....agent import (
+    AgentOperation,
+    EngineEnvironment,
+    Goal,
+    Role,
+    Specification,
+)
 from ....agent.orchestrator import Orchestrator
-from ....entities import EngineUri, Modality, TransformerEngineSettings
+from ....entities import (
+    EngineSettings,
+    EngineUri,
+    Modality,
+    TransformerEngineSettings,
+)
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
 
 from logging import Logger
+from typing import Any, cast
 from uuid import UUID
 
 
@@ -31,10 +43,10 @@ class DefaultOrchestrator(Orchestrator):
         user_template: str | None = None,
         template_id: str | None = None,
         settings: TransformerEngineSettings | None = None,
-        call_options: dict | None = None,
-        template_vars: dict | None = None,
+        call_options: dict[str, Any] | None = None,
+        template_vars: dict[str, Any] | None = None,
         id: UUID | None = None,
-    ):
+    ) -> None:
         if system is not None or developer is not None:
             specification = Specification(
                 role=None,
@@ -47,7 +59,7 @@ class DefaultOrchestrator(Orchestrator):
             )
         else:
             specification = Specification(
-                role=role,
+                role=cast(Role | None, role),
                 goal=(
                     Goal(task=task, instructions=[instructions])
                     if task and instructions
@@ -66,7 +78,8 @@ class DefaultOrchestrator(Orchestrator):
             AgentOperation(
                 specification=specification,
                 environment=EngineEnvironment(
-                    engine_uri=engine_uri, settings=settings
+                    engine_uri=engine_uri,
+                    settings=settings or EngineSettings(),
                 ),
                 modality=Modality.TEXT_GENERATION,
             ),
