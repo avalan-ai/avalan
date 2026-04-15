@@ -10,7 +10,7 @@ from .vendor import TextGenerationVendorStream
 
 from typing import AsyncGenerator, Callable, Generator
 
-from numpy import ndarray
+from numpy.typing import NDArray
 
 OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
 OutputFunction = Callable[..., OutputGenerator | str]
@@ -24,7 +24,7 @@ EngineResponse = (
     | list[ImageEntity]
     | list[str]
     | dict[str, str]
-    | ndarray
+    | NDArray[object]
     | str
 )
 
