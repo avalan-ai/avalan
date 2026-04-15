@@ -28,6 +28,7 @@ from ..engine import EngineAgent
 from ..renderer import Renderer, TemplateEngineAgent
 from .response.orchestrator_response import OrchestratorResponse
 
+import asyncio
 from contextlib import ExitStack
 from dataclasses import asdict
 from inspect import isawaitable
@@ -120,6 +121,12 @@ class Orchestrator:
             return None
         count = self._last_engine_agent.input_token_count
         if callable(count):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(count())
+            if self._last_engine_agent.output:
+                return self._last_engine_agent.output.input_token_count
             return None
         return cast(int | None, count)
 

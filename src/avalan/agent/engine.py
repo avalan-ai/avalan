@@ -229,9 +229,6 @@ class EngineAgent(ABC):
             or self._memory.permanent_message is not None
         )
 
-        # Should always be stored, with or without memory
-        self._last_prompt = (input_value, system_prompt, developer_prompt)
-
         if isinstance(input_value, Message):
             input_value = [input_value]
         if (
@@ -243,6 +240,11 @@ class EngineAgent(ABC):
                 Message(role=MessageRole.USER, content=item)
                 for item in input_value
             ]
+
+        # Should always be stored, with or without memory.
+        # Persist the normalized shape so token counting uses the same
+        # representation passed to generation.
+        self._last_prompt = (input_value, system_prompt, developer_prompt)
 
         # Transform input (by adding memory, if necessary)
         if (
