@@ -17,7 +17,9 @@ from collections.abc import Callable
 from contextlib import AsyncExitStack
 from inspect import isclass
 from logging import Logger
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar, cast
+
+HandlerType = TypeVar("HandlerType")
 
 
 class ModalityHandler(Protocol):
@@ -51,11 +53,14 @@ class ModalityRegistry:
     @classmethod
     def register(
         cls, modality: Modality
-    ) -> Callable[[ModalityHandler | type], ModalityHandler]:
-        def decorator(handler: ModalityHandler | type) -> ModalityHandler:
-            cls._handlers[modality] = (
-                handler() if isclass(handler) else handler
-            )
+    ) -> Callable[[HandlerType], HandlerType]:
+        def decorator(handler: HandlerType) -> HandlerType:
+            if isclass(handler):
+                class_handler = cast(type[ModalityHandler], handler)
+                resolved_handler = class_handler()
+            else:
+                resolved_handler = cast(ModalityHandler, handler)
+            cls._handlers[modality] = resolved_handler
             return handler
 
         return decorator
@@ -134,7 +139,7 @@ class ModalityRegistry:
                 generation_settings=settings,
                 input=input_string,
                 modality=modality,
-                parameters=None,
+                parameters=cast(Any, None),
                 requires_input=False,
             )
         return handler.get_operation_from_arguments(

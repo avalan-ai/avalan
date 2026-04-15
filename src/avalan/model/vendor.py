@@ -4,11 +4,17 @@ from ..entities import (
     MessageContent,
     MessageContentImage,
     MessageContentText,
+    Token,
+    TokenDetail,
     ToolCall,
     ToolCallToken,
 )
 from ..tool.manager import ToolManager
-from .message import TemplateMessage, TemplateMessageRole
+from .message import (
+    TemplateMessage,
+    TemplateMessageContent,
+    TemplateMessageRole,
+)
 from .stream import TextGenerationStream
 
 from abc import ABC
@@ -29,14 +35,16 @@ class TextGenerationVendor(ABC):
         raise NotImplementedError()
 
     def _system_prompt(self, messages: list[Message]) -> str | None:
-        return next(
-            (
-                message.content
-                for message in messages
-                if message.role == "system"
-            ),
-            None,
-        )
+        for message in messages:
+            if message.role != "system":
+                continue
+            content = message.content
+            if isinstance(content, str):
+                return content
+            if isinstance(content, MessageContentText):
+                return content.text
+            return None
+        return None
 
     def _template_messages(
         self,
@@ -73,7 +81,12 @@ class TextGenerationVendor(ABC):
             out.append(
                 {
                     "role": cast(TemplateMessageRole, str(msg.role)),
-                    "content": _wrap(msg.content),
+                    "content": cast(
+                        str
+                        | TemplateMessageContent
+                        | list[TemplateMessageContent],
+                        _wrap(msg.content),
+                    ),
                 }
             )
 
@@ -122,9 +135,12 @@ class TextGenerationVendorStream(TextGenerationStream):
 
     def __call__(
         self, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[str | ToolCallToken]:
+    ) -> AsyncIterator[Token | TokenDetail | str]:
         return self.__aiter__()
 
-    def __aiter__(self) -> AsyncIterator[str | ToolCallToken]:
+    def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
         assert self._generator
         return self
+
+    async def __anext__(self) -> str | ToolCallToken:
+        return await self._generator.__anext__()

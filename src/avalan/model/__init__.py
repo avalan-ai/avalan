@@ -8,7 +8,7 @@ from .call import ModelCallContext as ModelCallContext
 from .response.text import TextGenerationResponse
 from .vendor import TextGenerationVendorStream
 
-from typing import AsyncGenerator, Callable, Generator
+from typing import Any, AsyncGenerator, Callable, Generator
 
 from numpy.typing import NDArray
 
@@ -24,7 +24,7 @@ EngineResponse = (
     | list[ImageEntity]
     | list[str]
     | dict[str, str]
-    | NDArray[object]
+    | NDArray[Any]
     | str
 )
 
