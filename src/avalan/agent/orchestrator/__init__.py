@@ -6,6 +6,7 @@ from ...entities import (
     Message,
     MessageContentText,
     MessageRole,
+    TransformerEngineSettings,
 )
 from ...entities import Modality as Modality
 from ...event import Event, EventType
@@ -14,6 +15,7 @@ from ...memory.manager import MemoryManager
 from ...model.call import ModelCallContext
 from ...model.engine import Engine
 from ...model.manager import ModelManager
+from ...model.response.text import TextGenerationResponse
 from ...tool.manager import ToolManager
 from .. import (
     AgentOperation,
@@ -240,7 +242,7 @@ class Orchestrator:
             participant_id=participant_id,
             session_id=session_id,
         )
-        result = await engine_agent(context)
+        result = cast(TextGenerationResponse, await engine_agent(context))
         self._logger.info(
             "Engine agent %s responded to orchestrator", str(engine_agent)
         )
@@ -291,7 +293,7 @@ class Orchestrator:
                 model_ids.append(environment.engine_uri.model_id)
                 engine = self._model_manager.load_engine(
                     environment.engine_uri,
-                    environment.settings,
+                    cast(TransformerEngineSettings, environment.settings),
                     operation.modality,
                 )
                 if not engine:
@@ -402,7 +404,8 @@ class Orchestrator:
                 message = Message(role=message.role, content=content)
 
                 if isinstance(input, list):
-                    input[-1] = message
+                    assert input and isinstance(input[-1], Message)
+                    cast(list[Message], input)[-1] = message
                 else:
                     input = message
 

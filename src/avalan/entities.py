@@ -675,7 +675,7 @@ class OrchestratorSettings:
     sentence_model_overlap_size: int
     sentence_model_window_size: int
     json_config: dict[str, Any] | None
-    tools: list[str]
+    tools: list[str] | None
     log_events: bool
 
 

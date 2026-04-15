@@ -46,7 +46,7 @@ class Renderer:
                 template_id
             )
 
-        output = cast(str, self._templates[template_id].render(**kwargs))
+        output = self._templates[template_id].render(**kwargs)
 
         if self._clean_spaces:
             output = linesep.join(line.strip() for line in output.splitlines())
@@ -60,7 +60,7 @@ class Renderer:
     ) -> str:
         if not template_vars:
             return template
-        rendered = cast(str, Template(template).render(**template_vars))
+        rendered = Template(template).render(**template_vars)
         return cast(str, rendered.encode(encoding))
 
 

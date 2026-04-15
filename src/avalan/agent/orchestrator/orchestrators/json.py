@@ -1,14 +1,19 @@
 from ....agent import (
     AgentOperation,
     EngineEnvironment,
-    EngineUri,
     Goal,
     OutputType,
     Role,
     Specification,
 )
 from ....agent.orchestrator import Orchestrator
-from ....entities import Input, Modality, TransformerEngineSettings
+from ....entities import (
+    EngineSettings,
+    EngineUri,
+    Input,
+    Modality,
+    TransformerEngineSettings,
+)
 from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
@@ -16,7 +21,8 @@ from ....tool.manager import ToolManager
 
 from dataclasses import dataclass
 from logging import Logger
-from typing import Annotated, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin
+from uuid import UUID
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -37,8 +43,11 @@ class Property:
 
 class JsonSpecification(Specification):
     def __init__(
-        self, output: type | list[Property], role: str | None = None, **kwargs
-    ):
+        self,
+        output: type | list[Property],
+        role: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         if not isinstance(output, list):
             annotations = getattr(output, "__annotations__", None)
             assert annotations
@@ -56,7 +65,11 @@ class JsonSpecification(Specification):
                         Property(
                             name=name,
                             data_type=data_type,
-                            description=description.strip(),
+                            description=(
+                                description.strip()
+                                if isinstance(description, str)
+                                else None
+                            ),
                         )
                     )
         else:
@@ -104,9 +117,10 @@ class JsonOrchestrator(Orchestrator):
         user_template: str | None = None,
         template_id: str | None = None,
         settings: TransformerEngineSettings | None = None,
-        call_options: dict | None = None,
-        template_vars: dict | None = None,
-    ):
+        call_options: dict[str, Any] | None = None,
+        template_vars: dict[str, Any] | None = None,
+        id: UUID | None = None,
+    ) -> None:
         if system is not None or developer is not None:
             specification = JsonSpecification(
                 output=output,
@@ -136,15 +150,18 @@ class JsonOrchestrator(Orchestrator):
             AgentOperation(
                 specification=specification,
                 environment=EngineEnvironment(
-                    engine_uri=engine_uri, settings=settings
+                    engine_uri=engine_uri,
+                    settings=settings or EngineSettings(),
                 ),
                 modality=Modality.TEXT_GENERATION,
             ),
             call_options=call_options,
+            id=id,
+            name=name,
             user=user,
             user_template=user_template,
         )
 
-    async def __call__(self, input: Input, **kwargs) -> str:
+    async def __call__(self, input: Input, **kwargs: Any) -> str:  # type: ignore[override]
         text_response = await super().__call__(input, **kwargs)
         return await text_response.to_json()

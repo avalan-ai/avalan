@@ -236,10 +236,16 @@ class EngineAgent(ABC):
             and input_value
             and isinstance(input_value[0], str)
         ):
-            input_value = [
-                Message(role=MessageRole.USER, content=item)
-                for item in input_value
-            ]
+            input_messages: list[Message] = []
+            for item in input_value:
+                assert isinstance(item, str)
+                input_messages.append(
+                    Message(
+                        role=MessageRole.USER,
+                        content=item,
+                    )
+                )
+            input_value = input_messages
 
         # Should always be stored, with or without memory.
         # Persist the normalized shape so token counting uses the same
@@ -269,6 +275,7 @@ class EngineAgent(ABC):
                     await self.sync_message(previous_message)
 
             for current_message in input_value:
+                assert isinstance(current_message, Message)
                 await self.sync_message(current_message)
 
             # Make recent memory the new model input

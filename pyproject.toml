@@ -220,7 +220,6 @@ python_version = "3.11"
 
 [[tool.mypy.overrides]]
 module = [
-  "avalan.agent.*",
   "avalan.model.*",
   "avalan.tool.*",
 ]

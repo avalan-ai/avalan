@@ -24,8 +24,8 @@ from ..tool.browser import (
 )
 from ..tool.code import HAS_CODE_DEPENDENCIES, CodeToolSet
 from ..tool.context import ToolSettingsContext
-from ..tool.database import DatabaseToolSet
 from ..tool.database.settings import DatabaseToolSettings
+from ..tool.database.toolset import DatabaseToolSet
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
@@ -609,7 +609,7 @@ class OrchestratorLoader:
 
         if settings.orchestrator_type == "json":
             assert settings.json_config is not None
-            agent = self._load_json_orchestrator(
+            agent: Orchestrator = self._load_json_orchestrator(
                 agent_id=settings.agent_id,
                 engine_uri=engine_uri,
                 engine_settings=engine_settings,
@@ -675,10 +675,10 @@ class OrchestratorLoader:
         memory: MemoryManager,
         tool: ToolManager,
         event_manager: EventManager,
-        config: dict,
-        agent_config: dict,
-        call_options: dict | None,
-        template_vars: dict | None,
+        config: dict[str, Any],
+        agent_config: dict[str, Any],
+        call_options: dict[str, Any] | None,
+        template_vars: dict[str, Any] | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
         if "system" not in agent_config and "developer" not in agent_config:
