@@ -37,7 +37,7 @@ class TextGenerationSingleStream(TextGenerationStream):
         return self._content
 
     def __call__(
-        self, *args, **kwargs
+        self, *args: Any, **kwargs: Any
     ) -> AsyncIterator[str | Token | TokenDetail]:
         self._consumed = False
         return self

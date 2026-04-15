@@ -13,7 +13,7 @@ from .stream import TextGenerationStream
 
 from abc import ABC
 from json import JSONDecodeError, dumps, loads
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, AsyncIterator, cast
 
 
 class TextGenerationVendor(ABC):
@@ -43,14 +43,14 @@ class TextGenerationVendor(ABC):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
-        def _block(c: MessageContent) -> dict:
+        def _block(c: MessageContent) -> dict[str, Any]:
             if isinstance(c, MessageContentImage):
                 return {"type": "image_url", "image_url": c.image_url}
             return {"type": "text", "text": c.text}
 
         def _wrap(
-            content: str | MessageContent | list[MessageContent],
-        ) -> str | list[dict]:
+            content: str | MessageContent | list[MessageContent] | None,
+        ) -> str | list[dict[str, Any]]:
             if isinstance(content, str):
                 return content
 
@@ -70,7 +70,12 @@ class TextGenerationVendor(ABC):
             if exclude_roles and msg.role in exclude_roles:
                 continue
 
-            out.append({"role": str(msg.role), "content": _wrap(msg.content)})
+            out.append(
+                {
+                    "role": cast(TemplateMessageRole, str(msg.role)),
+                    "content": _wrap(msg.content),
+                }
+            )
 
         return out
 
@@ -86,17 +91,21 @@ class TextGenerationVendor(ABC):
     def build_tool_call_token(
         call_id: str | None,
         tool_name: str | None,
-        arguments: str | dict | None,
+        arguments: str | dict[str, Any] | None,
     ) -> ToolCallToken:
         name = TextGenerationVendor.decode_tool_name(tool_name or "")
         if isinstance(arguments, str):
             try:
-                args: dict = loads(arguments)
+                args = cast(dict[str, Any], loads(arguments))
             except JSONDecodeError:
                 args = {}
         else:
             args = arguments or {}
-        call = ToolCall(id=call_id, name=name, arguments=args)
+        call = ToolCall(
+            id=cast(str, call_id),
+            name=name,
+            arguments=cast(dict[str, str | int | float | bool | None], args),
+        )
         token_json = dumps({"name": name, "arguments": args})
         return ToolCallToken(
             token=f"<tool_call>{token_json}</tool_call>", call=call
@@ -104,14 +113,18 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncGenerator
+    _generator: AsyncGenerator[str | ToolCallToken, None]
 
-    def __init__(self, generator: AsyncGenerator):
+    def __init__(
+        self, generator: AsyncGenerator[str | ToolCallToken, None]
+    ) -> None:
         self._generator = generator
 
-    def __call__(self, *args, **kwargs):
+    def __call__(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[str | ToolCallToken]:
         return self.__aiter__()
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[str | ToolCallToken]:
         assert self._generator
         return self
