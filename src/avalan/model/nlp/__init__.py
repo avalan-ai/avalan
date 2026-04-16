@@ -94,8 +94,8 @@ class BaseNLPModel(TransformerModel, ABC):
             )
             if attention_mask is not None:
                 assert isinstance(attention_mask, Tensor)
-                assert input_ids is not None
-                assert attention_mask.shape == input_ids.shape
+                if input_ids is not None:
+                    assert attention_mask.shape == input_ids.shape
                 generation_kwargs["attention_mask"] = attention_mask
 
         if (
