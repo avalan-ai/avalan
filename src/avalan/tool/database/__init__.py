@@ -1,46 +1,58 @@
 from ...compat import override
 from .. import Tool
-from .settings import DatabaseToolSettings
+from .settings import DatabaseToolSettings as DatabaseToolSettings
 
 from abc import ABC
 from asyncio import sleep
 from dataclasses import dataclass
 from re import compile as regex_compile
+from types import TracebackType
 from typing import Any, Literal, final
 
 try:
-    from sqlalchemy import MetaData, event, func, select, text
+    from sqlalchemy import MetaData as MetaData
     from sqlalchemy import Table as SATable
+    from sqlalchemy import event as event
+    from sqlalchemy import func as func
     from sqlalchemy import inspect as sqlalchemy_inspect
-    from sqlalchemy.engine import Connection
-    from sqlalchemy.engine.reflection import Inspector
-    from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
-    from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-    from sqlalchemy.sql import Select
-    from sqlalchemy.sql.elements import ColumnElement, TextClause
+    from sqlalchemy import select as select
+    from sqlalchemy import text as text
+    from sqlalchemy.engine import Connection as Connection
+    from sqlalchemy.engine.reflection import Inspector as Inspector
+    from sqlalchemy.exc import NoSuchTableError as NoSuchTableError
+    from sqlalchemy.exc import SQLAlchemyError as SQLAlchemyError
+    from sqlalchemy.ext.asyncio import AsyncEngine as AsyncEngine
+    from sqlalchemy.ext.asyncio import (
+        create_async_engine as create_async_engine,
+    )
+    from sqlalchemy.sql import Select as Select
+    from sqlalchemy.sql.elements import ColumnElement as ColumnElement
+    from sqlalchemy.sql.elements import TextClause as TextClause
 
     _SQLALCHEMY_AVAILABLE = True
 except ImportError:
     _SQLALCHEMY_AVAILABLE = False
-    MetaData = None  # type: ignore[assignment]
+    MetaData = None  # type: ignore[misc,assignment]
     event = None  # type: ignore[assignment]
     func = None  # type: ignore[assignment]
     select = None  # type: ignore[assignment]
     text = None  # type: ignore[assignment]
-    SATable = None  # type: ignore[assignment]
+    SATable = None  # type: ignore[misc,assignment]
     sqlalchemy_inspect = None  # type: ignore[assignment]
-    Connection = None  # type: ignore[assignment]
-    Inspector = None  # type: ignore[assignment]
-    NoSuchTableError = None  # type: ignore[assignment]
-    SQLAlchemyError = None  # type: ignore[assignment]
-    AsyncEngine = None  # type: ignore[assignment]
+    Connection = None  # type: ignore[misc,assignment]
+    Inspector = None  # type: ignore[misc,assignment]
+    NoSuchTableError = None  # type: ignore[misc,assignment]
+    SQLAlchemyError = None  # type: ignore[misc,assignment]
+    AsyncEngine = None  # type: ignore[misc,assignment]
     create_async_engine = None  # type: ignore[assignment]
-    Select = None  # type: ignore[assignment]
-    ColumnElement = None  # type: ignore[assignment]
-    TextClause = None  # type: ignore[assignment]
+    Select = None  # type: ignore[misc,assignment]
+    ColumnElement = None  # type: ignore[misc,assignment]
+    TextClause = None  # type: ignore[misc,assignment]
 
 try:
-    from sqlglot import exp, parse, parse_one
+    from sqlglot import exp as exp
+    from sqlglot import parse as parse
+    from sqlglot import parse_one as parse_one
 
     _SQLGLOT_AVAILABLE = True
 except ImportError:
@@ -296,7 +308,9 @@ class DatabaseTool(Tool, ABC):
                         if isinstance(schema_ident, exp.Identifier)
                         else None
                     )
-                    key = self._normalizer.normalize(name)
+                    normalizer = self._normalizer
+                    assert normalizer is not None
+                    key = normalizer.normalize(name)
                     lookup = f"{schema}.{key}" if schema else key
                     actual = replacements.get(lookup) or replacements.get(key)
                     if actual:
@@ -387,7 +401,7 @@ class DatabaseTool(Tool, ABC):
 
         if dialect == "postgresql":
             sys = {"information_schema", "pg_catalog"}
-            schemas = [
+            schemas: list[str | None] = [
                 s
                 for s in inspector.get_schema_names()
                 if s not in sys and not (s or "").startswith("pg_")
@@ -396,9 +410,11 @@ class DatabaseTool(Tool, ABC):
                 schemas.append(default_schema)
             return default_schema, schemas
 
-        all_schemas = inspector.get_schema_names() or (
-            [default_schema] if default_schema is not None else [None]
-        )
+        all_schemas = [
+            schema for schema in inspector.get_schema_names() or [] if schema
+        ]
+        if not all_schemas and default_schema is not None:
+            all_schemas = [default_schema]
 
         sys_filters = {
             "mysql": {
@@ -421,9 +437,7 @@ class DatabaseTool(Tool, ABC):
         schemas = [s for s in all_schemas if s not in sys]
 
         if not schemas:
-            schemas = (
-                [default_schema] if default_schema is not None else [None]
-            )
+            schemas = [default_schema] if default_schema is not None else []
 
         seen: set[str | None] = set()
         uniq: list[str | None] = []
@@ -442,8 +456,8 @@ class DatabaseTool(Tool, ABC):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
-    ) -> bool:
+        traceback: TracebackType | None,
+    ) -> bool | None:
         return await super().__aexit__(exc_type, exc_value, traceback)
 
     @staticmethod
@@ -537,7 +551,9 @@ class DatabaseTool(Tool, ABC):
             return
 
         @event.listens_for(sync_engine, "connect")
-        def _set_read_only(dbapi_connection, _connection_record):  # type: ignore[arg-type]
+        def _set_read_only(
+            dbapi_connection: Any, _connection_record: Any
+        ) -> None:
             cursor = dbapi_connection.cursor()
             try:
                 for statement in statements:
