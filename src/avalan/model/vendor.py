@@ -122,7 +122,11 @@ class TextGenerationVendor(ABC):
                 else cast(dict[str, Any], {})
             )
         call = ToolCall(
-            id=cast(str | None, call_id) if isinstance(call_id, str) else None,
+            id=(
+                cast(str | None, call_id)
+                if isinstance(call_id, str) or call_id is None
+                else str(call_id)
+            ),
             name=name,
             arguments=cast(dict[str, str | int | float | bool | None], args),
         )

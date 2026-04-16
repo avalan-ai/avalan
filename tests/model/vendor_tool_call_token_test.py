@@ -1,4 +1,5 @@
 from unittest import TestCase
+from uuid import uuid4
 
 from avalan.entities import ToolCall, ToolCallToken
 from avalan.model.vendor import TextGenerationVendor
@@ -41,5 +42,21 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         expected = ToolCallToken(
             token='<tool_call>{"name": "", "arguments": {"b": 2}}</tool_call>',
             call=ToolCall(id="2", name="", arguments={"b": 2}),
+        )
+        self.assertEqual(token, expected)
+
+    def test_build_tool_call_token_preserves_object_call_id(self) -> None:
+        call_id = uuid4()
+        token = TextGenerationVendor.build_tool_call_token(
+            call_id=call_id,
+            tool_name="tool",
+            arguments={"b": 2},
+        )
+        expected = ToolCallToken(
+            token=(
+                '<tool_call>{"name": "tool", "arguments": {"b": 2}}'
+                "</tool_call>"
+            ),
+            call=ToolCall(id=str(call_id), name="tool", arguments={"b": 2}),
         )
         self.assertEqual(token, expected)
