@@ -71,9 +71,13 @@ class VllmModel(TextGenerationModel):
     def _build_sampling_params(self, settings: GenerationSettings) -> Any:
         assert SamplingParams is not None, "vLLM is not available"
         return SamplingParams(
-            temperature=settings.temperature if settings.temperature else 1.0,
-            top_p=settings.top_p if settings.top_p else 1.0,
-            top_k=settings.top_k if settings.top_k else -1,
+            temperature=(
+                settings.temperature
+                if settings.temperature is not None
+                else 1.0
+            ),
+            top_p=settings.top_p if settings.top_p is not None else 1.0,
+            top_k=settings.top_k if settings.top_k is not None else -1,
             max_tokens=settings.max_new_tokens,
             stop=settings.stop_strings,
         )

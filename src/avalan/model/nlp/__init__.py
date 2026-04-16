@@ -80,7 +80,7 @@ class BaseNLPModel(TransformerModel, ABC):
         attention_mask: Tensor | None = None
         if settings.use_inputs_attention_mask:
             input_ids: Tensor | None = None
-            if isinstance(inputs, dict):
+            if isinstance(inputs, (dict, BatchEncoding)):
                 maybe_input_ids = inputs.get("input_ids")
                 input_ids = (
                     maybe_input_ids
@@ -89,7 +89,7 @@ class BaseNLPModel(TransformerModel, ABC):
                 )
             attention_mask = (
                 inputs.get("attention_mask", None)
-                if isinstance(inputs, BatchEncoding)
+                if isinstance(inputs, (dict, BatchEncoding))
                 else getattr(inputs, "attention_mask", None)
             )
             if attention_mask is not None:
@@ -102,7 +102,7 @@ class BaseNLPModel(TransformerModel, ABC):
             not settings.use_inputs_attention_mask
             or attention_mask is not None
         ):
-            if isinstance(inputs, dict):
+            if isinstance(inputs, (dict, BatchEncoding)):
                 inputs.pop("attention_mask", None)
 
         if settings.forced_bos_token_id or settings.forced_eos_token_id:
