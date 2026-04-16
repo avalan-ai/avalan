@@ -16,6 +16,7 @@ from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from ...memory.source import MemorySource
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
+from ...model.nlp.sentence import SentenceTransformerModel
 
 from argparse import Namespace
 from asyncio import to_thread
@@ -23,13 +24,15 @@ from collections.abc import Callable
 from io import BytesIO
 from logging import Logger
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 from uuid import UUID
 
 from faiss import IndexFlatL2
 from markitdown import DocumentConverterResult, MarkItDown
-from numpy import abs, corrcoef, dot, sum, vstack
+from numpy import abs, asarray, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
+from numpy.typing import NDArray
 from rich.console import Console
 
 
@@ -65,8 +68,15 @@ async def memory_document_index(
         model_settings = get_model_settings(
             args, hub, logger, engine_uri, modality=Modality.EMBEDDING
         )
+        load_kwargs: dict[str, Any] = dict(model_settings)
+        load_engine_uri = load_kwargs.pop("engine_uri", engine_uri)
+        load_modality = load_kwargs.pop("modality", Modality.EMBEDDING)
+        assert isinstance(load_modality, Modality)
 
-        with manager.load(**model_settings) as stm:
+        with manager.load(
+            load_engine_uri, modality=load_modality, **load_kwargs
+        ) as loaded_model:
+            stm = cast(SentenceTransformerModel, loaded_model)
             logger.debug("Loaded model %s", stm.config.__repr__())
 
             model_display(
@@ -216,8 +226,15 @@ async def memory_embeddings(
     model_settings = get_model_settings(
         args, hub, logger, engine_uri, modality=Modality.EMBEDDING
     )
+    load_kwargs: dict[str, Any] = dict(model_settings)
+    load_engine_uri = load_kwargs.pop("engine_uri", engine_uri)
+    load_modality = load_kwargs.pop("modality", Modality.EMBEDDING)
+    assert isinstance(load_modality, Modality)
     with ModelManager(hub, logger) as manager:
-        with manager.load(**model_settings) as stm:
+        with manager.load(
+            load_engine_uri, modality=load_modality, **load_kwargs
+        ) as loaded_model:
+            stm = cast(SentenceTransformerModel, loaded_model)
             logger.debug("Loaded model %s", stm.config.__repr__())
 
             model_display(
@@ -256,7 +273,8 @@ async def memory_embeddings(
                 else input_string
             )
 
-            embeddings = await stm(input_strings)
+            embeddings_result = await stm(input_strings)
+            embeddings: NDArray[Any] = asarray(embeddings_result)
 
             input_string_embeddings = (
                 embeddings[0] if compare_strings else embeddings
@@ -293,8 +311,10 @@ async def memory_embeddings(
                     f'Calculating similarities between "{input_string}" and '
                     f'["{joined}"]'
                 )
-                embeddings = embeddings[1:]
-                comparisons = dict(zip(compare_strings, embeddings))
+                compare_embeddings_matrix = embeddings[1:]
+                comparisons = dict(
+                    zip(compare_strings, compare_embeddings_matrix)
+                )
                 # Calculate similarities
                 similarities: dict[str, Similarity] = {}
                 for compare_string, compare_embeddings in comparisons.items():
@@ -367,9 +387,9 @@ async def memory_embeddings(
 
                 if partitioner:
                     assert knowledge_partitions is not None
-                    knowledge_stack = vstack(
-                        [kp.embeddings for kp in knowledge_partitions]
-                    ).astype("float32", copy=False)
+                    knowledge_stack = vstack([
+                        kp.embeddings for kp in knowledge_partitions
+                    ]).astype("float32", copy=False)
                     index.add(knowledge_stack)
                 else:
                     index.add(
@@ -378,10 +398,11 @@ async def memory_embeddings(
                         )
                     )
 
-                search_embeddings = await stm(searches)
-                search_stack = vstack(search_embeddings).astype(
-                    "float32", copy=False
+                search_embeddings_result = await stm(searches)
+                search_embeddings: NDArray[Any] = asarray(
+                    search_embeddings_result
                 )
+                search_stack = search_embeddings.astype("float32", copy=False)
                 distances, ids = index.search(search_stack, search_k)
                 matches: list[tuple[int, int, float]] = [
                     (q_id, kn_id, float(dist))
@@ -399,7 +420,9 @@ async def memory_embeddings(
                     knowledge_chunk = (
                         knowledge_partitions[kn_id].data
                         if knowledge_partitions
-                        else input_string if kn_id == 0 else None
+                        else input_string
+                        if kn_id == 0
+                        else None
                     )
                     if not knowledge_chunk:
                         continue
@@ -445,9 +468,16 @@ async def memory_search(
     model_settings = get_model_settings(
         args, hub, logger, engine_uri, modality=Modality.EMBEDDING
     )
+    load_kwargs: dict[str, Any] = dict(model_settings)
+    load_engine_uri = load_kwargs.pop("engine_uri", engine_uri)
+    load_modality = load_kwargs.pop("modality", Modality.EMBEDDING)
+    assert isinstance(load_modality, Modality)
 
     with ModelManager(hub, logger) as manager:
-        with manager.load(**model_settings) as stm:
+        with manager.load(
+            load_engine_uri, modality=load_modality, **load_kwargs
+        ) as loaded_model:
+            stm = cast(SentenceTransformerModel, loaded_model)
             logger.debug("Loaded model %s", stm.config.__repr__())
 
             model_display(
