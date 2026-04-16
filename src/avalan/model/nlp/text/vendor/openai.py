@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Input,
@@ -116,7 +115,6 @@ class OpenAIClient(TextGenerationVendor):
     def __init__(self, api_key: str, base_url: str | None):
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
-    @override
     async def __call__(
         self,
         model_id: str,
@@ -288,7 +286,6 @@ class OpenAIModel(TextGenerationVendorModel):
             api_key=self._settings.access_token,
         )
 
-    @override
     async def __call__(
         self,
         input: Input,

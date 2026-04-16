@@ -1,4 +1,3 @@
-from ...compat import override
 from ...entities import Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
@@ -82,7 +81,6 @@ class SentenceTransformerModel(BaseNLPModel):
     ) -> BatchEncoding:
         raise NotImplementedError()
 
-    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,

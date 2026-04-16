@@ -1,4 +1,3 @@
-from ...compat import override
 from ...entities import EngineSettings, ImageEntity
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
@@ -49,7 +48,6 @@ class ObjectDetectionModel(ImageClassificationModel):
         )
         return model
 
-    @override
     async def __call__(
         self,
         image_source: str | Image.Image,

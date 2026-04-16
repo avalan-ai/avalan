@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -191,7 +190,6 @@ class BedrockClient(TextGenerationVendor):
             )
         return self._client
 
-    @override
     async def __call__(
         self,
         model_id: str,

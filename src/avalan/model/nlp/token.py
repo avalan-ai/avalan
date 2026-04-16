@@ -1,4 +1,3 @@
-from ...compat import override
 from ...entities import Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
@@ -87,7 +86,6 @@ class TokenClassificationModel(BaseNLPModel):
         inputs = tokenizer(input, return_tensors=tensor_format)
         return cast(BatchEncoding, inputs.to(model.device))
 
-    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,

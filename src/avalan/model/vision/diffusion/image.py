@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import (
     Input,
     TransformerEngineSettings,
@@ -60,7 +59,6 @@ class TextToImageModel(BaseVisionModel):
 
         return refiner
 
-    @override
     async def __call__(
         self,
         input: Input,

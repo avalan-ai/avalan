@@ -1,4 +1,3 @@
-from ...compat import override
 from ...entities import (
     GenerationSettings,
     ImageTextGenerationLoaderClass,
@@ -57,7 +56,6 @@ class ImageToTextModel(TransformerModel):
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
-    @override
     async def __call__(
         self,
         image_source: str | Image.Image,
@@ -110,7 +108,6 @@ class ImageTextToTextModel(ImageToTextModel):
         )
         return model
 
-    @override
     async def __call__(
         self,
         image_source: str | Image.Image,

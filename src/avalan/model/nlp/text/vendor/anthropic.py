@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -120,7 +119,6 @@ class AnthropicClient(TextGenerationVendor):
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._exit_stack = exit_stack
 
-    @override
     async def __call__(
         self,
         model_id: str,

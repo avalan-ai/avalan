@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
@@ -95,7 +94,6 @@ class MlxLmModel(TextGenerationModel):
             max_tokens=settings.max_new_tokens,
         )
 
-    @override
     async def __call__(
         self,
         input: Input,

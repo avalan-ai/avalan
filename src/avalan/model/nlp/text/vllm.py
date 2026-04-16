@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
@@ -137,7 +136,6 @@ class VllmModel(TextGenerationModel):
         results = list(model.generate([prompt], params))
         return results[0].outputs[0].text if results else ""
 
-    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,

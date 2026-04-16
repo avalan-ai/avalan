@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import BetaSchedule, EngineSettings, Input, TimestepSpacing
 from ....model.engine import Engine
 from ....model.vendor import TextGenerationVendor
@@ -56,7 +55,6 @@ class TextToAnimationModel(BaseVisionModel):
 
         return pipe
 
-    @override
     async def __call__(
         self,
         input: Input,

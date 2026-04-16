@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import GenerationSettings, Message, Token, TokenDetail
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -39,7 +38,6 @@ class LiteLLMClient(TextGenerationVendor):
         self._api_key = api_key
         self._base_url = base_url or "http://localhost:4000"
 
-    @override
     async def __call__(
         self,
         model_id: str,

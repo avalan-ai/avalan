@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -33,7 +32,6 @@ class HuggingfaceClient(TextGenerationVendor):
     def __init__(self, api_key: str, base_url: str | None = None):
         self._client = AsyncInferenceClient(token=api_key, base_url=base_url)
 
-    @override
     async def __call__(
         self,
         model_id: str,

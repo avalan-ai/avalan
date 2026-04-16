@@ -1,4 +1,3 @@
-from ...compat import override
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
@@ -36,7 +35,6 @@ class VisionEncoderDecoderModel(ImageToTextModel):
         )
         return model
 
-    @override
     async def __call__(
         self,
         image_source: str | Image.Image,

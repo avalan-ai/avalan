@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import GenerationSettings, Message, Token, TokenDetail
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -27,7 +26,6 @@ class GoogleClient(TextGenerationVendor):
     def __init__(self, api_key: str):
         self._client = Client(api_key=api_key)
 
-    @override
     async def __call__(
         self,
         model_id: str,

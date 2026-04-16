@@ -1,16 +1,14 @@
 import typing
-from typing import Callable, TypeVar
+from typing import Callable, TypeVar, cast
 
 T = TypeVar("T", bound=Callable[..., object])
 
 _typing_override = getattr(typing, "override", None)
 
 if _typing_override is not None:
-    _override = _typing_override
+    override = cast(Callable[[T], T], _typing_override)
+
 else:
 
-    def _override(func: T) -> T:
+    def override(func: T) -> T:
         return func
-
-
-override = _override
