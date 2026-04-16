@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
@@ -118,7 +117,6 @@ class TextGenerationModel(BaseNLPModel):
         model = loader.from_pretrained(self._model_id, **model_args)
         return model
 
-    @override
     async def __call__(
         self,
         input: Input,

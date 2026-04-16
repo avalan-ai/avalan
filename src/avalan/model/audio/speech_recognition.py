@@ -1,4 +1,3 @@
-from ...compat import override
 from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
@@ -42,7 +41,6 @@ class SpeechRecognitionModel(BaseAudioModel):
         )
         return model
 
-    @override
     async def __call__(
         self,
         path: str,

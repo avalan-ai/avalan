@@ -1,4 +1,4 @@
-from .....compat import override
+from .....compat import override as override
 from .....entities import (
     GenerationSettings,
     Input,
@@ -104,7 +104,6 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
             total_tokens += len(encoding.encode(message.content or ""))
         return total_tokens
 
-    @override
     async def __call__(
         self,
         input: Input,

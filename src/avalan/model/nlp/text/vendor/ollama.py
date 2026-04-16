@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -41,7 +40,6 @@ class OllamaClient(TextGenerationVendor):
             AsyncClient(host=base_url) if base_url else AsyncClient()
         )
 
-    @override
     async def __call__(
         self,
         model_id: str,

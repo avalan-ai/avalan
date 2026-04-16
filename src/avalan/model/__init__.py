@@ -8,14 +8,14 @@ from .call import ModelCallContext as ModelCallContext
 from .response.text import TextGenerationResponse
 from .vendor import TextGenerationVendorStream
 
-from typing import Any, AsyncGenerator, Callable, Generator
+from typing import Any, AsyncGenerator, Callable, Generator, TypeAlias
 
 from numpy.typing import NDArray
 
 OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
 OutputFunction = Callable[..., OutputGenerator | str]
 
-EngineResponse = (
+EngineResponse: TypeAlias = (
     TextGenerationResponse
     | TextGenerationVendorStream
     | Generator[str, None, None]

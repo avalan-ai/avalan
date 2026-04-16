@@ -57,14 +57,12 @@ class Engine(ABC):
     _logger: Logger
     _model_id: str | None
     _settings: EngineSettings
-    _transformers_logging_logger: Logger
-    _transformers_logging_level: int
+    _transformers_logging_logger: Logger | None
+    _transformers_logging_level: int | None
     _loaded_model: bool = False
     _loaded_tokenizer: bool = False
-    _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
-    _model: (
-        PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None
-    ) = None
+    _tokenizer: Any = None
+    _model: Any = None
     _config: ModelConfig | SentenceTransformerModelConfig | None = None
     _tokenizer_config: TokenizerConfig | None = None
     _parameter_types: set[str] | None = None
@@ -110,7 +108,7 @@ class Engine(ABC):
             return None
         if isinstance(parallel, dict):
             return {k: v.value for k, v in parallel.items()}
-        return parallel.value
+        return str(parallel.value)
 
     @staticmethod
     def _get_distributed_config(
@@ -118,7 +116,7 @@ class Engine(ABC):
     ) -> dict[str, object] | None:
         if distributed_config is None:
             return None
-        config = {"enable_expert_parallel": False}
+        config: dict[str, object] = {"enable_expert_parallel": False}
         config.update(distributed_config)
         return config
 
@@ -148,6 +146,7 @@ class Engine(ABC):
         self._transformers_logging_level = (
             self._transformers_logging_logger.level
             if self._settings.change_transformers_logging_level
+            and self._transformers_logging_logger is not None
             else None
         )
 
@@ -177,7 +176,7 @@ class Engine(ABC):
     @property
     def model(
         self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None:
+    ) -> Any:
         return self._model
 
     @property
@@ -207,13 +206,13 @@ class Engine(ABC):
         return self._tokenizer
 
     @abstractmethod
-    async def __call__(self, input: Input, **kwargs) -> EngineResponse:
+    async def __call__(self, input: Input, **kwargs: object) -> EngineResponse:
         raise NotImplementedError()
 
     @abstractmethod
     def _load_model(
         self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+    ) -> Any:
         raise NotImplementedError()
 
     def is_runnable(self, device: str | None = None) -> bool | None:
@@ -240,13 +239,18 @@ class Engine(ABC):
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
+        uses_tokenizer = (
+            self.uses_tokenizer()
+            if callable(self.uses_tokenizer)
+            else self.uses_tokenizer
+        )
         raise (
             TokenizerNotSupportedException()
-            if not self.uses_tokenizer()
+            if not uses_tokenizer
             else NotImplementedError()
         )
 
-    def __enter__(self):
+    def __enter__(self) -> "Engine":
         _l = self._log
         if (
             self._transformers_logging_logger
@@ -265,7 +269,7 @@ class Engine(ABC):
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
-    ):
+    ) -> bool:
         _l = self._log
         if (
             self._transformers_logging_logger
@@ -297,7 +301,10 @@ class Engine(ABC):
         self._pending_exit_task = None
 
     def _load(
-        self, *args, load_tokenizer: bool, tokenizer_name_or_path: str | None
+        self,
+        *args: object,
+        load_tokenizer: bool,
+        tokenizer_name_or_path: str | None,
     ) -> None:
         if (
             self._settings.auto_load_model
@@ -562,13 +569,13 @@ class Engine(ABC):
                 if ":" in device
                 else cuda.current_device()
             )
-            return cuda.get_device_properties(index).total_memory
+            return int(cuda.get_device_properties(index).total_memory)
 
         from psutil import virtual_memory
 
         if device == "mps" and mps.is_available():
-            return virtual_memory().total
-        return virtual_memory().total
+            return int(virtual_memory().total)
+        return int(virtual_memory().total)
 
     def _log(self, message: str, *args: object) -> None:
         self._logger.debug(

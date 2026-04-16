@@ -1,4 +1,3 @@
-from ...compat import override
 from ...entities import GenerationSettings, Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
@@ -76,7 +75,6 @@ class SequenceClassificationModel(BaseNLPModel):
         inputs = tokenizer(input, return_tensors=tensor_format)
         return cast(BatchEncoding, inputs.to(model.device))
 
-    @override  # type: ignore[untyped-decorator]
     async def __call__(self, input: Input) -> str:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
@@ -155,7 +153,6 @@ class SequenceToSequenceModel(BaseNLPModel):
         model_inputs = cast(BatchEncoding, inputs.to(model.device))
         return model_inputs["input_ids"]
 
-    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,
@@ -187,7 +184,6 @@ class SequenceToSequenceModel(BaseNLPModel):
 
 
 class TranslationModel(SequenceToSequenceModel):
-    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,

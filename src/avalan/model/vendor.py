@@ -19,7 +19,7 @@ from .stream import TextGenerationStream
 
 from abc import ABC
 from json import JSONDecodeError, dumps, loads
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from typing import Any, AsyncIterator, cast
 
 
 class TextGenerationVendor(ABC):
@@ -42,7 +42,7 @@ class TextGenerationVendor(ABC):
             if isinstance(content, str):
                 return content
             if isinstance(content, MessageContentText):
-                return content.text
+                return cast(str, content.text)
             return None
         return None
 
@@ -66,7 +66,7 @@ class TextGenerationVendor(ABC):
                 return [_block(c) for c in content]
 
             if isinstance(content, MessageContentText):
-                return content.text
+                return cast(str, content.text)
 
             if isinstance(content, MessageContentImage):
                 return [_block(content)]
@@ -102,20 +102,31 @@ class TextGenerationVendor(ABC):
 
     @staticmethod
     def build_tool_call_token(
-        call_id: str | None,
-        tool_name: str | None,
-        arguments: str | dict[str, Any] | None,
+        call_id: str | object | None,
+        tool_name: str | object | None,
+        arguments: str | dict[str, Any] | object | None,
     ) -> ToolCallToken:
-        name = TextGenerationVendor.decode_tool_name(tool_name or "")
+        tool_name_text = (
+            tool_name if isinstance(tool_name, str) else str(tool_name or "")
+        )
+        name = TextGenerationVendor.decode_tool_name(tool_name_text)
         if isinstance(arguments, str):
             try:
                 args = cast(dict[str, Any], loads(arguments))
             except JSONDecodeError:
                 args = {}
         else:
-            args = arguments or {}
+            args = (
+                arguments
+                if isinstance(arguments, dict)
+                else cast(dict[str, Any], {})
+            )
         call = ToolCall(
-            id=cast(str, call_id),
+            id=(
+                cast(str | None, call_id)
+                if isinstance(call_id, str) or call_id is None
+                else str(call_id)
+            ),
             name=name,
             arguments=cast(dict[str, str | int | float | bool | None], args),
         )
@@ -126,11 +137,9 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncGenerator[str | ToolCallToken, None]
+    _generator: AsyncIterator[str | ToolCallToken]
 
-    def __init__(
-        self, generator: AsyncGenerator[str | ToolCallToken, None]
-    ) -> None:
+    def __init__(self, generator: AsyncIterator[str | ToolCallToken]) -> None:
         self._generator = generator
 
     def __call__(

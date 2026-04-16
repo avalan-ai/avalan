@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import EngineSettings, Input
 from ....model.engine import Engine
 from ....model.vendor import TextGenerationVendor
@@ -56,7 +55,6 @@ class TextToVideoModel(BaseVisionModel):
         cast(Any, base_pipe.vae).enable_tiling()
         return cast(DiffusionPipeline, base_pipe)
 
-    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,
