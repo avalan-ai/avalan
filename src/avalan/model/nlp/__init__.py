@@ -4,13 +4,17 @@ from ...model.transformer import TransformerModel
 
 from abc import ABC
 from contextlib import nullcontext
+from typing import Any, cast
 
 from torch import (
     Tensor,
     inference_mode,
 )
-from transformers import AsyncTextIteratorStreamer
-from transformers.generation import StoppingCriteria
+from transformers import (
+    AsyncTextIteratorStreamer,
+    PreTrainedModel,
+    StoppingCriteria,
+)
 from transformers.tokenization_utils_base import BatchEncoding
 
 
@@ -21,7 +25,11 @@ class BaseNLPModel(TransformerModel, ABC):
         settings: GenerationSettings,
         stopping_criterias: list[StoppingCriteria] | None = None,
         streamer: AsyncTextIteratorStreamer | None = None,
-    ):
+    ) -> Any:
+        assert self._model, "Model must be loaded before generation."
+        assert self._tokenizer, "Tokenizer must be loaded before generation."
+        model = cast(PreTrainedModel, self._model)
+        typed_model = cast(Any, model)
         eos_token_id = (
             settings.eos_token_id
             if settings.eos_token_id
@@ -71,6 +79,14 @@ class BaseNLPModel(TransformerModel, ABC):
 
         attention_mask: Tensor | None = None
         if settings.use_inputs_attention_mask:
+            input_ids: Tensor | None = None
+            if isinstance(inputs, dict):
+                maybe_input_ids = inputs.get("input_ids")
+                input_ids = (
+                    maybe_input_ids
+                    if isinstance(maybe_input_ids, Tensor)
+                    else None
+                )
             attention_mask = (
                 inputs.get("attention_mask", None)
                 if isinstance(inputs, BatchEncoding)
@@ -78,14 +94,16 @@ class BaseNLPModel(TransformerModel, ABC):
             )
             if attention_mask is not None:
                 assert isinstance(attention_mask, Tensor)
-                assert attention_mask.shape == inputs["input_ids"].shape
+                assert input_ids is not None
+                assert attention_mask.shape == input_ids.shape
                 generation_kwargs["attention_mask"] = attention_mask
 
         if (
             not settings.use_inputs_attention_mask
             or attention_mask is not None
         ):
-            inputs.pop("attention_mask", None)
+            if isinstance(inputs, dict):
+                inputs.pop("attention_mask", None)
 
         if settings.forced_bos_token_id or settings.forced_eos_token_id:
             del generation_kwargs["bos_token_id"]
@@ -97,11 +115,11 @@ class BaseNLPModel(TransformerModel, ABC):
             else nullcontext()
         ):
             outputs = (
-                self._model.generate(
+                typed_model.generate(
                     inputs, tokenizer=self._tokenizer, **generation_kwargs
                 )
                 if isinstance(inputs, Tensor)
-                else self._model.generate(
+                else typed_model.generate(
                     **inputs, tokenizer=self._tokenizer, **generation_kwargs
                 )
             )

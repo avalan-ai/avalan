@@ -11,21 +11,32 @@ from ....tool.manager import ToolManager
 from asyncio import to_thread
 from dataclasses import asdict, replace
 from logging import Logger, getLogger
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Iterator, cast
 
 try:
     from vllm import LLM, SamplingParams
 except Exception:  # pragma: no cover - vllm may not be installed
-    LLM = None
-    SamplingParams = None
+    LLM = None  # type: ignore[misc,assignment]
+    SamplingParams = None  # type: ignore[misc,assignment]
 
 
 class VllmStream(TextGenerationVendorStream):
-    def __init__(self, generator):
-        super().__init__(generator)
-        self._iterator = generator
+    def __init__(
+        self, generator: Iterator[str] | AsyncGenerator[str, None]
+    ) -> None:
+        if hasattr(generator, "__anext__"):
+            super().__init__(cast(AsyncGenerator[str, None], generator))
+            self._iterator = None
+            return
+
+        iterator = cast(Iterator[str], generator)
+        self._iterator = iterator
+        self._generator = iterator  # type: ignore[assignment]
 
     async def __anext__(self) -> str:
+        if self._iterator is None:
+            return await super().__anext__()
+
         def _next(default: str | None = None) -> str | None:
             return next(self._iterator, default)
 
@@ -48,22 +59,21 @@ class VllmModel(TextGenerationModel):
     def supports_sample_generation(self) -> bool:
         return False
 
-    def _load_model(self):
-        assert LLM, "vLLM is not available"
+    def _load_model(self) -> Any:
+        assert LLM is not None, "vLLM is not available"
+        assert self._model_id, "A model id is required."
         return LLM(
             model=self._model_id,
             tokenizer=self._settings.tokenizer_name_or_path or self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
         )
 
-    def _build_sampling_params(
-        self, settings: GenerationSettings
-    ) -> SamplingParams:
-        assert SamplingParams, "vLLM is not available"
+    def _build_sampling_params(self, settings: GenerationSettings) -> Any:
+        assert SamplingParams is not None, "vLLM is not available"
         return SamplingParams(
-            temperature=settings.temperature,
-            top_p=settings.top_p,
-            top_k=settings.top_k,
+            temperature=settings.temperature if settings.temperature else 1.0,
+            top_p=settings.top_p if settings.top_p else 1.0,
+            top_k=settings.top_k if settings.top_k else -1,
             max_tokens=settings.max_new_tokens,
             stop=settings.stop_strings,
         )
@@ -85,9 +95,10 @@ class VllmModel(TextGenerationModel):
             tool=tool,
             chat_template_settings=chat_template_settings,
         )
-        return self._tokenizer.decode(
-            inputs["input_ids"][0], skip_special_tokens=False
-        )
+        tokenizer = self._tokenizer
+        assert tokenizer is not None
+        input_ids = cast(dict[str, Any], inputs)["input_ids"]
+        return tokenizer.decode(input_ids[0], skip_special_tokens=False)
 
     async def _stream_generator(
         self,
@@ -95,10 +106,22 @@ class VllmModel(TextGenerationModel):
         settings: GenerationSettings,
     ) -> AsyncGenerator[str, None]:
         params = self._build_sampling_params(settings)
-        iterator = self._model.generate([prompt], params, stream=True)
-        stream = VllmStream(iter(iterator))
-        async for chunk in stream:
-            yield chunk
+        model = cast(Any, self._model)
+        iterator = iter(model.generate([prompt], params, stream=True))
+
+        def _next(default: Any = None) -> Any:
+            return next(iterator, default)
+
+        while True:
+            chunk = await to_thread(_next, None)
+            if chunk is None:
+                return
+            if isinstance(chunk, str):
+                yield chunk
+            else:
+                text = getattr(chunk.outputs[0], "text", "")
+                if text:
+                    yield str(text)
 
     def _string_output(
         self,
@@ -106,10 +129,11 @@ class VllmModel(TextGenerationModel):
         settings: GenerationSettings,
     ) -> str:
         params = self._build_sampling_params(settings)
-        results = list(self._model.generate([prompt], params))
+        model = cast(Any, self._model)
+        results = list(model.generate([prompt], params))
         return results[0].outputs[0].text if results else ""
 
-    @override
+    @override  # type: ignore[untyped-decorator]
     async def __call__(
         self,
         input: Input,
