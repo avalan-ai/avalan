@@ -7,7 +7,8 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
 from io import BytesIO, TextIOBase
-from typing import TYPE_CHECKING, Literal, final
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Literal, cast, final
 
 if TYPE_CHECKING:
     from faiss import IndexFlatL2
@@ -16,8 +17,10 @@ if TYPE_CHECKING:
     from playwright.async_api import (
         Browser,
         Page,
-        PlaywrightContextManager,
         async_playwright,
+    )
+    from playwright.async_api import (
+        Playwright as PlaywrightContextManager,
     )
 
 try:
@@ -27,14 +30,16 @@ try:
     from playwright.async_api import (
         Browser,
         Page,
-        PlaywrightContextManager,
         async_playwright,
+    )
+    from playwright.async_api import (
+        Playwright as PlaywrightContextManager,
     )
 
     HAS_BROWSER_DEPENDENCIES = True
 except ImportError:
     HAS_BROWSER_DEPENDENCIES = False
-    IndexFlatL2 = None  # type: ignore
+    IndexFlatL2 = None
     MarkItDown = None  # type: ignore
     vstack = None  # type: ignore
     Browser = None  # type: ignore
@@ -45,7 +50,7 @@ except ImportError:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
-class BrowserToolSettings(dict):
+class BrowserToolSettings(dict[str, object]):
     engine: Literal["chromium", "firefox", "webkit"] = "firefox"
     search: bool = False
     search_context: int | None = 10
@@ -63,7 +68,7 @@ class BrowserToolSettings(dict):
     has_touch: bool = False
     java_script_enabled: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self["debug"] = self.debug
         self["debug_url"] = self.debug_url
         self["debug_source"] = self.debug_source
@@ -92,7 +97,7 @@ class BrowserTool(Tool):
         Contents of the requested page in Markdown format.
     """
 
-    _client: "PlaywrightContextManager"
+    _client: Any
     _settings: BrowserToolSettings
     _browser: "Browser | None" = None
     _page: "Page | None" = None
@@ -102,7 +107,7 @@ class BrowserTool(Tool):
     def __init__(
         self,
         settings: BrowserToolSettings,
-        client: "PlaywrightContextManager",
+        client: Any,
         partitioner: Partitioner | None = None,
     ) -> None:
         if not HAS_BROWSER_DEPENDENCIES:
@@ -127,7 +132,7 @@ class BrowserTool(Tool):
             and isinstance(context.input, Message)
             and context.input.role == MessageRole.USER
         ):
-            query = context.input.content
+            query = cast(str, context.input.content)
             sentence_model = self._partitioner.sentence_model
             knowledge_partitions = await self._partitioner(content)
 
@@ -201,6 +206,7 @@ class BrowserTool(Tool):
             return content
 
         if not self._browser:
+            assert self._client is not None
             browser_type = (
                 self._client.chromium
                 if self._settings.engine == "chromium"
@@ -254,6 +260,7 @@ class BrowserTool(Tool):
             )
 
         response = await self._page.goto(url)
+        assert response is not None
         contents: str = await self._page.content()
         content_type_header = response.headers.get("content-type", None)
         assert content_type_header
@@ -262,14 +269,16 @@ class BrowserTool(Tool):
         m["content-type"] = content_type_header
         maintype = m.get_content_maintype() or "text"
         assert maintype == "text"
-        encoding = (m.get_param("charset") or "utf-8").lower()
+        charset = m.get_param("charset")
+        encoding = charset.lower() if isinstance(charset, str) else "utf-8"
         mime_type = m.get_content_type()
         byte_stream = BytesIO(contents.encode(encoding))
+        assert self._md is not None
         result = self._md.convert_stream(byte_stream, mime_type=mime_type)
         content = result.text_content
         return content
 
-    def with_client(self, client: "PlaywrightContextManager") -> "BrowserTool":
+    def with_client(self, client: Any) -> "BrowserTool":
         self._client = client
         return self
 
@@ -278,8 +287,8 @@ class BrowserTool(Tool):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
-    ) -> bool:
+        traceback: TracebackType | None,
+    ) -> bool | None:
         if self._page:
             await self._page.close()
         if self._browser:
@@ -289,7 +298,7 @@ class BrowserTool(Tool):
 
 
 class BrowserToolSet(ToolSet):
-    _client: "PlaywrightContextManager | None" = None
+    _client: Any = None
 
     @override
     def __init__(
@@ -319,7 +328,10 @@ class BrowserToolSet(ToolSet):
 
     @override
     async def __aenter__(self) -> "BrowserToolSet":
+        assert self._client is not None
         self._client = await self._exit_stack.enter_async_context(self._client)
         for i, tool in enumerate(self._tools):
-            self._tools[i] = tool.with_client(self._client)
-        return await super().__aenter__()
+            if hasattr(tool, "with_client"):
+                self._tools[i] = tool.with_client(self._client)
+        entered = await super().__aenter__()
+        return cast("BrowserToolSet", entered)

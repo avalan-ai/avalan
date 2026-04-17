@@ -31,7 +31,7 @@ class TextGenerationVendor(ABC):
         *,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> TextGenerationStream:
+    ) -> TextGenerationStream | AsyncIterator[Token | TokenDetail | str]:
         raise NotImplementedError()
 
     def _system_prompt(self, messages: list[Message]) -> str | None:
@@ -50,7 +50,7 @@ class TextGenerationVendor(ABC):
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
-    ) -> list[TemplateMessage]:
+    ) -> list[TemplateMessage] | list[dict[str, Any]]:
         def _block(c: MessageContent) -> dict[str, Any]:
             if isinstance(c, MessageContentImage):
                 return {"type": "image_url", "image_url": c.image_url}
@@ -137,9 +137,11 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncIterator[str | ToolCallToken]
+    _generator: AsyncIterator[Token | TokenDetail | str]
 
-    def __init__(self, generator: AsyncIterator[str | ToolCallToken]) -> None:
+    def __init__(
+        self, generator: AsyncIterator[Token | TokenDetail | str]
+    ) -> None:
         self._generator = generator
 
     def __call__(
@@ -151,5 +153,5 @@ class TextGenerationVendorStream(TextGenerationStream):
         assert self._generator
         return self
 
-    async def __anext__(self) -> str | ToolCallToken:
+    async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()

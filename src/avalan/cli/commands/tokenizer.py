@@ -6,7 +6,7 @@ from ...model.nlp.text.generation import TextGenerationModel
 
 from argparse import Namespace
 from logging import Logger
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
 from rich.console import Console, RenderableType
 
@@ -56,7 +56,7 @@ async def tokenize(
         console.print(theme.tokenizer_config(lm.tokenizer_config))
 
         if args.save:
-            paths = lm.save_tokenizer(args.save)
+            paths = cast(Any, lm).save_tokenizer(args.save)
             total_files = len(paths)
             saved_tokenizer_files = cast(
                 Callable[[str, int], RenderableType],
@@ -76,7 +76,7 @@ async def tokenize(
         )
         if input_string:
             logger.debug("Loaded model %s", lm.config.__repr__())
-            tokens = cast(list[Token], lm.tokenize(input_string))
+            tokens = cast(list[Token], cast(Any, lm).tokenize(input_string))
 
             panel = theme.tokenizer_tokens(
                 tokens,

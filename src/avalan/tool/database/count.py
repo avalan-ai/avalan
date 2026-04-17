@@ -5,10 +5,11 @@ from . import (
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
     MetaData,
-    SATable,
     func,
     select,
 )
+from importlib import import_module
+from typing import Any, cast
 
 
 class DatabaseCountTool(DatabaseTool):
@@ -55,7 +56,11 @@ class DatabaseCountTool(DatabaseTool):
             actual_name = await conn.run_sync(
                 self._denormalize_table_name, schema, tbl_name
             )
-            tbl = SATable(actual_name, MetaData(), schema=schema)
+            sa_table = cast(
+                Any,
+                getattr(import_module("avalan.tool.database"), "SATable"),
+            )
+            tbl = sa_table(actual_name, MetaData(), schema=schema)
             stmt = select(func.count()).select_from(tbl)
 
             result = await conn.execute(stmt)
