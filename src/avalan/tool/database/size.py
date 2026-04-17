@@ -10,7 +10,7 @@ from . import (
     text,
 )
 
-from typing import Any
+from typing import Any, Literal
 
 
 class DatabaseSizeTool(DatabaseTool):
@@ -220,7 +220,7 @@ class DatabaseSizeTool(DatabaseTool):
             table_row.get("size") if table_row else None
         )
 
-        index_rows: list[dict[str, Any]] = []
+        index_rows: Any = []
         try:
             pragma = table_name.replace("'", "''")
             index_rows = (
@@ -420,7 +420,11 @@ class DatabaseSizeTool(DatabaseTool):
             metrics.append(self._metric("total", total_bytes))
         return metrics
 
-    def _metric(self, category: str, value: int | None) -> TableSizeMetric:
+    def _metric(
+        self,
+        category: Literal["data", "indexes", "total", "toast", "lob", "free"],
+        value: int | None,
+    ) -> TableSizeMetric:
         return TableSizeMetric(
             category=category,
             bytes=value,

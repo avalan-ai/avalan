@@ -5,10 +5,11 @@ from . import (
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
     MetaData,
-    SATable,
     func,
     select,
 )
+
+from sqlalchemy import Table as SATable
 
 
 class DatabaseCountTool(DatabaseTool):

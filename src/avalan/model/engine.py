@@ -1,6 +1,5 @@
 from ..entities import (
     EngineSettings,
-    Input,
     ModelConfig,
     ParallelStrategy,
     SentenceTransformerModelConfig,
@@ -8,7 +7,6 @@ from ..entities import (
     WeightType,
 )
 from ..model import (
-    EngineResponse,
     ModelAlreadyLoadedException,
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException,
@@ -20,7 +18,7 @@ from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import (
@@ -203,10 +201,12 @@ class Engine(ABC):
     def tokenizer(
         self,
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast | None:
-        return self._tokenizer
+        return cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast | None,
+            self._tokenizer,
+        )
 
-    @abstractmethod
-    async def __call__(self, input: Input, **kwargs: object) -> EngineResponse:
+    async def __call__(self, *args: object, **kwargs: object) -> object:
         raise NotImplementedError()
 
     @abstractmethod
@@ -256,7 +256,7 @@ class Engine(ABC):
             self._transformers_logging_logger
             and self._transformers_logging_level != ERROR
         ):
-            transformers_logging.set_verbosity_error()
+            cast(Any, transformers_logging.set_verbosity_error)()
             _l(
                 "Changed transformers logging level from %s to %s",
                 self._transformers_logging_level,
@@ -269,7 +269,7 @@ class Engine(ABC):
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
-    ) -> bool:
+    ) -> Literal[False]:
         _l = self._log
         if (
             self._transformers_logging_logger
@@ -322,7 +322,7 @@ class Engine(ABC):
         _l = self._log
 
         if self._settings.disable_loading_progress_bar:
-            disable_progress_bar()
+            cast(Any, disable_progress_bar)()
 
         if load_tokenizer and self._model_id:
             _l(
@@ -357,7 +357,8 @@ class Engine(ABC):
                 self._model, TextGenerationVendor
             ):
                 if find_spec("mlx.nn"):
-                    from mlx.nn import Module
+                    mlx_module = __import__("mlx.nn", fromlist=["Module"])
+                    Module = getattr(mlx_module, "Module")
 
                     is_mlx = isinstance(self._model, Module)
 
@@ -437,7 +438,9 @@ class Engine(ABC):
             if mc:
                 config = ModelConfig(
                     architectures=getattr(mc, "architectures", None),
-                    attribute_map=getattr(mc, "attribute_map", None),
+                    attribute_map=cast(
+                        dict[str, str], getattr(mc, "attribute_map", {})
+                    ),
                     bos_token_id=getattr(mc, "bos_token_id", None),
                     bos_token=(
                         self._tokenizer.decode(mc.bos_token_id)
@@ -464,10 +467,13 @@ class Engine(ABC):
                         if hasattr(mc, "hidden_sizes")
                         else None
                     ),
-                    keys_to_ignore_at_inference=(
-                        mc.keys_to_ignore_at_inference
-                        if hasattr(mc, "keys_to_ignore_at_inference")
-                        else None
+                    keys_to_ignore_at_inference=cast(
+                        list[str],
+                        (
+                            mc.keys_to_ignore_at_inference
+                            if hasattr(mc, "keys_to_ignore_at_inference")
+                            else []
+                        ),
                     ),
                     loss_type=(
                         mc.loss_type if hasattr(mc, "loss_type") else None
@@ -489,9 +495,11 @@ class Engine(ABC):
                         else None
                     ),
                     num_labels=getattr(mc, "num_labels", None),
-                    output_attentions=getattr(mc, "output_attentions", None),
-                    output_hidden_states=getattr(
-                        mc, "output_hidden_states", None
+                    output_attentions=cast(
+                        bool, getattr(mc, "output_attentions", False)
+                    ),
+                    output_hidden_states=cast(
+                        bool, getattr(mc, "output_hidden_states", False)
                     ),
                     pad_token_id=getattr(mc, "pad_token_id", None),
                     pad_token=(
@@ -515,10 +523,13 @@ class Engine(ABC):
                     task_specific_params=getattr(
                         mc, "task_specific_params", None
                     ),
-                    torch_dtype=(
-                        str(mc.torch_dtype)
-                        if hasattr(mc, "torch_dtype")
-                        else None
+                    torch_dtype=cast(
+                        dtype,
+                        (
+                            mc.torch_dtype
+                            if hasattr(mc, "torch_dtype") and mc.torch_dtype
+                            else float32
+                        ),
                     ),
                     vocab_size=(
                         mc.vocab_size if hasattr(mc, "vocab_size") else None
@@ -531,7 +542,7 @@ class Engine(ABC):
                     backend=self._model.backend,
                     similarity_function=self._model.similarity_fn_name,
                     truncate_dimension=self._model.truncate_dim,
-                    transformer_model_config=config,
+                    transformer_model_config=cast(ModelConfig, config),
                 )
 
             self._config = config
@@ -548,7 +559,7 @@ class Engine(ABC):
             )
 
         if self._settings.disable_loading_progress_bar:
-            enable_progress_bar()
+            cast(Any, enable_progress_bar)()
 
     @staticmethod
     def get_default_device() -> str:

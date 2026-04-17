@@ -227,6 +227,9 @@ class EngineSettings:
     checkpoint: str | None = None
     refiner_model_id: str | None = None
     upsampler_model_id: str | None = None
+    tokens: list[str] | None = None
+    special_tokens: list[str] | None = None
+    loader_class: str | None = None
 
 
 @final

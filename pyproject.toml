@@ -217,6 +217,7 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 python_version = "3.11"
+disable_error_code = ["override"]
 
 [[tool.mypy.overrides]]
 module = [

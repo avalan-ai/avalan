@@ -2,7 +2,7 @@ from ...model import TokenizerNotSupportedException
 from ...model.engine import Engine
 
 from abc import ABC, abstractmethod
-from typing import Literal
+from typing import Any, Literal, cast
 
 from numpy import ndarray
 from PIL import Image
@@ -49,11 +49,13 @@ class BaseAudioModel(Engine, ABC):
                 wave.unsqueeze(0), wave_sampling_rate, sampling_rate
             ).squeeze(0)
 
-        return wave
+        return cast(Tensor, wave)
 
-    def _resample(self, audio_source: str, sampling_rate: int) -> ndarray:
+    def _resample(
+        self, audio_source: str, sampling_rate: int
+    ) -> ndarray[Any, Any]:
         wave, wave_sampling_rate = load(audio_source)
         if wave_sampling_rate != sampling_rate:
             wave = resample(wave, wave_sampling_rate, sampling_rate)
         wave = wave.mean(0).numpy()
-        return wave
+        return cast(ndarray[Any, Any], wave)
