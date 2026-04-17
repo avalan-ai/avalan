@@ -61,10 +61,9 @@ class ImageToTextModel(TransformerModel):
     async def __call__(
         self,
         image_source: object,
-        *args: object,
+        *,
         skip_special_tokens: bool = True,
         tensor_format: Literal["pt"] = "pt",
-        **kwargs: object,
     ) -> str:
         image = BaseVisionModel._get_image(
             cast(str | Image.Image, image_source)
@@ -122,15 +121,14 @@ class ImageTextToTextModel(ImageToTextModel):
     async def __call__(
         self,
         image_source: object,
-        prompt: object | None = None,
-        *args: object,
+        prompt: object,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         width: int | None = None,
+        *,
         skip_special_tokens: bool = True,
         tensor_format: Literal["pt"] = "pt",
-        **kwargs: object,
     ) -> str:
         generation_settings = settings or GenerationSettings()
         image = BaseVisionModel._get_image(
