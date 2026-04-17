@@ -20,7 +20,7 @@ from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
 from ...secrets import KeyringSecrets
-from . import get_model_settings
+from . import ModelSettings, get_model_settings
 
 from argparse import Namespace
 from asyncio import (
@@ -89,7 +89,7 @@ def model_display(
         if not model and (
             (load is not None and load) or (load is None and args.load)
         ):
-            model_settings = get_model_settings(
+            model_settings: ModelSettings = get_model_settings(
                 args,
                 hub,
                 logger,
@@ -98,7 +98,9 @@ def model_display(
             )
             with manager.load(**model_settings) as lm:
                 logger.debug("Loaded model %s", lm.config.__repr__())
-                is_runnable = lm.is_runnable(getattr(args, "device", None))
+                is_runnable = bool(
+                    lm.is_runnable(getattr(args, "device", None))
+                )
                 console.print(
                     Padding(
                         theme.model_display(
@@ -163,22 +165,26 @@ async def model_run(
 
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
-        model_settings = get_model_settings(args, hub, logger, engine_uri)
-        modality = cast(Modality, model_settings["modality"])
+        model_settings: ModelSettings = get_model_settings(
+            args, hub, logger, engine_uri
+        )
+        modality = model_settings["modality"]
 
         if not args.quiet:
             if engine_uri.is_local:
                 can_access = (
                     args.quiet
                     or args.skip_hub_access_check
-                    or hub.can_access(engine_uri.model_id)
+                    or hub.can_access(cast(str, engine_uri.model_id))
                 )
 
-                model = hub.model(engine_uri.model_id)
+                hub_model_summary = hub.model(cast(str, engine_uri.model_id))
                 console.print(
                     Padding(
                         theme.model(
-                            model, can_access=can_access, summary=True
+                            hub_model_summary,
+                            can_access=can_access,
+                            summary=True,
                         ),
                         pad=(0, 0, 1, 0),
                     )
@@ -238,7 +244,9 @@ async def model_run(
                 console.print(output)
 
             elif operation.modality == Modality.AUDIO_CLASSIFICATION:
-                console.print(theme.display_audio_labels(output))
+                console.print(
+                    theme.display_audio_labels(cast(dict[str, float], output))
+                )
 
             elif operation.modality == Modality.AUDIO_TEXT_TO_SPEECH:
                 console.print(f"Audio generated in {output}")
@@ -247,7 +255,9 @@ async def model_run(
                 console.print(f"Audio generated in {output}")
 
             elif operation.modality == Modality.TEXT_TOKEN_CLASSIFICATION:
-                console.print(theme.display_token_labels([output]))
+                console.print(
+                    theme.display_token_labels([cast(dict[str, str], output)])
+                )
 
             elif operation.modality == Modality.TEXT_GENERATION:
                 await token_generation(
@@ -257,10 +267,10 @@ async def model_run(
                     logger=logger,
                     orchestrator=None,
                     event_stats=None,
-                    lm=model,
+                    lm=cast(TextGenerationModel, model),
                     input_string=cast(str, operation.input),
                     refresh_per_second=refresh_per_second,
-                    response=output,
+                    response=cast(TextGenerationResponse, output),
                     dtokens_pick=(
                         operation.parameters["text"].pick_tokens or 0
                         if operation.parameters
@@ -273,13 +283,19 @@ async def model_run(
                 )
 
             elif operation.modality == Modality.VISION_IMAGE_CLASSIFICATION:
-                console.print(theme.display_image_entity(output))
+                console.print(theme.display_image_entity(cast(Any, output)))
 
             elif operation.modality == Modality.VISION_OBJECT_DETECTION:
-                console.print(theme.display_image_entities(output, sort=True))
+                console.print(
+                    theme.display_image_entities(
+                        cast(list[Any], output), sort=True
+                    )
+                )
 
             elif operation.modality == Modality.VISION_SEMANTIC_SEGMENTATION:
-                console.print(theme.display_image_labels(output))
+                console.print(
+                    theme.display_image_labels(cast(list[str], output))
+                )
 
             elif operation.modality == Modality.VISION_TEXT_TO_IMAGE:
                 console.print(output)

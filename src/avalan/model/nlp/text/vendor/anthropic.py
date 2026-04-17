@@ -17,7 +17,7 @@ from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
 from contextlib import AsyncExitStack
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
@@ -26,9 +26,9 @@ from transformers import PreTrainedModel
 
 
 class AnthropicStream(TextGenerationVendorStream):
-    def __init__(self, events: AsyncIterator):
+    def __init__(self, events: AsyncIterator[object]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
-            tool_blocks: dict[int, dict] = {}
+            tool_blocks: dict[int, dict[str, Any]] = {}
 
             async for event in events:
                 etype = getattr(event, "type", None)
@@ -99,10 +99,10 @@ class AnthropicStream(TextGenerationVendorStream):
                 ):
                     break
 
-        super().__init__(generator())
+        super().__init__(cast(AsyncIterator[str | ToolCallToken], generator()))
 
-    async def __anext__(self) -> Token | TokenDetail | str:
-        return await self._generator.__anext__()
+    async def __anext__(self) -> str | ToolCallToken:
+        return cast(str | ToolCallToken, await self._generator.__anext__())
 
 
 class AnthropicClient(TextGenerationVendor):
@@ -127,11 +127,11 @@ class AnthropicClient(TextGenerationVendor):
         *,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> TextGenerationVendorStream:
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model": model_id,
             "system": system_prompt,
             "messages": template_messages,
@@ -162,20 +162,22 @@ class AnthropicClient(TextGenerationVendor):
             and (message.tool_call_result or message.tool_call_error)
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
-        messages = super()._template_messages(messages, do_exclude_roles)
+        template_messages = super()._template_messages(
+            messages, do_exclude_roles
+        )
         last_message = next(
             (
                 m
-                for m in reversed(messages)
+                for m in reversed(template_messages)
                 if m["role"] == str(MessageRole.ASSISTANT)
             ),
             None,
         )
         last_message_index = (
-            messages.index(last_message) if last_message else None
+            template_messages.index(last_message) if last_message else None
         )
-        if last_message_index:
-            messages[last_message_index] = {
+        if last_message_index is not None and last_message:
+            template_messages[last_message_index] = {
                 "role": last_message["role"],
                 "content": [
                     (
@@ -193,11 +195,14 @@ class AnthropicClient(TextGenerationVendor):
                             "input": r.call.arguments,
                         }
                         for r in tool_results
+                        if r is not None
                     ],
                 ],
             }
 
         for result in tool_results:
+            if result is None:
+                continue
             content = {
                 "type": "tool_result",
                 "tool_use_id": result.call.id,
@@ -209,20 +214,27 @@ class AnthropicClient(TextGenerationVendor):
             }
             if isinstance(result, ToolCallError):
                 content["is_error"] = True
-            result_message = TemplateMessage(role="user", content=[content])
-            if last_message_index:
-                messages.insert(last_message_index + 1, result_message)
+            result_message: TemplateMessage = TemplateMessage(
+                role="user",
+                content=[cast(Any, content)],
+            )
+            if last_message_index is not None:
+                template_messages.insert(
+                    last_message_index + 1, result_message
+                )
             else:
-                messages.append(result_message)
+                template_messages.append(result_message)
 
         # @TODO Ensure this doesn't happen from upstream
-        if len(messages) > 1 and (messages[0] == messages[-1]):
-            messages.pop()
+        if len(template_messages) > 1 and (
+            template_messages[0] == template_messages[-1]
+        ):
+            template_messages.pop()
 
-        return messages
+        return template_messages
 
     @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict] | None:
+    def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
         schemas = tool.json_schemas()
         return (
             [
@@ -236,7 +248,7 @@ class AnthropicClient(TextGenerationVendor):
                         "additionalProperties": False,
                     },
                 }
-                for t in tool.json_schemas()
+                for t in schemas
                 if t["type"] == "function"
             ]
             if schemas
@@ -251,7 +263,10 @@ class AnthropicClient(TextGenerationVendor):
             return getattr(value, attribute, None)
 
         parts: list[str] = []
-        for block in _get(response, "content") or []:
+        content_blocks = _get(response, "content")
+        if not isinstance(content_blocks, list):
+            return "".join(parts)
+        for block in content_blocks:
             block_type = _get(block, "type")
             if block_type == "text":
                 text = _get(block, "text")

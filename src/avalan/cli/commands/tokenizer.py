@@ -51,6 +51,7 @@ async def tokenize(
         ),
         logger=logger,
     ) as lm:
+        assert lm.tokenizer_config is not None
         logger.debug("Loaded tokenizer %s", lm.tokenizer_config.__repr__())
         console.print(theme.tokenizer_config(lm.tokenizer_config))
 
