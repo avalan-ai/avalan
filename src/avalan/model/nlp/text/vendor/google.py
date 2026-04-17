@@ -3,7 +3,7 @@ from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
-from typing import AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator, cast
 
 from diffusers import DiffusionPipeline
 from google.genai import Client
@@ -13,11 +13,15 @@ from transformers import PreTrainedModel
 
 class GoogleStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[GenerateContentResponse]):
-        super().__init__(stream)
+        async def generator() -> (
+            AsyncGenerator[Token | TokenDetail | str, None]
+        ):
+            async for chunk in stream:
+                text = chunk.text
+                if isinstance(text, str):
+                    yield text
 
-    async def __anext__(self) -> Token | TokenDetail | str:
-        chunk = await self._generator.__anext__()
-        return chunk.text
+        super().__init__(generator())
 
 
 class GoogleClient(TextGenerationVendor):
@@ -35,22 +39,26 @@ class GoogleClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
-        contents = [m.content for m in messages]
+        contents = [
+            m.content if isinstance(m.content, str) else "" for m in messages
+        ]
 
         if use_async_generator:
             stream = await self._client.aio.models.generate_content_stream(
                 model=model_id,
-                contents=contents,
+                contents=cast(Any, contents),
             )
             return GoogleStream(stream=stream.__aiter__())
         else:
             response = await self._client.aio.models.generate_content(
                 model=model_id,
-                contents=contents,
+                contents=cast(Any, contents),
             )
 
-            async def single_gen():
-                yield response.text
+            async def single_gen() -> (
+                AsyncGenerator[Token | TokenDetail | str, None]
+            ):
+                yield response.text or ""
 
             return single_gen()
 

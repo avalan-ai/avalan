@@ -19,7 +19,7 @@ from .stream import TextGenerationStream
 
 from abc import ABC
 from json import JSONDecodeError, dumps, loads
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncGenerator, AsyncIterator, cast
 
 
 class TextGenerationVendor(ABC):
@@ -42,7 +42,7 @@ class TextGenerationVendor(ABC):
             if isinstance(content, str):
                 return content
             if isinstance(content, MessageContentText):
-                return cast(str, content.text)
+                return content.text
             return None
         return None
 
@@ -66,7 +66,7 @@ class TextGenerationVendor(ABC):
                 return [_block(c) for c in content]
 
             if isinstance(content, MessageContentText):
-                return cast(str, content.text)
+                return content.text
 
             if isinstance(content, MessageContentImage):
                 return [_block(content)]
@@ -121,12 +121,13 @@ class TextGenerationVendor(ABC):
                 if isinstance(arguments, dict)
                 else cast(dict[str, Any], {})
             )
+        call_id_value = (
+            call_id
+            if isinstance(call_id, str) or call_id is None
+            else str(call_id)
+        )
         call = ToolCall(
-            id=(
-                cast(str | None, call_id)
-                if isinstance(call_id, str) or call_id is None
-                else str(call_id)
-            ),
+            id=cast(Any, call_id_value),
             name=name,
             arguments=cast(dict[str, str | int | float | bool | None], args),
         )
@@ -137,10 +138,10 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncIterator[Token | TokenDetail | str]
+    _generator: AsyncGenerator[Token | TokenDetail | str, None]
 
     def __init__(
-        self, generator: AsyncIterator[Token | TokenDetail | str]
+        self, generator: AsyncGenerator[Token | TokenDetail | str, None]
     ) -> None:
         self._generator = generator
 

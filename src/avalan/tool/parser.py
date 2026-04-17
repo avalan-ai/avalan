@@ -39,7 +39,9 @@ class ToolCallParser:
         """Return the tool format used by the parser."""
         return self._tool_format
 
-    def __call__(self, text: str) -> list[ToolCall] | None:
+    def __call__(
+        self, text: str
+    ) -> tuple[str, dict[str, Any]] | list[ToolCall] | None:
         calls = (
             self._parse_json(text)
             if self._tool_format is ToolFormat.JSON
@@ -152,7 +154,7 @@ class ToolCallParser:
 
     def message_tool_calls(self, text: str) -> list[dict[str, object]]:
         """Return tool calls extracted from ``text`` in message format."""
-        parsed = None
+        parsed: tuple[str, dict[str, Any]] | list[ToolCall] | None = None
         if "<|call|>" in text and "<|channel|>" in text:
             parsed = self._parse_harmony(text)
         elif self._tool_format:
@@ -272,7 +274,9 @@ class ToolCallParser:
 
         if existing_thinking:
             combined = "\n\n".join(
-                part for part in (existing_thinking, thinking) if part
+                part
+                for part in (existing_thinking, thinking)
+                if isinstance(part, str) and part
             )
         else:
             combined = thinking
@@ -379,7 +383,7 @@ class ToolCallParser:
             return tool_calls
         return None
 
-    def _parse_tag(self, text: str) -> tuple[str, dict[str, Any]] | None:
+    def _parse_tag(self, text: str) -> list[ToolCall] | None:
         tool_calls: list[ToolCall] = []
 
         if self._eos_token:
@@ -389,6 +393,8 @@ class ToolCallParser:
             for element in root.findall(".//tool_call"):
                 tool_call = None
                 try:
+                    if element.text is None:
+                        continue
                     json_text = element.text.strip()
 
                     try:
