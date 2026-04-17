@@ -2,17 +2,20 @@ from ...entities import ToolCallContext
 from . import (
     AsyncEngine,
     ColumnElement,
+    Connection,
     DatabaseTool,
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
     MetaData,
-    SATable,
-    Select,
     select,
     text,
 )
 
-from typing import Any, Iterable
+from importlib import import_module
+from typing import Any, Iterable, cast
+
+_database_module = import_module("avalan.tool.database")
+SATable = cast(Any, getattr(_database_module, "SATable"))
 
 
 class DatabaseSampleTool(DatabaseTool):
@@ -94,7 +97,7 @@ class DatabaseSampleTool(DatabaseTool):
 
     def _build_select_statement(
         self,
-        connection,
+        connection: Connection,
         *,
         schema: str | None,
         actual_table: str,
@@ -102,7 +105,7 @@ class DatabaseSampleTool(DatabaseTool):
         conditions: str | None,
         order: dict[str, str] | None,
         limit: int | None,
-    ) -> Select:
+    ) -> Any:
         table = self._reflect_table(connection, schema, actual_table)
 
         if requested_columns:
@@ -124,7 +127,7 @@ class DatabaseSampleTool(DatabaseTool):
         return stmt
 
     def _build_ordering(
-        self, table: SATable, order: dict[str, str]
+        self, table: Any, order: dict[str, str]
     ) -> Iterable[ColumnElement[Any]]:
         clauses: list[ColumnElement[Any]] = []
         for column_name, direction in order.items():
@@ -141,11 +144,11 @@ class DatabaseSampleTool(DatabaseTool):
         return clauses
 
     def _resolve_columns(
-        self, table: SATable, columns: list[str]
+        self, table: Any, columns: list[str]
     ) -> list[ColumnElement[Any]]:
         return [self._resolve_column(table, name) for name in columns]
 
-    def _resolve_column(self, table: SATable, name: str) -> ColumnElement[Any]:
+    def _resolve_column(self, table: Any, name: str) -> ColumnElement[Any]:
         lookup = {col.name: col for col in table.c}
         if self._normalizer is not None:
             for col in table.c:
@@ -159,11 +162,14 @@ class DatabaseSampleTool(DatabaseTool):
             raise ValueError(
                 f"Column '{name}' does not exist on table '{table.name}'"
             )
-        return column
+        return cast(ColumnElement[Any], column)
 
     def _reflect_table(
-        self, connection, schema: str | None, table_name: str
-    ) -> SATable:
+        self,
+        connection: Connection,
+        schema: str | None,
+        table_name: str,
+    ) -> Any:
         return SATable(
             table_name,
             MetaData(),

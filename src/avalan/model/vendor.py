@@ -19,7 +19,7 @@ from .stream import TextGenerationStream
 
 from abc import ABC
 from json import JSONDecodeError, dumps, loads
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from typing import Any, AsyncIterator, cast
 
 
 class TextGenerationVendor(ABC):
@@ -78,17 +78,15 @@ class TextGenerationVendor(ABC):
             if exclude_roles and msg.role in exclude_roles:
                 continue
 
-            out.append(
-                {
-                    "role": cast(TemplateMessageRole, str(msg.role)),
-                    "content": cast(
-                        str
-                        | TemplateMessageContent
-                        | list[TemplateMessageContent],
-                        _wrap(msg.content),
-                    ),
-                }
-            )
+            out.append({
+                "role": cast(TemplateMessageRole, str(msg.role)),
+                "content": cast(
+                    str
+                    | TemplateMessageContent
+                    | list[TemplateMessageContent],
+                    _wrap(msg.content),
+                ),
+            })
 
         return out
 
@@ -138,10 +136,10 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncGenerator[Token | TokenDetail | str, None]
+    _generator: AsyncIterator[Token | TokenDetail | str]
 
     def __init__(
-        self, generator: AsyncGenerator[Token | TokenDetail | str, None]
+        self, generator: AsyncIterator[Token | TokenDetail | str]
     ) -> None:
         self._generator = generator
 

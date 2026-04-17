@@ -105,7 +105,9 @@ class MemoryReadTool(Tool):
             function=self._function,
             limit=default_limit,
         )
-        memories = [cast(str, mp.data) for mp in memory_partitions]
+        memories = [
+            mp.data for mp in memory_partitions if isinstance(mp.data, str)
+        ]
         return memories
 
 

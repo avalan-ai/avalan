@@ -14,7 +14,7 @@ from contextlib import AsyncExitStack
 from dataclasses import replace
 from importlib import import_module
 from logging import Logger, getLogger
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from diffusers import DiffusionPipeline
 from torch import Tensor
@@ -39,9 +39,9 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         exit_stack: AsyncExitStack | None = None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
-        assert (
-            settings.base_url or settings.access_token
-        ), "API key needed for vendor"
+        assert settings.base_url or settings.access_token, (
+            "API key needed for vendor"
+        )
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
         self._exit_stack = exit_stack or AsyncExitStack()
@@ -69,7 +69,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         input: Input,
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
-        **kwargs,
+        **kwargs: object,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
@@ -78,12 +78,12 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         model_id: str, default_model: str
     ) -> _TiktokenEncoding:
         tiktoken = import_module("tiktoken")
-        encoding_for_model = getattr(tiktoken, "encoding_for_model")
-        get_encoding = getattr(tiktoken, "get_encoding")
+        encoding_for_model = cast(Any, getattr(tiktoken, "encoding_for_model"))
+        get_encoding = cast(Any, getattr(tiktoken, "get_encoding"))
         try:
-            return encoding_for_model(model_id)
+            return cast(_TiktokenEncoding, encoding_for_model(model_id))
         except KeyError:
-            return get_encoding(default_model)
+            return cast(_TiktokenEncoding, get_encoding(default_model))
 
     def input_token_count(
         self,
@@ -91,6 +91,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
     ) -> int:
+        assert self._model_id
         encoding = self._resolve_encoding(
             self._model_id, self._TIKTOKEN_DEFAULT_MODEL
         )
@@ -101,7 +102,11 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
 
         total_tokens = 0
         for message in messages:
-            total_tokens += len(encoding.encode(message.content or ""))
+            if isinstance(message.content, str):
+                content = message.content
+            else:
+                content = str(message.content or "")
+            total_tokens += len(encoding.encode(content))
         return total_tokens
 
     async def __call__(
@@ -114,14 +119,14 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         messages = self._messages(input, system_prompt, developer_prompt, tool)
+        gen_settings = settings or GenerationSettings()
         streamer = await self._model(
             self._model_id,
             messages,
-            settings,
+            gen_settings,
             tool=tool,
-            use_async_generator=settings.use_async_generator,
+            use_async_generator=gen_settings.use_async_generator,
         )
-        gen_settings = settings or GenerationSettings()
         return TextGenerationResponse(
             streamer,
             logger=self._logger,
