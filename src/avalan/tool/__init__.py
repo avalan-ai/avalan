@@ -1,13 +1,15 @@
-from __future__ import annotations
-
 from abc import ABC
 from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+)
 from inspect import Signature, isfunction, signature
 from types import TracebackType
-from typing import Any, get_type_hints
+from typing import Any, cast, get_type_hints
 
-from transformers.utils import get_json_schema
+from transformers.utils.chat_template_utils import get_json_schema
 
 
 class Tool(ABC):
@@ -17,7 +19,7 @@ class Tool(ABC):
         self._exit_stack = AsyncExitStack()
 
     def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
-        schema = get_json_schema(self)
+        schema = get_json_schema(cast(Callable[..., Any], self))
         if (
             prefix
             and "type" in schema
@@ -65,14 +67,14 @@ class ToolSet:
 
     _namespace: str | None
     _exit_stack: AsyncExitStack
-    _tools: list[Callable[..., Any] | Tool | "ToolSet"]
+    _tools: "list[Callable[..., Any] | Tool | ToolSet]"
 
     @property
     def namespace(self) -> str | None:
         return self._namespace
 
     @property
-    def tools(self) -> list[Callable[..., Any] | Tool | "ToolSet"]:
+    def tools(self) -> "list[Callable[..., Any] | Tool | ToolSet]":
         return self._tools
 
     def __init__(
@@ -80,7 +82,7 @@ class ToolSet:
         *,
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
-        tools: Sequence[Callable[..., Any] | Tool | "ToolSet"],
+        tools: "Sequence[Callable[..., Any] | Tool | ToolSet]",
     ):
         self._namespace = namespace
         self._exit_stack = exit_stack or AsyncExitStack()
@@ -130,9 +132,13 @@ class ToolSet:
     async def __aenter__(self) -> "ToolSet":
         for tool in self.tools:
             if hasattr(tool, "__aenter__"):
-                await self._exit_stack.enter_async_context(tool)
+                await self._exit_stack.enter_async_context(
+                    cast(AbstractAsyncContextManager[object], tool)
+                )
             elif hasattr(tool, "__enter__"):
-                self._exit_stack.enter_context(tool)
+                self._exit_stack.enter_context(
+                    cast(AbstractContextManager[object], tool)
+                )
         return self
 
     async def __aexit__(
@@ -150,9 +156,7 @@ class ToolSet:
         prefix = (
             f"{prefix}."
             if prefix
-            else f"{self.namespace}."
-            if self.namespace
-            else ""
+            else f"{self.namespace}." if self.namespace else ""
         )
         for tool in self.tools:
             if isinstance(tool, ToolSet):

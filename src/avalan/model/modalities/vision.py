@@ -24,7 +24,7 @@ from .registry import ModalityRegistry
 from argparse import Namespace
 from contextlib import AsyncExitStack
 from logging import Logger
-from typing import Any
+from typing import Any, cast
 
 
 @ModalityRegistry.register(Modality.VISION_ENCODER_DECODER)
@@ -39,6 +39,7 @@ class VisionEncoderDecoderModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return VisionEncoderDecoderModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -76,13 +77,17 @@ class VisionEncoderDecoderModality:
             operation.parameters["vision"]
             and operation.parameters["vision"].path
         )
+        prompt = operation.input if isinstance(operation.input, str) else None
+        skip_special_tokens = (
+            operation.parameters["vision"].skip_special_tokens
+            if operation.parameters["vision"].skip_special_tokens is not None
+            else True
+        )
 
         return await model(
             operation.parameters["vision"].path,
-            prompt=operation.input,
-            skip_special_tokens=operation.parameters[
-                "vision"
-            ].skip_special_tokens,
+            prompt=prompt,
+            skip_special_tokens=skip_special_tokens,
         )
 
 
@@ -150,6 +155,7 @@ class VisionImageToTextModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return ImageToTextModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -187,12 +193,15 @@ class VisionImageToTextModality:
             operation.parameters["vision"]
             and operation.parameters["vision"].path
         )
+        skip_special_tokens = (
+            operation.parameters["vision"].skip_special_tokens
+            if operation.parameters["vision"].skip_special_tokens is not None
+            else True
+        )
 
         return await model(
             operation.parameters["vision"].path,
-            skip_special_tokens=operation.parameters[
-                "vision"
-            ].skip_special_tokens,
+            skip_special_tokens=skip_special_tokens,
         )
 
 
@@ -208,6 +217,7 @@ class VisionImageTextToTextModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return ImageTextToTextModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -274,6 +284,7 @@ class VisionObjectDetectionModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return ObjectDetectionModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -335,6 +346,7 @@ class VisionTextToImageModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return TextToImageModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -403,6 +415,7 @@ class VisionTextToAnimationModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return TextToAnimationModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -471,6 +484,7 @@ class VisionTextToVideoModality:
         _ = exit_stack
         if not engine_uri.is_local:
             raise NotImplementedError()
+        assert engine_uri.model_id is not None
         return TextToVideoModel(
             model_id=engine_uri.model_id,
             settings=engine_settings,
@@ -523,7 +537,7 @@ class VisionTextToVideoModality:
             and operation.parameters["vision"].path
         )
         vision = operation.parameters["vision"]
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "reference_path": vision.reference_path,
             "negative_prompt": vision.negative_prompt,
             "height": vision.height,
@@ -540,7 +554,8 @@ class VisionTextToVideoModality:
         if vision.n_steps is not None:
             kwargs["steps"] = vision.n_steps
 
-        return await model(operation.input, vision.path, **kwargs)
+        callable_model = cast(Any, model)
+        return await callable_model(operation.input, vision.path, **kwargs)
 
 
 @ModalityRegistry.register(Modality.VISION_SEMANTIC_SEGMENTATION)

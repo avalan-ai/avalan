@@ -14,7 +14,7 @@ from .parser import ToolCallParser
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 
@@ -95,8 +95,12 @@ class ToolManager:
             for i, toolset in enumerate(enabled_toolsets):
                 prefix = f"{toolset.namespace}." if toolset.namespace else ""
                 for tool in toolset.tools:
+                    if isinstance(tool, ToolSet):
+                        continue
                     name = getattr(tool, "__name__", tool.__class__.__name__)
-                    self._tools[f"{prefix}{name}"] = tool
+                    self._tools[f"{prefix}{name}"] = cast(
+                        Callable[..., Any], tool
+                    )
 
         self._toolsets = enabled_toolsets
 
@@ -114,7 +118,8 @@ class ToolManager:
         return self._parser.tool_call_status(buffer)
 
     def get_calls(self, text: str) -> list[ToolCall] | None:
-        return self._parser(text)
+        calls = self._parser(text)
+        return calls if isinstance(calls, list) else None
 
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
@@ -157,17 +162,15 @@ class ToolManager:
 
         if self._settings.filters:
             for f in self._settings.filters:
-                namespace: str | None = None
-                func: Callable[
-                    [ToolCall, ToolCallContext],
-                    tuple[ToolCall, ToolCallContext] | None,
-                ] = f
+                filter_namespace: str | None = None
                 if isinstance(f, ToolFilter):
-                    func = f.func
-                    namespace = f.namespace
-                if not self._matches_namespace(call.name, namespace):
+                    filter_func = f.func
+                    filter_namespace = f.namespace
+                else:
+                    filter_func = f
+                if not self._matches_namespace(call.name, filter_namespace):
                     continue
-                modified = func(call, context)
+                modified = filter_func(call, context)
                 if modified is not None:
                     assert isinstance(modified, tuple) and len(modified) == 2
                     call, context = modified
@@ -191,14 +194,17 @@ class ToolManager:
 
             if self._settings.transformers:
                 for t in self._settings.transformers:
-                    namespace: str | None = None
-                    func: Callable[[ToolCall, ToolCallContext, Any], Any] = t
+                    transformer_namespace: str | None = None
                     if isinstance(t, ToolTransformer):
-                        func = t.func
-                        namespace = t.namespace
-                    if not self._matches_namespace(call.name, namespace):
+                        transformer_func = t.func
+                        transformer_namespace = t.namespace
+                    else:
+                        transformer_func = t
+                    if not self._matches_namespace(
+                        call.name, transformer_namespace
+                    ):
                         continue
-                    transformed = func(call, context, result)
+                    transformed = transformer_func(call, context, result)
                     if transformed is not None:
                         result = transformed
 

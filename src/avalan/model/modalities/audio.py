@@ -187,11 +187,15 @@ class AudioTextToSpeechModality:
             and operation.parameters["audio"].path
             and operation.parameters["audio"].sampling_rate
         )
+        assert isinstance(operation.input, str)
+        generation_settings = (
+            operation.generation_settings or GenerationSettings()
+        )
 
         return await model(
             path=operation.parameters["audio"].path,
             prompt=operation.input,
-            max_new_tokens=operation.generation_settings.max_new_tokens,
+            max_new_tokens=generation_settings.max_new_tokens or 0,
             reference_path=operation.parameters["audio"].reference_path,
             reference_text=operation.parameters["audio"].reference_text,
             sampling_rate=operation.parameters["audio"].sampling_rate,
@@ -248,9 +252,13 @@ class AudioGenerationModality:
             and operation.parameters["audio"]
             and operation.parameters["audio"].path
         )
+        assert isinstance(operation.input, str)
+        generation_settings = (
+            operation.generation_settings or GenerationSettings()
+        )
 
         return await model(
             operation.input,
             operation.parameters["audio"].path,
-            operation.generation_settings.max_new_tokens,
+            generation_settings.max_new_tokens or 0,
         )

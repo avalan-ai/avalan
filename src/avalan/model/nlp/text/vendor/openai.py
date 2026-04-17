@@ -18,7 +18,7 @@ from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
 from json import dumps
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 from diffusers import DiffusionPipeline
 from openai import AsyncOpenAI
@@ -29,9 +29,9 @@ class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
 
-    def __init__(self, stream: AsyncIterator):
+    def __init__(self, stream: AsyncIterator[Any]) -> None:
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
-            tool_calls: dict[str, dict] = {}
+            tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
 
             async for event in stream:
                 etype = getattr(event, "type", None)
@@ -44,6 +44,8 @@ class OpenAIStream(TextGenerationVendorStream):
                             call_id = getattr(
                                 custom, "id", getattr(item, "id", None)
                             )
+                            if not isinstance(call_id, str):
+                                continue
                             tool_calls[call_id] = {
                                 "name": getattr(custom, "name", None),
                                 "args_fragments": [],
@@ -56,11 +58,13 @@ class OpenAIStream(TextGenerationVendorStream):
                 ):
                     call_id = getattr(event, "id", None)
                     delta = getattr(event, "delta", None)
-                    if call_id is not None and delta:
+                    if isinstance(call_id, str) and isinstance(delta, str):
                         tc = tool_calls.setdefault(
                             call_id, {"name": None, "args_fragments": []}
                         )
-                        tc["args_fragments"].append(delta)
+                        args_fragments = tc["args_fragments"]
+                        assert isinstance(args_fragments, list)
+                        args_fragments.append(delta)
                         yield ToolCallToken(token=delta)
                     continue
 
@@ -78,13 +82,24 @@ class OpenAIStream(TextGenerationVendorStream):
 
                 if etype == "response.output_item.done":
                     item = getattr(event, "item", None)
-                    call_id = getattr(item, "id", None) if item else None
-                    cached = tool_calls.pop(call_id, None)
+                    call_id_value = getattr(item, "id", None) if item else None
+                    call_id = (
+                        call_id_value
+                        if isinstance(call_id_value, str)
+                        else None
+                    )
+                    cached = (
+                        tool_calls.pop(call_id, None)
+                        if isinstance(call_id, str)
+                        else None
+                    )
                     if cached:
+                        args_fragments = cached["args_fragments"]
+                        assert isinstance(args_fragments, list)
                         yield TextGenerationVendor.build_tool_call_token(
                             call_id,
                             cached.get("name"),
-                            "".join(cached["args_fragments"]) or None,
+                            "".join(args_fragments) or None,
                         )
                     elif (
                         item is not None
@@ -126,7 +141,7 @@ class OpenAIClient(TextGenerationVendor):
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
         template_messages = self._template_messages(messages)
-        kwargs: dict = {
+        kwargs: dict[str, Any] = {
             "extra_headers": {
                 "X-Title": "Avalan",
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
@@ -163,7 +178,7 @@ class OpenAIClient(TextGenerationVendor):
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
-    ) -> list[TemplateMessage]:
+    ) -> list[TemplateMessage] | list[dict[str, Any]]:
         tool_results = [
             message.tool_call_result or message.tool_call_error
             for message in messages
@@ -171,8 +186,12 @@ class OpenAIClient(TextGenerationVendor):
             and (message.tool_call_result or message.tool_call_error)
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
-        messages = super()._template_messages(messages, do_exclude_roles)
+        template_messages = super()._template_messages(
+            messages, do_exclude_roles
+        )
+        messages_out = cast(list[dict[str, Any]], template_messages)
         for result in tool_results:
+            assert result is not None
             call_message = {
                 "type": "function_call",
                 "name": TextGenerationVendor.encode_tool_name(
@@ -181,7 +200,7 @@ class OpenAIClient(TextGenerationVendor):
                 "call_id": result.call.id,
                 "arguments": dumps(result.call.arguments),
             }
-            messages.append(call_message)
+            messages_out.append(call_message)
 
             result_message = {
                 "type": "function_call_output",
@@ -192,11 +211,11 @@ class OpenAIClient(TextGenerationVendor):
                     else {"error": result.message}
                 ),
             }
-            messages.append(result_message)
-        return messages
+            messages_out.append(result_message)
+        return messages_out
 
     @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict] | None:
+    def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
         schemas = tool.json_schemas()
         return (
             [
@@ -209,7 +228,7 @@ class OpenAIClient(TextGenerationVendor):
                         )
                     },
                 }
-                for t in tool.json_schemas()
+                for t in schemas
                 if t["type"] == "function"
             ]
             if schemas
@@ -224,9 +243,15 @@ class OpenAIClient(TextGenerationVendor):
             return getattr(value, attribute, None)
 
         parts: list[str] = []
-        for item in _get(response, "output") or []:
+        output = _get(response, "output")
+        if not isinstance(output, list):
+            return "".join(parts)
+
+        for item in output:
             item_type = _get(item, "type")
-            contents = _get(item, "content") or []
+            contents = _get(item, "content")
+            if not isinstance(contents, list):
+                contents = []
 
             if item_type in {None, "message", "output_text"}:
                 for content in contents:
@@ -253,9 +278,9 @@ class OpenAINonStreamingResponse(TextGenerationResponse):
 
     def __init__(
         self,
-        *args,
+        *args: Any,
         static_response_text: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._static_response_text = static_response_text
@@ -281,6 +306,7 @@ class OpenAIModel(TextGenerationVendorModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.base_url or self._settings.access_token
+        assert self._settings.access_token
         return OpenAIClient(
             base_url=self._settings.base_url,
             api_key=self._settings.access_token,
