@@ -162,6 +162,6 @@ class JsonOrchestrator(Orchestrator):
             user_template=user_template,
         )
 
-    async def __call__(self, input: Input, **kwargs: Any) -> str:  # type: ignore[override]
+    async def __call__(self, input: Input, **kwargs: Any) -> str:
         text_response = await super().__call__(input, **kwargs)
         return await text_response.to_json()

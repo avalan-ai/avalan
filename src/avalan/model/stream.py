@@ -4,11 +4,11 @@ from ..entities import (
 )
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, AsyncIterator
+from typing import Any, AsyncIterator
 
 
 class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
-    _generator: AsyncGenerator[Token | TokenDetail | str, None] | None = None
+    _generator: AsyncIterator[Token | TokenDetail | str] | None = None
 
     @abstractmethod
     def __call__(

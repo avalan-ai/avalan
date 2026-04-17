@@ -2,17 +2,19 @@ from ...entities import ToolCallContext
 from . import (
     AsyncEngine,
     ColumnElement,
+    Connection,
     DatabaseTool,
     DatabaseToolSettings,
     IdentifierCaseNormalizer,
     MetaData,
-    SATable,
-    Select,
     select,
     text,
 )
 
 from typing import Any, Iterable
+
+from sqlalchemy import Table as SATable
+from sqlalchemy.sql import Select
 
 
 class DatabaseSampleTool(DatabaseTool):
@@ -94,7 +96,7 @@ class DatabaseSampleTool(DatabaseTool):
 
     def _build_select_statement(
         self,
-        connection,
+        connection: Connection,
         *,
         schema: str | None,
         actual_table: str,
@@ -102,7 +104,7 @@ class DatabaseSampleTool(DatabaseTool):
         conditions: str | None,
         order: dict[str, str] | None,
         limit: int | None,
-    ) -> Select:
+    ) -> Select[Any]:
         table = self._reflect_table(connection, schema, actual_table)
 
         if requested_columns:
@@ -162,7 +164,10 @@ class DatabaseSampleTool(DatabaseTool):
         return column
 
     def _reflect_table(
-        self, connection, schema: str | None, table_name: str
+        self,
+        connection: Connection,
+        schema: str | None,
+        table_name: str,
     ) -> SATable:
         return SATable(
             table_name,

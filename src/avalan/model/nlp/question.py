@@ -48,7 +48,7 @@ class QuestionAnsweringModel(BaseNLPModel):
         )
         return cast(PreTrainedModel, model)
 
-    def _tokenize_input(  # type: ignore[override]
+    def _tokenize_input(
         self,
         input: Input,
         system_prompt: str | None,
@@ -103,7 +103,10 @@ class QuestionAnsweringModel(BaseNLPModel):
         start = argmax(start_answer_logits)
         end = argmax(end_answer_logits)
         answer_ids = inputs["input_ids"][0, start : end + 1]
-        answer = self._tokenizer.decode(
-            answer_ids, skip_special_tokens=skip_special_tokens
+        answer = cast(
+            str,
+            self._tokenizer.decode(
+                answer_ids, skip_special_tokens=skip_special_tokens
+            ),
         )
         return answer

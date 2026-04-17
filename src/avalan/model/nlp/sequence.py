@@ -51,7 +51,7 @@ class SequenceClassificationModel(BaseNLPModel):
         )
         return cast(PreTrainedModel, model)
 
-    def _tokenize_input(  # type: ignore[override]
+    def _tokenize_input(
         self,
         input: Input,
         system_prompt: str | None,
@@ -128,7 +128,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         )
         return cast(PreTrainedModel, model)
 
-    def _tokenize_input(  # type: ignore[override]
+    def _tokenize_input(
         self,
         input: Input,
         system_prompt: str | None,
@@ -180,7 +180,10 @@ class SequenceToSequenceModel(BaseNLPModel):
             settings,
             stopping_criterias,
         )
-        return self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        return cast(
+            str,
+            self._tokenizer.decode(output_ids[0], skip_special_tokens=True),
+        )
 
 
 class TranslationModel(SequenceToSequenceModel):
@@ -229,8 +232,11 @@ class TranslationModel(SequenceToSequenceModel):
             generation_settings,
             stopping_criterias,
         )
-        text = self._tokenizer.decode(
-            output_ids[0], skip_special_tokens=skip_special_tokens
+        text = cast(
+            str,
+            self._tokenizer.decode(
+                output_ids[0], skip_special_tokens=skip_special_tokens
+            ),
         )
         self._tokenizer.src_lang = previous_language
         return text

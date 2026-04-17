@@ -69,7 +69,7 @@ class SentenceTransformerModel(BaseNLPModel):
         )
         return cast(PreTrainedModel | TextGenerationVendor, model)
 
-    def _tokenize_input(  # type: ignore[override]
+    def _tokenize_input(
         self,
         input: Input,
         system_prompt: str | None,

@@ -5,6 +5,7 @@ from . import Tool, ToolSet
 from asyncio import create_subprocess_exec
 from asyncio.subprocess import PIPE
 from contextlib import AsyncExitStack
+from typing import Any
 
 try:
     from RestrictedPython import (
@@ -38,9 +39,14 @@ class CodeTool(Tool):
         self.__name__ = "run"
 
     async def __call__(
-        self, code: str, *args: any, context: ToolCallContext, **kwargs: any
+        self,
+        code: str,
+        *args: Any,
+        context: ToolCallContext,
+        **kwargs: Any,
     ) -> str:
-        locals_dict = {}
+        _ = context
+        locals_dict: dict[str, Any] = {}
         byte_code = compile_restricted(
             code,
             filename="<avalan:tool:code>",
@@ -53,20 +59,32 @@ class CodeTool(Tool):
         assert "run" in locals_dict
 
         function = locals_dict["run"]
+        positional_args: tuple[Any, ...] = args
+        keyword_args: dict[str, Any] = kwargs
 
-        if args and not kwargs and isinstance(args, tuple) and len(args) == 2:
-            (args, kwargs) = args
-            if args and not kwargs and isinstance(args, dict):
-                kwargs = args
-                args = None
+        if (
+            positional_args
+            and not keyword_args
+            and len(positional_args) == 2
+            and isinstance(positional_args[1], dict)
+        ):
+            unpacked_args, unpacked_kwargs = positional_args
+            if isinstance(unpacked_args, tuple):
+                positional_args = unpacked_args
+            elif isinstance(unpacked_args, dict):
+                positional_args = ()
+                unpacked_kwargs = unpacked_args
+            keyword_args = unpacked_kwargs
 
         result = (
-            function(*args, **kwargs)
-            if args and kwargs
+            function(*positional_args, **keyword_args)
+            if positional_args and keyword_args
             else (
-                function(*args)
-                if args
-                else function(**kwargs) if kwargs else function()
+                function(*positional_args)
+                if positional_args
+                else function(**keyword_args)
+                if keyword_args
+                else function()
             )
         )
 

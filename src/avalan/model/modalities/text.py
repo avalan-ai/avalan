@@ -269,20 +269,22 @@ class TextGenerationModality:
                 operation.input,
                 system_prompt=operation.parameters["text"].system_prompt,
                 developer_prompt=operation.parameters["text"].developer_prompt,
-                settings=operation.generation_settings,
+                settings=operation.generation_settings or GenerationSettings(),
                 stopping_criterias=[criteria] if criteria else None,
-                manual_sampling=operation.parameters["text"].manual_sampling,
+                manual_sampling=operation.parameters["text"].manual_sampling
+                or False,
                 pick=operation.parameters["text"].pick_tokens,
                 skip_special_tokens=operation.parameters[
                     "text"
-                ].skip_special_tokens,
+                ].skip_special_tokens
+                or False,
                 tool=tool,
             )
         return await model(
             operation.input,
             system_prompt=operation.parameters["text"].system_prompt,
             developer_prompt=operation.parameters["text"].developer_prompt,
-            settings=operation.generation_settings,
+            settings=operation.generation_settings or GenerationSettings(),
             tool=tool,
         )
 
@@ -441,7 +443,7 @@ class TextSequenceToSequenceModality:
         criteria = _stopping_criteria(operation, model)
         return await model(
             operation.input,
-            settings=operation.generation_settings,
+            settings=operation.generation_settings or GenerationSettings(),
             stopping_criterias=[criteria] if criteria else None,
         )
 
@@ -563,9 +565,10 @@ class TextTranslationModality:
             destination_language=operation.parameters[
                 "text"
             ].language_destination,
-            settings=operation.generation_settings,
+            settings=operation.generation_settings or GenerationSettings(),
             stopping_criterias=[criteria] if criteria else None,
             skip_special_tokens=operation.parameters[
                 "text"
-            ].skip_special_tokens,
+            ].skip_special_tokens
+            or False,
         )
