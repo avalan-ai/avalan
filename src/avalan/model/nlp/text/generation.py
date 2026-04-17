@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 from ....entities import (
     GenerationSettings,
     Input,

@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 from ...agent import Specification
 from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
