@@ -7,16 +7,15 @@ from ....model.nlp.text.generation import TextGenerationModel
 from ....model.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
 
-from asyncio import to_thread
 from dataclasses import asdict, replace
 from logging import Logger, getLogger
-from typing import Any, AsyncGenerator, Iterator, cast
+from typing import Any, AsyncGenerator, Awaitable, Iterator, cast
 
 try:
     from vllm import LLM, SamplingParams
-except Exception:  # pragma: no cover - vllm may not be installed
-    LLM = None  # type: ignore[misc,assignment]
-    SamplingParams = None  # type: ignore[misc,assignment]
+except ImportError:  # pragma: no cover - vllm may not be installed
+    LLM = None
+    SamplingParams = None
 
 
 class VllmStream(TextGenerationVendorStream):
@@ -28,21 +27,23 @@ class VllmStream(TextGenerationVendorStream):
             self._iterator = None
             return
 
-        iterator = cast(Iterator[str], generator)
-        self._iterator = iterator
-        self._generator = iterator  # type: ignore[assignment]
+        self._iterator = generator
+        self._generator = cast(
+            AsyncGenerator[str, None], cast(Any, self._iterator)
+        )
 
     async def __anext__(self) -> str:
         if self._iterator is None:
-            return await super().__anext__()
+            chunk = await super().__anext__()
+            if isinstance(chunk, str):
+                return chunk
+            return chunk.token
 
-        def _next(default: str | None = None) -> str | None:
-            return next(self._iterator, default)
-
-        chunk = await to_thread(_next)
+        iterator = self._iterator
+        chunk = next(iterator, None)
         if chunk is None:
             raise StopAsyncIteration
-        return chunk
+        return str(chunk)
 
 
 class VllmModel(TextGenerationModel):
@@ -101,7 +102,10 @@ class VllmModel(TextGenerationModel):
         tokenizer = self._tokenizer
         assert tokenizer is not None
         input_ids = cast(dict[str, Any], inputs)["input_ids"]
-        return tokenizer.decode(input_ids[0], skip_special_tokens=False)
+        return cast(
+            str,
+            tokenizer.decode(input_ids[0], skip_special_tokens=False),
+        )
 
     async def _stream_generator(
         self,
@@ -116,7 +120,7 @@ class VllmModel(TextGenerationModel):
             return next(iterator, default)
 
         while True:
-            chunk = await to_thread(_next, None)
+            chunk = _next(None)
             if chunk is None:
                 return
             if isinstance(chunk, str):
@@ -144,7 +148,7 @@ class VllmModel(TextGenerationModel):
         settings: GenerationSettings | None = None,
         *,
         tool: ToolManager | None = None,
-    ) -> TextGenerationVendorStream | str:
+    ) -> TextGenerationVendorStream | str | AsyncGenerator[str, None]:
         settings = settings or GenerationSettings()
         prompt = self._prompt(
             input,
@@ -155,5 +159,13 @@ class VllmModel(TextGenerationModel):
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:
-            return await self._stream_generator(prompt, generation_settings)
+            stream = self._stream_generator(prompt, generation_settings)
+            if isinstance(stream, Awaitable):
+                return cast(
+                    TextGenerationVendorStream
+                    | str
+                    | AsyncGenerator[str, None],
+                    await stream,
+                )
+            return stream
         return self._string_output(prompt, generation_settings)

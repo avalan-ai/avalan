@@ -524,7 +524,11 @@ class TextGenerationModel(BaseNLPModel):
         elif not isinstance(input, Message):
             raise ValueError(input)
 
-        messages = [input] if not isinstance(input, list) else input
+        messages: list[Message]
+        if isinstance(input, list):
+            messages = cast(list[Message], input)
+        else:
+            messages = [input]
 
         if developer_prompt:
             messages = [
