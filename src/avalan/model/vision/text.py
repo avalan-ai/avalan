@@ -30,7 +30,7 @@ class ImageToTextModel(TransformerModel):
     ) -> Any:
         self._processor = cast(
             Any,
-            AutoImageProcessor.from_pretrained(
+            cast(Any, AutoImageProcessor).from_pretrained(
                 self._model_id,
                 # default behavior in transformers v4.48
                 use_fast=True,
@@ -38,7 +38,7 @@ class ImageToTextModel(TransformerModel):
         )
         model = cast(
             Any,
-            AutoModelForVision2Seq.from_pretrained(
+            cast(Any, AutoModelForVision2Seq).from_pretrained(
                 self._model_id,
                 device_map=self._device,
                 tp_plan=Engine._get_tp_plan(self._settings.parallel),
@@ -78,7 +78,7 @@ class ImageToTextModel(TransformerModel):
         output = self._tokenizer.decode(
             output_ids[0], skip_special_tokens=skip_special_tokens
         )
-        return output
+        return cast(str, output)
 
 
 class ImageTextToTextModel(ImageToTextModel):
@@ -97,7 +97,7 @@ class ImageTextToTextModel(ImageToTextModel):
 
         self._processor = cast(
             Any,
-            AutoProcessor.from_pretrained(
+            cast(Any, AutoProcessor).from_pretrained(
                 self._model_id,
                 use_fast=True,
             ),
@@ -106,7 +106,7 @@ class ImageTextToTextModel(ImageToTextModel):
         loader = self._loaders[self._settings.loader_class]
         model = cast(
             Any,
-            loader.from_pretrained(
+            cast(Any, loader).from_pretrained(
                 self._model_id,
                 torch_dtype=Engine.weight(self._settings.weight_type),
                 device_map=self._device,
@@ -196,4 +196,7 @@ class ImageTextToTextModel(ImageToTextModel):
             skip_special_tokens=skip_special_tokens,
             clean_up_tokenization_spaces=False,
         )
-        return output_text[0] if isinstance(output_text, list) else output_text
+        return cast(
+            str,
+            output_text[0] if isinstance(output_text, list) else output_text,
+        )

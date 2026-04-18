@@ -24,7 +24,7 @@ from dataclasses import asdict, replace
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Thread
-from typing import AsyncGenerator, Literal, cast
+from typing import Any, AsyncGenerator, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import Tensor, log_softmax, softmax, topk
@@ -87,11 +87,14 @@ class TextGenerationModel(BaseNLPModel):
             from transformers import BitsAndBytesConfig
 
             quantization = settings.quantization
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=quantization.load_in_4bit,
-                bnb_4bit_quant_type=quantization.bnb_4bit_quant_type,
-                bnb_4bit_use_double_quant=quantization.bnb_4bit_use_double_quant,
-                bnb_4bit_compute_dtype=quantization.bnb_4bit_compute_dtype,
+            bnb_config = cast(
+                object,
+                cast(Any, BitsAndBytesConfig)(
+                    load_in_4bit=quantization.load_in_4bit,
+                    bnb_4bit_quant_type=quantization.bnb_4bit_quant_type,
+                    bnb_4bit_use_double_quant=quantization.bnb_4bit_use_double_quant,
+                    bnb_4bit_compute_dtype=quantization.bnb_4bit_compute_dtype,
+                ),
             )
         else:
             bnb_config = None
@@ -121,7 +124,10 @@ class TextGenerationModel(BaseNLPModel):
         if model_args["quantization_config"] is None:
             model_args.pop("quantization_config", None)
 
-        model = loader.from_pretrained(self._model_id, **model_args)
+        model = cast(
+            PreTrainedModel,
+            cast(Any, loader).from_pretrained(self._model_id, **model_args),
+        )
         return model
 
     async def __call__(
@@ -261,8 +267,12 @@ class TextGenerationModel(BaseNLPModel):
         assert isinstance(inputs, dict)
         input_length = inputs["input_ids"].shape[1]
         outputs = self._generate_output(inputs, settings, stopping_criterias)
-        return self._tokenizer.decode(
-            outputs[0][input_length:], skip_special_tokens=skip_special_tokens
+        return cast(
+            str,
+            self._tokenizer.decode(
+                outputs[0][input_length:],
+                skip_special_tokens=skip_special_tokens,
+            ),
         )
 
     async def _token_generator(
@@ -501,7 +511,7 @@ class TextGenerationModel(BaseNLPModel):
         if hasattr(self._model, "device"):
             _l(f"Translating inputs to {self._model.device}")
             inputs = inputs.to(self._model.device)
-        return inputs
+        return cast(dict[str, Tensor] | BatchEncoding | Tensor, inputs)
 
     def _messages(
         self,

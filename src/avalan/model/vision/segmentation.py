@@ -2,7 +2,7 @@ from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from PIL import Image
@@ -18,17 +18,24 @@ class SemanticSegmentationModel(BaseVisionModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoImageProcessor.from_pretrained(
-            self._model_id,
-            # default behavior in transformers v4.48
-            use_fast=True,
+        self._processor = cast(
+            Any,
+            cast(Any, AutoImageProcessor).from_pretrained(
+                self._model_id,
+                # default behavior in transformers v4.48
+                use_fast=True,
+            ),
         )
-        model = AutoModelForSemanticSegmentation.from_pretrained(
-            self._model_id,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+        assert self._model_id
+        model = cast(
+            PreTrainedModel,
+            cast(Any, AutoModelForSemanticSegmentation).from_pretrained(
+                self._model_id,
+                device_map=self._device,
+                tp_plan=Engine._get_tp_plan(self._settings.parallel),
+                distributed_config=Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
             ),
         )
         model.eval()

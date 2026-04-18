@@ -2,7 +2,7 @@ from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
@@ -14,30 +14,37 @@ from transformers import (
 
 
 class SpeechRecognitionModel(BaseAudioModel):
-    _processor: AutoProcessor
+    _processor: Any
 
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoProcessor.from_pretrained(
-            self._model_id,
-            trust_remote_code=self._settings.trust_remote_code,
-            # default behavior in transformers v4.48
-            use_fast=True,
-            subfolder=self._settings.tokenizer_subfolder or "",
-        )
-        model = AutoModelForCTC.from_pretrained(
-            self._model_id,
-            trust_remote_code=self._settings.trust_remote_code,
-            pad_token_id=self._processor.tokenizer.pad_token_id,
-            ctc_loss_reduction="mean",
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+        self._processor = cast(
+            Any,
+            cast(Any, AutoProcessor).from_pretrained(
+                self._model_id,
+                trust_remote_code=self._settings.trust_remote_code,
+                # default behavior in transformers v4.48
+                use_fast=True,
+                subfolder=self._settings.tokenizer_subfolder or "",
             ),
-            ignore_mismatched_sizes=True,
-            subfolder=self._settings.subfolder or "",
+        )
+        assert self._model_id
+        model = cast(
+            PreTrainedModel,
+            cast(Any, AutoModelForCTC).from_pretrained(
+                self._model_id,
+                trust_remote_code=self._settings.trust_remote_code,
+                pad_token_id=self._processor.tokenizer.pad_token_id,
+                ctc_loss_reduction="mean",
+                device_map=self._device,
+                tp_plan=Engine._get_tp_plan(self._settings.parallel),
+                distributed_config=Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
+                ignore_mismatched_sizes=True,
+                subfolder=self._settings.subfolder or "",
+            ),
         )
         return model
 
@@ -58,4 +65,4 @@ class SpeechRecognitionModel(BaseAudioModel):
             logits = self._model(inputs.input_values).logits
         predicted_ids = argmax(logits, dim=-1)
         transcription = self._processor.batch_decode(predicted_ids)[0]
-        return transcription
+        return cast(str, transcription)

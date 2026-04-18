@@ -5,7 +5,7 @@ from ...model.vision import BaseVisionModel
 from ...model.vision.classification import ImageClassificationModel
 
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from PIL import Image
@@ -31,19 +31,26 @@ class ObjectDetectionModel(ImageClassificationModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoImageProcessor.from_pretrained(
-            self._model_id,
-            revision=self._revision,
-            # default behavior in transformers v4.48
-            use_fast=True,
+        self._processor = cast(
+            Any,
+            cast(Any, AutoImageProcessor).from_pretrained(
+                self._model_id,
+                revision=self._revision,
+                # default behavior in transformers v4.48
+                use_fast=True,
+            ),
         )
-        model = AutoModelForObjectDetection.from_pretrained(
-            self._model_id,
-            revision=self._revision,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+        assert self._model_id
+        model = cast(
+            PreTrainedModel,
+            cast(Any, AutoModelForObjectDetection).from_pretrained(
+                self._model_id,
+                revision=self._revision,
+                device_map=self._device,
+                tp_plan=Engine._get_tp_plan(self._settings.parallel),
+                distributed_config=Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
             ),
         )
         return model

@@ -5,7 +5,9 @@ from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
 from logging import Logger, getLogger
+from typing import Any, cast
 
+import diffusers.utils as diffusers_utils
 from diffusers import (
     AnimateDiffPipeline,
     DiffusionPipeline,
@@ -13,11 +15,12 @@ from diffusers import (
     MotionAdapter,
 )
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
-from diffusers.utils import export_to_gif
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from torch import inference_mode
 from transformers import PreTrainedModel
+
+export_to_gif = cast(Any, diffusers_utils).export_to_gif
 
 
 class TextToAnimationModel(BaseVisionModel):
@@ -40,18 +43,24 @@ class TextToAnimationModel(BaseVisionModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         dtype = Engine.weight(self._settings.weight_type)
-        adapter = MotionAdapter().to(self._device, dtype)
+        assert self._model_id and self._settings.checkpoint
+        adapter = cast(Any, MotionAdapter)().to(self._device, dtype)
         adapter.load_state_dict(
             load_file(
                 hf_hub_download(self._model_id, self._settings.checkpoint),
                 device=self._device,
             )
         )
-        pipe = AnimateDiffPipeline.from_pretrained(
-            self._settings.base_model_id,
-            motion_adapter=adapter,
-            torch_dtype=dtype,
-        ).to(self._device)
+        pipe = cast(
+            DiffusionPipeline,
+            cast(Any, AnimateDiffPipeline)
+            .from_pretrained(
+                self._settings.base_model_id,
+                motion_adapter=adapter,
+                torch_dtype=dtype,
+            )
+            .to(self._device),
+        )
 
         return pipe
 
@@ -60,10 +69,10 @@ class TextToAnimationModel(BaseVisionModel):
         input: Input,
         path: str,
         *,
-        beta_schedule: BetaSchedule = "linear",
+        beta_schedule: BetaSchedule = cast(BetaSchedule, "linear"),
         guidance_scale: float = 1.0,
         steps: int = 4,
-        timestep_spacing: TimestepSpacing = "trailing",
+        timestep_spacing: TimestepSpacing = cast(TimestepSpacing, "trailing"),
     ) -> str:
         assert steps and steps in [
             1,
@@ -73,10 +82,13 @@ class TextToAnimationModel(BaseVisionModel):
         ], f"Invalid number of steps: {steps}, can only be 1, 2, 4, or 8"
         scheduler_settings = (timestep_spacing, beta_schedule)
         if scheduler_settings not in self._schedulers:
-            scheduler = EulerDiscreteScheduler.from_config(
-                self._model.scheduler.config,
-                timestep_spacing=timestep_spacing,
-                beta_schedule=beta_schedule,
+            scheduler = cast(
+                SchedulerMixin,
+                cast(Any, EulerDiscreteScheduler).from_config(
+                    self._model.scheduler.config,
+                    timestep_spacing=timestep_spacing,
+                    beta_schedule=beta_schedule,
+                ),
             )
             self._schedulers[scheduler_settings] = scheduler
         else:

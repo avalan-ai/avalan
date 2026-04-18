@@ -10,7 +10,7 @@ from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import inference_mode
@@ -37,23 +37,29 @@ class TextToImageModel(BaseVisionModel):
         dtype = Engine.weight(self._settings.weight_type)
         dtype_variant = self._settings.weight_type
 
-        base = DiffusionPipeline.from_pretrained(
-            self._model_id,
-            torch_dtype=dtype,
-            variant=dtype_variant,
-            use_safetensors=True,
+        base = cast(
+            DiffusionPipeline,
+            cast(Any, DiffusionPipeline).from_pretrained(
+                self._model_id,
+                torch_dtype=dtype,
+                variant=dtype_variant,
+                use_safetensors=True,
+            ),
         )
-        base.to(self._device)
+        cast(Any, base).to(self._device)
 
-        refiner = DiffusionPipeline.from_pretrained(
-            self._settings.refiner_model_id,
-            text_encoder_2=base.text_encoder_2,
-            vae=base.vae,
-            torch_dtype=dtype,
-            use_safetensors=True,
-            variant=dtype_variant,
+        refiner = cast(
+            DiffusionPipeline,
+            cast(Any, DiffusionPipeline).from_pretrained(
+                self._settings.refiner_model_id,
+                text_encoder_2=cast(Any, base).text_encoder_2,
+                vae=cast(Any, base).vae,
+                torch_dtype=dtype,
+                use_safetensors=True,
+                variant=dtype_variant,
+            ),
         )
-        refiner.to(self._device)
+        cast(Any, refiner).to(self._device)
 
         self._base = base
 
@@ -81,7 +87,7 @@ class TextToImageModel(BaseVisionModel):
         )
 
         with inference_mode():
-            image = self._base(
+            image = cast(Any, self._base)(
                 prompt=input if isinstance(input, str) else str(input),
                 num_inference_steps=n_steps,
                 denoising_end=high_noise_frac,

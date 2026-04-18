@@ -39,7 +39,10 @@ class AnthropicStream(TextGenerationVendorStream):
                         cb is not None
                         and getattr(cb, "type", None) == "tool_use"
                     ):
-                        tool_blocks[event.index] = {
+                        index = cast(int | None, getattr(event, "index", None))
+                        if index is None:
+                            continue
+                        tool_blocks[index] = {
                             "id": getattr(cb, "id", None),
                             "name": getattr(cb, "name", None),
                             "args_fragments": [],
@@ -57,8 +60,11 @@ class AnthropicStream(TextGenerationVendorStream):
                         hasattr(delta, "partial_json")
                         and delta.partial_json is not None
                     ):
+                        index = cast(int | None, getattr(event, "index", None))
+                        if index is None:
+                            continue
                         tb = tool_blocks.setdefault(
-                            event.index,
+                            index,
                             {"id": None, "name": None, "args_fragments": []},
                         )
                         tb["args_fragments"].append(delta.partial_json)
@@ -88,8 +94,9 @@ class AnthropicStream(TextGenerationVendorStream):
                             )
                             yield token
 
-                        if event.index in tool_blocks:
-                            del tool_blocks[event.index]
+                        index = cast(int | None, getattr(event, "index", None))
+                        if index is not None and index in tool_blocks:
+                            del tool_blocks[index]
 
                     continue
 
@@ -148,7 +155,9 @@ class AnthropicClient(TextGenerationVendor):
 
         response = await self._client.messages.create(**kwargs)
         content = self._non_stream_response_content(response)
-        return TextGenerationSingleStream(content)
+        return cast(
+            TextGenerationVendorStream, TextGenerationSingleStream(content)
+        )
 
     def _template_messages(
         self,
@@ -162,8 +171,9 @@ class AnthropicClient(TextGenerationVendor):
             and (message.tool_call_result or message.tool_call_error)
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
-        template_messages = super()._template_messages(
-            messages, do_exclude_roles
+        template_messages = cast(
+            list[dict[str, Any]],
+            super()._template_messages(messages, do_exclude_roles),
         )
         last_message = next(
             (
@@ -203,7 +213,7 @@ class AnthropicClient(TextGenerationVendor):
         for result in tool_results:
             if result is None:
                 continue
-            content = {
+            content: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": result.call.id,
                 "content": to_json(
@@ -214,10 +224,10 @@ class AnthropicClient(TextGenerationVendor):
             }
             if isinstance(result, ToolCallError):
                 content["is_error"] = True
-            result_message: TemplateMessage = TemplateMessage(
-                role="user",
-                content=[cast(Any, content)],
-            )
+            result_message: dict[str, Any] = {
+                "role": "user",
+                "content": [content],
+            }
             if last_message_index is not None:
                 template_messages.insert(
                     last_message_index + 1, result_message
@@ -231,7 +241,7 @@ class AnthropicClient(TextGenerationVendor):
         ):
             template_messages.pop()
 
-        return template_messages
+        return cast(list[TemplateMessage], template_messages)
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
