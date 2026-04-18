@@ -48,7 +48,7 @@ def _string(value: Any) -> str | None:
 
 
 class BedrockStream(TextGenerationVendorStream):
-    def __init__(self, events: AsyncIterator):
+    def __init__(self, events: AsyncIterator[Any]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
 
