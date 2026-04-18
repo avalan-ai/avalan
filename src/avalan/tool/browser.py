@@ -40,12 +40,12 @@ try:
 except ImportError:
     HAS_BROWSER_DEPENDENCIES = False
     IndexFlatL2 = None
-    MarkItDown = None  # type: ignore
-    vstack = None  # type: ignore
-    Browser = None  # type: ignore
-    Page = None  # type: ignore
-    PlaywrightContextManager = None  # type: ignore
-    async_playwright = None  # type: ignore
+    MarkItDown = None  # type: ignore[assignment, misc]
+    vstack = None  # type: ignore[assignment]
+    Browser = None  # type: ignore[assignment, misc]
+    Page = None  # type: ignore[assignment, misc]
+    PlaywrightContextManager = None  # type: ignore[assignment, misc]
+    async_playwright = None  # type: ignore[assignment]
 
 
 @final

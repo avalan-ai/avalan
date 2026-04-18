@@ -36,7 +36,7 @@ try:
     HAS_A2A = True
 except ImportError:
     HAS_A2A = False
-    a2a_types = None  # type: ignore
+    a2a_types = None  # type: ignore[assignment]
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
