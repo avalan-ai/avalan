@@ -95,7 +95,7 @@ async def create_chat_completion(
     choices = [
         ChatCompletionChoice(
             index=i,
-            message=ChatMessage(role=str(MessageRole.ASSISTANT), content=text),
+            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
             finish_reason="stop",
         )
         for i in range(request.n or 1)

@@ -204,6 +204,7 @@ enable = true
 [tool.mypy]
 files = ["src/avalan"]
 plugins = ["pydantic.mypy"]
+python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
@@ -211,13 +212,22 @@ warn_redundant_casts = true
 warn_unused_configs = true
 show_error_codes = true
 show_column_numbers = true
+show_error_context = true
+show_error_code_links = true
 pretty = true
+exclude_gitignore = true
+local_partial_types = true
 check_untyped_defs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
-python_version = "3.11"
 disable_error_code = ["override"]
+enable_error_code = ["ignore-without-code"]
+
+[tool.pydantic-mypy]
+init_typed = true
+init_forbid_extra = true
+warn_required_dynamic_aliases = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -244,12 +254,10 @@ module = [
   "mlx_lm.*",
   "numpy",
   "ollama",
-  "ollama.*",
   "pgvector.*",
   "psutil",
   "pypdf",
   "RestrictedPython",
-  "RestrictedPython.*",
   "rich",
   "rich.*",
   "sympy",
@@ -267,7 +275,6 @@ module = [
   "transformers.*",
   "uvicorn",
   "vllm",
-  "vllm.*",
 ]
 ignore_missing_imports = true
 

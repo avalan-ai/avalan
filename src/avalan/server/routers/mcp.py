@@ -1,5 +1,6 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
+    MessageRole,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -402,7 +403,11 @@ def _build_chat_request(
     model_id = _default_model_id(orchestrator)
     return ChatCompletionRequest(
         model=model_id,
-        messages=[ChatMessage(role="user", content=tool_request.input_string)],
+        messages=[
+            ChatMessage(
+                role=MessageRole.USER, content=tool_request.input_string
+            )
+        ],
         stream=True,
     )
 
@@ -981,10 +986,12 @@ async def _tool_event_notifications(
             yield _resource_notification(resource)
             existing_resources = tool_summary.setdefault("resources", [])
             if isinstance(existing_resources, list):
-                existing_resources.append({
-                    "uri": resource.uri,
-                    "name": name,
-                })
+                existing_resources.append(
+                    {
+                        "uri": resource.uri,
+                        "name": name,
+                    }
+                )
 
     yield payload
 
