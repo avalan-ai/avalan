@@ -7,9 +7,10 @@ from ....model.nlp.text.generation import TextGenerationModel
 from ....model.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
 
+from asyncio import to_thread
 from dataclasses import asdict, replace
 from logging import Logger, getLogger
-from typing import Any, AsyncGenerator, Awaitable, Iterator, cast
+from typing import Any, AsyncGenerator, Awaitable, Callable, Iterator, cast
 
 try:
     from vllm import LLM, SamplingParams
@@ -40,7 +41,9 @@ class VllmStream(TextGenerationVendorStream):
             return chunk.token
 
         iterator = self._iterator
-        chunk = next(iterator, None)
+        chunk = await to_thread(
+            cast(Callable[[], Any], lambda: next(iterator, None))
+        )
         if chunk is None:
             raise StopAsyncIteration
         return str(chunk)
@@ -120,7 +123,7 @@ class VllmModel(TextGenerationModel):
             return next(iterator, default)
 
         while True:
-            chunk = _next(None)
+            chunk = await to_thread(lambda: _next(None))
             if chunk is None:
                 return
             if isinstance(chunk, str):
