@@ -387,9 +387,9 @@ async def memory_embeddings(
 
                 if partitioner:
                     assert knowledge_partitions is not None
-                    knowledge_stack = vstack([
-                        kp.embeddings for kp in knowledge_partitions
-                    ]).astype("float32", copy=False)
+                    knowledge_stack = vstack(
+                        [kp.embeddings for kp in knowledge_partitions]
+                    ).astype("float32", copy=False)
                     index.add(knowledge_stack)
                 else:
                     index.add(
@@ -420,9 +420,7 @@ async def memory_embeddings(
                     knowledge_chunk = (
                         knowledge_partitions[kn_id].data
                         if knowledge_partitions
-                        else input_string
-                        if kn_id == 0
-                        else None
+                        else input_string if kn_id == 0 else None
                     )
                     if not knowledge_chunk:
                         continue

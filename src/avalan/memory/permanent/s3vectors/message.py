@@ -100,18 +100,20 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
         await self._put_object(
             Bucket=self._bucket,
             Key=key,
-            Body=dumps({
-                "id": str(message.id),
-                "agent_id": str(message.agent_id),
-                "model_id": message.model_id,
-                "session_id": (
-                    str(message.session_id) if message.session_id else None
-                ),
-                "author": str(message.author),
-                "data": message.data,
-                "partitions": message.partitions,
-                "created_at": message.created_at.isoformat(),
-            }).encode(),
+            Body=dumps(
+                {
+                    "id": str(message.id),
+                    "agent_id": str(message.agent_id),
+                    "model_id": message.model_id,
+                    "session_id": (
+                        str(message.session_id) if message.session_id else None
+                    ),
+                    "author": str(message.author),
+                    "data": message.data,
+                    "partitions": message.partitions,
+                    "created_at": message.created_at.isoformat(),
+                }
+            ).encode(),
         )
         for row in message_partitions:
             await self._put_vector(

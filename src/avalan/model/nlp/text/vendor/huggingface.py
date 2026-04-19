@@ -49,9 +49,7 @@ class HuggingfaceClient(TextGenerationVendor):
         stop_strings = (
             settings.stop_strings
             if isinstance(settings.stop_strings, list)
-            else [settings.stop_strings]
-            if settings.stop_strings
-            else None
+            else [settings.stop_strings] if settings.stop_strings else None
         )
         response = await self._client.chat_completion(
             model=model_id,

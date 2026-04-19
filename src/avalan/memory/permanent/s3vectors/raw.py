@@ -97,20 +97,22 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         await self._put_object(
             Bucket=self._bucket,
             Key=f"{self._collection}/{entry.id}.json",
-            Body=dumps({
-                "id": str(entry.id),
-                "model_id": entry.model_id,
-                "type": str(entry.type),
-                "participant_id": str(entry.participant_id),
-                "namespace": entry.namespace,
-                "identifier": entry.identifier,
-                "data": entry.data,
-                "partitions": entry.partitions,
-                "symbols": entry.symbols,
-                "created_at": entry.created_at.isoformat(),
-                "title": entry.title,
-                "description": entry.description,
-            }).encode(),
+            Body=dumps(
+                {
+                    "id": str(entry.id),
+                    "model_id": entry.model_id,
+                    "type": str(entry.type),
+                    "participant_id": str(entry.participant_id),
+                    "namespace": entry.namespace,
+                    "identifier": entry.identifier,
+                    "data": entry.data,
+                    "partitions": entry.partitions,
+                    "symbols": entry.symbols,
+                    "created_at": entry.created_at.isoformat(),
+                    "title": entry.title,
+                    "description": entry.description,
+                }
+            ).encode(),
         )
         for row in partition_rows:
             await self._put_vector(

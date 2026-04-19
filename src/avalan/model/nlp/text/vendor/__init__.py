@@ -39,9 +39,9 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         exit_stack: AsyncExitStack | None = None,
     ) -> None:
         settings = settings or TransformerEngineSettings()
-        assert settings.base_url or settings.access_token, (
-            "API key needed for vendor"
-        )
+        assert (
+            settings.base_url or settings.access_token
+        ), "API key needed for vendor"
         settings = replace(settings, enable_eval=False)
         super().__init__(model_id, settings, logger)
         self._exit_stack = exit_stack or AsyncExitStack()

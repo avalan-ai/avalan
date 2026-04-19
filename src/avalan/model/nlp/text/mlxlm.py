@@ -18,6 +18,7 @@ from typing import Any, AsyncGenerator, Callable, Iterator, Literal, cast
 import mlx_lm
 from mlx_lm.sample_utils import make_sampler
 from torch import Tensor
+from transformers.tokenization_utils_base import BatchEncoding
 
 
 class MlxLmStream(TextGenerationVendorStream):
@@ -81,7 +82,7 @@ class MlxLmModel(TextGenerationModel):
 
     async def _stream_generator(
         self,
-        inputs: dict[str, Tensor] | Tensor,
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> AsyncGenerator[str, None]:
@@ -107,7 +108,7 @@ class MlxLmModel(TextGenerationModel):
 
     def _string_output(
         self,
-        inputs: dict[str, Tensor] | Tensor,
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> str:
@@ -164,7 +165,7 @@ class MlxLmModel(TextGenerationModel):
 
     def _get_sampler_and_prompt(
         self,
-        inputs: dict[str, Tensor] | Tensor,
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> tuple[Callable[..., Any], str]:
@@ -177,7 +178,7 @@ class MlxLmModel(TextGenerationModel):
             top_p=settings.top_p if settings.top_p is not None else 1.0,
             top_k=settings.top_k if settings.top_k is not None else 0,
         )
-        if not isinstance(inputs, dict):
+        if not isinstance(inputs, (dict, BatchEncoding)):
             raise ValueError("Expected tokenized inputs to be a mapping.")
         prompt = self._tokenizer.decode(
             inputs["input_ids"][0],

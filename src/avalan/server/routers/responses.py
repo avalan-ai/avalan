@@ -51,16 +51,18 @@ async def create_response(
             seq = 0
 
             yield sse_message(
-                to_json({
-                    "type": "response.created",
-                    "response": {
-                        "id": str(response_id),
-                        "created_at": timestamp,
-                        "model": request.model,
-                        "type": "response",
-                        "status": "in_progress",
-                    },
-                }),
+                to_json(
+                    {
+                        "type": "response.created",
+                        "response": {
+                            "id": str(response_id),
+                            "created_at": timestamp,
+                            "model": request.model,
+                            "type": "response",
+                            "status": "in_progress",
+                        },
+                    }
+                ),
                 event="response.created",
             )
 
@@ -143,13 +145,15 @@ def _token_to_sse(
     if isinstance(token, ReasoningToken):
         events.append(
             sse_message(
-                to_json({
-                    "type": "response.reasoning_text.delta",
-                    "delta": token.token,
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                }),
+                to_json(
+                    {
+                        "type": "response.reasoning_text.delta",
+                        "delta": token.token,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
                 event="response.reasoning_text.delta",
             )
         )
@@ -172,15 +176,17 @@ def _token_to_sse(
 
         events.append(
             sse_message(
-                to_json({
-                    **delta_obj,
-                    "type": "response.function_call_arguments.delta",
-                    "delta": to_json(delta_obj),
-                    "id": item["id"],
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                }),
+                to_json(
+                    {
+                        **delta_obj,
+                        "type": "response.function_call_arguments.delta",
+                        "delta": to_json(delta_obj),
+                        "id": item["id"],
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
                 event="response.function_call_arguments.delta",
             )
         )
@@ -193,42 +199,50 @@ def _token_to_sse(
             }
             events.append(
                 sse_message(
-                    to_json({
-                        "type": "response.function_call_arguments.delta",
-                        "delta": to_json(delta_obj),
-                        "id": str(token.call.id),
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    }),
+                    to_json(
+                        {
+                            "type": "response.function_call_arguments.delta",
+                            "delta": to_json(delta_obj),
+                            "id": str(token.call.id),
+                            "output_index": 0,
+                            "content_index": 0,
+                            "sequence_number": seq,
+                        }
+                    ),
                     event="response.function_call_arguments.delta",
                 )
             )
         else:
             events.append(
                 sse_message(
-                    to_json({
-                        "type": "response.custom_tool_call_input.delta",
-                        "delta": token.token,
-                        "output_index": 0,
-                        "content_index": 0,
-                        "sequence_number": seq,
-                    }),
+                    to_json(
+                        {
+                            "type": "response.custom_tool_call_input.delta",
+                            "delta": token.token,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "sequence_number": seq,
+                        }
+                    ),
                     event="response.custom_tool_call_input.delta",
                 )
             )
     else:
         events.append(
             sse_message(
-                to_json({
-                    "type": "response.output_text.delta",
-                    "delta": (
-                        token.token if isinstance(token, Token) else str(token)
-                    ),
-                    "output_index": 0,
-                    "content_index": 0,
-                    "sequence_number": seq,
-                }),
+                to_json(
+                    {
+                        "type": "response.output_text.delta",
+                        "delta": (
+                            token.token
+                            if isinstance(token, Token)
+                            else str(token)
+                        ),
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
                 event="response.output_text.delta",
             )
         )
@@ -275,13 +289,15 @@ def _switch_state(
 
 
 def _new_state(
-    token: ReasoningToken
-    | ToolCallToken
-    | Token
-    | TokenDetail
-    | Event
-    | str
-    | None,
+    token: (
+        ReasoningToken
+        | ToolCallToken
+        | Token
+        | TokenDetail
+        | Event
+        | str
+        | None
+    ),
 ) -> ResponseState | None:
     if isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
@@ -307,11 +323,13 @@ def _output_item_added(state: ResponseState, id: str | None = None) -> str:
     if id is not None:
         item["id"] = id
     return sse_message(
-        to_json({
-            "type": "response.output_item.added",
-            "output_index": 0,
-            "item": item,
-        }),
+        to_json(
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": item,
+            }
+        ),
         event="response.output_item.added",
     )
 
@@ -325,11 +343,13 @@ def _output_item_done(id: str | None = None) -> str:
 
 def _reasoning_text_done() -> str:
     return sse_message(
-        to_json({
-            "type": "response.reasoning_text.done",
-            "output_index": 0,
-            "content_index": 0,
-        }),
+        to_json(
+            {
+                "type": "response.reasoning_text.done",
+                "output_index": 0,
+                "content_index": 0,
+            }
+        ),
         event="response.reasoning_text.done",
     )
 
@@ -350,11 +370,13 @@ def _custom_tool_call_input_done(id: str | None = None) -> str:
 
 def _output_text_done() -> str:
     return sse_message(
-        to_json({
-            "type": "response.output_text.done",
-            "output_index": 0,
-            "content_index": 0,
-        }),
+        to_json(
+            {
+                "type": "response.output_text.done",
+                "output_index": 0,
+                "content_index": 0,
+            }
+        ),
         event="response.output_text.done",
     )
 
@@ -364,12 +386,14 @@ def _content_part_added(part_type: str, id: str | None = None) -> str:
     if id is not None:
         part["id"] = id
     return sse_message(
-        to_json({
-            "type": "response.content_part.added",
-            "output_index": 0,
-            "content_index": 0,
-            "part": part,
-        }),
+        to_json(
+            {
+                "type": "response.content_part.added",
+                "output_index": 0,
+                "content_index": 0,
+                "part": part,
+            }
+        ),
         event="response.content_part.added",
     )
 

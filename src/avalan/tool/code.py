@@ -82,9 +82,7 @@ class CodeTool(Tool):
             else (
                 function(*positional_args)
                 if positional_args
-                else function(**keyword_args)
-                if keyword_args
-                else function()
+                else function(**keyword_args) if keyword_args else function()
             )
         )
 

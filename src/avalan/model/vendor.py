@@ -78,15 +78,17 @@ class TextGenerationVendor(ABC):
             if exclude_roles and msg.role in exclude_roles:
                 continue
 
-            out.append({
-                "role": cast(TemplateMessageRole, str(msg.role)),
-                "content": cast(
-                    str
-                    | TemplateMessageContent
-                    | list[TemplateMessageContent],
-                    _wrap(msg.content),
-                ),
-            })
+            out.append(
+                {
+                    "role": cast(TemplateMessageRole, str(msg.role)),
+                    "content": cast(
+                        str
+                        | TemplateMessageContent
+                        | list[TemplateMessageContent],
+                        _wrap(msg.content),
+                    ),
+                }
+            )
 
         return out
 

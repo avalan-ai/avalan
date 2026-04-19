@@ -46,17 +46,21 @@ class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
 
     _ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
-    _OPENAI_COMPLETION_ALIASES = frozenset({
-        "chat",
-        "completion",
-        "completions",
-    })
+    _OPENAI_COMPLETION_ALIASES = frozenset(
+        {
+            "chat",
+            "completion",
+            "completions",
+        }
+    )
     _OPENAI_ENDPOINT_COMPLETIONS = "completions"
     _OPENAI_ENDPOINT_RESPONSES = "responses"
-    _OPENAI_ENDPOINTS = frozenset({
-        _OPENAI_ENDPOINT_COMPLETIONS,
-        _OPENAI_ENDPOINT_RESPONSES,
-    })
+    _OPENAI_ENDPOINTS = frozenset(
+        {
+            _OPENAI_ENDPOINT_COMPLETIONS,
+            _OPENAI_ENDPOINT_RESPONSES,
+        }
+    )
     _OPENAI_RESPONSES_ALIASES = frozenset({"response", "responses"})
 
     _hub: HuggingfaceHub
@@ -105,21 +109,21 @@ class OrchestratorLoader:
             protocol_part, _, endpoints_part = raw_protocol.partition(":")
             protocol = protocol_part.strip().lower()
             assert protocol, "Protocol name cannot be empty"
-            assert protocol in cls._ALLOWED_PROTOCOLS, (
-                f"Unsupported protocol '{protocol}'"
-            )
+            assert (
+                protocol in cls._ALLOWED_PROTOCOLS
+            ), f"Unsupported protocol '{protocol}'"
 
             endpoints_text = endpoints_part.strip()
             if endpoints_text:
-                assert protocol == "openai", (
-                    "Only the openai protocol accepts endpoint selection"
-                )
+                assert (
+                    protocol == "openai"
+                ), "Only the openai protocol accepts endpoint selection"
                 endpoints = selection.setdefault(protocol, set())
                 for endpoint in endpoints_text.split(","):
                     endpoint_name = endpoint.strip().lower()
-                    assert endpoint_name, (
-                        "OpenAI endpoint name cannot be empty"
-                    )
+                    assert (
+                        endpoint_name
+                    ), "OpenAI endpoint name cannot be empty"
                     if endpoint_name in cls._OPENAI_COMPLETION_ALIASES:
                         endpoints.add(cls._OPENAI_ENDPOINT_COMPLETIONS)
                     elif endpoint_name in cls._OPENAI_RESPONSES_ALIASES:
@@ -151,15 +155,15 @@ class OrchestratorLoader:
         if raw_protocols is None:
             return None
 
-        assert isinstance(raw_protocols, list), (
-            "Serve protocols must be defined as a list"
-        )
+        assert isinstance(
+            raw_protocols, list
+        ), "Serve protocols must be defined as a list"
 
         parsed_protocols: list[str] = []
         for item in raw_protocols:
-            assert isinstance(item, str), (
-                "Serve protocol entries must be strings"
-            )
+            assert isinstance(
+                item, str
+            ), "Serve protocol entries must be strings"
             value = item.strip()
             assert value, "Serve protocol entries cannot be empty"
             parsed_protocols.append(value)
@@ -215,24 +219,24 @@ class OrchestratorLoader:
             # Validate settings
 
             assert "agent" in config, "No agent section in configuration"
-            assert "engine" in config, (
-                "No engine section defined in configuration"
-            )
-            assert "uri" in config["engine"], (
-                "No uri defined in engine section of configuration"
-            )
+            assert (
+                "engine" in config
+            ), "No engine section defined in configuration"
+            assert (
+                "uri" in config["engine"]
+            ), "No uri defined in engine section of configuration"
 
             agent_config = config["agent"]
             assert not (
                 "user" in agent_config and "user_template" in agent_config
             ), "user and user_template are mutually exclusive"
 
-            assert "engine" in config, (
-                "No engine section defined in configuration"
-            )
-            assert "uri" in config["engine"], (
-                "No uri defined in engine section of configuration"
-            )
+            assert (
+                "engine" in config
+            ), "No engine section defined in configuration"
+            assert (
+                "uri" in config["engine"]
+            ), "No uri defined in engine section of configuration"
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
@@ -244,9 +248,9 @@ class OrchestratorLoader:
             if tool_section is None:
                 tool_section = {}
             else:
-                assert isinstance(tool_section, dict), (
-                    "Tool section must be a mapping"
-                )
+                assert isinstance(
+                    tool_section, dict
+                ), "Tool section must be a mapping"
 
             enable_tools_config = tool_section.get("enable")
             enable_tools: list[str] | None = None
@@ -254,14 +258,14 @@ class OrchestratorLoader:
                 if isinstance(enable_tools_config, str):
                     enable_tools = [enable_tools_config]
                 else:
-                    assert isinstance(enable_tools_config, list), (
-                        "tool.enable must be a string or a list of strings"
-                    )
+                    assert isinstance(
+                        enable_tools_config, list
+                    ), "tool.enable must be a string or a list of strings"
                     enable_tools = []
                     for tool_name in enable_tools_config:
-                        assert isinstance(tool_name, str), (
-                            "tool.enable entries must be strings"
-                        )
+                        assert isinstance(
+                            tool_name, str
+                        ), "tool.enable entries must be strings"
                         enable_tools.append(tool_name)
             engine_config.pop("uri", None)
             orchestrator_type = (
@@ -310,9 +314,9 @@ class OrchestratorLoader:
             ) = None
             if memory_options and "permanent" in memory_options:
                 memory_permanent_option = memory_options["permanent"]
-                assert isinstance(memory_permanent_option, dict), (
-                    "Permanent memory should be a mapping"
-                )
+                assert isinstance(
+                    memory_permanent_option, dict
+                ), "Permanent memory should be a mapping"
                 memory_permanent = {
                     str(ns): OrchestratorLoader.parse_permanent_store_value(
                         str(dsn)
@@ -324,9 +328,9 @@ class OrchestratorLoader:
                 if memory_options and "recent" in memory_options
                 else False
             )
-            assert isinstance(memory_recent, bool), (
-                "Recent message memory can only be set or unset"
-            )
+            assert isinstance(
+                memory_recent, bool
+            ), "Recent message memory can only be set or unset"
 
             sentence_model_id = (
                 config["memory.engine"]["model_id"]
@@ -388,14 +392,14 @@ class OrchestratorLoader:
             browser_config = None
             browser_section = tool_section.get("browser")
             if browser_section is not None:
-                assert isinstance(browser_section, dict), (
-                    "tool.browser section must be a mapping"
-                )
+                assert isinstance(
+                    browser_section, dict
+                ), "tool.browser section must be a mapping"
                 browser_open_section = browser_section.get("open")
                 if browser_open_section is not None:
-                    assert isinstance(browser_open_section, dict), (
-                        "tool.browser.open section must be a mapping"
-                    )
+                    assert isinstance(
+                        browser_open_section, dict
+                    ), "tool.browser.open section must be a mapping"
                     browser_config = browser_open_section
                 else:
                     browser_config = browser_section
@@ -412,9 +416,9 @@ class OrchestratorLoader:
             database_settings = None
             database_config = tool_section.get("database")
             if database_config:
-                assert isinstance(database_config, dict), (
-                    "tool.database section must be a mapping"
-                )
+                assert isinstance(
+                    database_config, dict
+                ), "tool.database section must be a mapping"
                 database_settings = DatabaseToolSettings(**database_config)
 
             if tool_settings:
@@ -681,12 +685,12 @@ class OrchestratorLoader:
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
         if "system" not in agent_config and "developer" not in agent_config:
-            assert "instructions" in agent_config, (
-                "No instructions defined in agent section of configuration"
-            )
-            assert "task" in agent_config, (
-                "No task defined in agent section of configuration"
-            )
+            assert (
+                "instructions" in agent_config
+            ), "No instructions defined in agent section of configuration"
+            assert (
+                "task" in agent_config
+            ), "No task defined in agent section of configuration"
 
         properties: list[Property] = []
         for property_name in config.get("json", []):
