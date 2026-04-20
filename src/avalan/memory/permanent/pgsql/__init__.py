@@ -13,6 +13,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pgvector.psycopg import register_vector_async
 from psycopg import AsyncConnection, AsyncCursor
+from psycopg.errors import UndefinedFile
 from psycopg.rows import dict_row
 from psycopg.types import TypeInfo
 from psycopg_pool import AsyncConnectionPool
@@ -20,6 +21,10 @@ from psycopg_pool import AsyncConnectionPool
 T = TypeVar("T")
 U = TypeVar("U")
 QueryParams = tuple[object, ...]
+
+
+class PgsqlVectorExtensionError(RuntimeError):
+    """Signal that PostgreSQL vector support is unavailable."""
 
 
 class BasePgsqlMemory(MemoryStore[T]):
@@ -199,7 +204,42 @@ class PgsqlMemory(BasePgsqlMemory[T]):
                 )
                 if composite_type:
                     composite_type.register(connection)
+        await self._ensure_vector_extension(connection)
         await register_vector_async(connection)
+
+    async def _ensure_vector_extension(
+        self, connection: AsyncConnection[Any]
+    ) -> None:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM "pg_extension"
+                    WHERE "extname" = 'vector'
+                ) AS "has_vector_extension"
+                """
+            )
+            result = await cursor.fetchone()
+            row = dict(result) if result is not None else {}
+            if not row.get("has_vector_extension"):
+                raise PgsqlVectorExtensionError(
+                    "PostgreSQL `vector` extension is not enabled. "
+                    "Install pgvector on the PostgreSQL server and run "
+                    "`CREATE EXTENSION vector;` in the target database "
+                    "before using permanent memory."
+                )
+            try:
+                await cursor.execute("SELECT '[0]'::vector")
+                await cursor.fetchone()
+            except UndefinedFile as exc:
+                raise PgsqlVectorExtensionError(
+                    "PostgreSQL `vector` extension is registered in the "
+                    "database, but the server cannot load the pgvector "
+                    "library. Install pgvector on the PostgreSQL server "
+                    "and recreate the extension before using permanent "
+                    "memory."
+                ) from exc
 
     @staticmethod
     @overload

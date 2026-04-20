@@ -387,7 +387,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     parameters=OperationParameters(
                         vision=OperationVisionParameters(
                             path="video.mp4",
-                            reference_path=None,
+                            reference_path="ref.png",
                             negative_prompt=None,
                             height=None,
                             downscale=2 / 3,
@@ -401,18 +401,18 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     ),
                 ),
                 (
-                    ("txt", "video.mp4"),
+                    ("txt",),
                     {
-                        "reference_path": None,
-                        "negative_prompt": None,
-                        "height": None,
+                        "path": "video.mp4",
+                        "reference_path": "ref.png",
+                        "negative_prompt": "",
                         "downscale": 2 / 3,
                         "frames": 96,
                         "denoise_strength": 0.4,
                         "inference_steps": 10,
                         "decode_timestep": 0.05,
                         "noise_scale": 0.025,
-                        "frames_per_second": 24,
+                        "fps": 24,
                     },
                 ),
             ),
@@ -425,7 +425,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     parameters=OperationParameters(
                         vision=OperationVisionParameters(
                             path="video.mp4",
-                            reference_path=None,
+                            reference_path="ref.png",
                             negative_prompt=None,
                             height=None,
                             downscale=2 / 3,
@@ -440,11 +440,11 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     ),
                 ),
                 (
-                    ("txt", "video.mp4"),
+                    ("txt",),
                     {
-                        "reference_path": None,
-                        "negative_prompt": None,
-                        "height": None,
+                        "path": "video.mp4",
+                        "reference_path": "ref.png",
+                        "negative_prompt": "",
                         "downscale": 2 / 3,
                         "frames": 96,
                         "denoise_strength": 0.4,
@@ -452,7 +452,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         "inference_steps": 10,
                         "decode_timestep": 0.05,
                         "noise_scale": 0.025,
-                        "frames_per_second": 24,
+                        "fps": 24,
                     },
                 ),
             ),

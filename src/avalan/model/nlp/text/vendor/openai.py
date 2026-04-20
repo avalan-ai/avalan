@@ -21,7 +21,7 @@ from json import dumps
 from typing import Any, AsyncIterator, cast
 
 from diffusers import DiffusionPipeline
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, Omit
 from transformers import PreTrainedModel
 
 
@@ -125,10 +125,20 @@ class OpenAIStream(TextGenerationVendorStream):
 
 
 class OpenAIClient(TextGenerationVendor):
+    _DEFAULT_MODEL_ID = "default"
     _client: AsyncOpenAI
 
-    def __init__(self, api_key: str, base_url: str | None):
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    def __init__(self, api_key: str | None, base_url: str | None):
+        client_kwargs: dict[str, Any] = {"base_url": base_url}
+        if api_key is None:
+            assert base_url
+            client_kwargs.update(
+                api_key="",
+                default_headers=cast(Any, {"Authorization": Omit()}),
+            )
+        else:
+            client_kwargs["api_key"] = api_key
+        self._client = AsyncOpenAI(**client_kwargs)
 
     async def __call__(
         self,
@@ -146,7 +156,7 @@ class OpenAIClient(TextGenerationVendor):
                 "X-Title": "Avalan",
                 "HTTP-Referer": "https://github.com/avalan-ai/avalan",
             },
-            "model": model_id,
+            "model": model_id or self._DEFAULT_MODEL_ID,
             "input": template_messages,
             "stream": use_async_generator,
             "timeout": timeout,
@@ -306,7 +316,6 @@ class OpenAIModel(TextGenerationVendorModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.base_url or self._settings.access_token
-        assert self._settings.access_token
         return OpenAIClient(
             base_url=self._settings.base_url,
             api_key=self._settings.access_token,

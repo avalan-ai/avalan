@@ -38,10 +38,15 @@ class AsyncIter:
 
 
 def patch_openai_imports():
+    class Omit:
+        def __bool__(self):
+            return False
+
     openai_stub = types.ModuleType("openai")
     openai_stub.__spec__ = ModuleSpec("openai", loader=None)
     openai_stub.AsyncOpenAI = MagicMock()
     openai_stub.AsyncStream = MagicMock()
+    openai_stub.Omit = Omit
     openai_stub.AsyncOpenAI.return_value.responses = MagicMock()
 
     transformers_stub = types.ModuleType("transformers")
@@ -63,8 +68,23 @@ def patch_openai_imports():
     transformers_tokenization_stub.BatchEncoding = MagicMock()
     transformers_stub.tokenization_utils_base = transformers_tokenization_stub
     transformers_generation_stub = types.ModuleType("transformers.generation")
+    transformers_generation_stub.__spec__ = ModuleSpec(
+        "transformers.generation", loader=None, is_package=True
+    )
+    transformers_generation_stub.__path__ = []
     transformers_generation_stub.StoppingCriteria = MagicMock()
     transformers_generation_stub.StoppingCriteriaList = MagicMock()
+    transformers_stopping_criteria_stub = types.ModuleType(
+        "transformers.generation.stopping_criteria"
+    )
+    transformers_stopping_criteria_stub.__spec__ = ModuleSpec(
+        "transformers.generation.stopping_criteria", loader=None
+    )
+    transformers_stopping_criteria_stub.StoppingCriteria = MagicMock()
+    transformers_stopping_criteria_stub.StoppingCriteriaList = MagicMock()
+    transformers_generation_stub.stopping_criteria = (
+        transformers_stopping_criteria_stub
+    )
     transformers_stub.generation = transformers_generation_stub
     transformers_stub.utils = transformers_utils_stub
 
@@ -83,6 +103,9 @@ def patch_openai_imports():
                 transformers_tokenization_stub
             ),
             "transformers.generation": transformers_generation_stub,
+            "transformers.generation.stopping_criteria": (
+                transformers_stopping_criteria_stub
+            ),
             "diffusers": diffusers_stub,
         },
     )
@@ -173,6 +196,58 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             model = self.mod.OpenAIModel("m", settings)
             loaded = model._load_model()
         ClientMock.assert_called_once_with(base_url="u", api_key="t")
+        self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_client_omits_auth_header_without_api_key(self):
+        client = self.mod.OpenAIClient(
+            api_key=None, base_url="http://localhost:9001/v1"
+        )
+
+        self.assertIsInstance(client, self.mod.OpenAIClient)
+        self.openai_stub.AsyncOpenAI.assert_called_once()
+        kwargs = self.openai_stub.AsyncOpenAI.call_args.kwargs
+        self.assertEqual(kwargs["base_url"], "http://localhost:9001/v1")
+        self.assertEqual(kwargs["api_key"], "")
+        self.assertIsInstance(
+            kwargs["default_headers"]["Authorization"], self.mod.Omit
+        )
+
+    async def test_client_uses_default_model_id_when_missing(self):
+        response = SimpleNamespace(output=[])
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=response
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key", base_url="http://localhost:9001/v1"
+        )
+        client._template_messages = MagicMock(return_value=[{"c": 1}])
+
+        await client("", [], use_async_generator=False)
+
+        self.openai_stub.AsyncOpenAI.return_value.responses.create.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="default",
+            input=[{"c": 1}],
+            stream=False,
+            timeout=None,
+        )
+
+    async def test_model_loads_with_base_url_without_access_token(self):
+        with patch.object(self.mod, "OpenAIClient") as ClientMock:
+            settings = TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+                base_url="http://localhost:9001/v1",
+            )
+            model = self.mod.OpenAIModel("m", settings)
+            loaded = model._load_model()
+
+        ClientMock.assert_called_once_with(
+            base_url="http://localhost:9001/v1", api_key=None
+        )
         self.assertIs(loaded, ClientMock.return_value)
 
     async def test_stream_event_types(self):

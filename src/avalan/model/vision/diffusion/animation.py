@@ -8,6 +8,7 @@ from logging import Logger, getLogger
 from typing import Any, cast
 
 import diffusers.utils as diffusers_utils
+import numpy as np
 from diffusers import (
     AnimateDiffPipeline,
     DiffusionPipeline,
@@ -16,6 +17,8 @@ from diffusers import (
 )
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from huggingface_hub import hf_hub_download
+from numpy.typing import NDArray
+from PIL import Image
 from safetensors.torch import load_file
 from torch import inference_mode
 from transformers import PreTrainedModel
@@ -64,6 +67,33 @@ class TextToAnimationModel(BaseVisionModel):
 
         return pipe
 
+    @staticmethod
+    def _frames_to_images(frames: NDArray[Any]) -> list[Image.Image]:
+        assert frames.ndim == 4, (
+            "Animation frames must have shape "
+            f"[frames, height, width, channels], got {frames.shape}"
+        )
+        sanitized_frames = np.clip(
+            np.nan_to_num(
+                frames,
+                nan=0.0,
+                posinf=1.0,
+                neginf=0.0,
+            ),
+            0.0,
+            1.0,
+        )
+        images: list[Image.Image] = []
+        for frame in sanitized_frames:
+            frame_uint8 = np.rint(frame * 255).astype("uint8")
+            if frame_uint8.shape[-1] == 1:
+                image = Image.fromarray(frame_uint8.squeeze(-1))
+            else:
+                image = Image.fromarray(frame_uint8)
+            images.append(image)
+
+        return images
+
     async def __call__(
         self,
         input: Input,
@@ -101,8 +131,14 @@ class TextToAnimationModel(BaseVisionModel):
                 prompt=input if isinstance(input, str) else str(input),
                 guidance_scale=guidance_scale,
                 num_inference_steps=steps,
+                output_type="np",
             )
 
-        export_to_gif(output.frames[0], path)
+        export_to_gif(
+            TextToAnimationModel._frames_to_images(
+                cast(NDArray[Any], output.frames[0])
+            ),
+            path,
+        )
 
         return path

@@ -47,10 +47,9 @@ When `vendor` is `None`, the model is considered local.  Otherwise, the URI desc
 | `ai://messi_api_key@openai/gpt-4o`         | vendor `openai`, user `messi_api_key`, model `gpt-4o`          |
 | `ai://hf_key:@huggingface/meta-llama/Llama-3-8B-Instruct` | vendor `huggingface`, user `hf_key`, model `meta-llama/Llama-3-8B-Instruct` |
 | `ai://secret:openai_key@openai/gpt-4o`     | vendor `openai`, secret key `openai_key`, model `gpt-4o`       |
-| `ai://env:ANTHROPIC_API_KEY@anthropic/claude-3-5-sonnet-latest` | vendor `anthropic`, env var `ANTHROPIC_API_KEY`, model `claude-3-5-sonnet-latest` |
+| `ai://env:ANTHROPIC_API_KEY@anthropic/claude-sonnet-4-6` | vendor `anthropic`, env var `ANTHROPIC_API_KEY`, model `claude-sonnet-4-6` |
 | `ai://ollama/llama3`                        | vendor `ollama`, model `llama3`                                |
 | `ai://litellm/gpt-3.5-turbo`                | vendor `litellm`, model `gpt-3.5-turbo`                        |
 | `ai://tg_key@together/mistral-7b`           | vendor `together`, model `mistral-7b`                          |
 
 These examples correspond to those used in the test-suite and highlight both local and remote forms.
-

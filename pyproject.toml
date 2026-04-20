@@ -100,11 +100,13 @@ translation = [
   "tiktoken>=0.10.0,<0.11.0",
 ]
 vendors = [
+  "aioboto3>=15.0.0,<16.0.0",
   "anthropic>=0.61.0,<0.62.0",
+  "diffusers>=0.34.0,<0.35.0",
   "google-genai>=1.28.0,<2.0.0",
+  "litellm>=1.75.0,<2.0.0",
   # version limited because of vllm
   "openai>=1.90.0,<1.91.0",
-  "litellm>=1.75.0,<2.0.0",
   "pillow>=11.3.0,<12.0.0",
   "tiktoken>=0.10.0,<0.11.0",
 ]

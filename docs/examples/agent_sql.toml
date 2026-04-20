@@ -22,7 +22,7 @@ db_engine = "MySQL"
 #uri = "ai://local/openai/gpt-oss-20b"
 #backend = "mlx"
 
-#uri = "ai://env:ANTHROPIC_API_KEY@anthropic/claude-sonnet-4-20250514"
+#uri = "ai://env:ANTHROPIC_API_KEY@anthropic/claude-sonnet-4-6"
 
 uri = "ai://env:OPENAI_API_KEY@openai/gpt-5-mini"
 
@@ -39,4 +39,3 @@ dsn = "mysql+aiomysql://root:password@localhost/tt_test"
 
 [run]
 max_new_tokens = 8192
-

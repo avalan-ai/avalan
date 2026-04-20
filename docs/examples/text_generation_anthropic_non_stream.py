@@ -11,7 +11,7 @@ async def example() -> None:
     assert api_key, "Need an $ANTHROPIC_API_KEY environment variable set"
     settings = TransformerEngineSettings(access_token=api_key)
 
-    with AnthropicModel("claude-sonnet-4-20250514", settings) as lm:
+    with AnthropicModel("claude-sonnet-4-6", settings) as lm:
         print("DONE.", flush=True)
 
         system_prompt = """

@@ -212,6 +212,13 @@ class ManagerTestCase(TestCase):
                 None,
                 None,
             ),
+            (
+                "ai://bedrock/us.anthropic.claude-sonnet-4-6",
+                "bedrock",
+                "us.anthropic.claude-sonnet-4-6",
+                None,
+                None,
+            ),
         ]
 
     def test_parse_uri(self):

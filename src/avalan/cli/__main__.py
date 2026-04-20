@@ -2247,6 +2247,7 @@ class CLI:
 
 def main() -> None:
     """Entry point for the ``avalan`` CLI."""
+    environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     basicConfig(
         level=INFO,
         format="%(message)s",

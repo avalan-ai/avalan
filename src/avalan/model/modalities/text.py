@@ -262,7 +262,7 @@ class TextGenerationModality:
         assert operation.input and operation.parameters["text"]
 
         criteria = _stopping_criteria(operation, model)
-        mlx_model = _get_mlx_model()
+        mlx_model = _get_mlx_model() if engine_uri.is_local else None
         is_mlx = mlx_model is not None and isinstance(model, mlx_model)
         if engine_uri.is_local and not is_mlx:
             return await model(

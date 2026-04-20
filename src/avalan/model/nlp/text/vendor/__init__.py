@@ -91,9 +91,9 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
     ) -> int:
-        assert self._model_id
         encoding = self._resolve_encoding(
-            self._model_id, self._TIKTOKEN_DEFAULT_MODEL
+            self._model_id or self._TIKTOKEN_DEFAULT_MODEL,
+            self._TIKTOKEN_DEFAULT_MODEL,
         )
 
         messages = self._messages(

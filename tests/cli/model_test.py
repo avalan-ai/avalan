@@ -3689,7 +3689,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             path="out.mp4",
-            vision_reference_path=None,
+            vision_reference_path="ref.png",
             vision_negative_prompt=None,
             vision_height=None,
             vision_downscale=2 / 3,
@@ -3766,17 +3766,16 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once_with(
             "hi",
-            "out.mp4",
-            reference_path=None,
-            negative_prompt=None,
-            height=None,
+            path="out.mp4",
+            reference_path="ref.png",
+            negative_prompt="",
             downscale=2 / 3,
             frames=96,
             denoise_strength=0.4,
             inference_steps=10,
             decode_timestep=0.05,
             noise_scale=0.025,
-            frames_per_second=24,
+            fps=24,
         )
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "out.mp4")
@@ -3884,7 +3883,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once_with(
             "hi",
-            "custom.mp4",
+            path="custom.mp4",
             reference_path="ref.png",
             negative_prompt="neg",
             height=256,
@@ -3894,7 +3893,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             inference_steps=5,
             decode_timestep=0.1,
             noise_scale=0.01,
-            frames_per_second=12,
+            fps=12,
         )
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "custom.mp4")
@@ -3925,7 +3924,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             path="wide.mp4",
-            vision_reference_path=None,
+            vision_reference_path="ref.png",
             vision_negative_prompt=None,
             vision_height=None,
             vision_width=320,
@@ -4003,10 +4002,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once_with(
             "hi",
-            "wide.mp4",
-            reference_path=None,
-            negative_prompt=None,
-            height=None,
+            path="wide.mp4",
+            reference_path="ref.png",
+            negative_prompt="",
             width=320,
             downscale=2 / 3,
             frames=96,
@@ -4014,7 +4012,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             inference_steps=10,
             decode_timestep=0.05,
             noise_scale=0.025,
-            frames_per_second=24,
+            fps=24,
         )
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "wide.mp4")
@@ -4045,7 +4043,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             display_tools=False,
             display_tools_events=2,
             path="steps.mp4",
-            vision_reference_path=None,
+            vision_reference_path="ref.png",
             vision_negative_prompt=None,
             vision_height=None,
             vision_downscale=2 / 3,
@@ -4123,10 +4121,9 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once_with(
             "hi",
-            "steps.mp4",
-            reference_path=None,
-            negative_prompt=None,
-            height=None,
+            path="steps.mp4",
+            reference_path="ref.png",
+            negative_prompt="",
             downscale=2 / 3,
             frames=96,
             denoise_strength=0.4,
@@ -4134,7 +4131,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             inference_steps=10,
             decode_timestep=0.05,
             noise_scale=0.025,
-            frames_per_second=24,
+            fps=24,
         )
         tg_patch.assert_not_called()
         self.assertEqual(console.print.call_args.args[0], "steps.mp4")

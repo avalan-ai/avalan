@@ -19,7 +19,7 @@ from . import TextGenerationVendorModel
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, cast
 
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
 from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
@@ -113,6 +113,12 @@ class AnthropicStream(TextGenerationVendorStream):
 
 
 class AnthropicClient(TextGenerationVendor):
+    _RETIRED_MODEL_REPLACEMENTS = {
+        "claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
+        "claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
+        "claude-3-5-sonnet-latest": "claude-sonnet-4-6",
+    }
+
     _client: AsyncAnthropic
     _exit_stack: AsyncExitStack
 
@@ -148,16 +154,21 @@ class AnthropicClient(TextGenerationVendor):
             "tool_choice": {"type": "auto"},
         }
 
-        if use_async_generator:
-            stream = self._client.messages.stream(**kwargs)
-            events = await self._exit_stack.enter_async_context(stream)
-            return AnthropicStream(events=events)
+        try:
+            if use_async_generator:
+                stream = self._client.messages.stream(**kwargs)
+                events = await self._exit_stack.enter_async_context(stream)
+                return AnthropicStream(events=events)
 
-        response = await self._client.messages.create(**kwargs)
-        content = self._non_stream_response_content(response)
-        return cast(
-            TextGenerationVendorStream, TextGenerationSingleStream(content)
-        )
+            response = await self._client.messages.create(**kwargs)
+            content = self._non_stream_response_content(response)
+            return cast(
+                TextGenerationVendorStream,
+                TextGenerationSingleStream(content),
+            )
+        except Exception as error:
+            AnthropicClient._translate_api_error(model_id, error)
+            raise
 
     def _template_messages(
         self,
@@ -293,6 +304,47 @@ class AnthropicClient(TextGenerationVendor):
                 parts.append(token.token)
 
         return "".join(parts)
+
+    @staticmethod
+    def _error_message(error: Exception) -> str:
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            nested = body.get("error")
+            if isinstance(nested, dict):
+                message = nested.get("message")
+                if isinstance(message, str):
+                    return message
+        return str(error)
+
+    @staticmethod
+    def _is_missing_model_error(error: Exception) -> bool:
+        if not isinstance(error, APIStatusError):
+            return False
+        if error.status_code != 404:
+            return False
+        return "model" in AnthropicClient._error_message(error).lower()
+
+    @classmethod
+    def _translate_api_error(cls, model_id: str, error: Exception) -> None:
+        if not cls._is_missing_model_error(error):
+            return
+
+        message = (
+            f"Anthropic model identifier {model_id!r} was not found. "
+            f"Anthropic replied: {cls._error_message(error)}."
+        )
+        replacement = cls._RETIRED_MODEL_REPLACEMENTS.get(model_id)
+        if replacement:
+            message += (
+                " This model has been retired by Anthropic."
+                f" Use {replacement!r} instead."
+            )
+        else:
+            message += (
+                " Verify the model identifier against Anthropic's current "
+                "models list."
+            )
+        raise ValueError(message) from error
 
 
 class AnthropicModel(TextGenerationVendorModel):

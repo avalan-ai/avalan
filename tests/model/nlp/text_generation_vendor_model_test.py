@@ -135,6 +135,19 @@ class InputTokenCountTestCase(TestCase):
         resolve.assert_called_once_with("m", "cl100k_base")
         self.assertEqual(count, 1)
 
+    def test_input_token_count_without_model_id_uses_default_encoding(self):
+        model = DummyVendorModel("", self.settings, logger=getLogger())
+        encoding = MagicMock()
+        encoding.encode.side_effect = lambda text: list(text)
+        messages = [Message(role=MessageRole.USER, content="abc")]
+        with patch.object(
+            model, "_resolve_encoding", return_value=encoding
+        ) as resolve:
+            model._messages = MagicMock(return_value=messages)
+            count = model.input_token_count("in")
+        resolve.assert_called_once_with("cl100k_base", "cl100k_base")
+        self.assertEqual(count, 3)
+
 
 class CallTestCase(IsolatedAsyncioTestCase):
     async def test_call(self):

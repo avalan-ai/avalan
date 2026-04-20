@@ -36,6 +36,15 @@ class AsyncIter:
 
 class AnthropicTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
+        class APIStatusError(Exception):
+            def __init__(self, message, *, response=None, body=None):
+                super().__init__(message)
+                self.status_code = getattr(response, "status_code", None)
+                self.body = body
+
+        class NotFoundError(APIStatusError):
+            pass
+
         class DeltaEvent:
             def __init__(self, delta, index=0):
                 self.delta = delta
@@ -45,7 +54,9 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             pass
 
         stub = types.ModuleType("anthropic")
+        stub.APIStatusError = APIStatusError
         stub.AsyncAnthropic = MagicMock()
+        stub.NotFoundError = NotFoundError
         types_mod = types.ModuleType("anthropic.types")
         types_mod.RawContentBlockDeltaEvent = DeltaEvent
         types_mod.RawMessageStopEvent = StopEvent
@@ -485,9 +496,14 @@ class OpenAIVendorsTestCase(TestCase):
     ]
 
     def setUp(self):
+        class Omit:
+            def __bool__(self):
+                return False
+
         self.openai_stub = types.ModuleType("openai")
         self.openai_stub.AsyncOpenAI = MagicMock()
         self.openai_stub.AsyncStream = MagicMock()
+        self.openai_stub.Omit = Omit
         self.patch = patch.dict(sys.modules, {"openai": self.openai_stub})
         self.patch.start()
         importlib.reload(

@@ -343,6 +343,41 @@ def test_text_generation_call_mlx_branch(
     assert kwargs["tool"] is tool
 
 
+def test_text_generation_call_remote_does_not_probe_mlx(
+    remote_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_mlx_lookup() -> type[Any] | None:
+        raise AssertionError("remote vendor call should not load mlx")
+
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model",
+        fail_mlx_lookup,
+    )
+    modality = TextGenerationModality()
+    model = DummyModel()
+    operation = make_operation(
+        modality=Modality.TEXT_GENERATION,
+        text_params=OperationTextParameters(
+            system_prompt="sys",
+            developer_prompt="dev",
+        ),
+    )
+    tool = object()
+
+    result = run(modality(remote_engine_uri, model, operation, tool=tool))
+
+    assert result == "result"
+    assert len(model.calls) == 1
+    _, kwargs = model.calls[0]
+    assert set(kwargs) == {
+        "system_prompt",
+        "developer_prompt",
+        "settings",
+        "tool",
+    }
+    assert kwargs["tool"] is tool
+
+
 def test_text_question_answering_load_engine_local(
     local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
 ) -> None:

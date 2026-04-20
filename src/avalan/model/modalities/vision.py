@@ -531,15 +531,19 @@ class VisionTextToVideoModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
-        assert (
-            operation.input
-            and operation.parameters["vision"]
-            and operation.parameters["vision"].path
-        )
+        assert operation.input
+        assert operation.parameters["vision"]
         vision = operation.parameters["vision"]
+        assert vision.path
+        assert (
+            vision.reference_path
+        ), "Text-to-video generation requires a reference image path."
         kwargs: dict[str, Any] = {
+            "negative_prompt": vision.negative_prompt or "",
+            "path": vision.path,
             "reference_path": vision.reference_path,
-            "negative_prompt": vision.negative_prompt,
+        }
+        optional_kwargs = {
             "height": vision.height,
             "downscale": vision.downscale,
             "frames": vision.frames,
@@ -547,15 +551,18 @@ class VisionTextToVideoModality:
             "inference_steps": vision.inference_steps,
             "decode_timestep": vision.decode_timestep,
             "noise_scale": vision.noise_scale,
-            "frames_per_second": vision.frames_per_second,
+            "fps": vision.frames_per_second,
         }
+        for key, value in optional_kwargs.items():
+            if value is not None:
+                kwargs[key] = value
         if vision.width is not None:
             kwargs["width"] = vision.width
         if vision.n_steps is not None:
             kwargs["steps"] = vision.n_steps
 
         callable_model = cast(Any, model)
-        return await callable_model(operation.input, vision.path, **kwargs)
+        return await callable_model(operation.input, **kwargs)
 
 
 @ModalityRegistry.register(Modality.VISION_SEMANTIC_SEGMENTATION)

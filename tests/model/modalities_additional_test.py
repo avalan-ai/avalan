@@ -1,13 +1,19 @@
 from argparse import Namespace
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import MagicMock
 
+from avalan.agent import Specification
 from avalan.entities import (
+    EngineUri,
     GenerationSettings,
     Modality,
     Operation,
     OperationParameters,
     OperationVisionParameters,
 )
+from avalan.model.call import ModelCall, ModelCallContext
+from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.model.manager import ModelManager
 from avalan.model.modalities.audio import AudioClassificationModality
 from avalan.model.modalities.vision import (
     VisionTextToAnimationModality,
@@ -126,9 +132,112 @@ class VisionTextToVideoCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, "ok")
         self.assertIsNotNone(model.called_with)
         args, kwargs = model.called_with
-        self.assertEqual(args, ("render", "movie.mp4"))
+        self.assertEqual(args, ("render",))
+        self.assertEqual(kwargs["path"], "movie.mp4")
         self.assertEqual(kwargs["width"], 640)
         self.assertEqual(kwargs["steps"], 8)
         self.assertEqual(kwargs["reference_path"], "ref.mp4")
         self.assertEqual(kwargs["frames"], 30)
-        self.assertEqual(kwargs["frames_per_second"], 12)
+        self.assertEqual(kwargs["fps"], 12)
+
+    async def test_text_to_video_requires_reference_path(self) -> None:
+        modality = VisionTextToVideoModality()
+        model = object()
+        operation = Operation(
+            generation_settings=GenerationSettings(),
+            input="render",
+            modality=Modality.VISION_TEXT_TO_VIDEO,
+            parameters=OperationParameters(
+                vision=OperationVisionParameters(
+                    path="movie.mp4",
+                    reference_path=None,
+                )
+            ),
+            requires_input=True,
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "Text-to-video generation requires a reference image path.",
+        ):
+            await modality(
+                engine_uri=None,  # type: ignore[arg-type]
+                model=model,  # type: ignore[arg-type]
+                operation=operation,
+                tool=None,
+            )
+
+
+class ModelManagerVisionTextToVideoCallTestCase(IsolatedAsyncioTestCase):
+    async def test_manager_routes_text_to_video_with_keywords(self) -> None:
+        hub = MagicMock(spec=HuggingfaceHub)
+        logger = MagicMock()
+        manager = ModelManager(hub, logger)
+
+        class DummyVideoModel:
+            def __init__(self) -> None:
+                self.called_with: tuple | None = None
+
+            async def __call__(self, *args, **kwargs):
+                self.called_with = (args, kwargs)
+                return "ok"
+
+        model = DummyVideoModel()
+        operation = Operation(
+            generation_settings=GenerationSettings(),
+            input="render",
+            modality=Modality.VISION_TEXT_TO_VIDEO,
+            parameters=OperationParameters(
+                vision=OperationVisionParameters(
+                    path="movie.mp4",
+                    reference_path="ref.png",
+                    negative_prompt=None,
+                    width=640,
+                    n_steps=8,
+                )
+            ),
+            requires_input=True,
+        )
+        task = ModelCall(
+            engine_uri=EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor=None,
+                model_id="m",
+                params={},
+            ),
+            model=model,
+            operation=operation,
+            tool=None,
+            context=ModelCallContext(
+                specification=Specification(role=None, goal=None),
+                input=operation.input,
+                engine_args={},
+            ),
+        )
+
+        result = await manager(task)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(
+            model.called_with,
+            (
+                ("render",),
+                {
+                    "decode_timestep": 0.05,
+                    "denoise_strength": 0.4,
+                    "downscale": 2 / 3,
+                    "fps": 24,
+                    "frames": 96,
+                    "inference_steps": 10,
+                    "negative_prompt": "",
+                    "noise_scale": 0.025,
+                    "path": "movie.mp4",
+                    "reference_path": "ref.png",
+                    "width": 640,
+                    "steps": 8,
+                },
+            ),
+        )
