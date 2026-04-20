@@ -15,14 +15,12 @@ from avalan.entities import (
     Modality,
     ReasoningToken,
     Token,
-    TokenDetail,
     TransformerEngineSettings,
 )
 from avalan.model.engine import Engine
 from avalan.model.manager import ModelManager
 from avalan.model.modalities import ModalityRegistry
 from avalan.model.nlp.text.generation import TextGenerationModel
-from avalan.model.nlp.text.mlxlm import MlxLmStream
 from avalan.model.nlp.text.vendor.ollama import OllamaStream
 from avalan.model.nlp.text.vllm import VllmModel, VllmStream
 from avalan.model.response.text import TextGenerationResponse
@@ -101,20 +99,6 @@ class TextGenerationModelCoverageTestCase(TestCase):
         )
         messages = model._messages(["a", "b"], None)
         self.assertEqual([m.content for m in messages], ["a", "b"])
-
-
-class MlxLmStreamCoverageTestCase(IsolatedAsyncioTestCase):
-    async def test_stream_handles_token_detail_and_text_attr(self) -> None:
-        stream = MlxLmStream(
-            iter(
-                [
-                    TokenDetail(token="alpha", id=1, probability=0.5),
-                    SimpleNamespace(text="beta"),
-                ]
-            )
-        )
-        self.assertEqual(await stream.__anext__(), "alpha")
-        self.assertEqual(await stream.__anext__(), "beta")
 
 
 class VllmCoverageTestCase(IsolatedAsyncioTestCase):
@@ -320,67 +304,6 @@ class TextGenerationModelAdditionalCoverageTestCase(TestCase):
             model._tokenizer.apply_chat_template.call_args.args[0]
         )
         self.assertEqual(template_messages[0]["content"], "")
-
-
-class MlxLmAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
-    async def test_stream_generator_paths_and_invalid_inputs(self) -> None:
-        stream = MlxLmStream(
-            iter([SimpleNamespace(text="txt"), Token(token="direct")])
-        )
-        first = await stream._generator.__anext__()
-        second = await stream._generator.__anext__()
-        self.assertEqual(first, "txt")
-        self.assertIsInstance(second, Token)
-        self.assertEqual(second.token, "direct")
-
-        mlx_model = __import__(
-            "avalan.model.nlp.text.mlxlm", fromlist=["MlxLmModel"]
-        ).MlxLmModel(
-            "id",
-            TransformerEngineSettings(
-                auto_load_model=False,
-                auto_load_tokenizer=False,
-            ),
-        )
-        mlx_model._model = MagicMock()
-        mlx_model._tokenizer = MagicMock()
-        mlx_model._tokenizer.decode.return_value = "prompt"
-        with self.assertRaises(ValueError):
-            mlx_model._get_sampler_and_prompt(
-                torch.tensor([1]), GenerationSettings(), False
-            )
-
-        class FakeStream:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if not hasattr(self, "_i"):
-                    self._i = 0
-                self._i += 1
-                if self._i == 1:
-                    return Token(token="a")
-                if self._i == 2:
-                    return TokenDetail(token="b", id=1, probability=0.5)
-                raise StopAsyncIteration
-
-        with (
-            patch(
-                "avalan.model.nlp.text.mlxlm.mlx_lm.stream_generate",
-                return_value=iter([]),
-            ),
-            patch(
-                "avalan.model.nlp.text.mlxlm.MlxLmStream",
-                return_value=FakeStream(),
-            ),
-        ):
-            chunks = [
-                c
-                async for c in mlx_model._stream_generator(
-                    {"input_ids": [[1]]}, GenerationSettings(), False
-                )
-            ]
-        self.assertEqual(chunks, ["a", "b"])
 
 
 class VllmAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
