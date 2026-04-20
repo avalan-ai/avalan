@@ -37,6 +37,12 @@ class AsyncIter:
             raise StopAsyncIteration from exc
 
 
+class FakeBedrockError(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.response = {"Error": {"Code": code, "Message": message}}
+
+
 def patch_bedrock_imports():
     aioboto3_stub = ModuleType("aioboto3")
     aioboto3_stub.__spec__ = ModuleSpec("aioboto3", loader=None)
@@ -75,8 +81,16 @@ def patch_bedrock_imports():
     generation_stub.__spec__ = ModuleSpec(
         "transformers.generation", loader=None
     )
+    generation_stub.__path__ = []
     generation_stub.StoppingCriteria = MagicMock()
     generation_stub.StoppingCriteriaList = MagicMock()
+    stopping_criteria_stub = ModuleType(
+        "transformers.generation.stopping_criteria"
+    )
+    stopping_criteria_stub.__spec__ = ModuleSpec(
+        "transformers.generation.stopping_criteria", loader=None
+    )
+    stopping_criteria_stub.StoppingCriteria = MagicMock()
 
     diffusers_stub = ModuleType("diffusers")
     diffusers_stub.__spec__ = ModuleSpec("diffusers", loader=None)
@@ -91,6 +105,9 @@ def patch_bedrock_imports():
             "transformers.utils.logging": transformers_logging_stub,
             "transformers.tokenization_utils_base": tokenization_stub,
             "transformers.generation": generation_stub,
+            "transformers.generation.stopping_criteria": (
+                stopping_criteria_stub
+            ),
             "diffusers": diffusers_stub,
         },
     )
@@ -307,6 +324,169 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["toolConfig"], {"tools": []})
         await exit_stack.aclose()
 
+    async def test_client_stream_invalid_model_identifier_hint(self):
+        self.client.converse_stream.side_effect = FakeBedrockError(
+            "ValidationException",
+            "The provided model identifier is invalid.",
+        )
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(
+            exit_stack=exit_stack, region_name="us-east-1"
+        )
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(ValueError) as exc_info:
+            await client(
+                "anthropic.claude-3-5-sonnet-20241022-v1:0",
+                [],
+                GenerationSettings(),
+            )
+
+        self.assertIn(
+            "Invalid Amazon Bedrock model identifier "
+            "'anthropic.claude-3-5-sonnet-20241022-v1:0'.",
+            str(exc_info.exception),
+        )
+        self.assertIn(
+            "Requested region: 'us-east-1'.", str(exc_info.exception)
+        )
+        self.assertIn(
+            "Try 'us.' as the model ID prefix.", str(exc_info.exception)
+        )
+        await exit_stack.aclose()
+
+    async def test_client_stream_other_validation_error_is_not_rewritten(self):
+        error = FakeBedrockError(
+            "ValidationException", "Malformed request payload."
+        )
+        self.client.converse_stream.side_effect = error
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(exit_stack=exit_stack)
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(FakeBedrockError) as exc_info:
+            await client("model", [], GenerationSettings())
+
+        self.assertIs(exc_info.exception, error)
+        await exit_stack.aclose()
+
+    async def test_client_stream_end_of_life_model_hint(self):
+        self.client.converse_stream.side_effect = FakeBedrockError(
+            "ResourceNotFoundException",
+            "This model version has reached the end of its life.",
+        )
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(
+            exit_stack=exit_stack, region_name="us-east-1"
+        )
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(ValueError) as exc_info:
+            await client(
+                "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+                [],
+                GenerationSettings(),
+            )
+
+        self.assertIn(
+            "Amazon Bedrock model identifier "
+            "'us.anthropic.claude-3-5-sonnet-20241022-v2:0' is no "
+            "longer usable",
+            str(exc_info.exception),
+        )
+        self.assertIn(
+            "aws bedrock list-inference-profiles --region us-east-1",
+            str(exc_info.exception),
+        )
+        await exit_stack.aclose()
+
+    async def test_client_stream_missing_use_case_details_hint(self):
+        self.client.converse_stream.side_effect = FakeBedrockError(
+            "ResourceNotFoundException",
+            "Model use case details have not been submitted for this "
+            "account. Fill out the Anthropic use case details form "
+            "before using the model.",
+        )
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(
+            exit_stack=exit_stack, region_name="us-east-1"
+        )
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(ValueError) as exc_info:
+            await client(
+                "us.anthropic.claude-sonnet-4-6",
+                [],
+                GenerationSettings(),
+            )
+
+        self.assertIn(
+            "Anthropic use-case details have not been submitted",
+            str(exc_info.exception),
+        )
+        self.assertIn(
+            "aws bedrock get-use-case-for-model-access --region us-east-1",
+            str(exc_info.exception),
+        )
+        await exit_stack.aclose()
+
+    async def test_client_stream_requires_inference_profile_hint(self):
+        self.client.converse_stream.side_effect = FakeBedrockError(
+            "ValidationException",
+            "Invocation of model ID anthropic.claude-sonnet-4-6 with "
+            "on-demand throughput isn’t supported. Retry your request "
+            "with the ID or ARN of an inference profile that contains "
+            "this model.",
+        )
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(
+            exit_stack=exit_stack, region_name="us-east-1"
+        )
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(ValueError) as exc_info:
+            await client(
+                "anthropic.claude-sonnet-4-6",
+                [],
+                GenerationSettings(),
+            )
+
+        self.assertIn(
+            "cannot be invoked directly with on-demand throughput",
+            str(exc_info.exception),
+        )
+        self.assertIn(
+            "'us.anthropic.claude-sonnet-4-6' or "
+            "'global.anthropic.claude-sonnet-4-6'",
+            str(exc_info.exception),
+        )
+        await exit_stack.aclose()
+
     async def test_client_without_stream(self):
         self.client.converse.return_value = {
             "output": {
@@ -409,7 +589,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         fallback = client._image_source({"uri": "blob"})
         self.assertEqual(fallback, {"type": "url", "url": "blob"})
         other = client._format_content(123)
-        self.assertEqual(other, [{"text": {"text": "123"}}])
+        self.assertEqual(other, [{"text": "123"}])
 
     def test_tool_schemas_ignore_non_function(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
@@ -458,9 +638,9 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
         templated = client._template_messages(messages)
         self.assertEqual(templated[0]["role"], "user")
-        self.assertEqual(templated[0]["content"][0]["text"]["text"], "hello")
+        self.assertEqual(templated[0]["content"][0]["text"], "hello")
         self.assertEqual(templated[1]["role"], "user")
-        self.assertEqual(templated[1]["content"][0]["text"]["text"], "dev")
+        self.assertEqual(templated[1]["content"][0]["text"], "dev")
         self.assertEqual(
             templated[2]["content"][1]["image"]["source"]["url"],
             "https://example.com",
@@ -470,8 +650,16 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             "id1",
         )
         self.assertEqual(
+            templated[3]["content"][0]["toolResult"]["content"][0]["text"],
+            '{"value": 2}',
+        )
+        self.assertEqual(
             templated[4]["content"][0]["toolResult"]["status"],
             "error",
+        )
+        self.assertEqual(
+            templated[4]["content"][0]["toolResult"]["content"][0]["text"],
+            '"bad"',
         )
 
         tool_manager = MagicMock()

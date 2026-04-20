@@ -7,7 +7,7 @@ from ..model.engine import Engine
 
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Any, Literal, cast
 
 from tokenizers import AddedToken
 from torch import Tensor
@@ -38,7 +38,7 @@ class TransformerModel(Engine, ABC):
         input: Input,
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
-        **kwargs,
+        **kwargs: object,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
 
@@ -71,7 +71,10 @@ class TransformerModel(Engine, ABC):
             not hasattr(self, "_loaded_tokenizer")
             or not self._loaded_tokenizer
         ):
-            self.load(
+            cast(
+                Any,
+                self,
+            ).load(
                 load_model=False,
                 load_tokenizer=True,
                 tokenizer_name_or_path=tokenizer_name_or_path,
@@ -109,19 +112,41 @@ class TransformerModel(Engine, ABC):
             developer_prompt=developer_prompt,
             context=None,
         )
-        return (
-            len(inputs["input_ids"][0])
-            if inputs and "input_ids" in inputs
-            else 0
-        )
+        if not isinstance(inputs, (dict, BatchEncoding)):
+            return 0
+
+        input_ids = inputs.get("input_ids")
+        if isinstance(input_ids, Tensor):
+            if input_ids.numel() == 0:
+                return 0
+            first_row = input_ids[0]
+            return (
+                int(first_row.shape[0]) if isinstance(first_row, Tensor) else 0
+            )
+
+        if (
+            isinstance(input_ids, list)
+            and input_ids
+            and isinstance(input_ids[0], list)
+        ):
+            return len(input_ids[0])
+
+        if not isinstance(input_ids, list):
+            return 0
+
+        return len(input_ids)
 
     def _load_tokenizer(
         self, tokenizer_name_or_path: str | None, use_fast: bool
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
-        return AutoTokenizer.from_pretrained(
-            tokenizer_name_or_path or self._model_id,
-            use_fast=use_fast,
-            subfolder=self._settings.tokenizer_subfolder or "",
+        auto_tokenizer = cast(Any, AutoTokenizer)
+        return cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast,
+            auto_tokenizer.from_pretrained(
+                tokenizer_name_or_path or self._model_id,
+                use_fast=use_fast,
+                subfolder=self._settings.tokenizer_subfolder or "",
+            ),
         )
 
     def _load_tokenizer_with_tokens(

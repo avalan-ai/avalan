@@ -1,4 +1,4 @@
-from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest import IsolatedAsyncioTestCase
 from uuid import uuid4
 
 from avalan.entities import EngineMessage, Message, MessageRole
@@ -36,15 +36,15 @@ class MemoryStoreTestCase(IsolatedAsyncioTestCase):
             await memory.search("query")
 
 
-class MessageMemoryTestCase(TestCase):
-    def test_search_not_implemented(self):
+class MessageMemoryTestCase(IsolatedAsyncioTestCase):
+    async def test_search_not_implemented(self):
         memory = DummyMessageMemory()
         with self.assertRaises(NotImplementedError):
-            memory.search("query")
+            await memory.search("query")
 
 
-class RecentMessageMemoryTestCase(TestCase):
-    def test_size_property(self):
+class RecentMessageMemoryTestCase(IsolatedAsyncioTestCase):
+    async def test_size_property(self):
         memory = RecentMessageMemory()
         self.assertEqual(memory.size, 0)
 
@@ -53,11 +53,11 @@ class RecentMessageMemoryTestCase(TestCase):
             model_id="m",
             message=Message(role=MessageRole.USER, content="hi"),
         )
-        memory.append(msg)
+        await memory.append(msg.agent_id, msg)
         self.assertEqual(memory.size, 1)
 
-        memory.append(msg)
+        await memory.append(msg.agent_id, msg)
         self.assertEqual(memory.size, 2)
 
-        memory.reset()
+        await memory.reset()
         self.assertEqual(memory.size, 0)

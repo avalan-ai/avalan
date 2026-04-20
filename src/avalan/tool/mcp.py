@@ -3,6 +3,8 @@ from ..entities import ToolCallContext
 from . import Tool, ToolSet
 
 from contextlib import AsyncExitStack
+from importlib import import_module
+from typing import cast
 
 
 class McpCallTool(Tool):
@@ -39,15 +41,17 @@ class McpCallTool(Tool):
         *,
         context: ToolCallContext,
     ) -> list[object]:
-        from mcp import Client
+        mcp_module = import_module("mcp")
+        client_factory = getattr(mcp_module, "Client")
 
         assert uri
         assert name
 
-        async with Client(uri, **self._client_params) as client:
-            return await client.call_tool(
+        async with client_factory(uri, **self._client_params) as client:
+            result = await client.call_tool(
                 name, arguments or {}, **self._call_params
             )
+            return cast(list[object], result)
 
 
 class McpToolSet(ToolSet):

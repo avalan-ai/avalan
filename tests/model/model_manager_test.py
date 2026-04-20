@@ -1,5 +1,7 @@
 from logging import Logger
 from os import environ
+from sys import modules
+from types import ModuleType
 from unittest import TestCase, main
 from unittest.mock import MagicMock, patch
 
@@ -210,6 +212,13 @@ class ManagerTestCase(TestCase):
                 None,
                 None,
             ),
+            (
+                "ai://bedrock/us.anthropic.claude-sonnet-4-6",
+                "bedrock",
+                "us.anthropic.claude-sonnet-4-6",
+                None,
+                None,
+            ),
         ]
 
     def test_parse_uri(self):
@@ -391,16 +400,28 @@ class ManagerLoadEngineTestCase(TestCase):
                     engine_uri = manager.parse_uri(uri)
                     settings = TransformerEngineSettings()
                     manager._stack.enter_context = MagicMock()
-                    with patch(path) as Model:
-                        result = manager.load_engine(
-                            engine_uri,
-                            settings,
-                            (
-                                Modality.EMBEDDING
-                                if is_sentence
-                                else Modality.TEXT_GENERATION
-                            ),
+                    if vendor in {"local", "sentence"}:
+                        context = patch(path)
+                    else:
+                        module_name, class_name = path.rsplit(".", 1)
+                        fake_module = ModuleType(module_name)
+                        fake_model = MagicMock(name=class_name)
+                        setattr(fake_module, class_name, fake_model)
+                        context = patch.dict(
+                            modules, {module_name: fake_module}
                         )
+
+                    with context:
+                        with patch(path) as Model:
+                            result = manager.load_engine(
+                                engine_uri,
+                                settings,
+                                (
+                                    Modality.EMBEDDING
+                                    if is_sentence
+                                    else Modality.TEXT_GENERATION
+                                ),
+                            )
                         expected_kwargs = dict(
                             model_id=model_id,
                             settings=settings,

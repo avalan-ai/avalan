@@ -11,128 +11,109 @@
   <a href="https://deepwiki.com/avalan-ai/avalan"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
-Avalan empowers developers and enterprises to build, orchestrate, and deploy intelligent AI solutions locally, on-premises and in the cloud. It provides a unified SDK and CLI for running millions of models with ease.
+Avalan is a Python framework and CLI for building AI agents with local and
+hosted models. It unifies model execution, tools, memory, workflows, and
+serving so you can move from experiments to deployed systems without rewriting
+around a single provider or runtime.
 
-# Highlights
+# ✨ Highlights
 
-- 🎞️ **Multi-modal** integration (NLP/text, vision, audio.)
-- 🔌 **Multi-backend** support ([transformers](https://github.com/huggingface/transformers), [vLLM](https://github.com/vllm-project/vllm), [mlx-lm](https://github.com/ml-explore/mlx-lm).)
-- 🔗 **Native adapters** for Amazon Bedrock, Anyscale, Anthropic, DeepInfra, DeepSeek, Google (Gemini), Groq, HuggingFace, Hyperbolic, LiteLLM, Ollama, OpenAI, OpenRouter, Together, among others.
-- 🤖 Sophisticated **memory management** with native implementations for PostgreSQL (pgvector), Elasticsearch, AWS Opensearch, AWS S3 Vectors, and reasoning graph storage.
-- 🧠 Multiple **reasoning strategies** including ReACT, Chain-of-Thought, Tree-of-Thought, Plan-and-Reflect, Self-Consistency, Scratchpad-Toolformer, Cascaded Prompting, Critic-Guided Direction-Following Experts, and Product-of-Experts.
-- 🔀 Intuitive pipelines with branching, filtering, and recursive **AI workflows**.
-- 📊 Comprehensive **observability** through metrics, event tracing, and dashboards.
-- 🚀 **Deploy** your AI workflows to the cloud, your premises, or locally.
-- 💻 Use via the **CLI** or integrate the **Python SDK** directly in your code.
+- 🔀 **One runtime for local and hosted models** across Hugging Face model ids and
+  vendor `ai://` URIs.
+- 🎞️ **Multi-modal support** for text, vision, and audio workloads.
+- 🔌 **Multiple backends** including
+  [`transformers`](https://github.com/huggingface/transformers),
+  [`vLLM`](https://github.com/vllm-project/vllm), and
+  [`mlx-lm`](https://github.com/ml-explore/mlx-lm).
+- 🧰 **Built-in tools and memory** for browser automation, code execution,
+  databases, MCP, search, YouTube, and vector-backed retrieval.
+- 🧠 **Composable orchestration** with flows, branching, reasoning strategies, and
+  observability.
+- 🌐 **Open serving surfaces** for OpenAI-compatible APIs, MCP, and A2A.
 
-These features make avalan ideal for everything from quick experiments to enterprise deployments.
+# 🚀 Start Here
 
-# Table of Contents
+- 📦 Use [Install](#install) to pick the extras you actually need.
+- ⚡ Use [Quickstart](#quickstart) to run a hosted model from the CLI or Python.
+- 🧪 Use [Models](#models) to search, install, and run open models locally.
+- 🤖 Use [Agents](#agents) to expose an agent over HTTP, MCP, or A2A.
+- 📚 Use [docs/examples](docs/examples/README.md) for runnable scripts and sample
+  agent configurations.
+- 🛠️ Use [docs/CLI.md](docs/CLI.md) for the complete command reference.
+- 🔗 Use [docs/ai_uri.md](docs/ai_uri.md) for engine URI syntax and backend
+  routing.
 
-- ❓ [Why Avalan](#why-avalan): Discover why avalan is a flexible foundation for agents.
-- 📦 [Install](#install): Set up avalan using your preferred package manager.
-  - 🐍 [Pip (recommended)](#pip-recommended): Install the full avalan toolkit from PyPI.
-  - 🍺 [Homebrew (macOS)](#homebrew-macos): Add avalan via the macOS package manager.
-  - 🛠️ [From source with Poetry](#from-source-with-poetry): Develop against avalan using a local checkout.
-- 🚀 [Quickstart](#quickstart): Run your first avalan prompt from the CLI or SDK.
-- 🧠 [Models](#models): Explore supported vendor-hosted and open-source models.
-  - 🏢 [Vendor models](#vendor-models): Connect to commercial APIs through engine URIs.
-  - 🆓 [Open models](#open-models): Run community models locally with avalan backends.
-- 🎛️ [Modalities](#modalities): Build workflows spanning audio, text, and vision tasks.
-  - 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
-    - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
-    - 🗣️ [Speech recognition](#speech-recognition): Convert spoken audio to text.
-    - 🔊 [Text to speech](#text-to-speech): Generate spoken audio from text.
-    - 🎵 [Audio generation](#audio-generation): Compose music from text.
-  - 📝 [**Text**](#text): Perform natural language processing to understand or generate information.
-    - ❓ [Question answering](#question-answering): Answer questions from context.
-    - 🧮 [Sequence classification](#sequence-classification): Label a sequence such as sentiment.
-    - 🔁 [Sequence to sequence](#sequence-to-sequence): Transform text like summarization.
-    - ✍️ [Text generation](#text-generation): Produce new text from prompts.
-    - 🏷️ [Token classification](#token-classification): Tag tokens for tasks like Named Entity Recognition.
-    - 🌍 [Translation](#translation): Convert text between languages.
-  - 👁️ [**Vision**](#vision): Analyze images or create visuals for content and automation.
-    - 👓 [Encoder Decoder](#encoder-decoder): Answer questions on documents, OCR-free.
-    - 🖼️ [Image classification](#image-classification): Identify objects in an image
-    - 📷 [Image to text](#image-to-text): Describe an image with text
-    - 🔤 [Image text to text](#image-text-to-text): Provide an image and instruction to produce text
-    - 🎯 [Object detection](#object-detection): Locate objects within an image
-    - 🧩 [Semantic segmentation](#semantic-segmentation): Label each pixel in an image
-    - 🎬 [Text to animation](#text-to-animation): Create animations from prompts
-    - 🖌️ [Text to image](#text-to-image): Generate images from text
-    - 🎥 [Text to video](#text-to-video): Produce videos from text prompts
-- 🛠️ [Tools](#tools): Extend agents with specialized capabilities and integrations.
-  - ➗ [Math](#math-toolset-math): Perform calculations and numeric reasoning during runs.
-    - 🧮 [Example: `math.calculator`](#example-mathcalculator): Demonstrates arithmetic support in prompts.
-  - 💻 [Code](#code-toolset-code): Execute and evaluate source code inside workflows.
-    - 🧾 [Example: `code.run`](#example-coderun): Showcase running multi-file code sessions.
-  - 🗄️ [Database](#database-toolset-database): Query and manage structured datasets from agents.
-  - 🌐 [Browser](#browser-toolset-browser): Navigate and extract information from web pages.
-  - 🧠 [Memory](#memory-toolset-memory): Persist and retrieve contextual knowledge over time.
-  - ▶️ [YouTube](#youtube-toolset-youtube): Interact with videos for search and transcription.
-  - 🧩 [MCP](#mcp-toolset-mcp): Connect to Model Context Protocol compliant services.
-  - 🔍 [Search](#search-tool-search_enginesearch): Perform live information retrieval during reasoning.
-- 🧭 [Reasoning strategies](#reasoning-strategies): Combine planning approaches for complex tasks.
-  - 🪄 [Reasoning models](#reasoning-models): Choose dedicated reasoning-capable backends.
-  - ♻️ [ReACT](#react): Alternate between thought and action steps for iterative solving.
-  - 🧵 [Chain-of-Thought](#chain-of-thought): Encourage detailed intermediate reasoning traces.
-  - 🌳 [Tree-of-Thought](#tree-of-thought): Branch reasoning paths and prune based on outcomes.
-  - 🗺️ [Plan-and-Reflect](#plan-and-reflect): Outline steps and refine results through reflection.
-  - 🔁 [Self-Consistency](#self-consistency): Sample multiple outputs and reconcile the best answer.
-  - ✏️ [Scratchpad-Toolformer](#scratchpad-toolformer): Mix scratchpad notes with adaptive tool calls.
-  - 🪜 [Cascaded Prompting](#cascaded-prompting): Stage prompts to incrementally improve responses.
-  - 🧑‍⚖️ [Critic-Guided Direction-Following Experts](#critic-guided-direction-following-experts): Combine specialist agents with critic feedback.
-  - 🤝 [Product-of-Experts](#product-of-experts): Merge expert outputs into a unified consensus.
-- 🗂️ [Memories](#memories): Learn how avalan structures short- and long-term memory.
-- 🕴️ [Agents](#agents): Compose, host, and embed intelligent agent services.
-  - 🛰️ [Serving agents](#serving-agents): Deploy avalan agents to different hosting environments.
-    - 🧠 [OpenAI completion and responses API](#openai-completion-and-responses-api): Serve OpenAI-compatible interfaces for drop-in usage.
-    - 🛰️ [MCP server](#mcp-server): Offer avalan functionality through the MCP protocol.
-    - 🔄 [A2A server](#a2a-server): Bridge avalan agents with the Assistant-to-Assistant network.
-    - ⚙️ [Embedding in existing FastAPI apps](#embedding-in-existing-fastapi-apps): Integrate avalan into current Python services.
-    - 🕷️ [Proxy agents](#proxy-agents): Relay requests through intermediary agents and services.
-- 📚 [Documentation & Resources](#documentation--resources): Find manuals, guides, and supporting materials.
-- 🤝 [Community & Support](#community--support): Join the community and get help from maintainers.
-- 🧑‍💻 [Contributing](#contributing): Learn how to propose changes and collaborate on avalan.
+# 🗂️ Table of Contents
 
-# Why Avalan
+- ❓ [Why Avalan](#why-avalan)
+- 📦 [Install](#install)
+- ⚡ [Quickstart](#quickstart)
+- 🧪 [Models](#models)
+- 🎛️ [Modalities](#modalities)
+- 🎧 [Audio](#audio)
+- 📝 [Text](#text)
+- 👁️ [Vision](#vision)
+- 🧰 [Tools](#tools)
+- 🧠 [Reasoning strategies](#reasoning-strategies)
+- 🗃️ [Memories](#memories)
+- 🤖 [Agents](#agents)
+- 📚 [Documentation & Resources](#documentation--resources)
+- 🤝 [Community & Support](#community--support)
+- 🧑‍💻 [Contributing](#contributing)
 
-* 🌐 **Open ecosystem**: tap not only the big LLM APIs but the millions of freely available models: text, vision, audio, agents, and more.
-* 🏠 **Run anywhere**: on-prem, in your cloud, at the edge, or on a laptop. No deployment restrictions.
-* 🎛️ **Total control**: switch models, tweak parameters, chain workflows, and track detailed metrics from CLI, code, or simple config files.
-* 🔗 **Protocol-agnostic**: native support for MCP, A2A, the OpenAI API, and easy adapters for your own interfaces.
-* 🛡️ **No vendor lock-in**: Avalan orchestrates your services and code, fitting your existing stack instead of replacing it.
-* 🧩 **Composable reasoning**: multiple strategy templates and nested workflows that can call other flows, invoke applications, and execute code on demand.
+# ❓ Why Avalan
 
-## Install
+- 🔄 **Model portability**: use the same CLI and SDK for open models, vendor APIs,
+  and local services.
+- 🏠 **Deployment flexibility**: run on a laptop, Apple Silicon workstation, Linux
+  GPU box, your own cloud, or on-prem.
+- 🧩 **Agent building blocks**: combine tools, memories, workflows, and reasoning
+  strategies instead of wiring them yourself.
+- 🔗 **Open interfaces**: expose agents through OpenAI-compatible HTTP, MCP, A2A,
+  or embed them into FastAPI.
+- 📈 **Incremental adoption**: start with a single `model run` command, then grow
+  into orchestrated agents and deployments.
 
-Avalan targets Python 3.11–3.12. Pick the installation path that matches your workflow:
+## 📦 Install
 
-### Pip (recommended)
+Avalan supports Python 3.11 and 3.12. Install the smallest profile that fits
+your workflow; the examples later in this README may require additional extras.
+
+### 🐍 Pip (recommended)
+
+Hosted APIs plus tool-enabled or served agents:
 
 ```bash
-python3 -m pip install -U "avalan[agent,audio,memory,server,tool,vision]"
+python3 -m pip install -U "avalan[agent,server,tool,vendors]"
 ```
 
-Add extras as needed:
+Broader local development setup with the capabilities used throughout this
+README:
 
-- `vllm` – Nvidia GPU acceleration via vLLM.
-- `quantization` – 4/8-bit quantized model loading.
-- `vendors` – hosted APIs such as Anthropic, Google, OpenAI, and others.
+```bash
+python3 -m pip install -U "avalan[agent,audio,memory,server,tool,translation,vendors,vision]"
+```
 
-For minimal installs simply omit the extras list.
+Add hardware-specific extras when needed:
 
-### Homebrew (macOS)
+- `mlx` or `apple` – Apple Silicon acceleration via MLX / MLX-LM.
+- `nvidia` – Linux + NVIDIA bundle for vLLM and quantization support.
+- `vllm` – the vLLM runtime without the full NVIDIA bundle.
+- `quantization` – 4-bit and 8-bit model loading.
+
+For the leanest install, omit the extras list entirely.
+
+### 🍺 Homebrew (macOS)
 
 ```bash
 brew tap avalan-ai/avalan
 brew install avalan
 ```
 
-### From source with Poetry
+### 🛠️ From Source with Poetry
 
 ```bash
-poetry install --all-extras
+poetry install --all-extras --with test
 ```
 
 > [!TIP]
@@ -149,50 +130,57 @@ When you need bleeding-edge `transformers` features, install the latest nightly:
 poetry run pip install --no-cache-dir "git+https://github.com/huggingface/transformers"
 ```
 
-## Quickstart
+## ⚡ Quickstart
 
-1. **Install Avalan** using pip or Homebrew.
-2. **Pick a model backend**: either export an API key for a vendor service (for example `export OPENAI_API_KEY=...`) or install an open model locally with `avalan model install`.
-3. **Run your first prompt** with the CLI:
+### 💬 Call a hosted model from the CLI
 
-   ```bash
-   echo "Who are you, and who is Leo Messi?" \
-       | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
-           --system "You are Aurora, a helpful assistant" \
-           --max-new-tokens 100
-   ```
+Export a vendor key, then run:
 
-4. **Use the Python SDK** inside an async application:
+```bash
+export OPENAI_API_KEY=...
+echo "Who are you, and who is Leo Messi?" \
+    | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
+        --system "You are Aurora, a helpful assistant" \
+        --max-new-tokens 100
+```
 
-   ```python
-   import asyncio
+### 🐍 Use the Python SDK
 
-   from avalan.model.nlp.generation import TextGenerationModel
+```python
+import asyncio
 
-   async def main() -> None:
-       with TextGenerationModel("ai://$OPENAI_API_KEY@openai/gpt-4o") as model:
-           response = await model("Give me two facts about Leo Messi.")
-           print(response)
+from avalan.model.nlp.generation import TextGenerationModel
 
-   asyncio.run(main())
-   ```
+async def main() -> None:
+    with TextGenerationModel("ai://env:OPENAI_API_KEY@openai/gpt-4o") as model:
+        response = await model("Give me two facts about Leo Messi.")
+        print(response)
 
-   See [docs/examples](docs/examples/README.md) for runnable scripts covering every modality, reasoning strategy, and deployment path.
+asyncio.run(main())
+```
 
-## Models
+### 🧭 Next steps
 
-Avalan provides text, audio and vision models that you can access from the CLI
-or your own code. Run millions of [open models](#open-models) or call any
-[vendor model](#vendor-models).
+- 📚 Browse [docs/examples](docs/examples/README.md) for runnable scripts across
+  text, audio, vision, tools, and agent serving.
+- 🧪 Jump to [Models](#models) to search and install open models locally.
+- 🤖 Jump to [Agents](#agents) to expose an agent over OpenAI-compatible HTTP,
+  MCP, or A2A.
+
+## 🧪 Models
+
+Avalan exposes text, audio, and vision models from the CLI and Python. Use bare
+model ids for open models and `ai://` engine URIs for vendor-hosted models or
+custom endpoints.
 
 ### Vendor models
 
-Avalan supports all popular vendor models through
+Avalan supports popular vendor models through
 [engine URIs](docs/ai_uri.md). The example below uses OpenAI's GPT-4o:
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
-    | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+    | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
         --system "You are Aurora, a helpful assistant" \
         --max-new-tokens 100 \
         --temperature .1 \
@@ -202,7 +190,7 @@ echo "Who are you, and who is Leo Messi?" \
 
 ### Open models
 
-Open models run across engines such as transformers, vLLM and mlx-lm.
+Open models run across engines such as `transformers`, `vllm`, and `mlx`.
 Search through millions of them with `avalan model search` using different
 filters. The following command looks for up to three text-generation models that
 run with the `mlx` backend, match the term `DeepSeek-R1`, and were published by
@@ -324,7 +312,7 @@ Determine the sentiment (neutral, happy, angry, sad) of a given audio file:
 ```bash
 avalan model run "superb/hubert-base-superb-er" \
     --modality audio_classification \
-    --path oprah.wav \
+    --path docs/examples/playground/oprah.wav \
     --audio-sampling-rate 16000
 ```
 
@@ -362,7 +350,7 @@ Transcribe speech from an audio file:
 ```bash
 avalan model run "facebook/wav2vec2-base-960h" \
     --modality audio_speech_recognition \
-    --path oprah.wav \
+    --path docs/examples/playground/oprah.wav \
     --audio-sampling-rate 16000
 ```
 
@@ -394,7 +382,7 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
     avalan model run "nari-labs/Dia-1.6B-0626" \
             --modality audio_text_to_speech \
             --path example.wav \
-            --audio-reference-path docs/examples/oprah.wav \
+            --audio-reference-path docs/examples/playground/oprah.wav \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
 ```
 
@@ -407,7 +395,7 @@ with TextToSpeechModel("nari-labs/Dia-1.6B-0626") as model:
     await model(
         "[S1] Leo Messi is the greatest football player of all times.",
         "example.wav",
-        reference_path="docs/examples/oprah.wav",
+        reference_path="docs/examples/playground/oprah.wav",
         reference_text=(
             "[S1] And then I grew up and had the esteemed honor of meeting her. "
             "And wasn't that a surprise. Here was this petite, almost delicate "
@@ -520,7 +508,9 @@ echo "
 The summary:
 
 ```text
-Andy Cucci is held by many as the greatest footballer of all times.
+Andres Cuccittini, commonly known as Andy Cucci, is an Argentine professional
+footballer. He plays as a forward for the Argentina national team. Cucci began
+playing football at the age of 19 in his native Ushuaia.
 ```
 
 Calling from Python is just as easy:
@@ -554,7 +544,8 @@ echo "Who are you, and who is Leo Messi?" \
         --max-new-tokens 100 \
         --temperature .1 \
         --top-p .9 \
-        --top-k 20
+        --top-k 20 \
+        --backend mlx
 ```
 
 Here's the equivalent Python snippet:
@@ -581,7 +572,7 @@ Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md
 
 ```bash
 echo "Who are you, and who is Leo Messi?" \
-    | avalan model run "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+    | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
         --system "You are Aurora, a helpful assistant" \
         --max-new-tokens 100 \
         --temperature .1 \
@@ -594,10 +585,8 @@ Swap in the vendor URI in code too:
 ```python
 from avalan.entities import GenerationSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
-from os import getenv
 
-api_key = getenv("OPENAI_API_KEY")
-with TextGenerationModel(f"ai://{api_key}@openai/gpt-4o") as model:
+with TextGenerationModel("ai://env:OPENAI_API_KEY@openai/gpt-4o") as model:
     async for token in await model(
         "Who are you, and who is Leo Messi?",
         system_prompt="You are Aurora, a helpful assistant",
@@ -618,11 +607,30 @@ you can target any Bedrock region via `--base-url`:
 
 ```bash
 echo "Summarize the latest AWS re:Invent keynote in three bullet points." \
-    | avalan model run "ai://bedrock/anthropic.claude-3-5-sonnet-20241022-v1:0" \
-        --base-url "us-east-1" \
-        --max-new-tokens 256 \
-        --temperature .7
+      | avalan model run "ai://bedrock/us.amazon.nova-lite-v1:0" \
+          --base-url "us-east-1" \
+          --max-new-tokens 256 \
+          --temperature .7
 ```
+
+Example output:
+
+```
+- **Hybrid and Multicloud**: AWS expanded its hybrid and multicloud capabilities with new services to help customers seamlessly connect their on-premises environments with AWS, and manage workloads across multiple clouds.
+
+- **Security and Compliance**: AWS announced new security and compliance features to help customers meet their regulatory requirements and protect their data, including new services for data encryption, identity management, and threat detection.
+
+These highlights capture some of the major themes and announcements from the keynote, but there were many more details and product updates as well. Hopefully this summary gives you a good overview! Let me know if you have any other
+```
+
+> [!TIP]
+> Some Bedrock models are only available through geo-prefixed IDs in a
+> given source region, such as `us.anthropic.claude-sonnet-4-6` for US
+> Anthropic routing. Those profile IDs change over time, so you can
+> inspect currently active options with
+> `aws bedrock list-inference-profiles --region us-east-1`. Anthropic
+> models can also require submitting the Bedrock use-case details form for
+> your account before inference is allowed.
 
 #### Token classification
 
@@ -642,23 +650,19 @@ echo "
 And you get the following labeled entities:
 
 ```text
-┏━━━━━━━━━━┳━━━━━━━━┓
-┃ Token    ┃ Label  ┃
-┡━━━━━━━━━━╇━━━━━━━━┩
-│ [CLS]    │ B-PER  │
-├──────────┼────────┤
-│ Lionel   │ I-PER  │
-├──────────┼────────┤
-│ Me       │ I-PER  │
-├──────────┼────────┤
-│ ##ssi    │ B-PER  │
-├──────────┼────────┤
-│ ,        │ I-PER  │
-├──────────┼────────┤
-│ commonly │ I-PER  │
-├──────────┼────────┤
-│ known    │ B-MISC │
-└──────────┴────────┘
+┏━━━━━━━━━━━┳━━━━━━━━┓
+┃ Token     ┃ Label  ┃
+┡━━━━━━━━━━━╇━━━━━━━━┩
+│ Lionel    │ B-PER  │
+├───────────┼────────┤
+│ Me        │ I-PER  │
+├───────────┼────────┤
+│ ##ssi     │ I-PER  │
+├───────────┼────────┤
+│ Leo       │ B-PER  │
+├───────────┼────────┤
+│ Argentine │ B-MISC │
+└───────────┴────────┘
 ```
 
 Use the Python API if you prefer:
@@ -696,10 +700,10 @@ echo "
 Here is the Spanish version:
 
 ```text
-Lionel Messi, conocido como Leo Messi, es un futbolista argentino profesional
-que representa a la Argentina en el equipo nacional. Considerado por muchos
-como el mejor futbolista de todos los tiempos, Messi ha conseguido un éxito
-sin precedentes durante su carrera.
+Lionel Messi, conocido también como Leo Messi, es un futbolista argentino
+profesional que representa a la Argentina en el equipo nacional de Argentina.
+Considerado por muchos como el futbolista más grande de todos los tiempos,
+Messi ha conseguido un éxito sin precedentes durante su carrera.
 ```
 
 The SDK call mirrors the CLI parameters:
@@ -734,15 +738,15 @@ echo "<s_docvqa><s_question>
 </s_question><s_answer>" | \
     avalan model run "naver-clova-ix/donut-base-finetuned-docvqa" \
         --modality vision_encoder_decoder \
-        --path docs/examples/factura-page-1.png
+        --path docs/examples/playground/invoice-factura.png
 ```
 
 And you get the answer:
 
 ```
 <s_docvqa>
-<s_question>What is the FACTURA Number?</s_question>
-<s_answer>0012-00187506</s_answer>
+<s_question> What is the FACTURA Number?</s_question>
+<s_answer> 0012-00187506</s_answer>
 </s>
 ```
 
@@ -753,7 +757,7 @@ from avalan.model.vision.decoder import VisionEncoderDecoderModel
 
 with VisionEncoderDecoderModel("naver-clova-ix/donut-base-finetuned-docvqa") as model:
     answer = await model(
-        "docs/examples/factura-page-1.png",
+        "docs/examples/playground/invoice-factura.png",
         prompt="<s_docvqa><s_question>What is the FACTURA Number?</s_question><s_answer>"
     )
     print(answer)
@@ -767,7 +771,7 @@ Classify an image, such as determining whether it is a hot dog, or not a hot dog
 ```bash
 avalan model run "microsoft/resnet-50" \
     --modality vision_image_classification \
-    --path docs/examples/cat.jpg
+    --path docs/examples/playground/cat.jpg
 ```
 
 The model identifies the image:
@@ -786,7 +790,7 @@ Programmatic usage:
 from avalan.model.vision.image import ImageClassificationModel
 
 with ImageClassificationModel("microsoft/resnet-50") as model:
-    output = await model("docs/examples/cat.jpg")
+    output = await model("docs/examples/playground/cat.jpg")
     print(output)
 ```
 For a runnable script, see [docs/examples/vision_image_classification.py](docs/examples/vision_image_classification.py).
@@ -798,7 +802,7 @@ Generate a caption for an image:
 ```bash
 avalan model run "salesforce/blip-image-captioning-base" \
     --modality vision_image_to_text \
-    --path docs/examples/Example_Image_1.jpg
+    --path docs/examples/playground/Example_Image_1.jpg
 ```
 
 Example output:
@@ -813,7 +817,7 @@ Python snippet:
 from avalan.model.vision.image import ImageToTextModel
 
 with ImageToTextModel("salesforce/blip-image-captioning-base") as model:
-    caption = await model("docs/examples/Example_Image_1.jpg")
+    caption = await model("docs/examples/playground/Example_Image_1.jpg")
     print(caption)
 ```
 For a runnable script, see [docs/examples/vision_image_to_text.py](docs/examples/vision_image_to_text.py).
@@ -826,7 +830,7 @@ Provide an image and an instruction to an `image-text-to-text` model:
 echo "Transcribe the text on this image, keeping format" | \
     avalan model run "ai://local/google/gemma-3-12b-it" \
         --modality vision_image_text_to_text \
-        --path docs/examples/typewritten_partial_sheet.jpg \
+        --path docs/examples/playground/typewritten_partial_sheet.jpg \
         --vision-width 512 \
         --max-new-tokens 1024
 ```
@@ -836,8 +840,13 @@ The transcription (truncated for brevity):
 ```text
 **INTRODUCCIÓN**
 
-Guillermo de Ockham (según se utiliza la grafía latina o la inglesa) es tan célebre como conocido. Su doctrina
-suele merecer las más diversas interpretaciones, y su biografía adolece tremendas oscuridades.
+Guillermo de Ockham (según se utiliza la grafía latina o la inglesa) es tan
+célebre como mal conocido. Su doctrina suele merecer las más diversas
+interpretaciones, y su biografía adolece tremendas oscuridades.
+
+Aún más, y como dice un renombrado autor, el estudio de su pensamiento "parece,
+por la falta de buenas ediciones de sus obras, una consecuencia del ‘anatema’
+que, durante siglos, ha pesado sobre el incipor del nominalismo" (1).
 ```
 
 Invoke the model with the SDK like so:
@@ -848,7 +857,7 @@ from avalan.model.vision.image import ImageTextToTextModel
 
 with ImageTextToTextModel("google/gemma-3-12b-it") as model:
     output = await model(
-        "docs/examples/typewritten_partial_sheet.jpg",
+        "docs/examples/playground/typewritten_partial_sheet.jpg",
         "Transcribe the text on this image, keeping format",
         settings=GenerationSettings(max_new_tokens=1024),
         width=512
@@ -864,7 +873,7 @@ Detect objects in an image and list them with accuracy scores:
 ```bash
 avalan model run "facebook/detr-resnet-50" \
     --modality vision_object_detection \
-    --path docs/examples/kitchen.jpg \
+    --path docs/examples/playground/kitchen.jpg \
     --vision-threshold 0.3
 ```
 
@@ -904,7 +913,7 @@ Example SDK call:
 from avalan.model.vision.detection import ObjectDetectionModel
 
 with ObjectDetectionModel("facebook/detr-resnet-50") as model:
-    labels = await model("docs/examples/kitchen.jpg", threshold=0.3)
+    labels = await model("docs/examples/playground/kitchen.jpg", threshold=0.3)
     print(labels)
 ```
 For a runnable script, see [docs/examples/vision_object_detection.py](docs/examples/vision_object_detection.py).
@@ -916,7 +925,7 @@ Classify each pixel using a semantic segmentation model:
 ```bash
 avalan model run "nvidia/segformer-b0-finetuned-ade-512-512" \
     --modality vision_semantic_segmentation \
-    --path docs/examples/kitchen.jpg
+    --path docs/examples/playground/kitchen.jpg
 ```
 
 The output lists each annotation:
@@ -979,7 +988,7 @@ This is how you'd do it in code:
 from avalan.model.vision.segmentation import SemanticSegmentationModel
 
 with SemanticSegmentationModel("nvidia/segformer-b0-finetuned-ade-512-512") as model:
-    labels = await model("docs/examples/kitchen.jpg")
+    labels = await model("docs/examples/playground/kitchen.jpg")
     print(labels)
 ```
 For a runnable script, see [docs/examples/vision_semantic_segmentation.py](docs/examples/vision_semantic_segmentation.py).
@@ -1076,7 +1085,7 @@ echo 'A cute little penguin takes out a book and starts reading it' | \
         --vision-steps 30 \
         --vision-negative-prompt "worst quality, inconsistent motion, blurry, jittery, distorted" \
         --vision-inference-steps 10 \
-        --vision-reference-path penguin.png \
+        --vision-reference-path docs/examples/playground/penguin.png \
         --vision-width 832 \
         --vision-height 480 \
         --vision-frames 96 \
@@ -1100,7 +1109,7 @@ with TextToVideoModel("Lightricks/LTX-Video-0.9.7-dev", settings=EngineSettings(
     await model(
         "A cute little penguin takes out a book and starts reading it",
         "worst quality, inconsistent motion, blurry, jittery, distorted",
-        "penguin.png",
+        "docs/examples/playground/penguin.png",
         "example_text_to_video.mp4",
         steps=30,
         inference_steps=10,
@@ -1157,7 +1166,7 @@ You can give your GPU some breathing type by running the same on a vendor model,
 ```bash
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
   | avalan agent run \
-      --engine-uri "ai://$ANTHROPIC_API_KEY@anthropic/claude-3-5-sonnet-latest" \
+      --engine-uri "ai://$ANTHROPIC_API_KEY@anthropic/claude-sonnet-4-6" \
       --tool "math.calculator" \
       --memory-recent \
       --run-max-new-tokens 8192 \
@@ -1195,7 +1204,8 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
       --display-events \
-      --display-tools
+      --display-tools \
+      --backend mlx
 ```
 
 ### Database toolset (`database.*`)
@@ -1257,8 +1267,11 @@ echo "What's avalan's latest release on https://github.com/avalan-ai/avalan/rele
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
       --display-events \
-      --display-tools
+      --display-tools \
+      --backend mlx
 ```
+
+You may need to update playwright browser images with `poetry run playwright install`
 
 When using the browser tool to extract knowledge, be mindful of your context window. With OpenAI's gpt-oss-20b, the model processes 7261 input tokens before producing a final response. When browser context search is enabled (using `--tool-browser-search` and `--tool-browser-search-context`), that number decreases to 1443 input tokens, and the response time improves proportionally:
 
@@ -1266,7 +1279,6 @@ When using the browser tool to extract knowledge, be mindful of your context win
 echo "What's avalan's latest release on https://github.com/avalan-ai/avalan/releases" | \
     avalan agent run \
       --engine-uri 'ai://local/openai/gpt-oss-20b' \
-      --backend mlx \
       --tool-format harmony \
       --tool "browser.open" \
       --tool-browser-search \
@@ -1275,7 +1287,8 @@ echo "What's avalan's latest release on https://github.com/avalan-ai/avalan/rele
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
-      --display-tools
+      --display-tools \
+      --backend mlx
 ```
 
 ### Memory toolset (`memory.*`)
@@ -1288,6 +1301,8 @@ Add the memory toolset when agents should consult past conversations or long-liv
 - `memory.read(namespace: str, search: str) -> list[PermanentMemoryPartition]`: Fetch chunks of long-term knowledge inside a namespace for grounding responses.
 - `memory.list(namespace: str) -> list[Memory]`: Enumerate stored memories in a namespace so the agent can decide which entries to reuse.
 - `memory.stores() -> list[PermanentMemoryStore]`: List permanent memory stores available to the agent for broader exploration.
+
+See [Memories](memories) for sample usage.
 
 ### YouTube toolset (`youtube.*`)
 
@@ -1386,7 +1401,8 @@ echo "Tell me what avalan does based on the web page https://raw.githubuserconte
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
       --stats \
       --display-events \
-      --display-tools
+      --display-tools \
+      --backend mlx
 ```
 
 and you'll get the model's interpretation of what Avalan does based on its README.md file on github:
@@ -1443,7 +1459,8 @@ echo "Hi Tool, my name is Leo. Nice to meet you." \
       --run-max-new-tokens 1024 \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-      --stats
+      --stats \
+      --backend mlx
 ```
 
 Enable persistent memory and the `memory.message.read` tool so the agent can recall earlier messages. It should discover that your name is `Leo` from the previous conversation:
@@ -1460,7 +1477,8 @@ echo "Hi Tool, based on our previous conversations, what's my name?" \
       --run-max-new-tokens 1024 \
       --name "Tool" \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-      --stats
+      --stats \
+      --backend mlx
 ```
 
 Agents can use knowledge stores to solve problems. Index the rules of the "Truco" card game directly from a website. The `--dsn` parameter sets the store location and `--namespace` chooses the knowledge namespace:
@@ -1484,7 +1502,6 @@ Create an agent, give it access to the indexed memory store and the `memory` too
 echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | \
   avalan agent run \
     --engine-uri "ai://local/openai/gpt-oss-20b" \
-    --backend mlx \
     --tool-format harmony \
     --tool memory \
     --system "Reasoning: high" \
@@ -1499,25 +1516,29 @@ echo "What does the memory stored in namespace games.cards.truco say about retru
     --run-temperature 0.1 \
     --run-top-p 0.9 \
     --run-top-k 40 \
-    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58"
+    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
+    --backend mlx
 ```
 
 And you should get your answer:
 
 ```text
-<|channel|>analysis<|message|>We need to fetch memory stored in namespace games.cards.truco. Use memory.read.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.read <|constrain|>json<|message|>{"namespace":"games.cards.truco","search":"retrucar"}<|call|><|channel|>analysis<|message|>We have the memory content. We need to answer: "What does the memory stored in namespace games.cards.truco say about retrucar?" Summarize relevant parts. The memory says: In Truco, after a Truco call, the next player can retrucar. Retrucar is a counter-raise. Only the team that has wanted the last bet can retrucar. The team that has retrucado cannot raise again; only the opposing team can. Retrucar is only possible after a "Quiero" response. Also, the team that has wanted the Truco can retrucar at any time. The team that has called Truco cannot raise until the other team raises. So answer accordingly.<|end|><|start|>assistant<|channel|>final<|message|>In the Truco rules stored in the **games.cards.truco** namespace, “retrucar” is described as the **counter‑raise** that a team can make after the opponent has called *Truco* and the other team has answered *“Quiero”*.
+<|channel|>analysis<|message|>The user asks: "What does the memory stored in namespace games.cards.truco say about retrucar?" They want to retrieve memory from namespace games.cards.truco about retrucar. We need to use memory.read function.  Search for "retrucar".<|end|><|start|>assistant<|channel|>commentary to=functions.memory.read <|constrain|>json<|message|>{"namespace":"games.cards.truco","search":"retrucar"}<|call|><|channel|>analysis<|message|>The memory returned a list of strings. We need to extract the relevant part about retrucar. The relevant parts are:
 
-Key points from the memory:
+- "Siempre tiene la potestad de retrucar únicamente **el que ha querido la última apuesta**."
+- "El equipo que ha retrucado ya no puede subir la apuesta, solo podrá hacerlo el equipo contrario, a esto se lo denomina 'tener el quiero'."
+- "El equipo que ha querido el Truco tendrá ahora la posibilidad de retrucar en cualquier momento."
 
-| What the memory says | Explanation |
-|----------------------|-------------|
-| **Retrucar is only possible after a “Quiero”** | The team that has answered *“Quiero”* to the original *Truco* can now raise the stakes again. |
-| **Only the team that has wanted the last bet can retrucar** | The team that just said *“Quiero”* (the “last bet”) is the one that may retrucar. |
-| **The team that has retrucado cannot raise again** | Once a team has retrucado, it cannot raise the bet again; only the opposing team can do so. This is sometimes referred to as “tener el quiero.” |
-| **The team that called the original Truco cannot raise until the other team raises** | After the first *Truco* is called, the calling team must wait for the other team to raise (retrucar) before they can raise again. |
-| **Retrucar is a valid move only when the opponent has said “Quiero”** | If the opponent says anything other than *“Quiero”* (e.g., “sí”, “vemos”), the retrucar is not considered valid. |
+We need to summarize. The user asked: "What does the memory stored in namespace games.cards.truco say about retrucar?" So we should provide the content. Let's produce a concise answer summarizing the memory.<|end|><|start|>assistant<|channel|>final<|message|>In the **games.cards.truco** memory, the rules for **retrucar** are summarized as follows:
 
-So, in short, the memory explains that **retrucar is the act of raising the bet again after the opponent has accepted the original *Truco* call, and it can only be done by the team that has just said “Quiero.”**%
+| What it is | How it works | Who can do it | What happens after |
+|------------|--------------|---------------|--------------------|
+| **Retrucar** | The act of raising the stakes after a *Truco* has been called. | Only the team that has **accepted** the last bet (i.e., said “Quiero”) can retrucar. | The team that retrucado **cannot raise the bet again**; only the opposing team can do so. This state is sometimes called “tener el quiero.” |
+| | | | The team that has just retrucado can no longer raise the stakes until the other side does. |
+| | | | The opposing team, if they want to raise again, must say “Quiero Retruco.” |
+| | | | The team that has already retrucado is then “locked” into the current stake level until the other side raises. |
+
+In short, **retrucar** is a counter‑raise that can only be made by the team that accepted the previous bet, and once it’s done, that team cannot raise the stakes again until the opponent does.%
 ```
 
 PDF files are natively supported by memories. Let's index an arxiv paper (in its PDF format) from September 2025, considerably after the training date of the model we'll later use to query it:
@@ -1537,7 +1558,6 @@ Now let's ask the memory agent about that paper (notice the description added wh
 echo "What papers do you have in memory?" | \
   avalan agent run \
     --engine-uri "ai://local/openai/gpt-oss-20b" \
-    --backend mlx \
     --tool-format harmony \
     --tool memory \
     --system "Reasoning: high" \
@@ -1552,19 +1572,18 @@ echo "What papers do you have in memory?" | \
     --run-temperature 0.1 \
     --run-top-p 0.9 \
     --run-top-k 40 \
-    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58"
+    --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
+    --backend mlx
 ```
 
 And the stored paper is found:
 
 ```text
-<|channel|>analysis<|message|>We need to list papers in memory. We have memory functions. We should call memory.list for namespace "papers" maybe. Let's check memory stores.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.stores <|constrain|>json<|message|>{}<|call|><|channel|>analysis<|message|>We have a memory store "papers.arxiv". Let's list memory in that namespace.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.list<|constrain|>json<|message|>{"namespace":"papers.arxiv"}<|call|><|channel|>analysis<|message|>We have one memory entry: a paper with URL https://arxiv.org/pdf/2509.17325 titled "Generalizable End-to-End Tool-Use RL with Synthetic CodeGym". So we should answer that.<|end|><|start|>assistant<|channel|>final<|message|>I have one paper stored in my memory:
+<|channel|>analysis<|message|>The user asks: "What papers do you have in memory?" They want to know what papers are stored in memory. We need to list the papers. We have memory stores. We can call memory.stores to see available memory stores . Then memory.list for each store. Then memory.read for each paper. But we need to list the papers. The user likely wants a list of paper titles. We can use memory.list to get the list of keys. Then memory.read to get the content. But we just need to list the papers. So we can call memory.stores to get store names. Then for each store, call memory.list. Then compile a list of paper titles. Let's do that.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.stores <|constrain|>json<|message|>{}<|call|><|channel|>analysis<|message|>We have one memory store: "papers.arxiv". Let's list it.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.list<|channel|>commentary <|constrain|>json<|message|>{"namespace":"papers.arxiv"}<|call|><|channel|>analysis<|message|>The list shows two Memory objects, both with the same identifier 'https://arxiv.org/pdf/2509.17325', but with different partitions and created_at times. They both have the title 'Generalizable End-to-End Tool-Use RL with Synthetic CodeGym'. So the only paper in memory is that one. The user asked: "What papers do you have in memory?" So we should answer: "I have one paper: Generalizable End-to-End Tool-Use RL with Synthetic CodeGym (arXiv:2509.17325)". We can mention that it's stored twice with different partitions. Let's respond.<|end|><|start|>assistant<|channel|>final<|message|>I have one paper stored in memory:
 
-| ID | URL | Title | Description |
-|----|-----|-------|-------------|
-| 1 | https://arxiv.org/pdf/2509.17325 | **Generalizable End-to-End Tool-Use RL with Synthetic CodeGym** | Tool‑augmented large language models (LLMs) leverage external tools to solve diverse tasks and interface with the real world. Current training practices largely rely on supervised fine‑tuning (SFT) over static trajectories or reinforcement learning (RL) on narrow tasks, and generalize poorly beyond development settings, leading to brittleness with new tools and unseen workflows. Because code execution reflects many structures of real‑world workflows, coding problems provide a natural basis for building agent training environments. Motivated by this, we introduce CodeGym, a scalable framework that synthesizes diverse, verifiable, and controllable multi‑turn tool‑use environments for agent RL, enabling LLM agents to explore and master various workflows actively. CodeGym rewrites static coding problems into interactive environments by extracting atomic functions or logic into callable tools, yielding verifiable tasks that span various tool‑execution workflows. Models of varying sizes and chain‑of‑thought configurations, trained in CodeGym, exhibit consistent out‑of‑distribution generalizability; for example, Qwen2.5‑32B‑Instruct achieves an absolute accuracy gain of 8.7 points on the OOD benchmark τ‑Bench. These results highlight CodeGym as a step toward scalable general‑purpose RL environments that align with real‑world agent workflows. |
-
-Let me know if you’d like more details about this paper or if you’re looking for something else!
+- **Generalizable End‑to‑End Tool‑Use RL with Synthetic CodeGym**
+  - **Source:** arXiv (https://arxiv.org/pdf/2509.17325)
+  - **Details:** The paper discusses a scalable framework called CodeGym for training large language model agents to use tools in diverse, verifiable, multi‑turn environments. It highlights the generalizability of these agents across out‑of‑distribution benchmarks.%
 ```
 
 ## Agents
@@ -1662,6 +1681,7 @@ avalan agent serve \
     --run-max-new-tokens 1024 \
     --name "Tool" \
     --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+    --backend mlx \
     -vvv
 ```
 
@@ -1727,7 +1747,6 @@ from logging import getLogger
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.server import register_agent_endpoints
 
-
 app = FastAPI()
 logger = getLogger("my-app")
 hub = HuggingfaceHub()
@@ -1760,7 +1779,7 @@ For example, to proxy OpenAI's gpt-4o, do:
 
 ```bash
 avalan agent proxy \
-    --engine-uri "ai://$OPENAI_API_KEY@openai/gpt-4o" \
+    --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
     --run-max-new-tokens 1024 \
     -v
 ```
@@ -1774,14 +1793,16 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
-
 ## Documentation & Resources
 
-- [CLI reference](docs/CLI.md) – exhaustive documentation for every command and flag.
-- [Installation guide](docs/INSTALL.md) – environment preparation and platform-specific tips.
-- [docs/examples](docs/examples/README.md) – runnable scripts that mirror the snippets in this README.
-- [docs/ai_uri.md](docs/ai_uri.md) – the authoritative guide to engine URIs and backend selection.
-- [docs/tutorials](docs/tutorials) – longer-form walkthroughs for advanced workflows.
+- [docs/examples](docs/examples/README.md) – runnable scripts and sample agent
+  configurations.
+- [docs/CLI.md](docs/CLI.md) – exhaustive documentation for commands and flags.
+- [docs/INSTALL.md](docs/INSTALL.md) – platform-specific installation notes.
+- [docs/ai_uri.md](docs/ai_uri.md) – the guide to engine URIs and backend
+  selection.
+- [docs/tutorials](docs/tutorials) – longer walkthroughs for advanced
+  workflows.
 
 ## Community & Support
 
@@ -1791,11 +1812,11 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 
 ## Contributing
 
-We welcome pull requests, issue reports, and new examples.
+We welcome pull requests, issue reports, docs improvements, and new examples.
 
 1. Read the [Code of Conduct](CODE_OF_CONDUCT.md) before you start.
-2. Install the project in editable mode with `poetry install --all-extras` and activate the virtual environment with `poetry shell`.
-3. Run `poetry run pytest -s` and `make lint` before submitting a pull request.
+2. Install the development environment with `poetry install --all-extras --with test`.
+3. Run `make lint`.
+4. Run `poetry run pytest --verbose -s`.
 
 Open a [GitHub issue](https://github.com/avalan-ai/avalan/issues) if you discover bugs or want to propose larger changes.
-

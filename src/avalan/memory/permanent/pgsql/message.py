@@ -1,5 +1,4 @@
-from ....entities import EngineMessage, EngineMessageScored
-from ....memory.partitioner.text import TextPartition
+from ....entities import EngineMessage, TextPartition
 from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageMemory,
@@ -10,27 +9,25 @@ from ....memory.permanent.pgsql import PgsqlMemory
 
 from datetime import datetime, timezone
 from logging import Logger
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from pgvector.psycopg import Vector
 
 
-class PgsqlMessageMemory(
-    PgsqlMemory[PermanentMessage], PermanentMessageMemory
-):
+class PgsqlMessageMemory(PgsqlMemory[EngineMessage], PermanentMessageMemory):
     """PostgreSQL-backed implementation of :class:`PermanentMessageMemory`."""
 
     @classmethod
     async def create_instance(
         cls,
         dsn: str,
-        *args,
         logger: Logger,
         pool_minimum: int = 1,
         pool_maximum: int = 10,
         pool_open: bool = True,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> "PgsqlMessageMemory":
         """Create a memory store backed by a PostgreSQL connection."""
         memory = cls(
             dsn=dsn,
@@ -45,7 +42,7 @@ class PgsqlMessageMemory(
         return memory
 
     async def create_session(
-        self, *args, agent_id: UUID, participant_id: UUID
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         """Create a new session for a participant."""
         now_utc = datetime.now(timezone.utc)
@@ -81,13 +78,12 @@ class PgsqlMessageMemory(
 
     async def continue_session_and_get_id(
         self,
-        *args,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
         """Continue an existing session if it belongs to the participant."""
-        session_id = await self._fetch_field(
+        session_value = await self._fetch_field(
             "id",
             """
             SELECT "sessions"."id"
@@ -99,13 +95,16 @@ class PgsqlMessageMemory(
         """,
             (str(agent_id), str(participant_id), str(session_id)),
         )
-        assert session_id
-        return session_id if isinstance(session_id, UUID) else UUID(session_id)
+        assert session_value
+        return (
+            session_value
+            if isinstance(session_value, UUID)
+            else UUID(session_value)
+        )
 
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *args,
         partitions: list[TextPartition],
     ) -> None:
         """Persist a message and its partitions."""
@@ -197,7 +196,6 @@ class PgsqlMessageMemory(
         self,
         session_id: UUID,
         participant_id: UUID,
-        *args,
         limit: int | None = None,
     ) -> list[EngineMessage]:
         """Retrieve recent messages for a session."""
@@ -231,16 +229,15 @@ class PgsqlMessageMemory(
 
     async def search_messages(
         self,
-        *args,
         agent_id: UUID,
         function: VectorFunction,
-        limit: int | None = None,
         participant_id: UUID,
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
         exclude_session_id: UUID | None,
-    ) -> list[EngineMessageScored]:
+        limit: int | None = None,
+    ) -> list[EngineMessage]:
         """Search messages using a similarity function."""
         assert agent_id and participant_id and search_partitions
         search_function = str(function)
@@ -297,4 +294,4 @@ class PgsqlMessageMemory(
             limit=limit_value,
             scored=True,
         )
-        return engine_messages
+        return cast(list[EngineMessage], engine_messages)

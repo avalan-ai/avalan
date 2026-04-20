@@ -10,47 +10,46 @@ from ...entities import (
     SearchMatch,
     SentenceTransformerModelConfig,
     Similarity,
+    TextPartition,
     Token,
     TokenizerConfig,
     User,
 )
 from ...event import Event, EventStats
-from ...memory.partitioner.text import TextPartition
 from ...memory.permanent import Memory as Memory
 from ...memory.permanent import PermanentMemoryPartition
 
 from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
-from enum import StrEnum
 from logging import Logger
-from typing import Callable, Generator, Literal
+from typing import Any, AsyncGenerator, Callable, Literal, TypeAlias, cast
 from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
 from numpy import ndarray
 from rich.console import RenderableType
 
-Formatter = (
-    Callable[[datetime], str] | Callable[[float], str] | Callable[[int], str]
-)
+Formatter: TypeAlias = Callable[[datetime | float | int], str]
 Formatters = dict[Literal["datetime", "number", "quantity", "size"], Formatter]
-Spinner = Literal["cache_accessing", "connecting", "thinking", "downloading"]
-Data = StrEnum(
-    "Data",
-    {
-        **{field.name: field.name for field in fields(Model)},
-        **{field.name: field.name for field in fields(User)},
-    },
-)
-DataValue = datetime | float | int | str | None
-Stylers = dict[Data, Callable[[DataValue], str]]
+Spinner = Literal[
+    "agent_loading",
+    "cache_accessing",
+    "connecting",
+    "downloading",
+    "thinking",
+    "tool_running",
+]
+Data = str
+DataValue = datetime | float | int | str | UUID | None
+Styler: TypeAlias = Callable[[Data, DataValue, str | None, bool | str], str]
+Stylers = dict[Data, Styler]
 
 
 class Theme(ABC):
-    _all_spinners: dict[Spinner, str]
+    _all_spinners: dict[Spinner, str | None]
     _all_stylers: Stylers
-    _all_styles: dict[Data, str]
+    _all_styles: dict[str, str]
     _icons: dict[Data, str]
     _: Callable[[str], str]
 
@@ -75,7 +74,7 @@ class Theme(ABC):
         return {}
 
     @property
-    def styles(self) -> dict[Data, str]:
+    def styles(self) -> dict[str, str]:
         return {}
 
     @abstractmethod
@@ -95,9 +94,10 @@ class Theme(ABC):
     def agent(
         self,
         agent: Orchestrator,
-        *args,
+        *args: object,
         models: list[Model | str],
-        cans_access: bool | None,
+        cans_access: bool | None = None,
+        can_access: bool | None = None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -127,7 +127,9 @@ class Theme(ABC):
 
     @abstractmethod
     def cache_delete(
-        self, cache_deletion: HubCacheDeletion | None, deleted: bool
+        self,
+        cache_deletion: HubCacheDeletion | None,
+        deleted: bool = False,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -152,7 +154,7 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def download_progress(self) -> tuple[str | RenderableType]:
+    def download_progress(self) -> tuple[str | RenderableType, ...]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -165,12 +167,13 @@ class Theme(ABC):
         events: list[Event],
         *,
         events_limit: int | None = None,
+        height: int | None = None,
         include_tokens: bool = True,
         include_tool_detect: bool = True,
         include_tools: bool = True,
         include_non_tools: bool = True,
         tool_view: bool = False,
-    ) -> RenderableType:
+    ) -> RenderableType | None:
         raise NotImplementedError()
 
     @abstractmethod
@@ -181,8 +184,8 @@ class Theme(ABC):
     def memory_embeddings(
         self,
         input_string: str,
-        embeddings: ndarray,
-        *args,
+        embeddings: ndarray[Any, Any],
+        *args: object,
         total_tokens: int,
         minv: float,
         maxv: float,
@@ -208,14 +211,17 @@ class Theme(ABC):
     def memory_embeddings_search(
         self,
         matches: list[SearchMatch],
-        *args,
+        *args: object,
         match_preview_length: int = 300,
     ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def memory_partitions(
-        self, partitions: list[TextPartition], *args, display_partitions: int
+        self,
+        partitions: list[TextPartition],
+        *args: object,
+        display_partitions: int,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -223,7 +229,7 @@ class Theme(ABC):
     def model(
         self,
         model: Model,
-        *args,
+        *args: object,
         can_access: bool | None = None,
         expand: bool = False,
         summary: bool = False,
@@ -234,8 +240,8 @@ class Theme(ABC):
     def model_display(
         self,
         model_config: ModelConfig | SentenceTransformerModelConfig | None,
-        tokenizer_config: TokenizerConfig,
-        *args,
+        tokenizer_config: TokenizerConfig | None,
+        *args: object,
         is_runnable: bool | None = None,
         summary: bool = False,
     ) -> RenderableType:
@@ -247,12 +253,14 @@ class Theme(ABC):
         participant_id: UUID,
         agent: Orchestrator,
         messages: list[EngineMessage],
-    ):
+    ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
     def saved_tokenizer_files(
-        directory_path: str, total_files: int
+        self,
+        directory_path_or_total: str | int,
+        total_files: int | None = None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -262,7 +270,7 @@ class Theme(ABC):
         participant_id: UUID,
         agent: Orchestrator,
         messages: list[EngineMessageScored],
-    ):
+    ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
@@ -284,8 +292,9 @@ class Theme(ABC):
         dtokens: list[Token],
         added_tokens: list[str] | None,
         special_tokens: list[str] | None,
+        display_details: bool = False,
         current_dtoken: Token | None = None,
-        dtokens_selected: list[Token] = [],
+        dtokens_selected: list[Token] | None = None,
     ) -> RenderableType:
         raise NotImplementedError()
 
@@ -296,7 +305,9 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def display_image_entity(self, ImageEntity) -> RenderableType:
+    def display_image_entity(
+        self, image_entity: ImageEntity
+    ) -> RenderableType:
         raise NotImplementedError()
 
     @abstractmethod
@@ -316,7 +327,7 @@ class Theme(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def tokens(
+    def tokens(
         self,
         model_id: str,
         added_tokens: list[str] | None,
@@ -334,6 +345,7 @@ class Theme(ABC):
         tool_events: list[Event] | None,
         tool_event_calls: list[Event] | None,
         tool_event_results: list[Event] | None,
+        tool_running_spinner: Spinner | None,
         ttft: float,
         ttnt: float | None,
         ttsr: float | None,
@@ -355,7 +367,7 @@ class Theme(ABC):
         limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> Generator[tuple[Token | None, RenderableType], None, None]:
+    ) -> AsyncGenerator[tuple[Token | None, RenderableType], None]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -373,41 +385,62 @@ class Theme(ABC):
         self,
         translator: Callable[[str], str],
         translator_plurals: Callable[[str, str, int], str],
-        formatters: Formatters = {},
-        stylers: Stylers = {},
-        styles: dict[Data, str] = {},
-        spinners: dict[Spinner, str] = {},
-        icons: dict[Data, str] = {},
-        quantity_data: list[str] = [],
-    ):
-        data_keys = list(map(str, Data))
+        formatters: Formatters | None = None,
+        stylers: Stylers | None = None,
+        styles: dict[str, str] | None = None,
+        spinners: dict[Spinner, str] | None = None,
+        icons: dict[str, str] | None = None,
+        quantity_data: list[str] | None = None,
+    ) -> None:
+        data_keys = sorted(
+            set(field.name for field in fields(Model))
+            | set(field.name for field in fields(User))
+            | set(self.icons.keys())
+            | set((icons or {}).keys())
+        )
 
         formatters = {
             **{
-                "datetime": lambda v: naturaltime(v),
-                "number": lambda v: intcomma(v),
-                "quantity": lambda v: intword(v),
-                "size": lambda v: naturalsize(v),
+                "datetime": lambda v: naturaltime(cast(datetime, v)),
+                "number": lambda v: intcomma(cast(float | int, v)),
+                "quantity": lambda v: intword(cast(float | int, v)),
+                "size": lambda v: naturalsize(cast(float | int, v)),
             },
             **self.formatters,
+            **(formatters or {}),
         }
 
         all_icons = {
-            **{data: None for data in data_keys},
+            **{data: "" for data in data_keys},
             **self.icons,
-            **icons,
+            **(icons or {}),
         }
 
-        data_keys.extend(all_icons)
+        data_keys.extend(all_icons.keys())
         data_keys.extend(self.styles.keys())
 
         self._all_spinners = {
-            **{spinner: None for spinner in Spinner.__args__},
-            **self.spinners,
-        }
-        self._all_stylers = {
             **{
-                data: lambda data, value, prefix=None, icon=True: "".join(
+                "agent_loading": None,
+                "cache_accessing": None,
+                "connecting": None,
+                "thinking": None,
+                "downloading": None,
+                "tool_running": None,
+            },
+            **self.spinners,
+            **(spinners or {}),
+        }
+        quantity_keys = quantity_data or self.quantity_data
+
+        def _build_styler(data_key: Data) -> Styler:
+            def _styler(
+                data: Data,
+                value: DataValue,
+                prefix: str | None = None,
+                icon: bool | str = True,
+            ) -> str:
+                return "".join(
                     [
                         prefix or "",
                         (
@@ -420,35 +453,45 @@ class Theme(ABC):
                         ),
                         f"[{data}]",
                         (
-                            formatters["quantity"](value)
-                            if data in quantity_data
+                            formatters["quantity"](cast(float | int, value))
+                            if data_key in quantity_keys
                             else (
-                                formatters["datetime"](value)
+                                formatters["datetime"](
+                                    cast(datetime | float | int, value)
+                                )
                                 if isinstance(value, datetime)
                                 else (
                                     formatters["number"](value)
                                     if isinstance(value, int)
                                     or isinstance(value, float)
-                                    else value
+                                    else str(value)
                                 )
                             )
                         ),
                         f"[/{data}]",
                     ]
                 )
-                for data in data_keys
-            },
+
+            return _styler
+
+        self._all_stylers = {
+            **{data: _build_styler(data) for data in data_keys},
             **self.stylers,
+            **(stylers or {}),
         }
-        self._all_styles = {**{data: "" for data in data_keys}, **self.styles}
+        self._all_styles = {
+            **{data: "" for data in data_keys},
+            **self.styles,
+            **(styles or {}),
+        }
         self._icons = all_icons
         self._ = translator
         self._n = translator_plurals
 
-    def get_styles(self) -> dict[Data, str]:
+    def get_styles(self) -> dict[str, str]:
         return self._all_styles
 
-    def get_spinner(self, spinner_name: str) -> Spinner:
+    def get_spinner(self, spinner_name: Spinner) -> str | None:
         return self._all_spinners[spinner_name]
 
     def __call__(self, item: Model | str) -> RenderableType:
@@ -463,6 +506,6 @@ class Theme(ABC):
     ) -> str:
         return (
             self._all_stylers[data](data, value, prefix, icon)
-            if data in self._all_stylers and self._all_stylers[data]
+            if data in self._all_stylers
             else str(value)
         )

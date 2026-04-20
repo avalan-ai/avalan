@@ -1,11 +1,10 @@
-from ...compat import override
 from ...entities import GenerationSettings, Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
 from ...model.vendor import TextGenerationVendor
 
 from dataclasses import replace
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import Tensor, argmax, inference_mode, softmax
@@ -13,8 +12,10 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     AutoModelForSequenceClassification,
     PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    StoppingCriteria,
 )
-from transformers.generation import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
 
 
@@ -30,23 +31,25 @@ class SequenceClassificationModel(BaseNLPModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id, "A model id is required."
+        settings = cast(Any, self._settings)
         model = AutoModelForSequenceClassification.from_pretrained(
             self._model_id,
-            cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder or "",
-            attn_implementation=self._settings.attention,
-            trust_remote_code=self._settings.trust_remote_code,
-            torch_dtype=Engine.weight(self._settings.weight_type),
-            state_dict=self._settings.state_dict,
-            local_files_only=self._settings.local_files_only,
-            token=self._settings.access_token,
+            cache_dir=settings.cache_dir,
+            subfolder=settings.subfolder or "",
+            attn_implementation=settings.attention,
+            trust_remote_code=settings.trust_remote_code,
+            torch_dtype=Engine.weight(settings.weight_type),
+            state_dict=settings.state_dict,
+            local_files_only=settings.local_files_only,
+            token=settings.access_token,
             device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            tp_plan=Engine._get_tp_plan(settings.parallel),
             distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+                settings.distributed_config
             ),
         )
-        return model
+        return cast(PreTrainedModel, model)
 
     def _tokenize_input(
         self,
@@ -56,6 +59,7 @@ class SequenceClassificationModel(BaseNLPModel):
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
+        **kwargs: object,
     ) -> BatchEncoding:
         assert not system_prompt and not developer_prompt, (
             "Sequence classification model "
@@ -64,11 +68,13 @@ class SequenceClassificationModel(BaseNLPModel):
         )
         _l = self._log
         _l(f"Tokenizing input {input}")
-        inputs = self._tokenizer(input, return_tensors=tensor_format)
-        inputs = inputs.to(self._model.device)
-        return inputs
+        tokenizer = cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast, self._tokenizer
+        )
+        model = cast(PreTrainedModel, self._model)
+        inputs = tokenizer(input, return_tensors=tensor_format)
+        return cast(BatchEncoding, inputs.to(model.device))
 
-    @override
     async def __call__(self, input: Input) -> str:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
@@ -78,13 +84,15 @@ class SequenceClassificationModel(BaseNLPModel):
             f"Model {self._model} can't be executed, it "
             + "needs to be loaded first"
         )
+        model = cast(PreTrainedModel, self._model)
         inputs = self._tokenize_input(input, system_prompt=None, context=None)
         with inference_mode():
-            outputs = self._model(**inputs)
+            outputs = model(**inputs)
             # logits shape (batch_size, num_labels)
             label_probs = softmax(outputs.logits, dim=-1)
-            label_id = argmax(label_probs, dim=-1).item()
-            label = self._model.config.id2label[label_id]
+            label_id = int(argmax(label_probs, dim=-1).item())
+            id_to_label = cast(dict[int, str], model.config.id2label or {})
+            label = id_to_label.get(label_id, str(label_id))
             return label
 
 
@@ -100,23 +108,25 @@ class SequenceToSequenceModel(BaseNLPModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id, "A model id is required."
+        settings = cast(Any, self._settings)
         model = AutoModelForSeq2SeqLM.from_pretrained(
             self._model_id,
-            cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder or "",
-            attn_implementation=self._settings.attention,
-            trust_remote_code=self._settings.trust_remote_code,
-            torch_dtype=Engine.weight(self._settings.weight_type),
-            state_dict=self._settings.state_dict,
-            local_files_only=self._settings.local_files_only,
-            token=self._settings.access_token,
+            cache_dir=settings.cache_dir,
+            subfolder=settings.subfolder or "",
+            attn_implementation=settings.attention,
+            trust_remote_code=settings.trust_remote_code,
+            torch_dtype=Engine.weight(settings.weight_type),
+            state_dict=settings.state_dict,
+            local_files_only=settings.local_files_only,
+            token=settings.access_token,
             device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            tp_plan=Engine._get_tp_plan(settings.parallel),
             distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+                settings.distributed_config
             ),
         )
-        return model
+        return cast(PreTrainedModel, model)
 
     def _tokenize_input(
         self,
@@ -126,6 +136,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
+        **kwargs: object,
     ) -> Tensor:
         assert not system_prompt and not developer_prompt, (
             "SequenceToSequence model "
@@ -134,11 +145,14 @@ class SequenceToSequenceModel(BaseNLPModel):
         )
         _l = self._log
         _l(f"Tokenizing input {input}")
-        inputs = self._tokenizer(input, return_tensors=tensor_format)
-        inputs = inputs.to(self._model.device)
-        return inputs["input_ids"]
+        tokenizer = cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast, self._tokenizer
+        )
+        model = cast(PreTrainedModel, self._model)
+        inputs = tokenizer(input, return_tensors=tensor_format)
+        model_inputs = cast(BatchEncoding, inputs.to(model.device))
+        return model_inputs["input_ids"]
 
-    @override
     async def __call__(
         self,
         input: Input,
@@ -166,11 +180,13 @@ class SequenceToSequenceModel(BaseNLPModel):
             settings,
             stopping_criterias,
         )
-        return self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        return cast(
+            str,
+            self._tokenizer.decode(output_ids[0], skip_special_tokens=True),
+        )
 
 
 class TranslationModel(SequenceToSequenceModel):
-    @override
     async def __call__(
         self,
         input: Input,
@@ -216,8 +232,11 @@ class TranslationModel(SequenceToSequenceModel):
             generation_settings,
             stopping_criterias,
         )
-        text = self._tokenizer.decode(
-            output_ids[0], skip_special_tokens=skip_special_tokens
+        text = cast(
+            str,
+            self._tokenizer.decode(
+                output_ids[0], skip_special_tokens=skip_special_tokens
+            ),
         )
         self._tokenizer.src_lang = previous_language
         return text

@@ -10,7 +10,7 @@ from ..tool.manager import ToolManager
 
 from os import linesep
 from os.path import dirname, join
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from jinja2 import (
@@ -30,7 +30,7 @@ class Renderer:
 
     def __init__(
         self, templates_path: str | None = None, clean_spaces: bool = True
-    ):
+    ) -> None:
         self._clean_spaces = clean_spaces
         self._environment = TemplateEnvironment(
             loader=FileSystemLoader(
@@ -40,7 +40,7 @@ class Renderer:
             lstrip_blocks=True,
         )
 
-    def __call__(self, template_id: str, **kwargs) -> str:
+    def __call__(self, template_id: str, **kwargs: Any) -> str:
         if template_id not in self._templates:
             self._templates[template_id] = self._environment.get_template(
                 template_id
@@ -55,14 +55,13 @@ class Renderer:
     def from_string(
         self,
         template: str,
-        template_vars: dict | None = None,
+        template_vars: dict[str, Any] | None = None,
         encoding: str = "utf-8",
     ) -> str:
-        return (
-            Template(template).render(**template_vars).encode(encoding)
-            if template_vars
-            else template
-        )
+        if not template_vars:
+            return template
+        rendered = Template(template).render(**template_vars)
+        return cast(str, rendered.encode(encoding))
 
 
 class TemplateEngineAgent(EngineAgent):
@@ -77,10 +76,10 @@ class TemplateEngineAgent(EngineAgent):
         model_manager: ModelManager,
         renderer: Renderer,
         engine_uri: EngineUri,
-        *args,
+        *args: object,
         name: str | None = None,
         id: UUID | None = None,
-    ):
+    ) -> None:
         super().__init__(
             model,
             memory,

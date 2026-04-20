@@ -27,7 +27,7 @@ from inspect import iscoroutine
 from json import dumps
 from queue import Queue
 from time import perf_counter
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, cast
 from uuid import UUID
 
 
@@ -35,10 +35,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     """Async iterator handling tool execution during streaming."""
 
     _response: TextGenerationResponse
-    _response_iterator: AsyncIterator[Token | TokenDetail | Event] | None
+    _response_iterator: AsyncIterator[Token | TokenDetail | str] | None
     _engine_agent: EngineAgent
     _operation: AgentOperation
-    _engine_args: dict
+    _engine_args: dict[str, Any]
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
     _calls: Queue[ToolCall]
@@ -61,7 +61,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         response: TextGenerationResponse,
         engine_agent: EngineAgent,
         operation: AgentOperation,
-        engine_args: dict,
+        engine_args: dict[str, Any],
         context: ModelCallContext,
         event_manager: EventManager | None = None,
         tool: ToolManager | None = None,
@@ -131,7 +131,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     def __aiter__(self) -> "OrchestratorResponse":
         if self._event_manager:
             self._response.add_done_callback(self._on_consumed)
-        self._response_iterator = self._response.__aiter__()
+        self._response_iterator = aiter(self._response)
         self._calls = Queue()
         self._parser_queue = Queue()
         self._tool_context = ToolCallContext(
@@ -150,7 +150,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     async def __anext__(self) -> Token | TokenDetail | Event:
         assert self._response_iterator
 
-        if not self._parser_queue.empty():
+        if self._parser_queue and not self._parser_queue.empty():
             return self._parser_queue.get()
 
         if not self._tool_process_events.empty():
@@ -162,9 +162,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if not self._tool_call_events.empty():
             event = self._tool_call_events.get()
             assert event.type == EventType.TOOL_PROCESS
+            assert self._event_manager
             await self._event_manager.trigger(event)
 
-            calls: list[ToolCall] = event.payload or []
+            calls = cast(list[ToolCall], event.payload or [])
             if calls:
                 for call in calls:
                     assert isinstance(call, ToolCall)
@@ -192,7 +193,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 await self._event_manager.trigger(execute_event)
 
             context = ToolCallContext(
-                input=self._tool_context.input,
+                input=self._tool_context.input if self._tool_context else None,
                 agent_id=self._agent_id,
                 participant_id=self._participant_id,
                 session_id=self._session_id,
@@ -236,6 +237,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
             tool_messages = []
             for e in result_events:
+                assert e.payload is not None and "result" in e.payload
                 tool_result = e.payload["result"]
                 tool_output = (
                     tool_result.message
@@ -256,7 +258,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 )
                 tool_result_output = dumps(
                     (
-                        asdict(tool_output)
+                        asdict(cast(Any, tool_output))
                         if is_dataclass(tool_output)
                         else tool_output
                     ),
@@ -293,8 +295,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 or isinstance(self._input, Message)
             )
 
-            messages = list(
-                self._input if isinstance(self._input, list) else [self._input]
+            messages = (
+                cast(list[Message], self._input)
+                if isinstance(self._input, list)
+                else [self._input]
             )
 
             messages.extend(tool_messages)
@@ -307,11 +311,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     "engine_args": self._engine_args,
                 },
             )
+            assert self._event_manager
             await self._event_manager.trigger(event_tool_model_run)
 
-            context = self._make_child_context(messages)
-            inner_response = await self._engine_agent(context)
+            model_context = self._make_child_context(messages)
+            inner_response = await self._engine_agent(model_context)
             assert inner_response
+            assert isinstance(inner_response, TextGenerationResponse)
 
             self._response = inner_response
             self.__aiter__()
@@ -325,6 +331,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     "engine_args": self._engine_args,
                 },
             )
+            assert self._event_manager
             await self._event_manager.trigger(event_tool_model_response)
 
             return event_tool_model_response
@@ -334,7 +341,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if isinstance(token, ToolCallToken) and token.call:
                 event = Event(
                     type=EventType.TOOL_PROCESS,
-                    payload=[token.call],
+                    payload=cast(dict[str, Any], [token.call]),
                     started=perf_counter(),
                 )
                 self._tool_process_events.put(event)
@@ -344,8 +351,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     if isinstance(item, Event):
                         self._tool_process_events.put(item)
                     else:
+                        assert self._parser_queue
                         self._parser_queue.put(item)
-                if not self._parser_queue.empty():
+                if self._parser_queue and not self._parser_queue.empty():
                     return self._parser_queue.get()
             if self._event_manager and not self._finished:
                 self._finished = True
@@ -419,7 +427,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 )
                 self._call_history.append(call)
                 self._tool_context = context
-                results.append(result)
+                if result is not None:
+                    results.append(result)
 
                 if self._event_manager:
                     end = perf_counter()
@@ -492,12 +501,14 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             or isinstance(self._input, Message)
         )
 
-        messages = list(
-            self._input if isinstance(self._input, list) else [self._input]
+        messages = (
+            cast(list[Message], self._input)
+            if isinstance(self._input, list)
+            else [self._input]
         )
         messages.extend(tool_messages)
 
-        self._input = messages
+        self._input = cast(Input, messages)
         self._tool_context = ToolCallContext(
             input=self._input,
             agent_id=self._agent_id,
@@ -514,11 +525,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 "engine_args": self._engine_args,
             },
         )
+        assert self._event_manager
         await self._event_manager.trigger(event_tool_model_run)
 
         context = self._make_child_context(messages)
         response = await self._engine_agent(context)
         assert response
+        assert isinstance(response, TextGenerationResponse)
         return response
 
     async def _emit(
@@ -569,10 +582,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 if it.type == EventType.TOOL_PROCESS:
                     self._tool_process_events.put(it)
                 else:
+                    assert self._parser_queue
                     self._parser_queue.put(it)
             else:
+                assert self._parser_queue
                 self._parser_queue.put(it)
 
+        assert self._parser_queue
         return self._parser_queue.get()
 
     async def _on_consumed(self) -> None:

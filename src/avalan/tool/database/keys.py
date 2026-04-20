@@ -8,6 +8,8 @@ from . import (
     TableKey,
 )
 
+from typing import Any, cast
+
 
 class DatabaseKeysTool(DatabaseTool):
     """List primary and unique keys defined on a table.
@@ -71,12 +73,16 @@ class DatabaseKeysTool(DatabaseTool):
 
         keys: list[TableKey] = []
 
-        pk = (
+        pk = cast(
+            dict[str, Any],
             inspector.get_pk_constraint(actual_table, schema=resolved_schema)
-            or {}
+            or {},
         )
-        pk_columns = tuple(
-            pk.get("constrained_columns") or pk.get("column_names") or []
+        pk_columns = tuple[str, ...](
+            cast(
+                list[str],
+                pk.get("constrained_columns") or pk.get("column_names") or [],
+            )
         )
         if pk_columns:
             keys.append(
@@ -95,11 +101,15 @@ class DatabaseKeysTool(DatabaseTool):
             or []
         )
 
-        for constraint in unique_constraints:
-            columns = tuple(
-                constraint.get("column_names")
-                or constraint.get("constrained_columns")
-                or []
+        for raw_constraint in unique_constraints:
+            constraint = cast(dict[str, Any], raw_constraint)
+            columns = tuple[str, ...](
+                cast(
+                    list[str],
+                    constraint.get("column_names")
+                    or constraint.get("constrained_columns")
+                    or [],
+                )
             )
             if not columns:
                 continue

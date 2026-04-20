@@ -1,4 +1,4 @@
-from .....compat import override
+from .....compat import override as override
 from .....entities import (
     GenerationSettings,
     Input,
@@ -12,14 +12,19 @@ from .....tool.manager import ToolManager
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import replace
+from importlib import import_module
 from logging import Logger, getLogger
-from typing import Literal
+from typing import Any, Literal, Protocol, cast
 
 from diffusers import DiffusionPipeline
-from tiktoken import encoding_for_model, get_encoding
 from torch import Tensor
 from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
+
+
+class _TiktokenEncoding(Protocol):
+    def encode(self, text: str) -> list[int]:
+        """Encode the provided text into token IDs."""
 
 
 class TextGenerationVendorModel(TextGenerationModel, ABC):
@@ -64,9 +69,21 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         input: Input,
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
-        **kwargs,
+        **kwargs: object,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         raise NotImplementedError()
+
+    @staticmethod
+    def _resolve_encoding(
+        model_id: str, default_model: str
+    ) -> _TiktokenEncoding:
+        tiktoken = import_module("tiktoken")
+        encoding_for_model = cast(Any, getattr(tiktoken, "encoding_for_model"))
+        get_encoding = cast(Any, getattr(tiktoken, "get_encoding"))
+        try:
+            return cast(_TiktokenEncoding, encoding_for_model(model_id))
+        except KeyError:
+            return cast(_TiktokenEncoding, get_encoding(default_model))
 
     def input_token_count(
         self,
@@ -74,10 +91,10 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
     ) -> int:
-        try:
-            encoding = encoding_for_model(self._model_id)
-        except KeyError:
-            encoding = get_encoding(self._TIKTOKEN_DEFAULT_MODEL)
+        encoding = self._resolve_encoding(
+            self._model_id or self._TIKTOKEN_DEFAULT_MODEL,
+            self._TIKTOKEN_DEFAULT_MODEL,
+        )
 
         messages = self._messages(
             input, system_prompt, developer_prompt, tool=None
@@ -85,10 +102,13 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
 
         total_tokens = 0
         for message in messages:
-            total_tokens += len(encoding.encode(message.content or ""))
+            if isinstance(message.content, str):
+                content = message.content
+            else:
+                content = str(message.content or "")
+            total_tokens += len(encoding.encode(content))
         return total_tokens
 
-    @override
     async def __call__(
         self,
         input: Input,
@@ -99,14 +119,14 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         messages = self._messages(input, system_prompt, developer_prompt, tool)
+        gen_settings = settings or GenerationSettings()
         streamer = await self._model(
             self._model_id,
             messages,
-            settings,
+            gen_settings,
             tool=tool,
-            use_async_generator=settings.use_async_generator,
+            use_async_generator=gen_settings.use_async_generator,
         )
-        gen_settings = settings or GenerationSettings()
         return TextGenerationResponse(
             streamer,
             logger=self._logger,

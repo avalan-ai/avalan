@@ -9,7 +9,7 @@ from avalan.secrets.keyring import KeyringSecrets
 class KeyringModuleTest(TestCase):
     def test_methods(self) -> None:
         ring = MagicMock()
-        with patch("avalan.secrets.keyring.get_keyring", return_value=ring):
+        with patch("avalan.secrets.keyring._get_keyring", return_value=ring):
             sec = KeyringSecrets()
         ring.get_password.return_value = "val"
         self.assertEqual(sec.read("k"), "val")

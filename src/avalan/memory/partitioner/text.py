@@ -1,11 +1,10 @@
-from ...compat import override
 from ...entities import TextPartition
 from ...filters import Partitioner
 from ...model.nlp.sentence import SentenceTransformerModel
 
+from collections.abc import Callable
 from logging import Logger
 from re import split
-from typing import Callable
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
@@ -23,11 +22,10 @@ class TextPartitioner(Partitioner):
         self,
         model: SentenceTransformerModel,
         logger: Logger,
-        *args,
         max_tokens: int,
         overlap_size: int,
         window_size: int,
-    ):
+    ) -> None:
         assert model and model.tokenizer
         self._model = model
         self._tokenizer = model.tokenizer
@@ -40,7 +38,6 @@ class TextPartitioner(Partitioner):
 
     def configure(
         self,
-        *args,
         max_tokens: int,
         overlap_size: int,
         window_size: int,
@@ -60,12 +57,10 @@ class TextPartitioner(Partitioner):
         self._window_size = window_size
         self._overlap_size = overlap_size
 
-    @override
     @property
-    def sentence_model(self) -> Callable:
+    def sentence_model(self) -> Callable[[str], object]:
         return self._model
 
-    @override
     async def __call__(
         self,
         text: str,

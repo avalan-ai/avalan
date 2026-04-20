@@ -5,6 +5,8 @@ from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
+from transformers.tokenization_utils_base import BatchEncoding
+
 import avalan.model  # noqa: F401
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.response.text import TextGenerationResponse
@@ -121,6 +123,32 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
                 True,
             )
             make_sampler.assert_called_once_with(temp=0.5, top_p=0.1, top_k=2)
+        self.assertEqual(prompt, "prompt")
+        self.assertEqual(sampler, make_sampler.return_value)
+
+    def test_get_sampler_and_prompt_batch_encoding(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "prompt"
+        inputs = BatchEncoding({"input_ids": [[1]]})
+        settings = GenerationSettings(
+            temperature=0.3,
+            top_p=0.2,
+            top_k=4,
+        )
+        with patch("avalan.model.nlp.text.mlxlm.make_sampler") as make_sampler:
+            sampler, prompt = model._get_sampler_and_prompt(
+                inputs,
+                settings,
+                False,
+            )
+            make_sampler.assert_called_once_with(temp=0.3, top_p=0.2, top_k=4)
         self.assertEqual(prompt, "prompt")
         self.assertEqual(sampler, make_sampler.return_value)
 

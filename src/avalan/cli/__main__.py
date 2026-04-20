@@ -23,6 +23,7 @@ from ..cli.commands.model import (
     model_uninstall,
 )
 from ..cli.commands.tokenizer import tokenize
+from ..cli.theme import Theme
 from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
@@ -51,7 +52,12 @@ from ..utils import logger_replace
 
 import gettext
 import sys
-from argparse import ArgumentParser, Namespace, _SubParsersAction
+from argparse import (
+    ArgumentParser,
+    Namespace,
+    _ArgumentGroup,
+    _SubParsersAction,
+)
 from asyncio import run as run_in_loop
 from asyncio.exceptions import CancelledError
 from dataclasses import fields
@@ -73,7 +79,7 @@ from os.path import join
 from pathlib import Path
 from subprocess import run
 from tomllib import load as toml_load
-from typing import Optional, get_args, get_origin
+from typing import Callable, Protocol, TextIO, cast, get_args, get_origin
 from typing import get_args as get_type_args
 from uuid import uuid4
 from warnings import filterwarnings
@@ -81,15 +87,28 @@ from warnings import filterwarnings
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
-from rich.theme import Theme
+from rich.theme import Theme as RichTheme
 from torch.cuda import device_count, is_available, set_device
 from torch.distributed import destroy_process_group
-from transformers.utils import (
-    is_flash_attn_2_available,
-    is_torch_flex_attn_available,
+from transformers import utils as transformer_utils
+from transformers.utils import logging as hf_logging
+
+
+class Translator(Protocol):
+    """Represent the translation helpers needed by the CLI."""
+
+    def gettext(self, message: str) -> str: ...
+
+    def ngettext(self, singular: str, plural: str, n: int) -> str: ...
+
+
+is_flash_attn_2_available = cast(
+    Callable[[], bool],
+    getattr(transformer_utils, "is_flash_attn_2_available", lambda: False),
 )
-from transformers.utils import (
-    logging as hf_logging,
+is_torch_flex_attn_available = cast(
+    Callable[[], bool],
+    getattr(transformer_utils, "is_torch_flex_attn_available", lambda: False),
 )
 
 
@@ -107,6 +126,7 @@ class CLI:
 
         cache_dir = HuggingfaceHub.DEFAULT_CACHE_DIR
         default_locale, _ = getlocale()
+        default_locale = default_locale or "en_US"
         default_locales_path = join(
             Path(__file__).resolve().parents[3], "locale"
         )
@@ -141,7 +161,7 @@ class CLI:
         cache_dir: str,
         default_locales_path: str,
         default_locale: str,
-    ):
+    ) -> ArgumentParser:
         default_attention = CLI._default_attention(default_device)
         global_parser = ArgumentParser(add_help=False)
         global_parser.add_argument(
@@ -1637,7 +1657,7 @@ class CLI:
     @staticmethod
     def _get_translator(
         app_name: str, locales_path: str, locale: str
-    ) -> object:
+    ) -> Translator:
         """Return translation object for ``locale`` or ``gettext`` fallback."""
         try:
             return translation(
@@ -1763,7 +1783,7 @@ class CLI:
     @staticmethod
     def _add_agent_settings_arguments(
         parser: ArgumentParser,
-    ) -> ArgumentParser:
+    ) -> _ArgumentGroup:
         group = parser.add_argument_group("inline agent settings")
         group.add_argument("--engine-uri", type=str, help="Agent engine URI")
         group.add_argument("--name", type=str, help="Agent name")
@@ -1885,7 +1905,7 @@ class CLI:
     @staticmethod
     def _add_tool_settings_arguments(
         parser: ArgumentParser, *, prefix: str, settings_cls: type
-    ) -> ArgumentParser:
+    ) -> _ArgumentGroup:
         """Add dataclass based tool options to ``parser``."""
         group = parser.add_argument_group(f"{prefix} tool settings")
 
@@ -1899,7 +1919,7 @@ class CLI:
             if origin is not None:
                 if origin is list or origin is tuple:
                     ftype = args[0]
-                elif origin is Optional or type(None) in args:
+                elif type(None) in args:
                     ftype = next((a for a in args if a is not type(None)), str)
                 elif origin.__name__ == "Literal":
                     ftype = type(args[0])
@@ -1922,23 +1942,26 @@ class CLI:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
         if command == "model" and (args.model_command or "display") == "run":
+            assert isinstance(args.model, str)
             engine_uri = ModelManager.parse_uri(args.model)
-            return engine_uri.is_local
+            return bool(engine_uri.is_local)
         if command == "agent" and (
             (args.agent_command or "run") in {"run", "serve", "proxy"}
         ):
             engine = getattr(args, "engine_uri", None)
             if engine:
+                assert isinstance(engine, str)
                 engine_uri = ModelManager.parse_uri(engine)
-                return engine_uri.is_local
+                return bool(engine_uri.is_local)
             specs = getattr(args, "specifications_file", None)
             if specs:
                 with open(specs, "rb") as file:
                     config = toml_load(file)
                 engine_uri_str = config.get("engine", {}).get("uri")
                 if engine_uri_str:
+                    assert isinstance(engine_uri_str, str)
                     engine_uri = ModelManager.parse_uri(engine_uri_str)
-                    return engine_uri.is_local
+                    return bool(engine_uri.is_local)
         return True
 
     async def __call__(self) -> None:
@@ -1979,8 +2002,12 @@ class CLI:
         assert self._logger is not None and isinstance(self._logger, Logger)
         theme = FancyTheme(translator.gettext, translator.ngettext)
         _ = theme._
+        rich_theme_styles = {
+            str(data_key): style
+            for data_key, style in theme.get_styles().items()
+        }
         console = Console(
-            theme=Theme(styles=theme.get_styles()), record=args.record
+            theme=RichTheme(styles=rich_theme_styles), record=args.record
         )
 
         if args.help_full:
@@ -1991,14 +2018,14 @@ class CLI:
 
         if requires_token:
             if not access_token:
-                prompt_kwargs = {}
+                prompt_stream: TextIO | None = None
                 if has_input(console):
                     try:
-                        prompt_kwargs["stream"] = open(args.tty)
+                        prompt_stream = open(args.tty)
                     except OSError:
                         pass
                 access_token = Prompt.ask(
-                    theme.ask_access_token(), **prompt_kwargs
+                    theme.ask_access_token(), stream=prompt_stream
                 )
             assert access_token
         else:
@@ -2097,7 +2124,7 @@ class CLI:
         ):
             with console.status(
                 theme.logging_in(hub.domain),
-                spinner=(theme.get_spinner("connecting")),
+                spinner=(theme.get_spinner("connecting") or "dots"),
                 refresh_per_second=self._REFRESH_RATE,
             ):
                 hub.login()
@@ -2108,7 +2135,7 @@ class CLI:
                 theme.welcome(
                     self._site.geturl(),
                     self._name,
-                    self._version,
+                    str(self._version),
                     self._license,
                     user,
                 )
@@ -2220,6 +2247,7 @@ class CLI:
 
 def main() -> None:
     """Entry point for the ``avalan`` CLI."""
+    environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     basicConfig(
         level=INFO,
         format="%(message)s",

@@ -740,3 +740,19 @@ class CliMainFunctionTestCase(TestCase):
             main()
         run.assert_called_once()
         cli.assert_called_once()
+
+    def test_main_sets_tokenizers_parallelism_default(self):
+        with (
+            patch.dict("avalan.cli.__main__.environ", {}, clear=True),
+            patch("avalan.cli.__main__.run_in_loop"),
+            patch("avalan.cli.__main__.CLI"),
+        ):
+            from avalan.cli.__main__ import main
+
+            main()
+            self.assertEqual(
+                sys.modules["avalan.cli.__main__"].environ[
+                    "TOKENIZERS_PARALLELISM"
+                ],
+                "false",
+            )

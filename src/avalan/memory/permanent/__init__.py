@@ -1,23 +1,23 @@
-from ...compat import override
 from ...entities import (
     EngineMessage,
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    TextPartition,
 )
 from ...memory import MemoryStore as MemoryStoreBase
 from ...memory import MessageMemory
-from ...memory.partitioner.text import TextPartition
 from ...model.nlp.sentence import SentenceTransformerModel
 
 from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from numpy import ndarray
+from numpy.typing import NDArray
 
 Order = Literal["asc", "desc"]
 
@@ -67,7 +67,7 @@ class Memory:
     identifier: str
     data: str | None = None
     partitions: int
-    symbols: dict | None
+    symbols: dict[str, Any] | None
     created_at: datetime
     title: str | None = None
     description: str | None = None
@@ -103,7 +103,7 @@ class PermanentMessagePartition:
     message_id: UUID
     partition: int
     data: str
-    embedding: ndarray
+    embedding: NDArray[Any]
     created_at: datetime
 
 
@@ -113,7 +113,7 @@ class PermanentMemoryPartition:
     memory_id: UUID
     partition: int
     data: str
-    embedding: ndarray
+    embedding: NDArray[Any]
     created_at: datetime
 
 
@@ -122,8 +122,8 @@ class Hyperedge:
     id: UUID
     relation: str
     surface_text: str
-    embedding: ndarray
-    symbols: dict | None = None
+    embedding: NDArray[Any]
+    symbols: dict[str, Any] | None = None
     created_at: datetime
 
 
@@ -140,8 +140,8 @@ class Entity:
     id: UUID
     name: str
     type: str | None = None
-    embedding: ndarray
-    symbols: dict | None = None
+    embedding: NDArray[Any]
+    symbols: dict[str, Any] | None = None
     participant_id: UUID | None = None
     namespace: str | None = None
     created_at: datetime
@@ -157,13 +157,13 @@ class HyperedgeEntity:
 
 class PermanentMessageMemory(MessageMemory):
     _session_id: UUID | None = None
-    _sentence_model: SentenceTransformerModel
+    _sentence_model: SentenceTransformerModel | None
 
     def __init__(
         self,
-        sentence_model: SentenceTransformerModel,
-        **kwargs,
-    ):
+        sentence_model: SentenceTransformerModel | None,
+        **kwargs: Any,
+    ) -> None:
         self._sentence_model = sentence_model
         super().__init__(**kwargs)
 
@@ -175,7 +175,7 @@ class PermanentMessageMemory(MessageMemory):
     def session_id(self) -> UUID | None:
         return self._session_id
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         raise NotImplementedError()
 
     async def reset_session(
@@ -197,8 +197,9 @@ class PermanentMessageMemory(MessageMemory):
             session_id=session_id,
         )
 
-    @override
-    def append(self, data: EngineMessage) -> None:
+    async def append(self, agent_id: UUID, data: EngineMessage) -> None:
+        del agent_id
+        del data
         raise NotImplementedError()
 
     @abstractmethod
@@ -210,7 +211,6 @@ class PermanentMessageMemory(MessageMemory):
     @abstractmethod
     async def continue_session_and_get_id(
         self,
-        *args,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
@@ -221,7 +221,6 @@ class PermanentMessageMemory(MessageMemory):
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *args,
         partitions: list[TextPartition],
     ) -> None:
         raise NotImplementedError()
@@ -231,7 +230,6 @@ class PermanentMessageMemory(MessageMemory):
         self,
         session_id: UUID,
         participant_id: UUID,
-        *args,
         limit: int | None = None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
@@ -239,15 +237,14 @@ class PermanentMessageMemory(MessageMemory):
     @abstractmethod
     async def search_messages(
         self,
-        *args,
         agent_id: UUID,
         function: VectorFunction,
-        limit: int | None = None,
         participant_id: UUID,
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
         exclude_session_id: UUID | None,
+        limit: int | None = None,
     ) -> list[EngineMessage]:
         raise NotImplementedError()
 
@@ -267,7 +264,7 @@ class PermanentMessageMemory(MessageMemory):
             content.text
             if isinstance(content, MessageContentText)
             else (
-                content.image_url
+                str(content.image_url)
                 if isinstance(content, MessageContentImage)
                 else str(content)
             )
@@ -317,19 +314,22 @@ class PermanentMessageMemory(MessageMemory):
 
 
 class PermanentMemory(MemoryStoreBase[Memory]):
-    _sentence_model: SentenceTransformerModel
+    _sentence_model: SentenceTransformerModel | None
 
     def __init__(
-        self, sentence_model: SentenceTransformerModel, **kwargs
+        self,
+        sentence_model: SentenceTransformerModel | None,
+        **kwargs: Any,
     ) -> None:
         self._sentence_model = sentence_model
         super().__init__(**kwargs)
 
-    @override
-    def append(self, data: EngineMessage) -> None:
+    async def append(self, agent_id: UUID, data: Memory) -> None:
+        del agent_id
+        del data
         raise NotImplementedError()
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         raise NotImplementedError()
 
     @abstractmethod
@@ -337,12 +337,11 @@ class PermanentMemory(MemoryStoreBase[Memory]):
         self,
         namespace: str,
         participant_id: UUID,
-        *args,
         memory_type: MemoryType,
         data: str,
         identifier: str,
         partitions: list[TextPartition],
-        symbols: dict | None = None,
+        symbols: Mapping[str, Any] | None = None,
         model_id: str | None = None,
         title: str | None = None,
         description: str | None = None,
@@ -352,7 +351,6 @@ class PermanentMemory(MemoryStoreBase[Memory]):
     @abstractmethod
     async def search_memories(
         self,
-        *args,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -380,7 +378,7 @@ class PermanentMemory(MemoryStoreBase[Memory]):
         partitions: list[TextPartition],
         *,
         created_at: datetime,
-        symbols: dict | None = None,
+        symbols: Mapping[str, Any] | None = None,
         model_id: str | None = None,
         memory_id: UUID | None = None,
         title: str | None = None,
@@ -397,7 +395,7 @@ class PermanentMemory(MemoryStoreBase[Memory]):
             identifier=identifier,
             data=data,
             partitions=len(partitions),
-            symbols=symbols,
+            symbols=dict(symbols) if symbols is not None else None,
             created_at=created_at,
             title=title,
             description=description,
@@ -417,10 +415,10 @@ class PermanentMemory(MemoryStoreBase[Memory]):
 
 
 class RecordNotFoundException(Exception):
-    def __init__(self):
+    def __init__(self) -> None:
         super(RecordNotFoundException, self).__init__("record_not_found")
 
 
 class RecordNotSavedException(Exception):
-    def __init__(self):
+    def __init__(self) -> None:
         super(RecordNotSavedException, self).__init__("record_not_saved")

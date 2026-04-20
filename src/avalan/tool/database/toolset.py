@@ -1,25 +1,22 @@
 from ...compat import override
 from .. import ToolSet
-from . import (
-    AsyncEngine,
-    DatabaseCountTool,
-    DatabaseInspectTool,
-    DatabaseKeysTool,
-    DatabaseKillTool,
-    DatabaseLocksTool,
-    DatabasePlanTool,
-    DatabaseRelationshipsTool,
-    DatabaseRunTool,
-    DatabaseSampleTool,
-    DatabaseSizeTool,
-    DatabaseTablesTool,
-    DatabaseTasksTool,
-    DatabaseTool,
-    IdentifierCaseNormalizer,
-)
+from . import AsyncEngine, DatabaseTool, IdentifierCaseNormalizer
+from .count import DatabaseCountTool
+from .inspect import DatabaseInspectTool
+from .keys import DatabaseKeysTool
+from .kill import DatabaseKillTool
+from .locks import DatabaseLocksTool
+from .plan import DatabasePlanTool
+from .relationships import DatabaseRelationshipsTool
+from .run import DatabaseRunTool
+from .sample import DatabaseSampleTool
 from .settings import DatabaseToolSettings
+from .size import DatabaseSizeTool
+from .tables import DatabaseTablesTool
+from .tasks import DatabaseTasksTool
 
 from contextlib import AsyncExitStack
+from types import TracebackType
 
 
 class DatabaseToolSet(ToolSet):
@@ -132,8 +129,8 @@ class DatabaseToolSet(ToolSet):
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        tb: BaseException | None,
-    ) -> bool:
+        tb: TracebackType | None,
+    ) -> bool | None:
         try:
             if self._engine is not None:
                 await self._engine.dispose()

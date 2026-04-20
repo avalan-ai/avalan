@@ -1,6 +1,5 @@
 from ..entities import (
     EngineSettings,
-    Input,
     ModelConfig,
     ParallelStrategy,
     SentenceTransformerModelConfig,
@@ -8,7 +7,6 @@ from ..entities import (
     WeightType,
 )
 from ..model import (
-    EngineResponse,
     ModelAlreadyLoadedException,
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException,
@@ -20,7 +18,7 @@ from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import (
@@ -57,19 +55,18 @@ class Engine(ABC):
     _logger: Logger
     _model_id: str | None
     _settings: EngineSettings
-    _transformers_logging_logger: Logger
-    _transformers_logging_level: int
+    _transformers_logging_logger: Logger | None
+    _transformers_logging_level: int | None
     _loaded_model: bool = False
     _loaded_tokenizer: bool = False
-    _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
-    _model: (
-        PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None
-    ) = None
+    _tokenizer: Any = None
+    _model: Any = None
     _config: ModelConfig | SentenceTransformerModelConfig | None = None
     _tokenizer_config: TokenizerConfig | None = None
     _parameter_types: set[str] | None = None
     _parameter_count: int | None = None
     _exit_stack: AsyncExitStack = AsyncExitStack()
+    _pending_exit_task: asyncio.Task[None] | None = None
 
     DTYPE_SIZES: dict[str, int] = {
         "bool": 1,
@@ -109,7 +106,7 @@ class Engine(ABC):
             return None
         if isinstance(parallel, dict):
             return {k: v.value for k, v in parallel.items()}
-        return parallel.value
+        return str(parallel.value)
 
     @staticmethod
     def _get_distributed_config(
@@ -117,7 +114,7 @@ class Engine(ABC):
     ) -> dict[str, object] | None:
         if distributed_config is None:
             return None
-        config = {"enable_expert_parallel": False}
+        config: dict[str, object] = {"enable_expert_parallel": False}
         config.update(distributed_config)
         return config
 
@@ -147,6 +144,7 @@ class Engine(ABC):
         self._transformers_logging_level = (
             self._transformers_logging_logger.level
             if self._settings.change_transformers_logging_level
+            and self._transformers_logging_logger is not None
             else None
         )
 
@@ -176,7 +174,7 @@ class Engine(ABC):
     @property
     def model(
         self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline | None:
+    ) -> Any:
         return self._model
 
     @property
@@ -203,16 +201,18 @@ class Engine(ABC):
     def tokenizer(
         self,
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast | None:
-        return self._tokenizer
+        return cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast | None,
+            self._tokenizer,
+        )
 
-    @abstractmethod
-    async def __call__(self, input: Input, **kwargs) -> EngineResponse:
+    async def __call__(self, *args: object, **kwargs: object) -> object:
         raise NotImplementedError()
 
     @abstractmethod
     def _load_model(
         self,
-    ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+    ) -> Any:
         raise NotImplementedError()
 
     def is_runnable(self, device: str | None = None) -> bool | None:
@@ -239,19 +239,24 @@ class Engine(ABC):
     def _load_tokenizer_with_tokens(
         self, tokenizer_name_or_path: str | None, use_fast: bool = True
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
+        uses_tokenizer = (
+            self.uses_tokenizer()
+            if callable(self.uses_tokenizer)
+            else self.uses_tokenizer
+        )
         raise (
             TokenizerNotSupportedException()
-            if not self.uses_tokenizer()
+            if not uses_tokenizer
             else NotImplementedError()
         )
 
-    def __enter__(self):
+    def __enter__(self) -> "Engine":
         _l = self._log
         if (
             self._transformers_logging_logger
             and self._transformers_logging_level != ERROR
         ):
-            transformers_logging.set_verbosity_error()
+            cast(Any, transformers_logging.set_verbosity_error)()
             _l(
                 "Changed transformers logging level from %s to %s",
                 self._transformers_logging_level,
@@ -264,7 +269,7 @@ class Engine(ABC):
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
-    ):
+    ) -> Literal[False]:
         _l = self._log
         if (
             self._transformers_logging_logger
@@ -283,11 +288,23 @@ class Engine(ABC):
         except RuntimeError:
             asyncio.run(self._exit_stack.aclose())
         else:
-            loop.create_task(self._exit_stack.aclose())
+            self._pending_exit_task = loop.create_task(
+                self._exit_stack.aclose()
+            )
         return False
 
+    async def wait_closed(self) -> None:
+        """Wait for any asynchronous close task scheduled by __exit__."""
+        if self._pending_exit_task is None:
+            return
+        await self._pending_exit_task
+        self._pending_exit_task = None
+
     def _load(
-        self, *args, load_tokenizer: bool, tokenizer_name_or_path: str | None
+        self,
+        *args: object,
+        load_tokenizer: bool,
+        tokenizer_name_or_path: str | None,
     ) -> None:
         if (
             self._settings.auto_load_model
@@ -305,7 +322,7 @@ class Engine(ABC):
         _l = self._log
 
         if self._settings.disable_loading_progress_bar:
-            disable_progress_bar()
+            cast(Any, disable_progress_bar)()
 
         if load_tokenizer and self._model_id:
             _l(
@@ -340,7 +357,8 @@ class Engine(ABC):
                 self._model, TextGenerationVendor
             ):
                 if find_spec("mlx.nn"):
-                    from mlx.nn import Module
+                    mlx_module = __import__("mlx.nn", fromlist=["Module"])
+                    Module = getattr(mlx_module, "Module")
 
                     is_mlx = isinstance(self._model, Module)
 
@@ -420,7 +438,9 @@ class Engine(ABC):
             if mc:
                 config = ModelConfig(
                     architectures=getattr(mc, "architectures", None),
-                    attribute_map=getattr(mc, "attribute_map", None),
+                    attribute_map=cast(
+                        dict[str, str], getattr(mc, "attribute_map", {})
+                    ),
                     bos_token_id=getattr(mc, "bos_token_id", None),
                     bos_token=(
                         self._tokenizer.decode(mc.bos_token_id)
@@ -447,10 +467,13 @@ class Engine(ABC):
                         if hasattr(mc, "hidden_sizes")
                         else None
                     ),
-                    keys_to_ignore_at_inference=(
-                        mc.keys_to_ignore_at_inference
-                        if hasattr(mc, "keys_to_ignore_at_inference")
-                        else None
+                    keys_to_ignore_at_inference=cast(
+                        list[str],
+                        (
+                            mc.keys_to_ignore_at_inference
+                            if hasattr(mc, "keys_to_ignore_at_inference")
+                            else []
+                        ),
                     ),
                     loss_type=(
                         mc.loss_type if hasattr(mc, "loss_type") else None
@@ -472,9 +495,11 @@ class Engine(ABC):
                         else None
                     ),
                     num_labels=getattr(mc, "num_labels", None),
-                    output_attentions=getattr(mc, "output_attentions", None),
-                    output_hidden_states=getattr(
-                        mc, "output_hidden_states", None
+                    output_attentions=cast(
+                        bool, getattr(mc, "output_attentions", False)
+                    ),
+                    output_hidden_states=cast(
+                        bool, getattr(mc, "output_hidden_states", False)
                     ),
                     pad_token_id=getattr(mc, "pad_token_id", None),
                     pad_token=(
@@ -498,10 +523,13 @@ class Engine(ABC):
                     task_specific_params=getattr(
                         mc, "task_specific_params", None
                     ),
-                    torch_dtype=(
-                        str(mc.torch_dtype)
-                        if hasattr(mc, "torch_dtype")
-                        else None
+                    torch_dtype=cast(
+                        dtype,
+                        (
+                            mc.torch_dtype
+                            if hasattr(mc, "torch_dtype") and mc.torch_dtype
+                            else float32
+                        ),
                     ),
                     vocab_size=(
                         mc.vocab_size if hasattr(mc, "vocab_size") else None
@@ -514,7 +542,7 @@ class Engine(ABC):
                     backend=self._model.backend,
                     similarity_function=self._model.similarity_fn_name,
                     truncate_dimension=self._model.truncate_dim,
-                    transformer_model_config=config,
+                    transformer_model_config=cast(ModelConfig, config),
                 )
 
             self._config = config
@@ -531,7 +559,7 @@ class Engine(ABC):
             )
 
         if self._settings.disable_loading_progress_bar:
-            enable_progress_bar()
+            cast(Any, enable_progress_bar)()
 
     @staticmethod
     def get_default_device() -> str:
@@ -552,13 +580,13 @@ class Engine(ABC):
                 if ":" in device
                 else cuda.current_device()
             )
-            return cuda.get_device_properties(index).total_memory
+            return int(cuda.get_device_properties(index).total_memory)
 
         from psutil import virtual_memory
 
         if device == "mps" and mps.is_available():
-            return virtual_memory().total
-        return virtual_memory().total
+            return int(virtual_memory().total)
+        return int(virtual_memory().total)
 
     def _log(self, message: str, *args: object) -> None:
         self._logger.debug(

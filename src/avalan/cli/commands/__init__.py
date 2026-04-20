@@ -1,8 +1,46 @@
-from ...entities import EngineUri, Modality
+from ...entities import (
+    AttentionImplementation,
+    Backend,
+    EngineUri,
+    Modality,
+    ParallelStrategy,
+    TextGenerationLoaderClass,
+    WeightType,
+)
 from ...model.hubs.huggingface import HuggingfaceHub
 
 from argparse import Namespace
 from logging import Logger
+from typing import TypedDict
+
+
+class ModelSettings(TypedDict):
+    """Define typed settings used by ModelManager.load."""
+
+    base_url: str | None
+    engine_uri: EngineUri
+    attention: AttentionImplementation | None
+    output_hidden_states: bool | None
+    device: str | None
+    disable_loading_progress_bar: bool
+    modality: Modality
+    loader_class: TextGenerationLoaderClass | None
+    backend: Backend
+    low_cpu_mem_usage: bool
+    quiet: bool
+    revision: str | None
+    parallel: ParallelStrategy | None
+    base_model_id: str | None
+    checkpoint: str | None
+    refiner_model_id: str | None
+    upsampler_model_id: str | None
+    special_tokens: list[str] | None
+    tokenizer: str | None
+    tokens: list[str] | None
+    subfolder: str | None
+    tokenizer_subfolder: str | None
+    trust_remote_code: bool | None
+    weight_type: WeightType
 
 
 def get_model_settings(
@@ -11,7 +49,7 @@ def get_model_settings(
     logger: Logger,
     engine_uri: EngineUri,
     modality: Modality | None = None,
-) -> dict:
+) -> ModelSettings:
     """Return settings used to load a model."""
     modality = (
         modality

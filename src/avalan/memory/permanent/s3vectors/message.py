@@ -4,12 +4,13 @@ from ....entities import (
     EngineMessageScored,
     Message,
     MessageRole,
+    TextPartition,
 )
-from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     PermanentMessageMemory,
     VectorFunction,
 )
+from ....model.nlp.sentence import SentenceTransformerModel
 from . import S3VectorsMemory
 
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
         *,
         client: Any,
         logger: Logger,
-        sentence_model: Any | None = None,
+        sentence_model: SentenceTransformerModel | None = None,
     ) -> None:
         S3VectorsMemory.__init__(
             self,
@@ -38,7 +39,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
             client=client,
             logger=logger,
         )
-        PermanentMessageMemory.__init__(self, sentence_model=sentence_model)  # type: ignore[arg-type]
+        PermanentMessageMemory.__init__(self, sentence_model=sentence_model)
 
     @classmethod
     async def create_instance(
@@ -48,7 +49,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
         *,
         logger: Logger,
         aws_client: Any | None = None,
-        sentence_model: Any | None = None,
+        sentence_model: SentenceTransformerModel | None = None,
     ) -> "S3VectorsMessageMemory":
         if aws_client is None:
             aws_client = boto_client("s3vectors")
@@ -61,23 +62,25 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
         )
 
     async def create_session(
-        self, *, agent_id: UUID, participant_id: UUID
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
+        del agent_id
+        del participant_id
         return uuid4()
 
     async def continue_session_and_get_id(
         self,
-        *,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
     ) -> UUID:
+        del agent_id
+        del participant_id
         return session_id
 
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *,
         partitions: list[TextPartition],
     ) -> None:
         assert engine_message and partitions
@@ -131,9 +134,9 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
         self,
         session_id: UUID,
         participant_id: UUID,
-        *,
         limit: int | None = None,
     ) -> list[EngineMessage]:
+        del participant_id
         prefix = f"{self._collection}/{session_id}/"
         response = await self._call_client(
             self._client.list_objects_v2, Bucket=self._bucket, Prefix=prefix
@@ -159,16 +162,17 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
 
     async def search_messages(
         self,
-        *,
         agent_id: UUID,
         function: VectorFunction,
-        limit: int | None = None,
         participant_id: UUID,
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
         exclude_session_id: UUID | None,
-    ) -> list[EngineMessageScored]:
+        limit: int | None = None,
+    ) -> list[EngineMessage]:
+        del search_user_messages
+        del exclude_session_id
         assert agent_id and participant_id and search_partitions
         query = search_partitions[0].embeddings.tolist()
         filt = {
@@ -186,7 +190,7 @@ class S3VectorsMessageMemory(S3VectorsMemory, PermanentMessageMemory):
             Function=str(function),
             Filter=filt,
         )
-        results: list[EngineMessageScored] = []
+        results: list[EngineMessage] = []
         for item in response.get("Items", []):
             msg_id = item.get("Metadata", {}).get("message_id")
             if not msg_id:

@@ -1,9 +1,8 @@
-from ...compat import override
 from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import inference_mode
@@ -15,25 +14,32 @@ from transformers import (
 
 
 class AudioClassificationModel(BaseAudioModel):
-    _extractor: AutoFeatureExtractor
+    _extractor: Any
 
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._extractor = AutoFeatureExtractor.from_pretrained(self._model_id)
-        model = AutoModelForAudioClassification.from_pretrained(
-            self._model_id,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
-            ),
-            subfolder=self._settings.subfolder or "",
-        ).to(self._device)
+        self._extractor = cast(
+            Any,
+            cast(Any, AutoFeatureExtractor).from_pretrained(self._model_id),
+        )
+        model = cast(
+            PreTrainedModel,
+            cast(Any, AutoModelForAudioClassification)
+            .from_pretrained(
+                self._model_id,
+                device_map=self._device,
+                tp_plan=Engine._get_tp_plan(self._settings.parallel),
+                distributed_config=Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
+                subfolder=self._settings.subfolder or "",
+            )
+            .to(self._device),
+        )
 
         return model
 
-    @override
     async def __call__(
         self,
         path: str,

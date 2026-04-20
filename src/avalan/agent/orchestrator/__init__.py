@@ -6,6 +6,7 @@ from ...entities import (
     Message,
     MessageContentText,
     MessageRole,
+    TransformerEngineSettings,
 )
 from ...entities import Modality as Modality
 from ...event import Event, EventType
@@ -14,24 +15,29 @@ from ...memory.manager import MemoryManager
 from ...model.call import ModelCallContext
 from ...model.engine import Engine
 from ...model.manager import ModelManager
+from ...model.response.text import TextGenerationResponse
 from ...tool.manager import ToolManager
 from .. import (
     AgentOperation,
-    EngineEnvironment,
     InputType,
     NoOperationAvailableException,
     Specification,
+)
+from .. import (
+    EngineEnvironment as EngineEnvironment,
 )
 from ..engine import EngineAgent
 from ..renderer import Renderer, TemplateEngineAgent
 from .response.orchestrator_response import OrchestratorResponse
 
+import asyncio
 from contextlib import ExitStack
 from dataclasses import asdict
+from inspect import isawaitable
 from json import dumps
 from logging import Logger
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 
@@ -46,11 +52,12 @@ class Orchestrator:
     _memory: MemoryManager
     _tool: ToolManager
     _event_manager: EventManager
-    _engine_agents: dict[EngineEnvironment, EngineAgent] = {}
+    _engine_agents: dict[str, EngineAgent] = {}
     _engines_stack: ExitStack = ExitStack()
+    _engines: list[Engine]
     _operation_step: int | None = None
     _model_ids: set[str] = set()
-    _call_options: dict | None = None
+    _call_options: dict[str, Any] | None = None
     _last_engine_agent: EngineAgent | None = None
     _exit_memory: bool = True
     _user: str | None
@@ -65,7 +72,7 @@ class Orchestrator:
         event_manager: EventManager,
         operations: AgentOperation | list[AgentOperation],
         *,
-        call_options: dict | None = None,
+        call_options: dict[str, Any] | None = None,
         exit_memory: bool = True,
         id: UUID | None = None,
         name: str | None = None,
@@ -92,6 +99,9 @@ class Orchestrator:
         self._call_options = call_options
         self._user = user
         self._user_template = user_template
+        self._engines = []
+        self._engine_agents = {}
+        self._model_ids = set()
 
     @property
     def engine_agent(self) -> EngineAgent | None:
@@ -109,11 +119,18 @@ class Orchestrator:
 
     @property
     def input_token_count(self) -> int | None:
-        return (
-            self._last_engine_agent.input_token_count
-            if self._last_engine_agent
-            else None
-        )
+        if not self._last_engine_agent:
+            return None
+        count = self._last_engine_agent.input_token_count
+        if callable(count):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(count())
+            if self._last_engine_agent.output:
+                return self._last_engine_agent.output.input_token_count
+            return None
+        return cast(int | None, count)
 
     @property
     def is_finished(self) -> bool:
@@ -151,7 +168,9 @@ class Orchestrator:
         """Return the renderer used by the orchestrator."""
         return self._renderer
 
-    async def __call__(self, input: Input, **kwargs) -> OrchestratorResponse:
+    async def __call__(
+        self, input: Input, **kwargs: Any
+    ) -> OrchestratorResponse:
         tool_confirm = kwargs.pop("tool_confirm", None)
         if self.is_finished:
             self._operation_step = 0
@@ -170,8 +189,13 @@ class Orchestrator:
         # Load engine agent
         operation = self._operations[self._operation_step]
         environment_hash = dumps(asdict(operation.environment))
-        assert self._engine_agents and environment_hash in self._engine_agents
-        engine_agent = self._engine_agents[environment_hash]
+        engine_agents = self._engine_agents
+        if (
+            not engine_agents or environment_hash not in engine_agents
+        ) and Orchestrator._engine_agents:
+            engine_agents = Orchestrator._engine_agents
+        assert engine_agents and environment_hash in engine_agents
+        engine_agent = engine_agents[environment_hash]
 
         # Adapt tool manager
         if (
@@ -218,7 +242,7 @@ class Orchestrator:
             participant_id=participant_id,
             session_id=session_id,
         )
-        result = await engine_agent(context)
+        result = cast(TextGenerationResponse, await engine_agent(context))
         self._logger.info(
             "Engine agent %s responded to orchestrator", str(engine_agent)
         )
@@ -256,24 +280,27 @@ class Orchestrator:
             session_id=session_id,
         )
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "Orchestrator":
         first_agent: TemplateEngineAgent | None = None
         model_ids: list[str] = []
         for operation in self._operations:
             # Load engine with environment
             environment = operation.environment
             environment_hash = dumps(asdict(environment))
-            if environment_hash not in self._engine_agents:
+            engine_agents = self._engine_agents
+            if environment_hash not in engine_agents:
+                assert environment.engine_uri.model_id is not None
                 model_ids.append(environment.engine_uri.model_id)
                 engine = self._model_manager.load_engine(
                     environment.engine_uri,
-                    environment.settings,
+                    cast(TransformerEngineSettings, environment.settings),
                     operation.modality,
                 )
                 if not engine:
                     raise NotImplementedError()
 
                 self._engines_stack.enter_context(engine)
+                self._engines.append(engine)
                 agent = TemplateEngineAgent(
                     engine,
                     self._memory,
@@ -285,7 +312,7 @@ class Orchestrator:
                     name=self._name,
                     id=self._id,
                 )
-                self._engine_agents[environment_hash] = agent
+                engine_agents[environment_hash] = agent
                 if not first_agent:
                     first_agent = agent
 
@@ -298,13 +325,21 @@ class Orchestrator:
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any | None,
-    ):
+    ) -> bool | None:
         await self.sync_messages()
 
         if self._exit_memory:
             self._memory.__exit__(exc_type, exc_value, traceback)
 
-        return self._engines_stack.__exit__(exc_type, exc_value, traceback)
+        result = self._engines_stack.__exit__(exc_type, exc_value, traceback)
+        for engine in self._engines:
+            wait_closed = getattr(engine, "wait_closed", None)
+            if wait_closed:
+                close_result = wait_closed()
+                if isawaitable(close_result):
+                    await close_result
+        self._engines.clear()
+        return result
 
     async def sync_messages(self) -> None:
         if self._last_engine_agent:
@@ -312,7 +347,7 @@ class Orchestrator:
 
     def _input_messages(
         self, specification: Specification, input: Input
-    ) -> Message | list[Message]:
+    ) -> Input:
         input_type = specification.input_type
         assert (
             input_type != InputType.TEXT
@@ -363,13 +398,14 @@ class Orchestrator:
                     self._renderer(self._user_template, **render_vars)
                     if self._user_template
                     else self._renderer.from_string(
-                        self._user, template_vars=render_vars
+                        self._user or "", template_vars=render_vars
                     )
                 )
                 message = Message(role=message.role, content=content)
 
                 if isinstance(input, list):
-                    input[-1] = message
+                    assert input and isinstance(input[-1], Message)
+                    cast(list[Message], input)[-1] = message
                 else:
                     input = message
 

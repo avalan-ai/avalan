@@ -1,16 +1,19 @@
-from ...compat import override
 from ...entities import Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
 from ...model.vendor import TextGenerationVendor
 
 from contextlib import nullcontext
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
-from numpy import ndarray
+from numpy.typing import NDArray
 from torch import inference_mode
-from transformers import PreTrainedModel
+from transformers import (
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
 from transformers.tokenization_utils_base import BatchEncoding
 
 
@@ -28,7 +31,10 @@ class SentenceTransformerModel(BaseNLPModel):
         return True
 
     def token_count(self, input: str) -> int:
-        token_ids = self.tokenizer.encode(input, add_special_tokens=False)
+        tokenizer = cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast, self.tokenizer
+        )
+        token_ids = tokenizer.encode(input, add_special_tokens=False)
         return len(token_ids)
 
     def _load_model(
@@ -36,30 +42,32 @@ class SentenceTransformerModel(BaseNLPModel):
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         from sentence_transformers import SentenceTransformer
 
+        settings = cast(Any, self._settings)
+        assert self._model_id, "A model id is required."
         model = SentenceTransformer(
             self._model_id,
-            cache_folder=self._settings.cache_dir,
+            cache_folder=settings.cache_dir,
             device=self._device,
-            trust_remote_code=self._settings.trust_remote_code,
-            local_files_only=self._settings.local_files_only,
-            token=self._settings.access_token,
+            trust_remote_code=settings.trust_remote_code,
+            local_files_only=settings.local_files_only,
+            token=settings.access_token,
             model_kwargs={
-                "attn_implementation": self._settings.attention,
-                "torch_dtype": Engine.weight(self._settings.weight_type),
+                "attn_implementation": settings.attention,
+                "torch_dtype": Engine.weight(settings.weight_type),
                 "low_cpu_mem_usage": (
-                    True if self._device else self._settings.low_cpu_mem_usage
+                    True if self._device else settings.low_cpu_mem_usage
                 ),
                 "device_map": self._device,
-                "tp_plan": Engine._get_tp_plan(self._settings.parallel),
+                "tp_plan": Engine._get_tp_plan(settings.parallel),
                 "distributed_config": Engine._get_distributed_config(
-                    self._settings.distributed_config
+                    settings.distributed_config
                 ),
             },
             backend="torch",
             similarity_fn_name=None,
             truncate_dim=None,
         )
-        return model
+        return cast(PreTrainedModel | TextGenerationVendor, model)
 
     def _tokenize_input(
         self,
@@ -69,24 +77,28 @@ class SentenceTransformerModel(BaseNLPModel):
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
+        **kwargs: object,
     ) -> BatchEncoding:
         raise NotImplementedError()
 
-    @override
     async def __call__(
-        self, input: Input, *args, enable_gradient_calculation: bool = False
-    ) -> ndarray:
+        self,
+        input: Input,
+        *args: object,
+        enable_gradient_calculation: bool = False,
+    ) -> NDArray[Any]:
         assert self._model, (
             f"Model {self._model} can't be executed, it "
             + "needs to be loaded first"
         )
         assert isinstance(input, str) or isinstance(input, list)
+        model = cast(Any, self._model)
         with (
             inference_mode()
             if not enable_gradient_calculation
             else nullcontext()
         ):
-            embeddings = self._model.encode(
+            embeddings = model.encode(
                 input, convert_to_numpy=True, show_progress_bar=False
             )
-        return embeddings
+        return cast(NDArray[Any], embeddings)

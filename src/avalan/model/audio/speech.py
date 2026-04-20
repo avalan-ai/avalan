@@ -1,9 +1,8 @@
-from ...compat import override
 from ...model.audio import BaseAudioModel
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import inference_mode
@@ -15,29 +14,34 @@ from transformers import (
 
 
 class TextToSpeechModel(BaseAudioModel):
-    _processor: AutoProcessor
+    _processor: Any
 
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoProcessor.from_pretrained(
-            self._model_id,
-            trust_remote_code=self._settings.trust_remote_code,
-            subfolder=self._settings.tokenizer_subfolder or "",
-        )
-        model = DiaForConditionalGeneration.from_pretrained(
-            self._model_id,
-            trust_remote_code=self._settings.trust_remote_code,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+        self._processor = cast(
+            Any,
+            cast(Any, AutoProcessor).from_pretrained(
+                self._model_id,
+                trust_remote_code=self._settings.trust_remote_code,
+                subfolder=self._settings.tokenizer_subfolder or "",
             ),
-            subfolder=self._settings.subfolder or "",
+        )
+        model = cast(
+            PreTrainedModel,
+            cast(Any, DiaForConditionalGeneration).from_pretrained(
+                self._model_id,
+                trust_remote_code=self._settings.trust_remote_code,
+                device_map=self._device,
+                tp_plan=Engine._get_tp_plan(self._settings.parallel),
+                distributed_config=Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
+                subfolder=self._settings.subfolder or "",
+            ),
         )
         return model
 
-    @override
     async def __call__(
         self,
         prompt: str,

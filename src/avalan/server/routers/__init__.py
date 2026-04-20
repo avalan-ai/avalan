@@ -1,4 +1,7 @@
 from ...agent.orchestrator import Orchestrator
+from ...agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
+)
 from ...entities import (
     GenerationSettings,
     Message,
@@ -11,20 +14,35 @@ from ...entities import (
 from ...entities import (
     ToolCallToken as ToolCallToken,
 )
-from ...server.entities import ChatCompletionRequest, ContentImage, ContentText
+from ...server.entities import (
+    ChatCompletionRequest,
+    ContentImage,
+    ContentText,
+    ResponsesRequest,
+)
 
 from logging import Logger
 from time import time
+from typing import TypeAlias, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
 
+MessageContentInput: TypeAlias = (
+    str | ContentImage | ContentText | list[ContentImage | ContentText]
+)
+MessageContentOutput: TypeAlias = (
+    MessageContentText
+    | MessageContentImage
+    | list[MessageContentText | MessageContentImage]
+)
+
 
 async def orchestrate(
-    request: ChatCompletionRequest,
+    request: ChatCompletionRequest | ResponsesRequest,
     logger: Logger,
     orchestrator: Orchestrator,
-):
+) -> tuple[OrchestratorResponse, str, int]:
     messages = [
         Message(role=req.role, content=to_message_content(req.content))
         for req in request.messages
@@ -40,7 +58,7 @@ async def orchestrate(
     timestamp = int(time())
 
     settings = GenerationSettings(
-        use_async_generator=request.stream,
+        use_async_generator=bool(request.stream),
         temperature=request.temperature,
         max_new_tokens=request.max_tokens,
         stop_strings=request.stop,
@@ -56,15 +74,17 @@ async def orchestrate(
     )
 
     response = await orchestrator(messages, settings=settings)
-    return response, response_id, timestamp
+    return response, str(response_id), timestamp
 
 
-def to_message_content(item):
+def to_message_content(item: MessageContentInput) -> MessageContentOutput:
     if isinstance(item, list):
         return [
-            to_message_content(i)
+            cast(
+                MessageContentText | MessageContentImage, to_message_content(i)
+            )
             for i in item
-            if isinstance(i, (ContentImage, ContentText, str))
+            if isinstance(i, (ContentImage, ContentText))
         ]
     if isinstance(item, ContentImage):
         return MessageContentImage(type=item.type, image_url=item.image_url)

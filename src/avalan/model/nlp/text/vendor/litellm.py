@@ -1,10 +1,9 @@
-from .....compat import override
 from .....entities import GenerationSettings, Message, Token, TokenDetail
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 import litellm
 from diffusers import DiffusionPipeline
@@ -12,18 +11,18 @@ from transformers import PreTrainedModel
 
 
 class LiteLLMStream(TextGenerationVendorStream):
-    def __init__(self, stream: AsyncIterator):
-        super().__init__(stream.__aiter__())
+    def __init__(self, stream: AsyncIterator[Any]) -> None:
+        super().__init__(stream)
 
     async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
-        choice = None
         if isinstance(chunk, dict):
             choice = chunk.get("choices", [{}])[0]
             delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
             text = delta.get("content", "")
         else:
-            choice = chunk.choices[0]
+            dynamic_chunk = cast(Any, chunk)
+            choice = dynamic_chunk.choices[0]
             delta = getattr(choice, "delta", None)
             text = getattr(delta, "content", "") if delta else ""
         return text
@@ -39,7 +38,6 @@ class LiteLLMClient(TextGenerationVendor):
         self._api_key = api_key
         self._base_url = base_url or "http://localhost:4000"
 
-    @override
     async def __call__(
         self,
         model_id: str,
@@ -50,7 +48,7 @@ class LiteLLMClient(TextGenerationVendor):
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
         template_messages = self._template_messages(messages)
-        kwargs = dict(
+        kwargs: dict[str, Any] = dict(
             model=model_id,
             messages=template_messages,
             api_key=self._api_key,
@@ -62,7 +60,7 @@ class LiteLLMClient(TextGenerationVendor):
         if use_async_generator:
             return LiteLLMStream(result)
 
-        async def single_gen():
+        async def single_gen() -> AsyncIterator[Token | TokenDetail | str]:
             if isinstance(result, dict):
                 yield result["choices"][0]["message"]["content"]
             else:

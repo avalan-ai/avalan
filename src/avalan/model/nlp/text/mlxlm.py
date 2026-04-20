@@ -1,7 +1,8 @@
-from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
+    Token,
+    TokenDetail,
     TransformerEngineSettings,
 )
 from ....model.response.text import TextGenerationResponse
@@ -12,11 +13,12 @@ from .generation import TextGenerationModel
 from asyncio import to_thread
 from dataclasses import asdict, replace
 from logging import Logger, getLogger
-from typing import AsyncGenerator, Callable, Literal
+from typing import Any, AsyncGenerator, Callable, Iterator, Literal, cast
 
-from mlx_lm import generate, load, stream_generate
+import mlx_lm
 from mlx_lm.sample_utils import make_sampler
 from torch import Tensor
+from transformers.tokenization_utils_base import BatchEncoding
 
 
 class MlxLmStream(TextGenerationVendorStream):
@@ -24,8 +26,19 @@ class MlxLmStream(TextGenerationVendorStream):
 
     _SENTINEL = object()
 
-    def __init__(self, generator):
-        super().__init__(generator)
+    def __init__(self, generator: Iterator[object]) -> None:
+        async def _generator() -> (
+            AsyncGenerator[Token | TokenDetail | str, None]
+        ):
+            for item in generator:
+                if isinstance(item, (Token, TokenDetail, str)):
+                    yield item
+                    continue
+                text = getattr(item, "text", None)
+                if isinstance(text, str):
+                    yield text
+
+        super().__init__(_generator())
         self._iterator = generator
 
     async def __anext__(self) -> str:
@@ -33,7 +46,12 @@ class MlxLmStream(TextGenerationVendorStream):
         chunk = await to_thread(next, self._iterator, sentinel)
         if chunk is sentinel:
             raise StopAsyncIteration
-        return chunk
+        if isinstance(chunk, str):
+            return chunk
+        if isinstance(chunk, (Token, TokenDetail)):
+            return chunk.token
+        text = getattr(chunk, "text", None)
+        return text if isinstance(text, str) else ""
 
 
 class MlxLmModel(TextGenerationModel):
@@ -52,22 +70,29 @@ class MlxLmModel(TextGenerationModel):
     def supports_sample_generation(self) -> bool:
         return False
 
-    def _load_model(self):
-        model, tokenizer = load(self._model_id)
+    def _load_model(self) -> Any:
+        assert self._model_id, "A model id is required."
+        load_fn = cast(
+            Callable[[str], tuple[Any, Any]], getattr(mlx_lm, "load")
+        )
+        model, tokenizer = load_fn(self._model_id)
         self._tokenizer = tokenizer
         self._loaded_tokenizer = True
         return model
 
     async def _stream_generator(
         self,
-        inputs: dict[str, Tensor] | Tensor,
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> AsyncGenerator[str, None]:
         sampler, prompt = self._get_sampler_and_prompt(
             inputs, settings, skip_special_tokens
         )
-        iterator = stream_generate(
+        stream_generate_fn = cast(
+            Callable[..., Iterator[object]], getattr(mlx_lm, "stream_generate")
+        )
+        iterator = stream_generate_fn(
             self._model,
             self._tokenizer,
             prompt,
@@ -76,18 +101,22 @@ class MlxLmModel(TextGenerationModel):
         )
         stream = MlxLmStream(iter(iterator))
         async for chunk in stream:
-            yield chunk.text
+            if isinstance(chunk, str):
+                yield chunk
+            elif isinstance(chunk, (Token, TokenDetail)):
+                yield chunk.token
 
     def _string_output(
         self,
-        inputs: dict[str, Tensor] | Tensor,
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> str:
         sampler, prompt = self._get_sampler_and_prompt(
             inputs, settings, skip_special_tokens
         )
-        return generate(
+        generate_fn = cast(Callable[..., str], getattr(mlx_lm, "generate"))
+        return generate_fn(
             self._model,
             self._tokenizer,
             prompt,
@@ -95,7 +124,6 @@ class MlxLmModel(TextGenerationModel):
             max_tokens=settings.max_new_tokens,
         )
 
-    @override
     async def __call__(
         self,
         input: Input,
@@ -137,19 +165,21 @@ class MlxLmModel(TextGenerationModel):
 
     def _get_sampler_and_prompt(
         self,
-        inputs: dict[str, Tensor] | Tensor,
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
-    ) -> tuple[Callable, str]:
-        sampler_settings = {
-            "temp": settings.temperature,
-            "top_p": settings.top_p,
-            "top_k": settings.top_k,
-        }
-        sampler_settings = {
-            k: v for k, v in sampler_settings.items() if v is not None
-        }
-        sampler = make_sampler(**sampler_settings)
+    ) -> tuple[Callable[..., Any], str]:
+        sampler = make_sampler(
+            temp=(
+                settings.temperature
+                if settings.temperature is not None
+                else 0.0
+            ),
+            top_p=settings.top_p if settings.top_p is not None else 1.0,
+            top_k=settings.top_k if settings.top_k is not None else 0,
+        )
+        if not isinstance(inputs, (dict, BatchEncoding)):
+            raise ValueError("Expected tokenized inputs to be a mapping.")
         prompt = self._tokenizer.decode(
             inputs["input_ids"][0],
             skip_special_tokens=skip_special_tokens,

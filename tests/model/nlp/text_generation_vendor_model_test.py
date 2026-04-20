@@ -76,6 +76,38 @@ class InputTokenCountTestCase(TestCase):
         )
         self.model = DummyVendorModel("m", self.settings, logger=getLogger())
 
+    def test_resolve_encoding_with_model_specific_encoding(self):
+        tiktoken = MagicMock()
+        encoding = MagicMock()
+        tiktoken.encoding_for_model.return_value = encoding
+
+        with patch(
+            "avalan.model.nlp.text.vendor.import_module",
+            return_value=tiktoken,
+        ) as import_module_mock:
+            resolved = self.model._resolve_encoding("m", "cl100k_base")
+
+        import_module_mock.assert_called_once_with("tiktoken")
+        tiktoken.encoding_for_model.assert_called_once_with("m")
+        tiktoken.get_encoding.assert_not_called()
+        self.assertIs(resolved, encoding)
+
+    def test_resolve_encoding_falls_back_to_default_encoding(self):
+        tiktoken = MagicMock()
+        encoding = MagicMock()
+        tiktoken.encoding_for_model.side_effect = KeyError("missing")
+        tiktoken.get_encoding.return_value = encoding
+
+        with patch(
+            "avalan.model.nlp.text.vendor.import_module",
+            return_value=tiktoken,
+        ):
+            resolved = self.model._resolve_encoding("m", "cl100k_base")
+
+        tiktoken.encoding_for_model.assert_called_once_with("m")
+        tiktoken.get_encoding.assert_called_once_with("cl100k_base")
+        self.assertIs(resolved, encoding)
+
     def test_input_token_count_with_model_encoding(self):
         encoding = MagicMock()
         encoding.encode.side_effect = lambda text: list(text)
@@ -83,37 +115,38 @@ class InputTokenCountTestCase(TestCase):
             Message(role=MessageRole.USER, content="hi"),
             Message(role=MessageRole.USER, content="there"),
         ]
-        with (
-            patch(
-                "avalan.model.nlp.text.vendor.encoding_for_model",
-                return_value=encoding,
-            ) as efm,
-            patch("avalan.model.nlp.text.vendor.get_encoding") as ge,
-        ):
+        with patch.object(
+            self.model, "_resolve_encoding", return_value=encoding
+        ) as resolve:
             self.model._messages = MagicMock(return_value=messages)
             count = self.model.input_token_count("in")
-        efm.assert_called_once_with("m")
-        ge.assert_not_called()
+        resolve.assert_called_once_with("m", "cl100k_base")
         self.assertEqual(count, len("hi") + len("there"))
 
     def test_input_token_count_fallback_encoding(self):
         encoding = MagicMock()
         encoding.encode.side_effect = lambda text: list(text)
         messages = [Message(role=MessageRole.USER, content="a")]
-        with (
-            patch(
-                "avalan.model.nlp.text.vendor.encoding_for_model",
-                side_effect=KeyError,
-            ),
-            patch(
-                "avalan.model.nlp.text.vendor.get_encoding",
-                return_value=encoding,
-            ) as ge,
-        ):
+        with patch.object(
+            self.model, "_resolve_encoding", return_value=encoding
+        ) as resolve:
             self.model._messages = MagicMock(return_value=messages)
             count = self.model.input_token_count("in")
-        ge.assert_called_once()
+        resolve.assert_called_once_with("m", "cl100k_base")
         self.assertEqual(count, 1)
+
+    def test_input_token_count_without_model_id_uses_default_encoding(self):
+        model = DummyVendorModel("", self.settings, logger=getLogger())
+        encoding = MagicMock()
+        encoding.encode.side_effect = lambda text: list(text)
+        messages = [Message(role=MessageRole.USER, content="abc")]
+        with patch.object(
+            model, "_resolve_encoding", return_value=encoding
+        ) as resolve:
+            model._messages = MagicMock(return_value=messages)
+            count = model.input_token_count("in")
+        resolve.assert_called_once_with("cl100k_base", "cl100k_base")
+        self.assertEqual(count, 3)
 
 
 class CallTestCase(IsolatedAsyncioTestCase):

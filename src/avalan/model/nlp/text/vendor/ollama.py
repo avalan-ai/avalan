@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -11,28 +10,37 @@ from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from logging import Logger, getLogger
-from typing import AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator, cast
 
 try:
     from ollama import AsyncClient
-except Exception:  # pragma: no cover - ollama may not be installed
+except ImportError:  # pragma: no cover - ollama may not be installed
     AsyncClient = None
 
 
 class OllamaStream(TextGenerationVendorStream):
-    def __init__(self, stream: AsyncIterator[dict]):
-        super().__init__(stream)
+    def __init__(self, stream: AsyncIterator[dict[str, Any]]) -> None:
+        super().__init__(
+            cast(AsyncIterator[Token | TokenDetail | str], stream)
+        )
 
     async def __anext__(self) -> Token | TokenDetail | str:
         chunk = await self._generator.__anext__()
-        message = chunk.get("message", {}) if isinstance(chunk, dict) else {}
-        return message.get("content", "")
+        message: dict[str, Any]
+        if isinstance(chunk, dict):
+            chunk_message = chunk.get("message", {})
+            message = chunk_message if isinstance(chunk_message, dict) else {}
+        else:
+            message = {}
+        content = message.get("content", "")
+        return content if isinstance(content, str) else str(content)
 
 
 class OllamaClient(TextGenerationVendor):
-    _client: AsyncClient
+    _client: Any
 
     def __init__(self, base_url: str | None = None):
         assert AsyncClient, "ollama is not available"
@@ -40,7 +48,6 @@ class OllamaClient(TextGenerationVendor):
             AsyncClient(host=base_url) if base_url else AsyncClient()
         )
 
-    @override
     async def __call__(
         self,
         model_id: str,
@@ -57,7 +64,7 @@ class OllamaClient(TextGenerationVendor):
                 messages=template_messages,
                 stream=True,
             )
-            return OllamaStream(stream)
+            return OllamaStream(cast(AsyncIterator[dict[str, Any]], stream))
         else:
             response = await self._client.chat(
                 model=model_id,
@@ -65,8 +72,11 @@ class OllamaClient(TextGenerationVendor):
                 stream=False,
             )
 
-            async def single_gen():
-                yield response["message"]["content"]
+            async def single_gen() -> (
+                AsyncGenerator[Token | TokenDetail | str, None]
+            ):
+                content = response["message"]["content"]
+                yield content if isinstance(content, str) else str(content)
 
             return single_gen()
 
@@ -77,10 +87,12 @@ class OllamaModel(TextGenerationVendorModel):
         model_id: str,
         settings: TransformerEngineSettings | None = None,
         logger: Logger = getLogger(__name__),
+        exit_stack: AsyncExitStack | None = None,
     ) -> None:
+        _ = exit_stack
         settings = settings or TransformerEngineSettings()
         settings = replace(settings, enable_eval=False)
         TextGenerationModel.__init__(self, model_id, settings, logger)
 
-    def _load_model(self):
+    def _load_model(self) -> TextGenerationVendor:
         return OllamaClient(base_url=self._settings.base_url)

@@ -4,7 +4,9 @@ from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, call, patch
 
+import numpy as np
 from diffusers import AnimateDiffPipeline, DiffusionPipeline
+from PIL import Image
 
 from avalan.entities import (
     BetaSchedule,
@@ -23,6 +25,7 @@ class TextToAnimationModelInstantiationTestCase(TestCase):
         with (
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
+            patch("avalan.model.engine.find_spec", return_value=None),
             patch(
                 "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
@@ -71,6 +74,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
+            patch("avalan.model.engine.find_spec", return_value=None),
             patch(
                 "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
@@ -102,7 +106,10 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
             pipe_instance.to.return_value = pipe_instance
             pipe_instance.scheduler = MagicMock(config="cfg")
             output = MagicMock()
-            output.frames = [["frame"]]
+            output.frames = np.array(
+                [[[[[0.25, 0.5, 0.75]]]]],
+                dtype=np.float32,
+            )
             pipe_instance.return_value = output
             pipe_mock.return_value = pipe_instance
 
@@ -129,13 +136,19 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
                             timestep_spacing=spacing,
                         )
                         self.assertEqual(result, path)
-                        export_mock.assert_called_with(output.frames[0], path)
+                        exported_frames, exported_path = (
+                            export_mock.call_args.args
+                        )
+                        self.assertEqual(exported_path, path)
+                        self.assertEqual(len(exported_frames), 1)
+                        self.assertIsInstance(exported_frames[0], Image.Image)
                         self.assertEqual(
                             pipe_instance.call_args,
                             call(
                                 prompt="prompt",
                                 guidance_scale=1.5,
                                 num_inference_steps=steps,
+                                output_type="np",
                             ),
                         )
                         if (spacing, beta) not in called:
@@ -156,6 +169,7 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
+            patch("avalan.model.engine.find_spec", return_value=None),
             patch(
                 "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
@@ -185,11 +199,46 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
                 await model("prompt", "out.gif", steps=3)
 
 
+class TextToAnimationModelFrameConversionTestCase(TestCase):
+    def test_frames_to_images_sanitizes_invalid_rgb_values(self) -> None:
+        frames = np.array(
+            [[[[np.nan, np.inf, -np.inf], [1.2, 0.4, -0.1]]]],
+            dtype=np.float32,
+        )
+
+        images = TextToAnimationModel._frames_to_images(frames)
+
+        self.assertEqual(len(images), 1)
+        self.assertEqual(images[0].mode, "RGB")
+        self.assertEqual(images[0].size, (2, 1))
+        self.assertEqual(
+            list(images[0].getdata()),
+            [(0, 255, 0), (255, 102, 0)],
+        )
+
+    def test_frames_to_images_supports_grayscale_frames(self) -> None:
+        frames = np.array([[[[0.5], [1.0]]]], dtype=np.float32)
+
+        images = TextToAnimationModel._frames_to_images(frames)
+
+        self.assertEqual(len(images), 1)
+        self.assertEqual(images[0].mode, "L")
+        self.assertEqual(images[0].size, (2, 1))
+        self.assertEqual(list(images[0].getdata()), [128, 255])
+
+    def test_frames_to_images_requires_frame_batches(self) -> None:
+        with self.assertRaises(AssertionError):
+            TextToAnimationModel._frames_to_images(
+                np.zeros((1, 1, 3), dtype=np.float32)
+            )
+
+
 class TextToAnimationModelBaseMethodsTestCase(TestCase):
     def test_uses_tokenizer(self) -> None:
         settings = EngineSettings(base_model_id="base", checkpoint="c")
         with (
             patch.object(Engine, "get_default_device", return_value="cpu"),
+            patch("avalan.model.engine.find_spec", return_value=None),
             patch.object(
                 TextToAnimationModel,
                 "_load_model",
@@ -208,6 +257,7 @@ class TextToAnimationModelBaseMethodsTestCase(TestCase):
         )
         with (
             patch.object(Engine, "get_default_device", return_value="cpu"),
+            patch("avalan.model.engine.find_spec", return_value=None),
             patch.object(
                 TextToAnimationModel,
                 "_load_model",

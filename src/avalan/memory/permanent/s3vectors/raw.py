@@ -1,5 +1,5 @@
 from ....deploy.aws import AsyncClient
-from ....memory.partitioner.text import TextPartition
+from ....entities import TextPartition
 from ....memory.permanent import (
     Memory,
     MemoryType,
@@ -10,6 +10,7 @@ from ....memory.permanent import (
 from . import S3VectorsMemory
 
 from asyncio import to_thread  # noqa: F401
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from json import dumps, loads
 from logging import Logger
@@ -66,12 +67,11 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
         self,
         namespace: str,
         participant_id: UUID,
-        *,
         memory_type: MemoryType,
         data: str,
         identifier: str,
         partitions: list[TextPartition],
-        symbols: dict | None = None,
+        symbols: Mapping[str, Any] | None = None,
         model_id: str | None = None,
         title: str | None = None,
         description: str | None = None,
@@ -133,7 +133,6 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
 
     async def search_memories(
         self,
-        *,
         search_partitions: list[TextPartition],
         participant_id: UUID,
         namespace: str,
@@ -230,7 +229,5 @@ class S3VectorsRawMemory(S3VectorsMemory, PermanentMemory):
             )
         return memories
 
-    async def search(
-        self, query: str
-    ) -> list[PermanentMemoryPartition] | None:
+    async def search(self, query: str) -> list[Memory] | None:
         raise NotImplementedError()

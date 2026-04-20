@@ -5,17 +5,21 @@ from ...agent.orchestrator.response.orchestrator_response import (
 )
 from ...cli import confirm_tool_call, get_input, has_input
 from ...cli.commands.model import token_generation
+from ...cli.theme import Theme
 from ...entities import (
     Backend,
+    EngineMessageScored,
     GenerationCacheStrategy,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
     ToolCall,
     ToolFormat,
 )
-from ...event import EventStats
+from ...event import Event, EventStats
 from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.nlp.text.generation import TextGenerationModel
 from ...model.nlp.text.vendor import TextGenerationVendorModel
+from ...model.response.text import TextGenerationResponse
 from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
@@ -26,7 +30,7 @@ from contextlib import AsyncExitStack
 from dataclasses import fields
 from logging import Logger
 from os.path import dirname, getmtime, join
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast, overload
 from uuid import UUID, uuid4
 
 from jinja2 import Environment, FileSystemLoader
@@ -34,7 +38,6 @@ from rich.console import Console
 from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
-from rich.theme import Theme
 
 
 def _parse_permanent_memory_items(
@@ -192,9 +195,9 @@ def _tool_settings_from_mapping(
     mapping: Mapping[str, object] | Namespace,
     *,
     prefix: str | None = None,
-    settings_cls: type,
+    settings_cls: type[BrowserToolSettings] | type[DatabaseToolSettings],
     open_files: bool = True,
-) -> object:
+) -> BrowserToolSettings | DatabaseToolSettings | None:
     """Return tool settings from a mapping using dataclass ``settings_cls``."""
     values: dict[str, object] = {}
     for field in fields(settings_cls):
@@ -224,16 +227,40 @@ def _tool_settings_from_mapping(
     if not values:
         return None
 
-    return settings_cls(**values)
+    settings = cast(
+        BrowserToolSettings | DatabaseToolSettings,
+        cast(Any, settings_cls)(**values),
+    )
+    return settings
+
+
+@overload
+def get_tool_settings(
+    args: Namespace,
+    *,
+    prefix: str,
+    settings_cls: type[BrowserToolSettings],
+    open_files: bool = True,
+) -> BrowserToolSettings | None: ...
+
+
+@overload
+def get_tool_settings(
+    args: Namespace,
+    *,
+    prefix: str,
+    settings_cls: type[DatabaseToolSettings],
+    open_files: bool = True,
+) -> DatabaseToolSettings | None: ...
 
 
 def get_tool_settings(
     args: Namespace,
     *,
     prefix: str,
-    settings_cls: type,
+    settings_cls: type[BrowserToolSettings] | type[DatabaseToolSettings],
     open_files: bool = True,
-) -> object:
+) -> BrowserToolSettings | DatabaseToolSettings | None:
     return _tool_settings_from_mapping(
         args, prefix=prefix, settings_cls=settings_cls, open_files=open_files
     )
@@ -286,7 +313,7 @@ async def agent_message_search(
         )
         with console.status(
             _("Loading agent..."),
-            spinner=theme.get_spinner("agent_loading"),
+            spinner=theme.get_spinner("agent_loading") or "dots",
             refresh_per_second=refresh_per_second,
         ):
             if specs_path:
@@ -331,7 +358,8 @@ async def agent_message_search(
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
 
-            assert orchestrator.engine_agent and orchestrator.engine.model_id
+            assert orchestrator.engine_agent
+            assert orchestrator.engine and orchestrator.engine.model_id
 
             can_access = args.skip_hub_access_check or hub.can_access(
                 orchestrator.engine.model_id
@@ -367,7 +395,9 @@ async def agent_message_search(
             )
             console.print(
                 theme.search_message_matches(
-                    participant_id, orchestrator, messages
+                    participant_id,
+                    orchestrator,
+                    cast(list[EngineMessageScored], messages),
                 )
             )
 
@@ -411,7 +441,8 @@ async def agent_run(
             console, call, tty_path=tty_path, live=live_container["live"]
         )
 
-    async def _event_listener(event):
+    async def _event_listener(event: object) -> None:
+        assert isinstance(event, Event)
         nonlocal event_stats
         event_stats.total_triggers += 1
         if event.type not in event_stats.triggers:
@@ -494,13 +525,17 @@ async def agent_run(
             (
                 "yes, with session #"
                 + str(orchestrator.memory.permanent_message.session_id)
-                if orchestrator.memory.has_permanent_message
+                if (
+                    orchestrator.memory.has_permanent_message
+                    and orchestrator.memory.permanent_message is not None
+                )
                 else "no"
             ),
         )
 
         if not args.quiet:
-            assert orchestrator.engine_agent and orchestrator.engine.model_id
+            assert orchestrator.engine_agent
+            assert orchestrator.engine and orchestrator.engine.model_id
 
             is_local = not isinstance(
                 orchestrator.engine, TextGenerationVendorModel
@@ -533,14 +568,17 @@ async def agent_run(
         if (
             load_recent_messages
             and orchestrator.memory.has_recent_message
-            and not orchestrator.memory.recent_message.is_empty
             and not args.quiet
         ):
+            recent_message = orchestrator.memory.recent_message
+            assert recent_message is not None
+            if recent_message.is_empty:
+                return orchestrator
             console.print(
                 theme.recent_messages(
                     participant_id,
                     orchestrator,
-                    orchestrator.memory.recent_message.data,
+                    recent_message.data,
                 )
             )
 
@@ -549,7 +587,7 @@ async def agent_run(
     async with AsyncExitStack() as stack:
         with console.status(
             _("Loading agent..."),
-            spinner=theme.get_spinner("agent_loading"),
+            spinner=theme.get_spinner("agent_loading") or "dots",
             refresh_per_second=refresh_per_second,
         ):
             orchestrator = await _init_orchestrator()
@@ -574,6 +612,7 @@ async def agent_run(
                 + str(orchestrator.memory.recent_message.size)
                 if orchestrator.memory
                 and orchestrator.memory.has_recent_message
+                and orchestrator.memory.recent_message is not None
                 else "0" + " messages"
             )
             input_string = get_input(
@@ -603,6 +642,9 @@ async def agent_run(
                 return
 
             assert isinstance(output, OrchestratorResponse)
+            assert orchestrator.engine is not None
+            text_output = cast(TextGenerationResponse, output)
+            text_engine = cast(TextGenerationModel, orchestrator.engine)
 
             await token_generation(
                 args=args,
@@ -611,10 +653,10 @@ async def agent_run(
                 logger=logger,
                 orchestrator=orchestrator,
                 event_stats=event_stats,
-                lm=orchestrator.engine,
+                lm=text_engine,
                 input_string=input_string,
                 refresh_per_second=refresh_per_second,
-                response=output,
+                response=text_output,
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
                 tool_events_limit=args.display_tools_events,

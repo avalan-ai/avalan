@@ -2,10 +2,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, TypedDict, final
+from typing import Any, Literal, TypedDict, final
 from uuid import UUID
 
-from numpy import ndarray
+from numpy.typing import NDArray
 from torch import Tensor, dtype
 
 AttentionImplementation = Literal[
@@ -227,6 +227,9 @@ class EngineSettings:
     checkpoint: str | None = None
     refiner_model_id: str | None = None
     upsampler_model_id: str | None = None
+    tokens: list[str] | None = None
+    special_tokens: list[str] | None = None
+    loader_class: str | None = None
 
 
 @final
@@ -393,11 +396,11 @@ class GenerationSettings:
 
     # Templating ------------------------------------------------------------
     # Additional variables available during prompt and message rendering
-    template_vars: dict | None = None
+    template_vars: dict[str, Any] | None = None
 
     # Response settings ------------------------------------------------------
     # How to format the model response
-    response_format: dict | None = None
+    response_format: dict[str, Any] | None = None
 
 
 @final
@@ -483,7 +486,7 @@ MessageContent = MessageContentText | MessageContentImage
 class MessageToolCall:
     id: str | None = None
     name: str
-    arguments: list
+    arguments: list[Any]
     content_type: Literal["json"] = "json"
 
 
@@ -518,7 +521,7 @@ class Message:
     thinking: str | None = ""
     content: str | MessageContent | list[MessageContent] | None = None
     name: str | None = None
-    arguments: dict | None = None
+    arguments: dict[str, Any] | None = None
     tool_calls: list[MessageToolCall] | None = None
     tool_call_result: ToolCallResult | None = None
     tool_call_error: ToolCallError | None = None
@@ -636,7 +639,7 @@ class ModelConfig:
     sep_token: str | None
     state_size: int
     # Additional keyword arguments to store for the current task
-    task_specific_params: dict[str, any] | None
+    task_specific_params: dict[str, Any] | None
     # The dtype of the weight. Since the config object is stored in plain
     # text, this attribute contains just the floating type string without the
     # torch
@@ -661,21 +664,21 @@ class PermanentMemoryStoreSettings:
 class OrchestratorSettings:
     agent_id: UUID
     orchestrator_type: str | None
-    agent_config: dict
+    agent_config: dict[str, Any]
     uri: str
-    engine_config: dict
-    call_options: dict | None
-    template_vars: dict | None
+    engine_config: dict[str, Any]
+    call_options: dict[str, Any] | None
+    template_vars: dict[str, Any] | None
     memory_permanent_message: str | None
     permanent_memory: dict[str, PermanentMemoryStoreSettings] | None
     memory_recent: bool
     sentence_model_id: str
-    sentence_model_engine_config: dict | None
+    sentence_model_engine_config: dict[str, Any] | None
     sentence_model_max_tokens: int
     sentence_model_overlap_size: int
     sentence_model_window_size: int
-    json_config: dict | None
-    tools: list[str]
+    json_config: dict[str, Any] | None
+    tools: list[str] | None
     log_events: bool
 
 
@@ -759,9 +762,9 @@ class OperationVisionParameters:
 
 
 class OperationParameters(TypedDict, total=False):
-    audio: OperationAudioParameters | None = None
-    text: OperationTextParameters | None = None
-    vision: OperationVisionParameters | None = None
+    audio: OperationAudioParameters | None
+    text: OperationTextParameters | None
+    vision: OperationVisionParameters | None
 
 
 @final
@@ -883,7 +886,7 @@ class ToolManagerSettings:
 class TextPartition:
     data: str
     total_tokens: int
-    embeddings: ndarray
+    embeddings: NDArray[Any]
 
 
 @final
@@ -896,7 +899,7 @@ class TransformerEngineSettings(EngineSettings):
     low_cpu_mem_usage: bool = False
     output_hidden_states: bool = False
     special_tokens: list[str] | None = None
-    state_dict: dict[str, Tensor] = None
+    state_dict: dict[str, Tensor] | None = None
     tokens: list[str] | None = None
 
 

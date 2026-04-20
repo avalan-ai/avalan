@@ -3,12 +3,13 @@ from ....entities import (
     EngineMessageScored,
     Message,
     MessageRole,
+    TextPartition,
 )
-from ....memory.partitioner.text import TextPartition
 from ....memory.permanent import (
     PermanentMessageMemory,
     VectorFunction,
 )
+from ....model.nlp.sentence import SentenceTransformerModel
 from . import ElasticsearchMemory
 
 from datetime import datetime, timezone
@@ -26,12 +27,12 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         *,
         client: Any,
         logger: Logger,
-        sentence_model: Any | None = None,
+        sentence_model: SentenceTransformerModel | None = None,
     ) -> None:
         ElasticsearchMemory.__init__(
             self, index=index, client=client, logger=logger
         )
-        PermanentMessageMemory.__init__(self, sentence_model=sentence_model)  # type: ignore[arg-type]
+        PermanentMessageMemory.__init__(self, sentence_model=sentence_model)
 
     @classmethod
     async def create_instance(
@@ -40,7 +41,7 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         *,
         logger: Logger,
         es_client: Any | None = None,
-        sentence_model: Any | None = None,
+        sentence_model: SentenceTransformerModel | None = None,
     ) -> "ElasticsearchMessageMemory":
         if es_client is None:
             es_client = AsyncElasticsearch()
@@ -52,7 +53,7 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         )
 
     async def create_session(
-        self, *, agent_id: UUID, participant_id: UUID
+        self, agent_id: UUID, participant_id: UUID
     ) -> UUID:
         now_utc = datetime.now(timezone.utc)
         session = self._build_session(
@@ -75,7 +76,6 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
 
     async def continue_session_and_get_id(
         self,
-        *,
         agent_id: UUID,
         participant_id: UUID,
         session_id: UUID,
@@ -92,7 +92,6 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
     async def append_with_partitions(
         self,
         engine_message: EngineMessage,
-        *,
         partitions: list[TextPartition],
     ) -> None:
         assert engine_message and partitions
@@ -143,7 +142,6 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
         self,
         session_id: UUID,
         participant_id: UUID,
-        *,
         limit: int | None = None,
     ) -> list[EngineMessage]:
         response = await self._call_client(
@@ -175,16 +173,15 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
 
     async def search_messages(
         self,
-        *,
         agent_id: UUID,
         function: VectorFunction,
-        limit: int | None = None,
         participant_id: UUID,
         search_partitions: list[TextPartition],
         search_user_messages: bool,
         session_id: UUID | None,
         exclude_session_id: UUID | None,
-    ) -> list[EngineMessageScored]:
+        limit: int | None = None,
+    ) -> list[EngineMessage]:
         assert agent_id and participant_id and search_partitions
         query = search_partitions[0].embeddings.tolist()
         filt = {
@@ -201,7 +198,7 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
             function=str(function),
             filter=filt,
         )
-        results: list[EngineMessageScored] = []
+        results: list[EngineMessage] = []
         for item in response.get("Items", []):
             msg_id = item.get("Metadata", {}).get("message_id")
             if not msg_id:

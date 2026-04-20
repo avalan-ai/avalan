@@ -1,23 +1,30 @@
-from __future__ import annotations
-
 from abc import ABC
 from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack, ContextDecorator
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+)
 from inspect import Signature, isfunction, signature
-from types import FunctionType
-from typing import get_type_hints
+from types import TracebackType
+from typing import Any, cast, get_type_hints
 
-from transformers.utils import get_json_schema
+from transformers import utils as transformers_utils
+
+get_json_schema = cast(
+    Callable[[Callable[..., Any]], dict[str, Any]],
+    getattr(transformers_utils, "get_json_schema"),
+)
 
 
-class Tool(ABC, ContextDecorator):
+class Tool(ABC):
     _exit_stack: AsyncExitStack
 
     def __init__(self) -> None:
         self._exit_stack = AsyncExitStack()
 
-    def json_schema(self, prefix: str | None = None) -> dict:
-        schema = get_json_schema(self)
+    def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
+        schema = get_json_schema(cast(Callable[..., Any], self))
         if (
             prefix
             and "type" in schema
@@ -31,7 +38,7 @@ class Tool(ABC, ContextDecorator):
 
     @staticmethod
     def _get_signature(
-        function: FunctionType, exclude_type_names: list[str]
+        function: Callable[..., Any], exclude_type_names: list[str]
     ) -> Signature:
         function_signature = signature(function)
         parameters = [
@@ -44,15 +51,15 @@ class Tool(ABC, ContextDecorator):
             return_annotation=function_signature.return_annotation,
         )
 
-    async def __aenter__(self) -> "ToolSet":
+    async def __aenter__(self) -> "Tool":
         return self
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
-    ) -> bool:
+        traceback: TracebackType | None,
+    ) -> bool | None:
         if self._exit_stack:
             return await self._exit_stack.__aexit__(
                 exc_type, exc_value, traceback
@@ -60,19 +67,19 @@ class Tool(ABC, ContextDecorator):
         return True
 
 
-class ToolSet(ContextDecorator):
+class ToolSet:
     """Collection of tools sharing an optional namespace."""
 
     _namespace: str | None
     _exit_stack: AsyncExitStack
-    _tools: Sequence[Callable]
+    _tools: "list[Callable[..., Any] | Tool | ToolSet]"
 
     @property
     def namespace(self) -> str | None:
         return self._namespace
 
     @property
-    def tools(self) -> Sequence[Callable]:
+    def tools(self) -> "list[Callable[..., Any] | Tool | ToolSet]":
         return self._tools
 
     def __init__(
@@ -80,11 +87,11 @@ class ToolSet(ContextDecorator):
         *,
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = None,
-        tools: Sequence[Callable | "ToolSet"],
+        tools: "Sequence[Callable[..., Any] | Tool | ToolSet]",
     ):
         self._namespace = namespace
         self._exit_stack = exit_stack or AsyncExitStack()
-        self._tools = tools
+        self._tools = list(tools)
 
         exclude_type_names = ["self", "context"]
 
@@ -102,8 +109,10 @@ class ToolSet(ContextDecorator):
                     if type_name not in exclude_type_names
                 }
                 tool.__annotations__ = type_hints
-                tool.__signature__ = Tool._get_signature(
-                    tool.__call__, exclude_type_names
+                setattr(
+                    tool,
+                    "__signature__",
+                    Tool._get_signature(tool.__call__, exclude_type_names),
                 )
                 if not tool.__doc__ and tool.__call__.__doc__:
                     tool.__doc__ = tool.__call__.__doc__
@@ -128,21 +137,27 @@ class ToolSet(ContextDecorator):
     async def __aenter__(self) -> "ToolSet":
         for tool in self.tools:
             if hasattr(tool, "__aenter__"):
-                await self._exit_stack.enter_async_context(tool)
+                await self._exit_stack.enter_async_context(
+                    cast(AbstractAsyncContextManager[object], tool)
+                )
             elif hasattr(tool, "__enter__"):
-                self._exit_stack.enter_context(tool)
+                self._exit_stack.enter_context(
+                    cast(AbstractContextManager[object], tool)
+                )
         return self
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
-    ) -> bool:
+        traceback: TracebackType | None,
+    ) -> bool | None:
         return await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
 
-    def json_schemas(self, prefix: str | None = None) -> list[dict] | None:
-        schemas = []
+    def json_schemas(
+        self, prefix: str | None = None
+    ) -> list[dict[str, Any]] | None:
+        schemas: list[dict[str, Any]] = []
         prefix = (
             f"{prefix}."
             if prefix

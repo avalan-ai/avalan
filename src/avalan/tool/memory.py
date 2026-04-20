@@ -3,13 +3,13 @@ from ..entities import ToolCallContext
 from ..memory.manager import MemoryManager
 from ..memory.permanent import (
     Memory,
-    PermanentMemoryPartition,
     PermanentMemoryStore,
     VectorFunction,
 )
 from . import Tool, ToolSet
 
 from contextlib import AsyncExitStack
+from typing import cast
 
 
 class MessageReadTool(Tool):
@@ -48,7 +48,7 @@ class MessageReadTool(Tool):
             limit=1,
         )
         if results and results[0].message:
-            return results[0].message.content
+            return cast(str, results[0].message.content)
 
         return MessageReadTool._NOT_FOUND
 
@@ -84,7 +84,7 @@ class MemoryReadTool(Tool):
         search: str,
         *,
         context: ToolCallContext,
-    ) -> list[PermanentMemoryPartition]:
+    ) -> list[str]:
         """Return memory partitions that match the search query."""
         if (
             not namespace
@@ -105,7 +105,9 @@ class MemoryReadTool(Tool):
             function=self._function,
             limit=default_limit,
         )
-        memories = [mp.data for mp in memory_partitions]
+        memories = [
+            mp.data for mp in memory_partitions if isinstance(mp.data, str)
+        ]
         return memories
 
 

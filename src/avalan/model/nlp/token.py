@@ -1,14 +1,18 @@
-from ...compat import override
 from ...entities import Input
 from ...model.engine import Engine
 from ...model.nlp import BaseNLPModel
 from ...model.vendor import TextGenerationVendor
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
-from transformers import AutoModelForTokenClassification, PreTrainedModel
+from transformers import (
+    AutoModelForTokenClassification,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
 from transformers.tokenization_utils_base import BatchEncoding
 
 
@@ -26,20 +30,22 @@ class TokenClassificationModel(BaseNLPModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
+        assert self._model_id, "A model id is required."
+        settings = cast(Any, self._settings)
         model = AutoModelForTokenClassification.from_pretrained(
             self._model_id,
-            cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder or "",
-            attn_implementation=self._settings.attention,
-            trust_remote_code=self._settings.trust_remote_code,
-            torch_dtype=Engine.weight(self._settings.weight_type),
-            state_dict=self._settings.state_dict,
-            local_files_only=self._settings.local_files_only,
-            token=self._settings.access_token,
+            cache_dir=settings.cache_dir,
+            subfolder=settings.subfolder or "",
+            attn_implementation=settings.attention,
+            trust_remote_code=settings.trust_remote_code,
+            torch_dtype=Engine.weight(settings.weight_type),
+            state_dict=settings.state_dict,
+            local_files_only=settings.local_files_only,
+            token=settings.access_token,
             device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            tp_plan=Engine._get_tp_plan(settings.parallel),
             distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+                settings.distributed_config
             ),
         )
         labels = (
@@ -54,7 +60,7 @@ class TokenClassificationModel(BaseNLPModel):
             self._default_label_id = (
                 next(iter(default_label_ids)) if default_label_ids else None
             )
-        return model
+        return cast(PreTrainedModel, model)
 
     def _tokenize_input(
         self,
@@ -64,6 +70,7 @@ class TokenClassificationModel(BaseNLPModel):
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
         chat_template_settings: dict[str, object] | None = None,
+        **kwargs: object,
     ) -> BatchEncoding:
         assert not system_prompt and not developer_prompt, (
             "Token classification model "
@@ -72,11 +79,13 @@ class TokenClassificationModel(BaseNLPModel):
         )
         _l = self._log
         _l(f"Tokenizing input {input}")
-        inputs = self._tokenizer(input, return_tensors=tensor_format)
-        inputs = inputs.to(self._model.device)
-        return inputs
+        tokenizer = cast(
+            PreTrainedTokenizer | PreTrainedTokenizerFast, self._tokenizer
+        )
+        model = cast(PreTrainedModel, self._model)
+        inputs = tokenizer(input, return_tensors=tensor_format)
+        return cast(BatchEncoding, inputs.to(model.device))
 
-    @override
     async def __call__(
         self,
         input: Input,
@@ -93,6 +102,7 @@ class TokenClassificationModel(BaseNLPModel):
             f"Model {self._model} can't be executed, it "
             + "needs to be loaded first"
         )
+        model = cast(PreTrainedModel, self._model)
         inputs = self._tokenize_input(
             input,
             system_prompt=system_prompt,
@@ -100,7 +110,7 @@ class TokenClassificationModel(BaseNLPModel):
             context=None,
         )
         with inference_mode():
-            outputs = self._model(**inputs)
+            outputs = model(**inputs)
             # logits shape (1, seq_len, num_labels)
             input_ids = inputs["input_ids"][0]
             label_ids = argmax(outputs.logits, dim=2)[0]
@@ -112,8 +122,11 @@ class TokenClassificationModel(BaseNLPModel):
 
             assert input_ids.numel() == label_ids.numel()
             tokens = self._tokenizer.convert_ids_to_tokens(input_ids)
+            id_to_label = cast(dict[int, str], model.config.id2label or {})
             labels = [
-                self._model.config.id2label[label_id.item()]
+                id_to_label.get(
+                    int(label_id.item()), str(int(label_id.item()))
+                )
                 for label_id in label_ids
             ]
             tokens_to_labels = dict(zip(tokens, labels))

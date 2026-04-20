@@ -8,7 +8,7 @@ from ....tool.parser import ToolCallParser
 
 from io import StringIO
 from time import perf_counter
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 
 class ToolCallResponseParser:
@@ -90,7 +90,9 @@ class ToolCallResponseParser:
             return result
 
         event = Event(
-            type=EventType.TOOL_PROCESS, payload=calls, started=perf_counter()
+            type=EventType.TOOL_PROCESS,
+            payload=cast(dict[str, Any], calls),
+            started=perf_counter(),
         )
 
         self._buffer = StringIO()

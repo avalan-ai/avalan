@@ -12,15 +12,17 @@ from . import Tool, ToolSet
 from .parser import ToolCallParser
 
 from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack, ContextDecorator
+from contextlib import AsyncExitStack
+from types import TracebackType
+from typing import Any, cast
 from uuid import uuid4
 
 
-class ToolManager(ContextDecorator):
+class ToolManager:
     _parser: ToolCallParser
     _stack: AsyncExitStack
-    _tools: dict[str, Callable] | None = None
-    _toolsets: Sequence[ToolSet] | None = None
+    _tools: dict[str, Callable[..., Any]] | None = None
+    _toolsets: list[ToolSet] | None = None
 
     @staticmethod
     def _matches_namespace(tool_name: str, namespace: str | None) -> bool:
@@ -35,7 +37,7 @@ class ToolManager(ContextDecorator):
         available_toolsets: Sequence[ToolSet] | None = None,
         enable_tools: list[str] | None = None,
         settings: ToolManagerSettings | None = None,
-    ):
+    ) -> "ToolManager":
         parser = ToolCallParser(
             eos_token=settings.eos_token if settings else None,
             tool_format=settings.tool_format if settings else None,
@@ -52,7 +54,7 @@ class ToolManager(ContextDecorator):
         return not bool(self._tools)
 
     @property
-    def tools(self) -> list[Callable] | None:
+    def tools(self) -> list[Callable[..., Any]] | None:
         return list(self._tools.values()) if self._tools else None
 
     @property
@@ -60,10 +62,12 @@ class ToolManager(ContextDecorator):
         """Return the tool format configured for this manager."""
         return self._parser.tool_format
 
-    def json_schemas(self) -> list[dict] | None:
-        schemas = []
-        for toolset in self._toolsets:
-            schemas.extend(toolset.json_schemas())
+    def json_schemas(self) -> list[dict[str, Any]] | None:
+        schemas: list[dict[str, Any]] = []
+        for toolset in self._toolsets or []:
+            toolset_schemas = toolset.json_schemas()
+            if toolset_schemas:
+                schemas.extend(toolset_schemas)
         return schemas
 
     def __init__(
@@ -91,8 +95,12 @@ class ToolManager(ContextDecorator):
             for i, toolset in enumerate(enabled_toolsets):
                 prefix = f"{toolset.namespace}." if toolset.namespace else ""
                 for tool in toolset.tools:
+                    if isinstance(tool, ToolSet):
+                        continue
                     name = getattr(tool, "__name__", tool.__class__.__name__)
-                    self._tools[f"{prefix}{name}"] = tool
+                    self._tools[f"{prefix}{name}"] = cast(
+                        Callable[..., Any], tool
+                    )
 
         self._toolsets = enabled_toolsets
 
@@ -110,7 +118,8 @@ class ToolManager(ContextDecorator):
         return self._parser.tool_call_status(buffer)
 
     def get_calls(self, text: str) -> list[ToolCall] | None:
-        return self._parser(text)
+        calls = self._parser(text)
+        return calls if isinstance(calls, list) else None
 
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
@@ -123,8 +132,8 @@ class ToolManager(ContextDecorator):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: BaseException | None,
-    ) -> bool:
+        traceback: TracebackType | None,
+    ) -> bool | None:
         return await self._stack.__aexit__(exc_type, exc_value, traceback)
 
     async def __call__(
@@ -153,14 +162,15 @@ class ToolManager(ContextDecorator):
 
         if self._settings.filters:
             for f in self._settings.filters:
-                namespace = None
-                func = f
+                filter_namespace: str | None = None
                 if isinstance(f, ToolFilter):
-                    func = f.func
-                    namespace = f.namespace
-                if not self._matches_namespace(call.name, namespace):
+                    filter_func = f.func
+                    filter_namespace = f.namespace
+                else:
+                    filter_func = f
+                if not self._matches_namespace(call.name, filter_namespace):
                     continue
-                modified = func(call, context)
+                modified = filter_func(call, context)
                 if modified is not None:
                     assert isinstance(modified, tuple) and len(modified) == 2
                     call, context = modified
@@ -184,14 +194,17 @@ class ToolManager(ContextDecorator):
 
             if self._settings.transformers:
                 for t in self._settings.transformers:
-                    namespace = None
-                    func = t
+                    transformer_namespace: str | None = None
                     if isinstance(t, ToolTransformer):
-                        func = t.func
-                        namespace = t.namespace
-                    if not self._matches_namespace(call.name, namespace):
+                        transformer_func = t.func
+                        transformer_namespace = t.namespace
+                    else:
+                        transformer_func = t
+                    if not self._matches_namespace(
+                        call.name, transformer_namespace
+                    ):
                         continue
-                    transformed = func(call, context, result)
+                    transformed = transformer_func(call, context, result)
                     if transformed is not None:
                         result = transformed
 

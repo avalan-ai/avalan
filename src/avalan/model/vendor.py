@@ -4,16 +4,22 @@ from ..entities import (
     MessageContent,
     MessageContentImage,
     MessageContentText,
+    Token,
+    TokenDetail,
     ToolCall,
     ToolCallToken,
 )
 from ..tool.manager import ToolManager
-from .message import TemplateMessage, TemplateMessageRole
+from .message import (
+    TemplateMessage,
+    TemplateMessageContent,
+    TemplateMessageRole,
+)
 from .stream import TextGenerationStream
 
 from abc import ABC
 from json import JSONDecodeError, dumps, loads
-from typing import AsyncGenerator
+from typing import Any, AsyncIterator, cast
 
 
 class TextGenerationVendor(ABC):
@@ -25,32 +31,34 @@ class TextGenerationVendor(ABC):
         *,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> TextGenerationStream:
+    ) -> TextGenerationStream | AsyncIterator[Token | TokenDetail | str]:
         raise NotImplementedError()
 
     def _system_prompt(self, messages: list[Message]) -> str | None:
-        return next(
-            (
-                message.content
-                for message in messages
-                if message.role == "system"
-            ),
-            None,
-        )
+        for message in messages:
+            if message.role != "system":
+                continue
+            content = message.content
+            if isinstance(content, str):
+                return content
+            if isinstance(content, MessageContentText):
+                return content.text
+            return None
+        return None
 
     def _template_messages(
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
-    ) -> list[TemplateMessage]:
-        def _block(c: MessageContent) -> dict:
+    ) -> list[TemplateMessage] | list[dict[str, Any]]:
+        def _block(c: MessageContent) -> dict[str, Any]:
             if isinstance(c, MessageContentImage):
                 return {"type": "image_url", "image_url": c.image_url}
             return {"type": "text", "text": c.text}
 
         def _wrap(
-            content: str | MessageContent | list[MessageContent],
-        ) -> str | list[dict]:
+            content: str | MessageContent | list[MessageContent] | None,
+        ) -> str | list[dict[str, Any]]:
             if isinstance(content, str):
                 return content
 
@@ -70,7 +78,17 @@ class TextGenerationVendor(ABC):
             if exclude_roles and msg.role in exclude_roles:
                 continue
 
-            out.append({"role": str(msg.role), "content": _wrap(msg.content)})
+            out.append(
+                {
+                    "role": cast(TemplateMessageRole, str(msg.role)),
+                    "content": cast(
+                        str
+                        | TemplateMessageContent
+                        | list[TemplateMessageContent],
+                        _wrap(msg.content),
+                    ),
+                }
+            )
 
         return out
 
@@ -84,19 +102,35 @@ class TextGenerationVendor(ABC):
 
     @staticmethod
     def build_tool_call_token(
-        call_id: str | None,
-        tool_name: str | None,
-        arguments: str | dict | None,
+        call_id: str | object | None,
+        tool_name: str | object | None,
+        arguments: str | dict[str, Any] | object | None,
     ) -> ToolCallToken:
-        name = TextGenerationVendor.decode_tool_name(tool_name or "")
+        tool_name_text = (
+            tool_name if isinstance(tool_name, str) else str(tool_name or "")
+        )
+        name = TextGenerationVendor.decode_tool_name(tool_name_text)
         if isinstance(arguments, str):
             try:
-                args: dict = loads(arguments)
+                args = cast(dict[str, Any], loads(arguments))
             except JSONDecodeError:
                 args = {}
         else:
-            args = arguments or {}
-        call = ToolCall(id=call_id, name=name, arguments=args)
+            args = (
+                arguments
+                if isinstance(arguments, dict)
+                else cast(dict[str, Any], {})
+            )
+        call_id_value = (
+            call_id
+            if isinstance(call_id, str) or call_id is None
+            else str(call_id)
+        )
+        call = ToolCall(
+            id=cast(Any, call_id_value),
+            name=name,
+            arguments=cast(dict[str, str | int | float | bool | None], args),
+        )
         token_json = dumps({"name": name, "arguments": args})
         return ToolCallToken(
             token=f"<tool_call>{token_json}</tool_call>", call=call
@@ -104,14 +138,21 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncGenerator
+    _generator: AsyncIterator[Token | TokenDetail | str]
 
-    def __init__(self, generator: AsyncGenerator):
+    def __init__(
+        self, generator: AsyncIterator[Token | TokenDetail | str]
+    ) -> None:
         self._generator = generator
 
-    def __call__(self, *args, **kwargs):
+    def __call__(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[Token | TokenDetail | str]:
         return self.__aiter__()
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
         assert self._generator
         return self
+
+    async def __anext__(self) -> Token | TokenDetail | str:
+        return await self._generator.__anext__()

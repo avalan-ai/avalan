@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -22,7 +21,7 @@ from . import TextGenerationVendorModel
 
 from contextlib import AsyncExitStack
 from json import dumps
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, NoReturn
 
 from aioboto3 import Session as Boto3Session
 from diffusers import DiffusionPipeline
@@ -48,8 +47,40 @@ def _string(value: Any) -> str | None:
     return None
 
 
+def _bedrock_error_code(error: Exception) -> str | None:
+    response = getattr(error, "response", None)
+    if not isinstance(response, dict):
+        return None
+    details = response.get("Error")
+    if not isinstance(details, dict):
+        return None
+    code = details.get("Code")
+    return code if isinstance(code, str) else None
+
+
+def _bedrock_error_message(error: Exception) -> str:
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        details = response.get("Error")
+        if isinstance(details, dict):
+            message = details.get("Message")
+            if isinstance(message, str):
+                return message
+    return str(error)
+
+
+def _geo_inference_prefix(region_name: str | None) -> str | None:
+    if region_name is None:
+        return None
+    if region_name.startswith("us-"):
+        return "us."
+    if region_name.startswith("eu-"):
+        return "eu."
+    return None
+
+
 class BedrockStream(TextGenerationVendorStream):
-    def __init__(self, events: AsyncIterator):
+    def __init__(self, events: AsyncIterator[Any]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
 
@@ -191,7 +222,6 @@ class BedrockClient(TextGenerationVendor):
             )
         return self._client
 
-    @override
     async def __call__(
         self,
         model_id: str,
@@ -217,21 +247,177 @@ class BedrockClient(TextGenerationVendor):
         if tool_config:
             payload["toolConfig"] = tool_config
 
-        if use_async_generator:
-            response = await client.converse_stream(**payload)
-            stream = (
-                response.get("stream") if isinstance(response, dict) else None
-            )
-            assert stream is not None, "Missing stream in Converse response"
-            events = (
-                await self._exit_stack.enter_async_context(stream)
-                if hasattr(stream, "__aenter__")
-                else stream
-            )
-            return BedrockStream(events=events)
+        try:
+            if use_async_generator:
+                response = await client.converse_stream(**payload)
+                stream = (
+                    response.get("stream")
+                    if isinstance(response, dict)
+                    else None
+                )
+                assert (
+                    stream is not None
+                ), "Missing stream in Converse response"
+                events = (
+                    await self._exit_stack.enter_async_context(stream)
+                    if hasattr(stream, "__aenter__")
+                    else stream
+                )
+                return BedrockStream(events=events)
 
-        response = await client.converse(**payload)
-        return TextGenerationSingleStream(self._response_text(response))
+            response = await client.converse(**payload)
+            return TextGenerationSingleStream(self._response_text(response))
+        except Exception as error:
+            if self._is_invalid_model_identifier_error(error):
+                self._raise_invalid_model_identifier(model_id, error)
+            if self._is_inference_profile_required_error(error):
+                self._raise_inference_profile_required_error(model_id, error)
+            if self._is_use_case_details_required_error(error):
+                self._raise_use_case_details_required_error(model_id, error)
+            if self._is_end_of_life_model_error(error):
+                self._raise_end_of_life_model_error(model_id, error)
+            raise
+
+    @staticmethod
+    def _is_invalid_model_identifier_error(error: Exception) -> bool:
+        if _bedrock_error_code(error) != "ValidationException":
+            return False
+        return (
+            "model identifier is invalid"
+            in _bedrock_error_message(error).lower()
+        )
+
+    def _raise_invalid_model_identifier(
+        self, model_id: str, error: Exception
+    ) -> NoReturn:
+        message = (
+            f"Invalid Amazon Bedrock model identifier {model_id!r}. "
+            f"Bedrock replied: {_bedrock_error_message(error)}."
+        )
+        if self._region_name:
+            message += f" Requested region: {self._region_name!r}."
+        message += (
+            " Verify the exact Bedrock foundation-model or "
+            "inference-profile ID for your account."
+        )
+        if model_id.startswith("anthropic.") and not model_id.startswith(
+            (
+                "us.",
+                "eu.",
+                "apac.",
+            )
+        ):
+            prefix = _geo_inference_prefix(self._region_name)
+            if prefix:
+                message += (
+                    " Anthropic Bedrock models in this region may require "
+                    "a geo-prefixed inference profile ID."
+                    f" Try {prefix!r} as the model ID prefix."
+                )
+            else:
+                message += (
+                    " Anthropic Bedrock models may require a geo-prefixed "
+                    "inference profile such as 'us.anthropic...'."
+                )
+        raise ValueError(message) from error
+
+    @staticmethod
+    def _is_inference_profile_required_error(error: Exception) -> bool:
+        if _bedrock_error_code(error) != "ValidationException":
+            return False
+        message = _bedrock_error_message(error).lower()
+        return (
+            "on-demand throughput" in message
+            and "inference profile" in message
+        )
+
+    def _raise_inference_profile_required_error(
+        self, model_id: str, error: Exception
+    ) -> NoReturn:
+        message = (
+            f"Amazon Bedrock model identifier {model_id!r} cannot be invoked "
+            "directly with on-demand throughput. "
+            f"Bedrock replied: {_bedrock_error_message(error)}."
+        )
+        if self._region_name:
+            message += f" Requested region: {self._region_name!r}."
+        message += " Use an inference-profile ID or ARN for this model."
+        if model_id.startswith("anthropic."):
+            prefix = _geo_inference_prefix(self._region_name) or "us."
+            regional_profile = prefix + model_id
+            global_profile = "global." + model_id
+            message += f" Try {regional_profile!r} or {global_profile!r}."
+        raise ValueError(message) from error
+
+    @staticmethod
+    def _is_use_case_details_required_error(error: Exception) -> bool:
+        if _bedrock_error_code(error) != "ResourceNotFoundException":
+            return False
+        message = _bedrock_error_message(error).lower()
+        return (
+            "use case details have not been submitted" in message
+            or "fill out the request form" in message
+        )
+
+    def _raise_use_case_details_required_error(
+        self, model_id: str, error: Exception
+    ) -> NoReturn:
+        message = (
+            "Amazon Bedrock blocked access to model identifier "
+            f"{model_id!r} because Anthropic use-case details have not "
+            "been submitted for this account. "
+            f"Bedrock replied: {_bedrock_error_message(error)}."
+        )
+        if self._region_name:
+            message += f" Requested region: {self._region_name!r}."
+        message += (
+            " Submit the Anthropic model access form in Amazon Bedrock, "
+            "then retry."
+        )
+        message += (
+            " You can verify the current status with "
+            "'aws bedrock get-use-case-for-model-access --region "
+            f"{self._region_name or 'us-east-1'}'."
+        )
+        raise ValueError(message) from error
+
+    @staticmethod
+    def _is_end_of_life_model_error(error: Exception) -> bool:
+        if _bedrock_error_code(error) != "ResourceNotFoundException":
+            return False
+        return "end of its life" in _bedrock_error_message(error).lower()
+
+    def _raise_end_of_life_model_error(
+        self, model_id: str, error: Exception
+    ) -> NoReturn:
+        message = (
+            f"Amazon Bedrock model identifier {model_id!r} is no longer "
+            "usable because that model version reached end of life. "
+            f"Bedrock replied: {_bedrock_error_message(error)}."
+        )
+        if self._region_name:
+            message += f" Requested region: {self._region_name!r}."
+        message += (
+            " Use an active inference-profile ID instead of the retired "
+            "profile or model version."
+        )
+        if model_id.startswith(("us.anthropic.", "eu.anthropic.")):
+            prefix = model_id.split(".", 1)[0]
+            message += (
+                " List current options with "
+                "'aws bedrock list-inference-profiles --region "
+                f"{self._region_name or 'us-east-1'}' and look for active "
+                f"{prefix}.anthropic profiles."
+            )
+        elif model_id.startswith("anthropic."):
+            geo_prefix = _geo_inference_prefix(self._region_name)
+            if geo_prefix:
+                message += (
+                    " Anthropic Bedrock models in this region are typically "
+                    "invoked through inference profiles."
+                    f" Try an active {geo_prefix!r}-prefixed profile."
+                )
+        raise ValueError(message) from error
 
     def _inference_config(
         self, settings: GenerationSettings | None
@@ -322,9 +508,9 @@ class BedrockClient(TextGenerationVendor):
         if content is None:
             return []
         if isinstance(content, str):
-            return [{"text": {"text": content}}]
+            return [{"text": content}]
         if isinstance(content, MessageContentText):
-            return [{"text": {"text": content.text}}]
+            return [{"text": content.text}]
         if isinstance(content, MessageContentImage):
             return [
                 {"image": {"source": self._image_source(content.image_url)}}
@@ -333,7 +519,7 @@ class BedrockClient(TextGenerationVendor):
             blocks: list[dict[str, Any]] = []
             for block in content:
                 if isinstance(block, MessageContentText):
-                    blocks.append({"text": {"text": block.text}})
+                    blocks.append({"text": block.text})
                 elif isinstance(block, MessageContentImage):
                     blocks.append(
                         {
@@ -343,7 +529,7 @@ class BedrockClient(TextGenerationVendor):
                         }
                     )
             return blocks
-        return [{"text": {"text": str(content)}}]
+        return [{"text": str(content)}]
 
     def _image_source(self, image_url: dict[str, Any]) -> dict[str, Any]:
         if "url" in image_url:
@@ -364,13 +550,11 @@ class BedrockClient(TextGenerationVendor):
             "toolUseId": result.call.id,
             "content": [
                 {
-                    "text": {
-                        "text": to_json(
-                            result.result
-                            if isinstance(result, ToolCallResult)
-                            else result.message
-                        )
-                    }
+                    "text": to_json(
+                        result.result
+                        if isinstance(result, ToolCallResult)
+                        else result.message
+                    )
                 }
             ],
             "status": (

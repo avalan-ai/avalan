@@ -4,24 +4,23 @@ from ..entities import (
 )
 
 from abc import ABC, abstractmethod
-from typing import (
-    AsyncGenerator,
-    AsyncIterator,
-)
+from typing import Any, AsyncIterator
 
 
 class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
-    _generator: AsyncGenerator | None = None
+    _generator: AsyncIterator[Token | TokenDetail | str] | None = None
 
     @abstractmethod
-    def __call__(self, *args, **kwargs):
+    def __call__(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[Token | TokenDetail | str]:
         raise NotImplementedError()
 
     @abstractmethod
     async def __anext__(self) -> Token | TokenDetail | str:
         raise NotImplementedError()
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
         assert self._generator
         return self
 
@@ -30,7 +29,7 @@ class TextGenerationSingleStream(TextGenerationStream):
     _content: str | Token | TokenDetail
     _consumed: bool = False
 
-    def __init__(self, content: str):
+    def __init__(self, content: str | Token | TokenDetail) -> None:
         self._content = content
 
     @property
@@ -38,7 +37,7 @@ class TextGenerationSingleStream(TextGenerationStream):
         return self._content
 
     def __call__(
-        self, *args, **kwargs
+        self, *args: Any, **kwargs: Any
     ) -> AsyncIterator[str | Token | TokenDetail]:
         self._consumed = False
         return self

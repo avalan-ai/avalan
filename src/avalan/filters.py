@@ -1,13 +1,13 @@
 from .entities import TextPartition
 
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Any, Callable
 
 
 class Partitioner(ABC):
     @property
     @abstractmethod
-    def sentence_model(self) -> Callable:
+    def sentence_model(self) -> Callable[..., Any]:
         raise NotImplementedError()
 
     @abstractmethod

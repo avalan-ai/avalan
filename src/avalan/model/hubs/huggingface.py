@@ -52,7 +52,7 @@ class HuggingfaceHub:
             endpoint=endpoint,
             token=access_token,
             library_name=name(),
-            library_version=version(),
+            library_version=str(version()),
         )
         self._cache_dir = expanduser(cache_dir)
         self._domain = urlparse(endpoint).netloc
@@ -60,7 +60,7 @@ class HuggingfaceHub:
 
     def cache_delete(
         self, model_id: str, revisions: list[str] | None = None
-    ) -> (HubCacheDeletion | None, Callable[[], None] | None):
+    ) -> tuple[HubCacheDeletion | None, Callable[[], None] | None]:
         scan_results = scan_cache_dir(self._cache_dir)
         delete_revisions = [
             revision.commit_hash
@@ -126,7 +126,9 @@ class HuggingfaceHub:
                 )
                 for info in scan_results.repos
             ],
-            key=lambda m: m.size_on_disk if sort_models_by_size else m.name,
+            key=lambda m: (
+                m.size_on_disk if sort_models_by_size else m.model_id
+            ),
             reverse=sort_models_by_size,
         )
         return model_caches
@@ -143,7 +145,7 @@ class HuggingfaceHub:
         model_id: str,
         *,
         workers: int = 8,
-        tqdm_class: type[tqdm] | Callable[..., tqdm] | None = None,
+        tqdm_class: type[tqdm] | None = None,
         local_dir: str | None = None,
         local_dir_use_symlinks: bool | None = None,
     ) -> str:
@@ -255,7 +257,7 @@ class HuggingfaceHub:
                 else None
             ),
             pipeline_tag=model_info.pipeline_tag,
-            tags=model_info.tags,
+            tags=model_info.tags or [],
             architectures=(
                 model_info.config["architectures"]
                 if model_info.config and "architectures" in model_info.config
@@ -279,14 +281,20 @@ class HuggingfaceHub:
                 else None
             ),
             gated=model_info.gated,
-            private=model_info.private,
+            private=bool(model_info.private),
             disabled=model_info.disabled,
-            last_downloads=model_info.downloads,
-            downloads=model_info.downloads_all_time or model_info.downloads,
-            likes=model_info.likes,
+            last_downloads=model_info.downloads or 0,
+            downloads=(
+                model_info.downloads_all_time or model_info.downloads or 0
+            ),
+            likes=model_info.likes or 0,
             ranking=model_info.trending_score,
-            author=model_info.author,
-            created_at=model_info.created_at,
-            updated_at=model_info.last_modified or model_info.created_at,
+            author=model_info.author or "",
+            created_at=model_info.created_at or datetime.fromtimestamp(0),
+            updated_at=(
+                model_info.last_modified
+                or model_info.created_at
+                or datetime.fromtimestamp(0)
+            ),
         )
         return model

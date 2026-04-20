@@ -1,4 +1,3 @@
-from ....compat import override
 from ....entities import (
     GenerationSettings,
     Input,
@@ -25,7 +24,7 @@ from dataclasses import asdict, replace
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Thread
-from typing import AsyncGenerator, Literal
+from typing import Any, AsyncGenerator, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import Tensor, log_softmax, softmax, topk
@@ -38,7 +37,7 @@ from transformers import (
     Mistral3ForConditionalGeneration,
     PreTrainedModel,
 )
-from transformers.generation import StoppingCriteria
+from transformers.generation.stopping_criteria import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
 
 _TOOL_MESSAGE_PARSER = ToolCallParser()
@@ -46,10 +45,12 @@ _TOOL_MESSAGE_PARSER = ToolCallParser()
 
 class TextGenerationModel(BaseNLPModel):
     _loaders: dict[TextGenerationLoaderClass, type[PreTrainedModel]] = {
-        "auto": AutoModelForCausalLM,
-        "gemma3": Gemma3ForConditionalGeneration,
-        "gpt-oss": GptOssForCausalLM,
-        "mistral3": Mistral3ForConditionalGeneration,
+        "auto": cast(type[PreTrainedModel], AutoModelForCausalLM),
+        "gemma3": cast(type[PreTrainedModel], Gemma3ForConditionalGeneration),
+        "gpt-oss": cast(type[PreTrainedModel], GptOssForCausalLM),
+        "mistral3": cast(
+            type[PreTrainedModel], Mistral3ForConditionalGeneration
+        ),
     }
 
     def __init__(
@@ -74,51 +75,61 @@ class TextGenerationModel(BaseNLPModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert (
-            self._settings.loader_class in self._loaders
-        ), f"Unrecognized loader {self._settings.loader_class}"
+            cast(TransformerEngineSettings, self._settings).loader_class
+            in self._loaders
+        ), (
+            "Unrecognized loader "
+            + f"{cast(TransformerEngineSettings, self._settings).loader_class}"
+        )
+        settings = cast(TransformerEngineSettings, self._settings)
 
-        if self._settings.quantization and find_spec("bitsandbytes"):
+        if settings.quantization and find_spec("bitsandbytes"):
             from transformers import BitsAndBytesConfig
 
-            quantization = self._settings.quantization
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=quantization.load_in_4bit,
-                bnb_4bit_quant_type=quantization.bnb_4bit_quant_type,
-                bnb_4bit_use_double_quant=quantization.bnb_4bit_use_double_quant,
-                bnb_4bit_compute_dtype=quantization.bnb_4bit_compute_dtype,
+            quantization = settings.quantization
+            bnb_config = cast(
+                object,
+                cast(Any, BitsAndBytesConfig)(
+                    load_in_4bit=quantization.load_in_4bit,
+                    bnb_4bit_quant_type=quantization.bnb_4bit_quant_type,
+                    bnb_4bit_use_double_quant=quantization.bnb_4bit_use_double_quant,
+                    bnb_4bit_compute_dtype=quantization.bnb_4bit_compute_dtype,
+                ),
             )
         else:
             bnb_config = None
 
-        loader = self._loaders[self._settings.loader_class]
+        loader = self._loaders[settings.loader_class or "auto"]
         model_args = dict(
-            cache_dir=self._settings.cache_dir,
-            subfolder=self._settings.subfolder or "",
-            attn_implementation=self._settings.attention,
-            output_hidden_states=self._settings.output_hidden_states,
-            trust_remote_code=self._settings.trust_remote_code,
-            state_dict=self._settings.state_dict,
-            local_files_only=self._settings.local_files_only,
+            cache_dir=settings.cache_dir,
+            subfolder=settings.subfolder or "",
+            attn_implementation=settings.attention,
+            output_hidden_states=settings.output_hidden_states,
+            trust_remote_code=settings.trust_remote_code,
+            state_dict=settings.state_dict,
+            local_files_only=settings.local_files_only,
             low_cpu_mem_usage=(
-                True if self._device else self._settings.low_cpu_mem_usage
+                True if self._device else settings.low_cpu_mem_usage
             ),
-            torch_dtype=Engine.weight(self._settings.weight_type),
+            torch_dtype=Engine.weight(settings.weight_type),
             device_map=self._device,
-            token=self._settings.access_token,
+            token=settings.access_token,
             quantization_config=bnb_config,
-            revision=self._settings.revision,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
+            revision=settings.revision,
+            tp_plan=Engine._get_tp_plan(settings.parallel),
             distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+                settings.distributed_config
             ),
         )
         if model_args["quantization_config"] is None:
             model_args.pop("quantization_config", None)
 
-        model = loader.from_pretrained(self._model_id, **model_args)
+        model = cast(
+            PreTrainedModel,
+            cast(Any, loader).from_pretrained(self._model_id, **model_args),
+        )
         return model
 
-    @override
     async def __call__(
         self,
         input: Input,
@@ -131,6 +142,7 @@ class TextGenerationModel(BaseNLPModel):
         pick: int | None = None,
         skip_special_tokens: bool = False,
         tool: ToolManager | None = None,
+        **kwargs: object,
     ) -> TextGenerationResponse:
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
@@ -205,7 +217,7 @@ class TextGenerationModel(BaseNLPModel):
         settings: GenerationSettings,
         stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
-        **kwargs,
+        **kwargs: object,
     ) -> AsyncGenerator[str, None]:
         _l = self._log
 
@@ -250,12 +262,17 @@ class TextGenerationModel(BaseNLPModel):
         settings: GenerationSettings,
         stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
-        **kwargs,
+        **kwargs: object,
     ) -> str:
+        assert isinstance(inputs, dict)
         input_length = inputs["input_ids"].shape[1]
         outputs = self._generate_output(inputs, settings, stopping_criterias)
-        return self._tokenizer.decode(
-            outputs[0][input_length:], skip_special_tokens=skip_special_tokens
+        return cast(
+            str,
+            self._tokenizer.decode(
+                outputs[0][input_length:],
+                skip_special_tokens=skip_special_tokens,
+            ),
         )
 
     async def _token_generator(
@@ -266,7 +283,9 @@ class TextGenerationModel(BaseNLPModel):
         skip_special_tokens: bool,
         pick: int | None,
         probability_distribution: ProbabilityDistribution = "softmax",
+        **kwargs: object,
     ) -> AsyncGenerator[Token | TokenDetail, None]:
+        assert isinstance(inputs, dict)
         assert not settings.temperature or (
             settings.temperature >= 0 and settings.temperature <= 1
         ), "temperature should be [0, 1]"
@@ -317,7 +336,10 @@ class TextGenerationModel(BaseNLPModel):
                 if probability_distribution == "log_softmax"
                 else (
                     gumbel_softmax(
-                        logits, tau=settings.temperature, hard=False, dim=-1
+                        logits,
+                        tau=settings.temperature or 1.0,
+                        hard=False,
+                        dim=-1,
                     )
                     if probability_distribution == "gumbel_softmax"
                     else (
@@ -335,8 +357,9 @@ class TextGenerationModel(BaseNLPModel):
             )
 
             tokens: list[Token] | None = None
-            if pick > 0:
-                picked_logits = topk(logits_probs, pick)
+            pick_count = pick or 0
+            if pick_count > 0:
+                picked_logits = topk(logits_probs, pick_count)
                 picked_logits_ids = picked_logits.indices.tolist()
                 picked_logits_probs = picked_logits.values.tolist()
                 tokens = [
@@ -374,7 +397,7 @@ class TextGenerationModel(BaseNLPModel):
     def _tokenize_input(
         self,
         input: Input,
-        system_prompt: str | None,
+        system_prompt: str | None = None,
         developer_prompt: str | None = None,
         context: str | None = None,
         tensor_format: Literal["pt"] = "pt",
@@ -386,8 +409,10 @@ class TextGenerationModel(BaseNLPModel):
         messages = self._messages(input, system_prompt, developer_prompt, tool)
 
         def _format_content(
-            content: str | MessageContent | list[MessageContent],
+            content: str | MessageContent | list[MessageContent] | None,
         ) -> str | list[dict[str, object]]:
+            if content is None:
+                return ""
             if isinstance(content, str):
                 return content
 
@@ -461,7 +486,12 @@ class TextGenerationModel(BaseNLPModel):
                             else ""
                         )
                     )
-                prompt += template_message["content"].strip() + "\n"
+                content_text = template_message["content"]
+                prompt += (
+                    content_text.strip()
+                    if isinstance(content_text, str)
+                    else str(content_text)
+                ) + "\n"
 
             inputs = self._tokenizer(
                 prompt, add_special_tokens=True, return_tensors=tensor_format
@@ -481,7 +511,7 @@ class TextGenerationModel(BaseNLPModel):
         if hasattr(self._model, "device"):
             _l(f"Translating inputs to {self._model.device}")
             inputs = inputs.to(self._model.device)
-        return inputs
+        return cast(dict[str, Tensor] | BatchEncoding | Tensor, inputs)
 
     def _messages(
         self,
@@ -493,12 +523,22 @@ class TextGenerationModel(BaseNLPModel):
         if isinstance(input, str):
             input = Message(role=MessageRole.USER, content=input)
         elif isinstance(input, list):
-            for m in input:
-                assert isinstance(m, Message)
+            if input and isinstance(input[0], str):
+                input = [
+                    Message(role=MessageRole.USER, content=cast(str, m))
+                    for m in input
+                ]
+            else:
+                for m in input:
+                    assert isinstance(m, Message)
         elif not isinstance(input, Message):
             raise ValueError(input)
 
-        messages = [input] if not isinstance(input, list) else input
+        messages: list[Message]
+        if isinstance(input, list):
+            messages = cast(list[Message], input)
+        else:
+            messages = [input]
 
         if developer_prompt:
             messages = [

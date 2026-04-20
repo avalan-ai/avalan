@@ -3,6 +3,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from psycopg import AsyncConnection, AsyncCursor
+from psycopg.errors import UndefinedFile
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -10,7 +11,11 @@ from avalan.memory.permanent import (
     RecordNotFoundException,
     RecordNotSavedException,
 )
-from avalan.memory.permanent.pgsql import BasePgsqlMemory, PgsqlMemory
+from avalan.memory.permanent.pgsql import (
+    BasePgsqlMemory,
+    PgsqlMemory,
+    PgsqlVectorExtensionError,
+)
 
 
 @dataclass
@@ -181,6 +186,11 @@ class PgsqlMemoryTestCase(IsolatedAsyncioTestCase):
                 "avalan.memory.permanent.pgsql.TypeInfo.fetch",
                 AsyncMock(return_value=type_info),
             ) as fetch_patch,
+            patch.object(
+                memory,
+                "_ensure_vector_extension",
+                AsyncMock(),
+            ) as ensure_patch,
             patch(
                 "avalan.memory.permanent.pgsql.register_vector_async",
                 AsyncMock(),
@@ -191,4 +201,43 @@ class PgsqlMemoryTestCase(IsolatedAsyncioTestCase):
         connection.set_autocommit.assert_awaited_once_with(True)
         fetch_patch.assert_awaited_once_with(connection, "ctype")
         type_info.register.assert_called_once_with(connection)
+        ensure_patch.assert_awaited_once_with(connection)
         vector_patch.assert_awaited_once_with(connection)
+
+    async def test_ensure_vector_extension_missing_extension(self):
+        pool, connection, cursor = BasePgsqlMemoryTestCase.mock_query(
+            {"has_vector_extension": False}
+        )
+        memory = DummyPgsqlMemory(dsn=None, pool=pool, logger=MagicMock())
+
+        with self.assertRaises(PgsqlVectorExtensionError) as caught:
+            await memory._ensure_vector_extension(connection)
+
+        cursor.execute.assert_awaited_once()
+        self.assertIn("not enabled", str(caught.exception))
+
+    async def test_ensure_vector_extension_broken_library(self):
+        pool = AsyncMock(spec=AsyncConnectionPool)
+        memory = DummyPgsqlMemory(dsn=None, pool=pool, logger=MagicMock())
+        cursor = AsyncMock(spec=AsyncCursor)
+        cursor.__aenter__.return_value = cursor
+        cursor.fetchone = AsyncMock(
+            side_effect=[{"has_vector_extension": True}, None]
+        )
+        cursor.execute = AsyncMock(
+            side_effect=[
+                None,
+                UndefinedFile('could not access file "$libdir/vector"'),
+            ]
+        )
+        connection = AsyncMock(spec=AsyncConnection)
+        connection.cursor.return_value = cursor
+        connection.__aenter__.return_value = connection
+
+        with self.assertRaises(PgsqlVectorExtensionError) as caught:
+            await memory._ensure_vector_extension(connection)
+
+        self.assertEqual(cursor.execute.await_count, 2)
+        self.assertIn(
+            "cannot load the pgvector library", str(caught.exception)
+        )

@@ -1,4 +1,3 @@
-from .....compat import override
 from .....entities import (
     GenerationSettings,
     Message,
@@ -18,18 +17,18 @@ from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
 from contextlib import AsyncExitStack
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, cast
 
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
 from diffusers import DiffusionPipeline
 from transformers import PreTrainedModel
 
 
 class AnthropicStream(TextGenerationVendorStream):
-    def __init__(self, events: AsyncIterator):
+    def __init__(self, events: AsyncIterator[object]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
-            tool_blocks: dict[int, dict] = {}
+            tool_blocks: dict[int, dict[str, Any]] = {}
 
             async for event in events:
                 etype = getattr(event, "type", None)
@@ -40,7 +39,10 @@ class AnthropicStream(TextGenerationVendorStream):
                         cb is not None
                         and getattr(cb, "type", None) == "tool_use"
                     ):
-                        tool_blocks[event.index] = {
+                        index = cast(int | None, getattr(event, "index", None))
+                        if index is None:
+                            continue
+                        tool_blocks[index] = {
                             "id": getattr(cb, "id", None),
                             "name": getattr(cb, "name", None),
                             "args_fragments": [],
@@ -58,8 +60,11 @@ class AnthropicStream(TextGenerationVendorStream):
                         hasattr(delta, "partial_json")
                         and delta.partial_json is not None
                     ):
+                        index = cast(int | None, getattr(event, "index", None))
+                        if index is None:
+                            continue
                         tb = tool_blocks.setdefault(
-                            event.index,
+                            index,
                             {"id": None, "name": None, "args_fragments": []},
                         )
                         tb["args_fragments"].append(delta.partial_json)
@@ -89,8 +94,9 @@ class AnthropicStream(TextGenerationVendorStream):
                             )
                             yield token
 
-                        if event.index in tool_blocks:
-                            del tool_blocks[event.index]
+                        index = cast(int | None, getattr(event, "index", None))
+                        if index is not None and index in tool_blocks:
+                            del tool_blocks[index]
 
                     continue
 
@@ -100,13 +106,19 @@ class AnthropicStream(TextGenerationVendorStream):
                 ):
                     break
 
-        super().__init__(generator())
+        super().__init__(cast(AsyncIterator[str | ToolCallToken], generator()))
 
-    async def __anext__(self) -> Token | TokenDetail | str:
-        return await self._generator.__anext__()
+    async def __anext__(self) -> str | ToolCallToken:
+        return cast(str | ToolCallToken, await self._generator.__anext__())
 
 
 class AnthropicClient(TextGenerationVendor):
+    _RETIRED_MODEL_REPLACEMENTS = {
+        "claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
+        "claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
+        "claude-3-5-sonnet-latest": "claude-sonnet-4-6",
+    }
+
     _client: AsyncAnthropic
     _exit_stack: AsyncExitStack
 
@@ -120,7 +132,6 @@ class AnthropicClient(TextGenerationVendor):
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._exit_stack = exit_stack
 
-    @override
     async def __call__(
         self,
         model_id: str,
@@ -129,11 +140,11 @@ class AnthropicClient(TextGenerationVendor):
         *,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> TextGenerationVendorStream:
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model": model_id,
             "system": system_prompt,
             "messages": template_messages,
@@ -143,14 +154,21 @@ class AnthropicClient(TextGenerationVendor):
             "tool_choice": {"type": "auto"},
         }
 
-        if use_async_generator:
-            stream = self._client.messages.stream(**kwargs)
-            events = await self._exit_stack.enter_async_context(stream)
-            return AnthropicStream(events=events)
+        try:
+            if use_async_generator:
+                stream = self._client.messages.stream(**kwargs)
+                events = await self._exit_stack.enter_async_context(stream)
+                return AnthropicStream(events=events)
 
-        response = await self._client.messages.create(**kwargs)
-        content = self._non_stream_response_content(response)
-        return TextGenerationSingleStream(content)
+            response = await self._client.messages.create(**kwargs)
+            content = self._non_stream_response_content(response)
+            return cast(
+                TextGenerationVendorStream,
+                TextGenerationSingleStream(content),
+            )
+        except Exception as error:
+            AnthropicClient._translate_api_error(model_id, error)
+            raise
 
     def _template_messages(
         self,
@@ -164,20 +182,23 @@ class AnthropicClient(TextGenerationVendor):
             and (message.tool_call_result or message.tool_call_error)
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
-        messages = super()._template_messages(messages, do_exclude_roles)
+        template_messages = cast(
+            list[dict[str, Any]],
+            super()._template_messages(messages, do_exclude_roles),
+        )
         last_message = next(
             (
                 m
-                for m in reversed(messages)
+                for m in reversed(template_messages)
                 if m["role"] == str(MessageRole.ASSISTANT)
             ),
             None,
         )
         last_message_index = (
-            messages.index(last_message) if last_message else None
+            template_messages.index(last_message) if last_message else None
         )
-        if last_message_index:
-            messages[last_message_index] = {
+        if last_message_index is not None and last_message:
+            template_messages[last_message_index] = {
                 "role": last_message["role"],
                 "content": [
                     (
@@ -195,12 +216,15 @@ class AnthropicClient(TextGenerationVendor):
                             "input": r.call.arguments,
                         }
                         for r in tool_results
+                        if r is not None
                     ],
                 ],
             }
 
         for result in tool_results:
-            content = {
+            if result is None:
+                continue
+            content: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": result.call.id,
                 "content": to_json(
@@ -211,20 +235,27 @@ class AnthropicClient(TextGenerationVendor):
             }
             if isinstance(result, ToolCallError):
                 content["is_error"] = True
-            result_message = TemplateMessage(role="user", content=[content])
-            if last_message_index:
-                messages.insert(last_message_index + 1, result_message)
+            result_message: dict[str, Any] = {
+                "role": "user",
+                "content": [content],
+            }
+            if last_message_index is not None:
+                template_messages.insert(
+                    last_message_index + 1, result_message
+                )
             else:
-                messages.append(result_message)
+                template_messages.append(result_message)
 
         # @TODO Ensure this doesn't happen from upstream
-        if len(messages) > 1 and (messages[0] == messages[-1]):
-            messages.pop()
+        if len(template_messages) > 1 and (
+            template_messages[0] == template_messages[-1]
+        ):
+            template_messages.pop()
 
-        return messages
+        return cast(list[TemplateMessage], template_messages)
 
     @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict] | None:
+    def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
         schemas = tool.json_schemas()
         return (
             [
@@ -238,7 +269,7 @@ class AnthropicClient(TextGenerationVendor):
                         "additionalProperties": False,
                     },
                 }
-                for t in tool.json_schemas()
+                for t in schemas
                 if t["type"] == "function"
             ]
             if schemas
@@ -253,7 +284,10 @@ class AnthropicClient(TextGenerationVendor):
             return getattr(value, attribute, None)
 
         parts: list[str] = []
-        for block in _get(response, "content") or []:
+        content_blocks = _get(response, "content")
+        if not isinstance(content_blocks, list):
+            return "".join(parts)
+        for block in content_blocks:
             block_type = _get(block, "type")
             if block_type == "text":
                 text = _get(block, "text")
@@ -270,6 +304,47 @@ class AnthropicClient(TextGenerationVendor):
                 parts.append(token.token)
 
         return "".join(parts)
+
+    @staticmethod
+    def _error_message(error: Exception) -> str:
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            nested = body.get("error")
+            if isinstance(nested, dict):
+                message = nested.get("message")
+                if isinstance(message, str):
+                    return message
+        return str(error)
+
+    @staticmethod
+    def _is_missing_model_error(error: Exception) -> bool:
+        if not isinstance(error, APIStatusError):
+            return False
+        if error.status_code != 404:
+            return False
+        return "model" in AnthropicClient._error_message(error).lower()
+
+    @classmethod
+    def _translate_api_error(cls, model_id: str, error: Exception) -> None:
+        if not cls._is_missing_model_error(error):
+            return
+
+        message = (
+            f"Anthropic model identifier {model_id!r} was not found. "
+            f"Anthropic replied: {cls._error_message(error)}."
+        )
+        replacement = cls._RETIRED_MODEL_REPLACEMENTS.get(model_id)
+        if replacement:
+            message += (
+                " This model has been retired by Anthropic."
+                f" Use {replacement!r} instead."
+            )
+        else:
+            message += (
+                " Verify the model identifier against Anthropic's current "
+                "models list."
+            )
+        raise ValueError(message) from error
 
 
 class AnthropicModel(TextGenerationVendorModel):

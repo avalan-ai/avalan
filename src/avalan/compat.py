@@ -1,16 +1,14 @@
-from __future__ import annotations
+import typing
+from typing import Callable, TypeVar, cast
 
-from typing import Callable, TypeVar
+T = TypeVar("T", bound=Callable[..., object])
 
-try:
-    from typing import override as _override
-except ImportError:  # Python < 3.12
-    T = TypeVar("T", bound=Callable[..., object])
+_typing_override = getattr(typing, "override", None)
 
-    def _override(func: T) -> T:  # type: ignore
+if _typing_override is not None:
+    override = cast(Callable[[T], T], _typing_override)
+
+else:
+
+    def override(func: T) -> T:
         return func
-
-
-override = _override
-
-__all__ = ["override"]

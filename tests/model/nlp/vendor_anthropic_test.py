@@ -38,6 +38,15 @@ class AsyncIter:
 
 @pytest.fixture(scope="module")
 def anthropic_mod():
+    class APIStatusError(Exception):
+        def __init__(self, message, *, response=None, body=None):
+            super().__init__(message)
+            self.status_code = getattr(response, "status_code", None)
+            self.body = body
+
+    class NotFoundError(APIStatusError):
+        pass
+
     class DeltaEvent:
         def __init__(self, delta, index=0):
             self.delta = delta
@@ -47,7 +56,9 @@ def anthropic_mod():
         pass
 
     stub = types.ModuleType("anthropic")
+    stub.APIStatusError = APIStatusError
     stub.AsyncAnthropic = MagicMock()
+    stub.NotFoundError = NotFoundError
     types_mod = types.ModuleType("anthropic.types")
     types_mod.RawContentBlockDeltaEvent = DeltaEvent
     types_mod.RawMessageStopEvent = StopEvent
@@ -345,3 +356,53 @@ def test_non_stream_response_content_from_dict(anthropic_mod):
 
     assert text == "alpha<tool>"
     build.assert_called_once_with("call-id", "pkg.tool", {"foo": "bar"})
+
+
+def test_translate_api_error_for_retired_model(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+
+    error = stub.NotFoundError(
+        "missing model",
+        response=SimpleNamespace(status_code=404),
+        body={
+            "error": {
+                "type": "not_found_error",
+                "message": "model: claude-3-5-sonnet-latest",
+            }
+        },
+    )
+    client._client.messages.stream = MagicMock(side_effect=error)
+
+    with pytest.raises(ValueError, match="Use 'claude-sonnet-4-6' instead"):
+        asyncio.run(client("claude-3-5-sonnet-latest", []))
+
+
+def test_translate_api_error_for_unknown_model(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+
+    error = stub.NotFoundError(
+        "missing model",
+        response=SimpleNamespace(status_code=404),
+        body={
+            "error": {
+                "type": "not_found_error",
+                "message": "model: claude-missing",
+            }
+        },
+    )
+    client._client.messages.create = AsyncMock(side_effect=error)
+
+    with pytest.raises(
+        ValueError, match="Verify the model identifier against Anthropic"
+    ):
+        asyncio.run(
+            client(
+                "claude-missing",
+                [],
+                use_async_generator=False,
+            )
+        )

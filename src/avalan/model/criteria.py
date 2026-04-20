@@ -1,23 +1,31 @@
 from io import StringIO
 from re import Pattern, compile, escape
+from typing import Any, Protocol
 
-from transformers import AutoTokenizer
-from transformers.generation import StoppingCriteria
+from transformers.generation.stopping_criteria import StoppingCriteria
+
+
+class TokenDecoder(Protocol):
+    """Define the tokenizer contract required by keyword stopping criteria."""
+
+    def decode(
+        self, token_ids: int | list[int], skip_special_tokens: bool = False
+    ) -> str: ...
 
 
 class KeywordStoppingCriteria(StoppingCriteria):
     _buffer: StringIO
-    _tokenizer: AutoTokenizer
-    _pattern: Pattern
+    _tokenizer: TokenDecoder
+    _pattern: Pattern[str]
     _keywords: list[str]
     _keyword_count: int
 
     def __init__(
         self,
         keywords: list[str],
-        tokenizer: AutoTokenizer,
+        tokenizer: TokenDecoder,
         all_must_be_present: bool = False,
-    ):
+    ) -> None:
         assert keywords
         escaped_keywords = [escape(k) for k in keywords]
         self._pattern = compile(
@@ -30,7 +38,7 @@ class KeywordStoppingCriteria(StoppingCriteria):
         self._keywords = keywords
         self._keyword_count = len(keywords)
 
-    def __call__(self, input_ids, scores, **kwargs):
+    def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
         token_id = input_ids[0][-1]
         token = self._tokenizer.decode(token_id, skip_special_tokens=False)
         self._buffer.write(token)

@@ -1,10 +1,9 @@
-from ...compat import override
 from ...model.engine import Engine
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.text import ImageToTextModel
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
 from PIL import Image
@@ -22,21 +21,26 @@ class VisionEncoderDecoderModel(ImageToTextModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        self._processor = AutoImageProcessor.from_pretrained(
-            self._model_id,
-            use_fast=True,
+        self._processor = cast(
+            Any,
+            cast(Any, AutoImageProcessor).from_pretrained(
+                self._model_id,
+                use_fast=True,
+            ),
         )
-        model = VisionEncoderDecoderModelImpl.from_pretrained(
-            self._model_id,
-            device_map=self._device,
-            tp_plan=Engine._get_tp_plan(self._settings.parallel),
-            distributed_config=Engine._get_distributed_config(
-                self._settings.distributed_config
+        model = cast(
+            PreTrainedModel,
+            cast(Any, VisionEncoderDecoderModelImpl).from_pretrained(
+                self._model_id,
+                device_map=self._device,
+                tp_plan=Engine._get_tp_plan(self._settings.parallel),
+                distributed_config=Engine._get_distributed_config(
+                    self._settings.distributed_config
+                ),
             ),
         )
         return model
 
-    @override
     async def __call__(
         self,
         image_source: str | Image.Image,
@@ -80,4 +84,4 @@ class VisionEncoderDecoderModel(ImageToTextModel):
         output = self._tokenizer.batch_decode(
             outputs.sequences, skip_special_tokens=skip_special_tokens
         )[0]
-        return output
+        return cast(str, output)
