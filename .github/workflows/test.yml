@@ -83,7 +83,6 @@ jobs:
 
       - name: Install dependencies
         id: install-deps
-        if: env.IGNORE_VENV_CACHE == 'true' || steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: >
           poetry install --no-interaction
           --extras agent
