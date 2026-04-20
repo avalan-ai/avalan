@@ -258,6 +258,21 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         ].operation.generation_settings
         self.assertEqual(used_settings.top_p, 0.5)
 
+    async def test_run_with_list_of_strings_converts_to_user_messages(self):
+        agent, _, memory, manager = self._make_agent()
+        context = self._make_context("unused")
+
+        await agent._run(context, ["hello", "world"])
+
+        self.assertEqual(len(memory.recent_messages), 2)
+        first = memory.recent_messages[0].message
+        second = memory.recent_messages[1].message
+        self.assertEqual(first.role, MessageRole.USER)
+        self.assertEqual(first.content, "hello")
+        self.assertEqual(second.role, MessageRole.USER)
+        self.assertEqual(second.content, "world")
+        manager.assert_awaited_once()
+
 
 class EngineAgentCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):

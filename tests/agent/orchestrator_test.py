@@ -149,6 +149,65 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "done")
 
 
+class OrchestratorInputTokenCountTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        environment = EngineEnvironment(
+            engine_uri=engine_uri, settings=TransformerEngineSettings()
+        )
+        operation = AgentOperation(
+            specification=Specification(role=None, goal=None),
+            environment=environment,
+        )
+        memory = MagicMock(spec=MemoryManager)
+        memory.participant_id = uuid4()
+        self.orchestrator = Orchestrator(
+            MagicMock(),
+            MagicMock(spec=ModelManager),
+            memory,
+            MagicMock(spec=ToolManager),
+            MagicMock(spec=EventManager),
+            [operation],
+        )
+
+    def test_input_token_count_without_engine_agent(self):
+        self.assertIsNone(self.orchestrator.input_token_count)
+
+    def test_input_token_count_runs_callable_without_running_loop(self):
+        engine_agent = MagicMock()
+        engine_agent.input_token_count = AsyncMock(return_value=11)
+        engine_agent.output = None
+        self.orchestrator._last_engine_agent = engine_agent
+
+        self.assertEqual(self.orchestrator.input_token_count, 11)
+
+    async def test_input_token_count_returns_output_count_inside_loop(self):
+        engine_agent = MagicMock()
+        engine_agent.input_token_count = AsyncMock(return_value=5)
+        engine_agent.output = MagicMock(input_token_count=7)
+        self.orchestrator._last_engine_agent = engine_agent
+
+        self.assertEqual(self.orchestrator.input_token_count, 7)
+
+    async def test_input_token_count_returns_none_inside_loop_without_output(
+        self,
+    ):
+        engine_agent = MagicMock()
+        engine_agent.input_token_count = AsyncMock(return_value=5)
+        engine_agent.output = None
+        self.orchestrator._last_engine_agent = engine_agent
+
+        self.assertIsNone(self.orchestrator.input_token_count)
+
+
 class OrchestratorAenterTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_aenter_loads_engine_and_agent(self):
         env = EngineEnvironment(
