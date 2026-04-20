@@ -55,6 +55,7 @@ from avalan.server.a2a.router import (
     _skill_tags,
     _state_for_item,
     _status_to_state,
+    _STREAM_RESPONSE_ID_UNSET,
     _task_metadata,
     _task_metadata_from_overview,
     _timestamp_to_iso,
@@ -584,6 +585,16 @@ async def _run_event_converter_fallbacks() -> None:
         "data": {"message": {}},
     }
     assert await converter.convert(message_event) == message_event
+    assert await converter._response_id() is None
+
+    converter._cached_response_id = _STREAM_RESPONSE_ID_UNSET
+
+    async def _overview_with_unset(task_id: str) -> dict[str, object]:
+        assert task_id == "convert-fallback"
+        return {"metadata": {"jsonrpc_id": _STREAM_RESPONSE_ID_UNSET}}
+
+    store.get_task_overview = _overview_with_unset  # type: ignore[assignment]
+    assert await converter._response_id() is None
 
 
 def test_message_and_artifact_result_branches() -> None:

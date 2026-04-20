@@ -1008,6 +1008,31 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(tool_summaries)
         self.assertFalse(resources)
 
+    async def test_tool_event_notifications_ignores_non_string_call_id(
+        self,
+    ) -> None:
+        tool_summaries: dict[str, dict[str, Any]] = {}
+        resources: dict[str, mcp_router.MCPResource] = {}
+        store = mcp_router.MCPResourceStore()
+        event = Event(type=EventType.TOOL_PROCESS, payload=None)
+
+        with patch.object(
+            mcp_router, "_tool_call_event_item", return_value={"id": 1}
+        ):
+            items = []
+            async for item in mcp_router._tool_event_notifications(
+                event=event,
+                tool_summaries=tool_summaries,
+                resources=resources,
+                resource_store=store,
+                base_path="/base",
+            ):
+                items.append(item)
+
+        self.assertFalse(items)
+        self.assertFalse(tool_summaries)
+        self.assertFalse(resources)
+
     async def test_tool_event_notifications_append_existing_resource(
         self,
     ) -> None:
