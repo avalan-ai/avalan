@@ -207,6 +207,23 @@ class ResponsesUtilsTestCase(TestCase):
         result_payload = loads(delta["result"])
         self.assertEqual(result_payload["payload"], {"status": "ok"})
 
+    def test_tool_call_event_item_supports_indexed_mapping_payload(
+        self,
+    ) -> None:
+        call = ToolCall(id="c6", name="calc", arguments={"n": 1})
+
+        class IndexedPayload(dict[int, ToolCall]):
+            pass
+
+        event = Event(
+            type=EventType.TOOL_PROCESS,
+            payload=IndexedPayload({0: call}),
+        )
+
+        item = _tool_call_event_item(event)
+        self.assertEqual(item["id"], "c6")
+        self.assertEqual(item["name"], "calc")
+
     def test_sse_formats_event_and_data(self) -> None:
         result = sse_message(to_json({"a": 1}), event="test.event")
         self.assertEqual(result, 'event: test.event\ndata: {"a": 1}\n\n')
