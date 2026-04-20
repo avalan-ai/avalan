@@ -302,6 +302,25 @@ task you need:
 * 🎧 [**Audio**](#audio): Turn audio into text or produce speech for accessibility and media.
   - 🦻 [Audio classification](#audio-classification): Label an audio based on sentiment.
   - 🗣️ [Speech recognition](#speech-recognition): Convert spoken audio to text.
+  - 🔊 [Text to speech](#text-to-speech): Synthesize natural speech from text.
+  - 🎵 [Audio generation](#audio-generation): Generate or continue audio from prompts.
+* 📝 [**Text**](#text): Understand, transform, and generate text across core NLP tasks.
+  - ❓ [Question answering](#question-answering): Extract precise answers from context.
+  - 🏷️ [Sequence classification](#sequence-classification): Classify text into labels.
+  - 🔁 [Sequence to sequence](#sequence-to-sequence): Rewrite or transform text-to-text.
+  - ✍️ [Text generation](#text-generation): Produce completions and long-form responses.
+  - 🧩 [Token classification](#token-classification): Label entities and token-level tags.
+  - 🌍 [Translation](#translation): Translate text between languages.
+* 👁️ [**Vision**](#vision): Analyze images and create visual outputs from prompts.
+  - 🖼️ [Encoder decoder](#encoder-decoder): Caption images with encoder-decoder models.
+  - 🧪 [Image classification](#image-classification): Predict image classes and scores.
+  - 📝 [Image to text](#image-to-text): Describe image content in natural language.
+  - 💬 [Image text to text](#image-text-to-text): Answer questions grounded in images.
+  - 🎯 [Object detection](#object-detection): Detect and localize objects.
+  - 🧱 [Semantic segmentation](#semantic-segmentation): Label each pixel by class.
+  - 🕺 [Text to animation](#text-to-animation): Create animated clips from prompts.
+  - 🎨 [Text to image](#text-to-image): Generate images from text prompts.
+  - 🎬 [Text to video](#text-to-video): Generate short videos from prompts.
 
 ### Audio
 
