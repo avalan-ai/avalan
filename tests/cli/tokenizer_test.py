@@ -214,3 +214,28 @@ class CliTokenizerTestCase(IsolatedAsyncioTestCase):
             self.console.print.call_args_list,
             [call("cfg_panel"), call("tokens_panel")],
         )
+
+    async def test_tokenize_input_empty_returns_none(self):
+        args = Namespace(**vars(self.args))
+
+        dummy_model = MagicMock()
+        dummy_model.__enter__.return_value = dummy_model
+        dummy_model.__exit__.return_value = False
+        dummy_model.tokenizer_config = SimpleNamespace(
+            tokens=["x"], special_tokens=["y"]
+        )
+
+        with (
+            patch.object(
+                self.tokenizer_mod,
+                "TextGenerationModel",
+                return_value=dummy_model,
+            ),
+            patch.object(self.tokenizer_mod, "get_input", return_value=""),
+        ):
+            result = await self.tokenizer_mod.tokenize(
+                args, self.console, self.theme, self.hub, self.logger
+            )
+
+        self.assertIsNone(result)
+        self.theme.tokenizer_tokens.assert_not_called()

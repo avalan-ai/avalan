@@ -252,6 +252,31 @@ class AwsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(db, "db")
         self.aws._rds.create_db_instance.assert_not_called()
 
+    async def test_create_rds_if_missing_handles_client_error_not_found(self):
+        self.aws._rds.exceptions = MagicMock(DBInstanceNotFoundFault=None)
+        self.aws._rds.describe_db_instances = AsyncMock(
+            side_effect=DummyClientError(
+                {"Error": {"Code": "DBInstanceNotFound"}}, "describe"
+            )
+        )
+        self.aws._rds.create_db_instance = AsyncMock()
+        waiter = MagicMock()
+        waiter.wait = AsyncMock()
+        self.aws._rds.get_waiter = AsyncMock(return_value=waiter)
+
+        db = await self.aws.create_rds_if_missing("db", "cls", "sg", 10)
+
+        self.assertEqual(db, "db")
+        self.aws._rds.create_db_instance.assert_awaited_once()
+
+    async def test_create_rds_if_missing_reraises_unknown_error(self):
+        self.aws._rds.exceptions = MagicMock(DBInstanceNotFoundFault=None)
+        err = DummyClientError({"Error": {"Code": "AccessDenied"}}, "describe")
+        self.aws._rds.describe_db_instances = AsyncMock(side_effect=err)
+
+        with self.assertRaises(DummyClientError):
+            await self.aws.create_rds_if_missing("db", "cls", "sg", 10)
+
     async def test_create_instance_if_missing(self):
         self.aws._ec2.describe_instances = AsyncMock(
             return_value={
