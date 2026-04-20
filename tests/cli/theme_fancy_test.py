@@ -428,6 +428,51 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         pad = self.theme.saved_tokenizer_files("/d", 2)
         self.assertIn("2 tokenizer files", pad.renderable)
 
+    def test_saved_tokenizer_files_with_total_only(self):
+        pad = self.theme.saved_tokenizer_files(1)
+        self.assertIn("1 tokenizer file", pad.renderable)
+
+    def test_events_log_tool_branches(self):
+        tool_call = SimpleNamespace(
+            id=UUID(int=2), name="calc", arguments={"x": 1}
+        )
+        tool_result = SimpleNamespace(call=tool_call, result={"ok": True})
+        events = [
+            Event(
+                type=EventType.TOOL_EXECUTE,
+                payload={"call": tool_call},
+            ),
+            Event(
+                type=EventType.TOOL_MODEL_RUN,
+                payload={"model_id": "react", "messages": ["a", "b"]},
+            ),
+            Event(
+                type=EventType.TOOL_MODEL_RESPONSE,
+                payload={"model_id": "react"},
+            ),
+            Event(
+                type=EventType.TOOL_PROCESS,
+                payload=[SimpleNamespace(name="weather")],
+            ),
+            Event(
+                type=EventType.TOOL_RESULT,
+                payload={"result": tool_result},
+                elapsed=0.01,
+            ),
+        ]
+
+        log = self.theme._events_log(
+            events,
+            events_limit=None,
+            include_tokens=False,
+            include_tool_detect=False,
+            include_tools=True,
+            include_non_tools=False,
+        )
+
+        assert log is not None
+        self.assertEqual(len(log), 5)
+
     def test_search_message_matches(self):
         msg = EngineMessageScored(
             agent_id=UUID(int=0),

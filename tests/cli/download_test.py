@@ -71,3 +71,36 @@ class DownloadTestCase(TestCase):
             calls["task_kwargs"],
             {"total": 10.0, "completed": 0},
         )
+
+    def test_tqdm_rich_progress_allows_unknown_total(self):
+        calls: dict[str, object] = {}
+
+        class DummyProgress:
+            def __init__(self, *_progress_columns, **_kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def add_task(self, _description: str, **kwargs) -> int:
+                calls["task_kwargs"] = kwargs
+                return 1
+
+            def update(self, *_args, **_kwargs):
+                return None
+
+            def reset(self, *_args, **_kwargs):
+                return None
+
+        with patch.object(download, "Progress", DummyProgress):
+            prog = download.tqdm_rich_progress(
+                total=None,
+                disable=False,
+                progress=("col",),
+            )
+            prog.close()
+
+        self.assertEqual(calls["task_kwargs"], {"total": None, "completed": 0})

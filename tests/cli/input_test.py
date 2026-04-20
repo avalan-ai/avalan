@@ -1,3 +1,4 @@
+from io import UnsupportedOperation
 from unittest import TestCase
 from unittest.mock import MagicMock, call, patch
 from uuid import uuid4
@@ -101,6 +102,12 @@ class CliConfirmHasInputTestCase(TestCase):
 
     def test_has_input_false(self):
         with patch("avalan.cli.select", return_value=([], [], [])):
+            self.assertFalse(has_input(MagicMock()))
+
+    def test_has_input_unsupported_operation(self):
+        with patch(
+            "avalan.cli.select", side_effect=UnsupportedOperation("not tty")
+        ):
             self.assertFalse(has_input(MagicMock()))
 
 
