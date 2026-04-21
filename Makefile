@@ -1,4 +1,11 @@
 REAL_TARGETS := install lint test tests test-coverage version release
+TEST_ARGS := $(filter-out test tests,$(MAKECMDGOALS))
+PYTEST_ARGS := --verbose
+
+ifneq ($(filter coverage,$(TEST_ARGS)),)
+PYTEST_ARGS += --cov=src/ --cov-report=xml
+endif
+
 ifneq ($(filter-out $(REAL_TARGETS),$(MAKECMDGOALS)),)
 .PHONY: $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS)):
@@ -15,10 +22,12 @@ lint:
 	poetry run mypy
 
 test:
+ifeq ($(filter no-install,$(TEST_ARGS)),)
 	poetry sync --all-extras --with test
-	poetry run pytest --verbose
+endif
+	poetry run pytest $(PYTEST_ARGS)
 
-.PHONY: tests
+.PHONY: test tests
 tests: test
 
 test-coverage:
