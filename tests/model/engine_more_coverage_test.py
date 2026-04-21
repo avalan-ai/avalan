@@ -45,6 +45,13 @@ class WeightAndDeviceTestCase(TestCase):
         ):
             self.assertEqual(Engine.get_default_device(), "cpu")
 
+    def test_has_module_handles_module_not_found(self) -> None:
+        with patch(
+            "avalan.model.engine.find_spec",
+            side_effect=ModuleNotFoundError("missing parent package"),
+        ):
+            self.assertFalse(Engine._has_module("mlx.nn"))
+
 
 class UsesTokenizerPropertyTestCase(TestCase):
     def test_default_property(self) -> None:
