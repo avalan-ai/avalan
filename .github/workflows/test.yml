@@ -77,6 +77,13 @@ jobs:
       - name: Install dependencies
         run: poetry sync --all-extras --with test --no-interaction
 
+      - name: Install Linux MLX runtime
+        run: poetry run pip install "mlx[cpu]==0.28.0"
+
+      - name: Install MLX-LM runtime (Python 3.12 only)
+        if: matrix.python == '3.12'
+        run: poetry run pip install "mlx-lm==0.26.3"
+
       - name: Run tests with coverage analysis
         run: make test coverage no-install
 

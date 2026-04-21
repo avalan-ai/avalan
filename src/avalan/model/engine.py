@@ -353,16 +353,14 @@ class Engine(ABC):
             )
             self._model = self._load_model()
 
-            if not isinstance(self._model, PreTrainedModel) and not isinstance(
-                self._model, TextGenerationVendor
+            if (
+                not isinstance(self._model, PreTrainedModel)
+                and not isinstance(self._model, TextGenerationVendor)
+                and not isinstance(self._model, DiffusionPipeline)
             ):
-                if find_spec("mlx.nn"):
-                    mlx_module = __import__("mlx.nn", fromlist=["Module"])
-                    Module = getattr(mlx_module, "Module")
+                is_mlx = Engine._is_mlx_model(self._model)
 
-                    is_mlx = isinstance(self._model, Module)
-
-                if find_spec("sentence_transformers"):
+                if not is_mlx and Engine._has_module("sentence_transformers"):
                     from sentence_transformers import SentenceTransformer
 
                     is_sentence_transformer = isinstance(
@@ -567,6 +565,24 @@ class Engine(ABC):
             "cuda"
             if cuda.is_available()
             else "mps" if mps.is_available() else "cpu"
+        )
+
+    @staticmethod
+    def _has_module(name: str) -> bool:
+        try:
+            return find_spec(name) is not None
+        except ModuleNotFoundError:
+            return False
+
+    @staticmethod
+    def _is_mlx_model(model: object) -> bool:
+        return any(
+            cls.__name__ == "Module"
+            and (
+                cls.__module__ == "mlx.nn"
+                or cls.__module__.startswith("mlx.nn.")
+            )
+            for cls in type(model).__mro__
         )
 
     @staticmethod
