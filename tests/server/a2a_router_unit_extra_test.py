@@ -24,6 +24,7 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.server.a2a.router import (
+    _STREAM_RESPONSE_ID_UNSET,
     A2AResponseTranslator,
     A2AStreamEventConverter,
     A2ATaskCreateRequest,
@@ -55,7 +56,6 @@ from avalan.server.a2a.router import (
     _skill_tags,
     _state_for_item,
     _status_to_state,
-    _STREAM_RESPONSE_ID_UNSET,
     _task_metadata,
     _task_metadata_from_overview,
     _timestamp_to_iso,

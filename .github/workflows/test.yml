@@ -42,15 +42,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Update pip
-        run: pip install --upgrade pip
-
       - name: Load cached Poetry installation
         id: cached-poetry
         uses: actions/cache@v4
         with:
           path: ~/.local
-          key: poetry-v11
+          key: poetry-v12-2.3.3
 
       - name: Install Poetry
         if: steps.cached-poetry.outputs.cache-hit != 'true'
@@ -62,42 +59,33 @@ jobs:
           virtualenvs-path: .venv
           installer-parallel: true
 
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
       - name: Load cached venv
         id: cached-poetry-dependencies
         if: env.IGNORE_VENV_CACHE != 'true'
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-v11-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
-
-      - name: Install optional dependencies
-        id: install-opt-deps
-        run: >
-          poetry run pip install "mlx[cpu]==0.28.0" "beautifulsoup4==4.14.2" "pypdf==6.1.1"
-
-      - name: Install MLX-LM dependencies (Python 3.12 only)
-        id: install-mlxlm-deps
-        if: matrix.python == '3.12'
-        run: >
-          poetry run pip install "mlx-lm==0.26.3"
+          key: venv-v12-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          restore-keys: |
+            venv-v12-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Install dependencies
-        id: install-deps
-        run: >
-          poetry install --no-interaction
-          --extras agent
-          --extras audio
-          --extras memory
-          --extras secrets
-          --extras server
-          --extras tool
-          --extras translation
-          --extras vendors
-          --extras vision
-          --with test
+        run: poetry sync --all-extras --with test --no-interaction
+
+      - name: Install Linux MLX runtime
+        run: poetry run pip install "mlx[cpu]==0.28.0"
+
+      - name: Install MLX-LM runtime (Python 3.12 only)
+        if: matrix.python == '3.12'
+        run: poetry run pip install "mlx-lm==0.26.3"
 
       - name: Run tests with coverage analysis
-        run: poetry run pytest --cov=src/ --cov-report=xml
+        run: make test coverage no-install
 
       - name: Upload coverage to Coveralls
         continue-on-error: true
@@ -106,7 +94,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           format: cobertura
           file: coverage.xml
-          flag-name: unit test
+          flag-name: unit-tests-${{ matrix.python }}
           parallel: true
           fail-on-error: true
 
