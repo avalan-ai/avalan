@@ -103,8 +103,6 @@ class MlxLmModel(TextGenerationModel):
         async for chunk in stream:
             if isinstance(chunk, str):
                 yield chunk
-            elif isinstance(chunk, (Token, TokenDetail)):
-                yield chunk.token
 
     def _string_output(
         self,

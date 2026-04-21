@@ -346,7 +346,7 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(only_text[0], self.mod.Token)
         self.assertEqual(only_text[1], "b")
 
-    async def test_stream_generator_emits_token_branch(self) -> None:
+    async def test_stream_generator_normalizes_token_and_text(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
             TransformerEngineSettings(
@@ -357,28 +357,18 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-
-        class FakeStream:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if hasattr(self, "_done"):
-                    raise StopAsyncIteration
-                self._done = True
-                return self.mod.Token(token="z")
-
-        fake_stream = FakeStream()
-        fake_stream.mod = self.mod
-
-        with patch.object(self.mod, "MlxLmStream", return_value=fake_stream):
-            chunks = []
-            async for chunk in model._stream_generator(
-                {"input_ids": [[1]]}, GenerationSettings(), False
-            ):
-                chunks.append(chunk)
-
-        self.assertEqual(chunks, ["z"])
+        self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
+            [
+                self.mod.Token(token="z"),
+                types.SimpleNamespace(text="y"),
+            ]
+        )
+        chunks = []
+        async for chunk in model._stream_generator(
+            {"input_ids": [[1]]}, GenerationSettings(), False
+        ):
+            chunks.append(chunk)
+        self.assertEqual(chunks, ["z", "y"])
 
     def test_get_sampler_and_prompt_rejects_non_mapping_inputs(self) -> None:
         model = self.mod.MlxLmModel(
