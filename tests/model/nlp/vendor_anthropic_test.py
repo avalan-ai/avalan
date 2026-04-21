@@ -406,3 +406,105 @@ def test_translate_api_error_for_unknown_model(anthropic_mod):
                 use_async_generator=False,
             )
         )
+
+
+def test_stream_skips_tool_events_with_missing_indexes(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(type="tool_use", id="x", name="y"),
+            index=None,
+        )
+        yield mod.RawContentBlockDeltaEvent(
+            SimpleNamespace(partial_json='{"x":1}'),
+            index=None,
+        )
+        yield SimpleNamespace(type="message_stop")
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        out = []
+        async for token in stream:
+            out.append(token)
+        return out
+
+    assert asyncio.run(collect()) == []
+
+
+def test_call_reraises_when_translator_does_not_raise(anthropic_mod):
+    mod, _ = anthropic_mod
+    exit_stack = AsyncMock(spec=AsyncExitStack)
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+
+    err = RuntimeError("boom")
+    client._client.messages.stream = MagicMock(side_effect=err)
+
+    with patch.object(
+        mod.AnthropicClient, "_translate_api_error"
+    ) as translate:
+        with pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(client("model", []))
+
+    translate.assert_called_once_with("model", err)
+
+
+def test_error_helpers_cover_false_paths(anthropic_mod):
+    mod, stub = anthropic_mod
+
+    error = ValueError("plain")
+    assert mod.AnthropicClient._error_message(error) == "plain"
+    assert mod.AnthropicClient._is_missing_model_error(error) is False
+
+    not_found_wrong_status = stub.NotFoundError(
+        "bad",
+        response=SimpleNamespace(status_code=500),
+        body={"error": {"message": "model missing"}},
+    )
+    assert (
+        mod.AnthropicClient._is_missing_model_error(not_found_wrong_status)
+        is False
+    )
+
+    mod.AnthropicClient._translate_api_error("model", RuntimeError("x"))
+
+
+def test_template_messages_skips_dynamic_none_results(anthropic_mod):
+    mod, _ = anthropic_mod
+    client = mod.AnthropicClient("k", exit_stack=AsyncExitStack())
+
+    class DynamicToolMessage:
+        role = MessageRole.TOOL
+        tool_call_error = None
+
+        def __init__(self) -> None:
+            self._calls = 0
+
+        @property
+        def tool_call_result(self):
+            self._calls += 1
+            if self._calls == 1:
+                return object()
+            return None
+
+    with patch.object(
+        mod.TextGenerationVendor,
+        "_template_messages",
+        return_value=[{"role": "assistant", "content": "ok"}],
+    ):
+        output = client._template_messages([DynamicToolMessage()])
+
+    assert output == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "ok"}],
+        }
+    ]
+
+
+def test_non_stream_response_content_ignores_non_list_content(anthropic_mod):
+    mod, _ = anthropic_mod
+    response = {"content": "not-a-list"}
+
+    assert mod.AnthropicClient._non_stream_response_content(response) == ""

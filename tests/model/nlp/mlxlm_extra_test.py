@@ -295,3 +295,106 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             logger=getLogger(),
         )
         self.assertFalse(model.supports_sample_generation)
+
+
+class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.load = MagicMock(return_value=("model", "tokenizer"))
+        stub.generate = MagicMock(return_value="out")
+        stub.stream_generate = MagicMock(return_value=iter([]))
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock(return_value="sampler")
+        self.patch = patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        )
+        self.patch.start()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        importlib.reload(
+            importlib.import_module("avalan.model.nlp.text.mlxlm")
+        )
+        self.mod = importlib.import_module("avalan.model.nlp.text.mlxlm")
+        self.stub = stub
+
+    async def asyncTearDown(self) -> None:
+        self.patch.stop()
+        del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_handles_token_and_text_chunks(self) -> None:
+        stream = self.mod.MlxLmStream(
+            iter(
+                [
+                    self.mod.Token(token="tok"),
+                    types.SimpleNamespace(text="txt"),
+                ]
+            )
+        )
+
+        self.assertEqual(await stream.__anext__(), "tok")
+        self.assertEqual(await stream.__anext__(), "txt")
+
+        only_text = []
+        async for chunk in self.mod.MlxLmStream(
+            iter([self.mod.Token(token="a"), types.SimpleNamespace(text="b")])
+        )._generator:
+            only_text.append(chunk)
+        self.assertIsInstance(only_text[0], self.mod.Token)
+        self.assertEqual(only_text[1], "b")
+
+    async def test_stream_generator_emits_token_branch(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._model = "m"
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "p"
+
+        class FakeStream:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if hasattr(self, "_done"):
+                    raise StopAsyncIteration
+                self._done = True
+                return self.mod.Token(token="z")
+
+        fake_stream = FakeStream()
+        fake_stream.mod = self.mod
+
+        with patch.object(self.mod, "MlxLmStream", return_value=fake_stream):
+            chunks = []
+            async for chunk in model._stream_generator(
+                {"input_ids": [[1]]}, GenerationSettings(), False
+            ):
+                chunks.append(chunk)
+
+        self.assertEqual(chunks, ["z"])
+
+    def test_get_sampler_and_prompt_rejects_non_mapping_inputs(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._tokenizer = MagicMock()
+
+        with self.assertRaisesRegex(
+            ValueError, "Expected tokenized inputs to be a mapping"
+        ):
+            model._get_sampler_and_prompt(
+                object(),
+                GenerationSettings(),
+                False,
+            )
