@@ -1,6 +1,4 @@
-REAL_TARGETS := install lint test test-coverage version release
-TEST_EXTRAS := --extras agent --extras audio --extras memory --extras secrets --extras server --extras tool --extras translation --extras vendors --extras vision
-
+REAL_TARGETS := install lint test tests test-coverage version release
 ifneq ($(filter-out $(REAL_TARGETS),$(MAKECMDGOALS)),)
 .PHONY: $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS)):
@@ -17,8 +15,11 @@ lint:
 	poetry run mypy
 
 test:
-	poetry sync $(TEST_EXTRAS) --with test
+	poetry sync --all-extras --with test
 	poetry run pytest --verbose
+
+.PHONY: tests
+tests: test
 
 test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))
