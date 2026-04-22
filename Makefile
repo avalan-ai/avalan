@@ -68,7 +68,8 @@ release:
 	git tag v$(VERSION) -m "Release v$(VERSION)"
 	@$(eval NOTES := $(shell git log --format=%B -n1 v$(VERSION)))
 	git push origin --follow-tags
-	poetry publish --build
+	poetry build --clean
+	poetry publish
 	gh release create v$(VERSION) \
 	  --title "v$(VERSION)" \
 	  --notes "$(NOTES)"
