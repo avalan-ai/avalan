@@ -6,6 +6,7 @@ from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 from avalan.entities import (
     GenerationSettings,
@@ -307,7 +308,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(t5.call.arguments, {})
         self.assertEqual(
             t5.token,
-            '<tool_call>{"name": "pkg.func", "arguments": {}}</tool_call>',
+            '<tool_call>{"name": "pkg.func", "arguments": {}, "id":'
+            ' "c1"}</tool_call>',
         )
         t6 = await stream.__anext__()
         self.assertIsInstance(t6, Token)
@@ -754,6 +756,45 @@ class TemplateAndToolSchemaTestCase(TestCase):
                     "type": "function_call_output",
                     "call_id": "c2",
                     "output": '{"x": 3}',
+                },
+            ],
+        )
+
+    def test_template_messages_tool_results_stringify_uuid_call_id(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        call_id = UUID("11111111-1111-1111-1111-111111111111")
+        call = ToolCall(
+            id=call_id,
+            name="pkg.func",
+            arguments={"entity_id": call_id},
+        )
+        result = ToolCallResult(
+            id="c1",
+            name="pkg.func",
+            call=call,
+            result={"entity_id": call_id},
+        )
+        message = Message(role=MessageRole.TOOL, tool_call_result=result)
+
+        templated = client._template_messages([message])
+
+        self.assertEqual(
+            templated,
+            [
+                {
+                    "type": "function_call",
+                    "name": "pkg__func",
+                    "call_id": str(call_id),
+                    "arguments": (
+                        '{"entity_id": "11111111-1111-1111-1111-111111111111"}'
+                    ),
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": str(call_id),
+                    "output": (
+                        '{"entity_id": "11111111-1111-1111-1111-111111111111"}'
+                    ),
                 },
             ],
         )

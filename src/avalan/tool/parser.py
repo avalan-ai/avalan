@@ -12,7 +12,7 @@ from enum import Enum
 from json import JSONDecodeError, loads
 from re import DOTALL, compile, finditer, search, sub
 from typing import Any, final
-from uuid import uuid4
+from uuid import UUID, uuid4
 from xml.etree import ElementTree
 
 _HARMONY_SEGMENT_PATTERN = compile(
@@ -412,13 +412,9 @@ class ToolCallParser:
                     and "name" in tool_call
                     and "arguments" in tool_call
                 ):
-                    tool_calls.append(
-                        ToolCall(
-                            id=uuid4(),
-                            name=tool_call["name"],
-                            arguments=tool_call["arguments"],
-                        )
-                    )
+                    parsed = self._tool_call_from_payload(tool_call)
+                    if parsed is not None:
+                        tool_calls.append(parsed)
         except ElementTree.ParseError:
             pass
 
@@ -432,18 +428,9 @@ class ToolCallParser:
             tool_call_payload = m.group(1)
             try:
                 tool_call = loads(tool_call_payload)
-                if (
-                    tool_call
-                    and "name" in tool_call
-                    and "arguments" in tool_call
-                ):
-                    tool_calls.append(
-                        ToolCall(
-                            id=uuid4(),
-                            name=tool_call["name"],
-                            arguments=tool_call["arguments"],
-                        )
-                    )
+                parsed = self._tool_call_from_payload(tool_call)
+                if parsed is not None:
+                    tool_calls.append(parsed)
             except JSONDecodeError:
                 pass
 
@@ -498,3 +485,19 @@ class ToolCallParser:
                 pass
 
         return tool_calls if tool_calls else None
+
+    @staticmethod
+    def _tool_call_from_payload(payload: Any) -> ToolCall | None:
+        if not isinstance(payload, dict):
+            return None
+
+        name = payload.get("name")
+        arguments = payload.get("arguments")
+        if not isinstance(name, str) or not isinstance(arguments, dict):
+            return None
+
+        call_id = payload.get("id")
+        identifier: UUID | str = (
+            call_id if isinstance(call_id, (UUID, str)) else uuid4()
+        )
+        return ToolCall(id=identifier, name=name, arguments=arguments)

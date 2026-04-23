@@ -137,7 +137,13 @@ class TextGenerationVendor(ABC):
             name=name,
             arguments=cast(dict[str, str | int | float | bool | None], args),
         )
-        token_json = dumps({"name": name, "arguments": args})
+        token_payload: dict[str, Any] = {
+            "name": name,
+            "arguments": args,
+        }
+        if call_id_value is not None:
+            token_payload["id"] = call_id_value
+        token_json = dumps(token_payload)
         return ToolCallToken(
             token=f"<tool_call>{token_json}</tool_call>", call=call
         )

@@ -18,7 +18,6 @@ from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
-from json import dumps
 from typing import Any, AsyncIterator, cast
 
 from diffusers import DiffusionPipeline
@@ -216,19 +215,20 @@ class OpenAIClient(TextGenerationVendor):
                 ]
         for result in tool_results:
             assert result is not None
+            call_id = str(result.call.id)
             call_message = {
                 "type": "function_call",
                 "name": TextGenerationVendor.encode_tool_name(
                     result.call.name
                 ),
-                "call_id": result.call.id,
-                "arguments": dumps(result.call.arguments),
+                "call_id": call_id,
+                "arguments": to_json(result.call.arguments),
             }
             messages_out.append(call_message)
 
             result_message = {
                 "type": "function_call_output",
-                "call_id": result.call.id,
+                "call_id": call_id,
                 "output": to_json(
                     result.result
                     if isinstance(result, ToolCallResult)
