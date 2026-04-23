@@ -4,6 +4,7 @@ from .....entities import (
     MessageContentFile,
     MessageContentImage,
     MessageRole,
+    ReasoningEffort,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -158,6 +159,9 @@ class AnthropicClient(TextGenerationVendor):
         extra_headers = AnthropicClient._extra_headers(messages)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
+        output_config = AnthropicClient._output_config(settings)
+        if output_config:
+            kwargs["output_config"] = output_config
 
         try:
             if use_async_generator:
@@ -266,6 +270,22 @@ class AnthropicClient(TextGenerationVendor):
             template_messages.pop()
 
         return cast(list[TemplateMessage], template_messages)
+
+    @staticmethod
+    def _output_config(
+        settings: GenerationSettings,
+    ) -> dict[str, str] | None:
+        effort = settings.reasoning.effort
+        if effort is None:
+            return None
+        match effort:
+            case ReasoningEffort.NONE | ReasoningEffort.MINIMAL:
+                resolved_effort = ReasoningEffort.LOW
+            case ReasoningEffort.XHIGH:
+                resolved_effort = ReasoningEffort.MAX
+            case _:
+                resolved_effort = effort
+        return {"effort": resolved_effort.value}
 
     @staticmethod
     def _content_block(block: dict[str, Any]) -> dict[str, Any]:

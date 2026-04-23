@@ -3,6 +3,7 @@ from .....entities import (
     Input,
     Message,
     MessageRole,
+    ReasoningEffort,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -172,6 +173,9 @@ class OpenAIClient(TextGenerationVendor):
                 kwargs["text"] = {"stop": settings.stop_strings}
             if settings.response_format is not None:
                 kwargs["response_format"] = settings.response_format
+            reasoning = OpenAIClient._reasoning_config(settings)
+            if reasoning:
+                kwargs["reasoning"] = reasoning
         if tool:
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
@@ -233,6 +237,17 @@ class OpenAIClient(TextGenerationVendor):
             }
             messages_out.append(result_message)
         return messages_out
+
+    @staticmethod
+    def _reasoning_config(
+        settings: GenerationSettings,
+    ) -> dict[str, str] | None:
+        effort = settings.reasoning.effort
+        if effort is None:
+            return None
+        if effort == ReasoningEffort.MAX:
+            effort = ReasoningEffort.XHIGH
+        return {"effort": effort.value}
 
     @staticmethod
     def _content_block(block: dict[str, Any]) -> dict[str, Any]:

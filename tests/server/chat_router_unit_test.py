@@ -12,6 +12,7 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningEffort,
     ReasoningToken,
     ToolCallToken,
 )
@@ -22,6 +23,8 @@ from avalan.server.entities import (
     ContentFile,
     ContentImage,
     ContentText,
+    ReasoningConfig,
+    ResponsesRequest,
 )
 
 
@@ -35,10 +38,15 @@ class DummyOrchestrator(Orchestrator):
 class ChatRouterUnitTest(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         sys.modules.pop("avalan.server.routers.chat", None)
+        sys.modules.pop("avalan.server.routers.responses", None)
         self.chat = importlib.import_module("avalan.server.routers.chat")
+        self.responses = importlib.import_module(
+            "avalan.server.routers.responses"
+        )
 
     def tearDown(self) -> None:
         sys.modules.pop("avalan.server.routers.chat", None)
+        sys.modules.pop("avalan.server.routers.responses", None)
 
     async def test_create_chat_completion_non_stream(self) -> None:
         logger = AsyncMock(spec=Logger)
@@ -74,6 +82,42 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         orch.assert_awaited_once()
         settings = orch.await_args.kwargs["settings"]
         self.assertEqual(settings.num_return_sequences, 3)
+
+    async def test_create_chat_completion_forwards_reasoning_effort(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            reasoning_effort=ReasoningEffort.XHIGH,
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        settings = orch.await_args.kwargs["settings"]
+        self.assertEqual(settings.reasoning.effort, ReasoningEffort.XHIGH)
+
+    async def test_create_response_forwards_reasoning_effort(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            reasoning=ReasoningConfig(effort=ReasoningEffort.HIGH),
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.responses.create_response(req, logger, orch)
+
+        settings = orch.await_args.kwargs["settings"]
+        self.assertEqual(settings.reasoning.effort, ReasoningEffort.HIGH)
 
     async def test_dependency_get_orchestrator(self) -> None:
         req = type(

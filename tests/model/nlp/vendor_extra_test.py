@@ -14,6 +14,8 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
     ReasoningToken,
     Token,
     ToolCall,
@@ -421,6 +423,26 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
                     "parts": [{"text": "Earlier reply"}],
                 },
             ],
+        )
+
+    async def test_call_forwards_reasoning_effort_for_gemini_3(self):
+        client = self.mod.GoogleClient("k")
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
+
+        await client(
+            "gemini-3-flash-preview",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings,
+        )
+
+        kwargs = (
+            client._client.aio.models.generate_content_stream.await_args.kwargs
+        )
+        self.assertEqual(
+            kwargs["config"]["thinking_config"],
+            {"thinking_level": "high"},
         )
 
 

@@ -10,10 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from avalan.entities import (
+    GenerationSettings,
     Message,
     MessageContentFile,
     MessageContentImage,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
     ReasoningToken,
     Token,
     ToolCall,
@@ -228,6 +231,33 @@ def test_client_non_stream_tool_messages(anthropic_mod):
     create_mock.assert_awaited_once()
     kwargs = create_mock.await_args.kwargs
     assert all(msg["role"] != "tool" for msg in kwargs["messages"])
+
+
+def test_client_forwards_reasoning_effort(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="ok")]
+    )
+    stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        return_value=response
+    )
+
+    asyncio.run(
+        client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings=GenerationSettings(
+                reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+            ),
+            use_async_generator=False,
+        )
+    )
+
+    kwargs = stub.AsyncAnthropic.return_value.messages.create.await_args.kwargs
+    assert kwargs["output_config"] == {"effort": "max"}
 
 
 def test_template_messages_and_exclude_roles(anthropic_mod):

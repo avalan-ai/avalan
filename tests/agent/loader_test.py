@@ -1195,6 +1195,50 @@ enable_thinking = true
                 )
             await stack.aclose()
 
+    async def test_run_reasoning_settings_from_file(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.reasoning]
+effort = \"xhigh\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                )
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(
+                    settings.call_options["reasoning"]["effort"], "xhigh"
+                )
+            await stack.aclose()
+
     async def test_permanent_memory_from_file(self):
         config_tmpl = """
 [agent]

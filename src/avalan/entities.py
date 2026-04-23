@@ -194,6 +194,16 @@ class ReasoningTag(StrEnum):
     CHANNEL = "channel"
 
 
+class ReasoningEffort(StrEnum):
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QuantizationSettings:
@@ -251,6 +261,7 @@ class EngineUri:
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningSettings:
+    effort: ReasoningEffort | None = None
     max_new_tokens: int | None = None
     enabled: bool = True
     stop_on_max_new_tokens: bool = False

@@ -1,4 +1,4 @@
-from ..entities import MessageRole, OrchestratorSettings
+from ..entities import MessageRole, OrchestratorSettings, ReasoningEffort
 from ..tool.context import ToolSettingsContext
 
 from dataclasses import dataclass
@@ -125,6 +125,10 @@ class ChatMessage(BaseModel):
     content: str | list[ContentPart]
 
 
+class ReasoningConfig(BaseModel):
+    effort: ReasoningEffort | None = None
+
+
 class ChatCompletionRequest(BaseModel):
     model: str = Field(
         ..., description="ID of the model to use for generating the completion"
@@ -185,6 +189,10 @@ class ChatCompletionRequest(BaseModel):
     response_format: ResponseFormat | None = Field(
         None, description="Format to use for model response"
     )
+    reasoning_effort: ReasoningEffort | None = Field(
+        None,
+        description="Reasoning effort for supported reasoning models",
+    )
     tools: list[Tool] | None = None
     tool_choice: (
         Literal["auto", "none", "required"] | str | dict[str, object] | None
@@ -201,6 +209,7 @@ class ResponsesRequest(BaseModel):
     stop: str | list[str] | None = None
     max_tokens: int | None = None
     response_format: ResponseFormat | None = None
+    reasoning: ReasoningConfig | None = None
 
     @property
     def messages(self) -> list[ChatMessage]:

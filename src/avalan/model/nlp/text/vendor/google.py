@@ -2,6 +2,7 @@ from .....entities import (
     GenerationSettings,
     Message,
     MessageRole,
+    ReasoningEffort,
     Token,
     TokenDetail,
 )
@@ -51,7 +52,7 @@ class GoogleClient(TextGenerationVendor):
             "model": model_id,
             "contents": cast(Any, contents),
         }
-        config = self._config(messages, settings)
+        config = self._config(model_id, messages, settings)
         if config:
             kwargs["config"] = config
 
@@ -74,6 +75,7 @@ class GoogleClient(TextGenerationVendor):
 
     def _config(
         self,
+        model_id: str,
         messages: list[Message],
         settings: GenerationSettings | None,
     ) -> dict[str, Any] | None:
@@ -98,7 +100,29 @@ class GoogleClient(TextGenerationVendor):
                 else settings.stop_strings
             )
             config["stop_sequences"] = stop_sequences
+        thinking_config = GoogleClient._thinking_config(model_id, settings)
+        if thinking_config:
+            config["thinking_config"] = thinking_config
         return config or None
+
+    @staticmethod
+    def _thinking_config(
+        model_id: str,
+        settings: GenerationSettings,
+    ) -> dict[str, Any] | None:
+        effort = settings.reasoning.effort
+        if effort is None or "gemini-3" not in model_id.lower():
+            return None
+
+        match effort:
+            case ReasoningEffort.NONE:
+                thinking_level = ReasoningEffort.MINIMAL.value
+            case ReasoningEffort.XHIGH | ReasoningEffort.MAX:
+                thinking_level = ReasoningEffort.HIGH.value
+            case _:
+                thinking_level = effort.value
+
+        return {"thinking_level": thinking_level}
 
     def _template_messages(
         self,

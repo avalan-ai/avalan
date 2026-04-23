@@ -6,6 +6,7 @@ from ...entities import (
     Input,
     Modality,
     Operation,
+    ReasoningEffort,
     ReasoningSettings,
     ReasoningTag,
     TransformerEngineSettings,
@@ -93,6 +94,11 @@ class ModalityRegistry:
         input_string: Input | None,
     ) -> Operation:
         reasoning_settings = ReasoningSettings(
+            effort=(
+                ReasoningEffort(getattr(args, "reasoning_effort"))
+                if getattr(args, "reasoning_effort", None)
+                else None
+            ),
             max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),
             enabled=not getattr(args, "no_reasoning", False),
             stop_on_max_new_tokens=getattr(

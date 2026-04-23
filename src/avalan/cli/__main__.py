@@ -33,6 +33,7 @@ from ..entities import (
     GenerationCacheStrategy,
     Modality,
     ParallelStrategy,
+    ReasoningEffort,
     ReasoningTag,
     TextGenerationLoaderClass,
     TimestepSpacing,
@@ -1465,6 +1466,12 @@ class CLI:
             help="Reasoning tag style",
         )
         model_run_parser.add_argument(
+            "--reasoning-effort",
+            type=str,
+            choices=[e.value for e in ReasoningEffort],
+            help="Reasoning effort level",
+        )
+        model_run_parser.add_argument(
             "--reasoning-max-new-tokens",
             type=int,
             help="Maximum number of reasoning tokens",
@@ -1890,6 +1897,14 @@ class CLI:
                 "tokens with probabilities that add up to top_p or higher "
                 "are kept for generation."
             ),
+        )
+        group.add_argument(
+            "--reasoning-effort",
+            "--run-reasoning-effort",
+            type=str,
+            choices=[e.value for e in ReasoningEffort],
+            dest="run_reasoning_effort",
+            help="Reasoning effort level",
         )
         group.add_argument(
             "--tool", type=str, action="append", help="Enable tool"

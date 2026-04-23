@@ -14,6 +14,8 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
     ReasoningToken,
     Token,
     ToolCall,
@@ -618,6 +620,29 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_reasoning_effort_is_forwarded(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
+
+        await client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings,
+            use_async_generator=False,
+        )
+
+        kwargs = create_mock.await_args.kwargs
+        self.assertEqual(kwargs["reasoning"], {"effort": "xhigh"})
 
     async def test_non_stream_tool_call_output(self):
         response = SimpleNamespace(

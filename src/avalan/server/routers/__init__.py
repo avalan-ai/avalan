@@ -9,6 +9,7 @@ from ...entities import (
     MessageContentImage,
     MessageContentText,
     MessageFile,
+    ReasoningSettings,
 )
 from ...entities import (
     ReasoningToken as ReasoningToken,
@@ -72,6 +73,14 @@ async def orchestrate(
         stop_strings=request.stop,
         top_p=request.top_p,
         num_return_sequences=request.n,
+        reasoning=ReasoningSettings(
+            effort=(
+                request.reasoning.effort
+                if isinstance(request, ResponsesRequest)
+                and request.reasoning is not None
+                else getattr(request, "reasoning_effort", None)
+            )
+        ),
         response_format=(
             request.response_format.model_dump(
                 by_alias=True, exclude_none=True

@@ -73,6 +73,30 @@ class AgentParserOptionsTestCase(TestCase):
         )
         self.assertEqual(args.protocol, ["openai:responses", "mcp"])
 
+    def test_serve_parser_reasoning_effort_alias(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "serve",
+                "spec.toml",
+                "--reasoning-effort",
+                "xhigh",
+            ]
+        )
+        self.assertEqual(args.run_reasoning_effort, "xhigh")
+
+    def test_run_parser_reasoning_effort_alias(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "run",
+                "spec.toml",
+                "--reasoning-effort",
+                "xhigh",
+            ]
+        )
+        self.assertEqual(args.run_reasoning_effort, "xhigh")
+
 
 class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
     def _make_args(self, **overrides):

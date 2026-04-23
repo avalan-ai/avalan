@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
+    ChatSettings,
     EngineMessage,
     EngineUri,
     GenerationSettings,
     Message,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
+    ReasoningTag,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
@@ -257,6 +261,34 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             0
         ].operation.generation_settings
         self.assertEqual(used_settings.top_p, 0.5)
+
+    async def test_run_normalizes_nested_settings_from_dicts(self):
+        agent, _, _, manager = self._make_agent()
+        message = Message(role=MessageRole.USER, content="hi")
+        context = self._make_context(message)
+
+        await agent._run(
+            context,
+            message,
+            chat_settings={"enable_thinking": False},
+            reasoning={"effort": "xhigh", "tag": "think"},
+        )
+
+        manager.assert_awaited_once()
+        used_settings = manager.await_args.args[
+            0
+        ].operation.generation_settings
+        self.assertEqual(
+            used_settings.chat_settings,
+            ChatSettings(enable_thinking=False),
+        )
+        self.assertEqual(
+            used_settings.reasoning,
+            ReasoningSettings(
+                effort=ReasoningEffort.XHIGH,
+                tag=ReasoningTag.THINK,
+            ),
+        )
 
     async def test_run_with_list_of_strings_converts_to_user_messages(self):
         agent, _, memory, manager = self._make_agent()

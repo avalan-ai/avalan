@@ -24,6 +24,7 @@ from avalan.entities import (
     Message,
     MessageRole,
     Modality,
+    ReasoningEffort,
     ReasoningSettings,
     Token,
     TokenDetail,
@@ -1439,6 +1440,99 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 self.assertIsNone(settings.cache_strategy)
             else:
                 self.assertEqual(settings.cache_strategy, strat)
+
+    async def test_model_run_reasoning_effort_cli(self):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            cache_strategy=None,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            start_thinking=False,
+            chat_disable_thinking=False,
+            no_reasoning=False,
+            reasoning_tag=None,
+            reasoning_effort="xhigh",
+            reasoning_max_new_tokens=None,
+            reasoning_stop_on_max_new_tokens=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = MagicMock()
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+        captured: dict[str, GenerationSettings] = {}
+
+        async def manager_call(self, model_task):
+            operation = model_task.operation
+            captured["settings"] = operation.generation_settings
+            return TextGenerationResponse(
+                lambda: "resp",
+                logger=getLogger(),
+                use_async_generator=False,
+                generation_settings=operation.generation_settings,
+                settings=operation.generation_settings,
+            )
+
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(RealModelManager, "__call__", manager_call),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ),
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        settings = captured["settings"]
+        self.assertEqual(
+            settings.reasoning, ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
 
     async def test_model_run_sets_output_hidden_states(self):
         args = Namespace(

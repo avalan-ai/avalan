@@ -104,6 +104,11 @@ def get_orchestrator_settings(
         for k, v in vars(args).items()
         if k.startswith("run_chat_") and v is not None
     }
+    reasoning_settings = {
+        k[len("run_reasoning_") :]: v
+        for k, v in vars(args).items()
+        if k.startswith("run_reasoning_") and v is not None
+    }
     call_options = {
         "max_new_tokens": call_tokens,
         "skip_special_tokens": args.run_skip_special_tokens,
@@ -111,6 +116,7 @@ def get_orchestrator_settings(
         "top_k": top_k,
         "top_p": top_p,
         **({"chat_settings": chat_settings} if chat_settings else {}),
+        **({"reasoning": reasoning_settings} if reasoning_settings else {}),
     }
     if use_cache is not None:
         call_options["use_cache"] = use_cache
