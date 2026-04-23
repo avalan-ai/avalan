@@ -62,12 +62,10 @@ class UtilsToJsonTestCase(TestCase):
                     "id": UUID("019b7589-672b-766d-81c6-1da5efd5f49a"),
                 }
             ),
-            (
-                '{"date": "2025-09-19", '
-                '"datetime": "2025-09-19T12:34:56", '
-                '"time": "12:34:56", '
-                '"id": "019b7589-672b-766d-81c6-1da5efd5f49a"}'
-            ),
+            '{"date": "2025-09-19", '
+            '"datetime": "2025-09-19T12:34:56", '
+            '"time": "12:34:56", '
+            '"id": "019b7589-672b-766d-81c6-1da5efd5f49a"}',
         )
 
     def test_to_json_unsupported_type(self) -> None:

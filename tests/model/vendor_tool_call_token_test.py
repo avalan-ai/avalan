@@ -15,7 +15,7 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         expected = ToolCallToken(
             token=(
                 '<tool_call>{"name": "pkg.tool", "arguments": {"a":'
-                " 1}}</tool_call>"
+                ' 1}, "id": "1"}</tool_call>'
             ),
             call=ToolCall(id="1", name="pkg.tool", arguments={"a": 1}),
         )
@@ -40,7 +40,10 @@ class VendorBuildToolCallTokenTestCase(TestCase):
             arguments={"b": 2},
         )
         expected = ToolCallToken(
-            token='<tool_call>{"name": "", "arguments": {"b": 2}}</tool_call>',
+            token=(
+                '<tool_call>{"name": "", "arguments": {"b": 2},'
+                ' "id": "2"}</tool_call>'
+            ),
             call=ToolCall(id="2", name="", arguments={"b": 2}),
         )
         self.assertEqual(token, expected)
@@ -54,8 +57,8 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         )
         expected = ToolCallToken(
             token=(
-                '<tool_call>{"name": "tool", "arguments": {"b": 2}}'
-                "</tool_call>"
+                '<tool_call>{"name": "tool", "arguments": {"b": 2}, '
+                f'"id": "{call_id}"}}</tool_call>'
             ),
             call=ToolCall(id=str(call_id), name="tool", arguments={"b": 2}),
         )
