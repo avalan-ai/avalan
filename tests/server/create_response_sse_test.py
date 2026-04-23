@@ -1,12 +1,14 @@
 import importlib
 import sys
+from datetime import date
+from decimal import Decimal
 from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
@@ -14,6 +16,7 @@ from avalan.entities import (
     ReasoningToken,
     ToolCall,
     ToolCallError,
+    ToolCallResult,
     ToolCallToken,
 )
 from avalan.event import Event, EventType
@@ -401,6 +404,90 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(output_data["delta"], "final")
 
         orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_serializes_tool_result_temporal_types(
+        self,
+    ) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        call = ToolCall(id="call-1", name="database.sample", arguments={})
+        result = ToolCallResult(
+            id="call-1",
+            name="database.sample",
+            arguments={},
+            call=call,
+            result=[
+                {
+                    "id": UUID("019b7589-672b-766d-81c6-1da5efd5f49a"),
+                    "check_date": date(2025, 9, 19),
+                    "gross_check_amount": Decimal("524.46"),
+                }
+            ],
+        )
+
+        tokens = [
+            Event(
+                type=EventType.TOOL_RESULT,
+                payload={"result": result},
+            )
+        ]
+
+        class DummyResponse:
+            def __init__(self, items) -> None:  # type: ignore[no-untyped-def]
+                self._items = items
+                self.input_token_count = 0
+                self.output_token_count = 0
+
+            def __aiter__(self):  # type: ignore[override]
+                async def gen():
+                    for item in self._items:
+                        yield item
+
+                return gen()
+
+        response = DummyResponse(tokens)
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        text = "".join(chunks)
+        blocks = [b for b in text.strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+        data_lines = [block.split("\n")[1] for block in blocks]
+
+        function_index = events.index("response.function_call_arguments.delta")
+        payload = loads(data_lines[function_index][6:])
+        result_payload = loads(payload["result"])
+
+        self.assertEqual(
+            result_payload,
+            [
+                {
+                    "id": "019b7589-672b-766d-81c6-1da5efd5f49a",
+                    "check_date": "2025-09-19",
+                    "gross_check_amount": "524.46",
+                }
+            ],
+        )
 
     async def test_custom_tool_call_call_wraps_items_with_id(self) -> None:
         logger = getLogger()

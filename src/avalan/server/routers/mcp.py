@@ -16,7 +16,13 @@ from ...server.entities import (
 )
 from ...utils import to_json
 from ..sse import sse_bytes, sse_headers
-from . import orchestrate
+from . import (
+    MODEL_FALLBACK as DEFAULT_MODEL_FALLBACK,
+)
+from . import (
+    orchestrate,
+    resolve_model_id,
+)
 
 from asyncio import Event as AsyncEvent
 from asyncio import Lock, create_task
@@ -46,6 +52,7 @@ from fastapi.responses import (
 )
 
 RS: Final[str] = "\x1e"
+MODEL_FALLBACK: Final[str] = DEFAULT_MODEL_FALLBACK
 
 JSONScalar = None | bool | int | float | str
 JSONValue = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
@@ -62,6 +69,10 @@ AllowedMethod = Method | NotificationMethod
 ResponseItem = (
     ReasoningToken | ToolCallToken | Token | TokenDetail | Event | str
 )
+
+
+def _default_model_id(orchestrator: Orchestrator) -> str:
+    return resolve_model_id(orchestrator)
 
 
 class JSONRPCRequest(TypedDict, total=False):
@@ -385,22 +396,10 @@ class StreamResponse(Protocol):
     def __aiter__(self) -> AsyncIterator[ResponseItem]: ...
 
 
-MODEL_FALLBACK: Final[str] = "default"
-
-
-def _default_model_id(orchestrator: Orchestrator) -> str:
-    model_ids = getattr(orchestrator, "model_ids", None)
-    if model_ids:
-        candidates = sorted(str(model_id) for model_id in model_ids)
-        if candidates:
-            return candidates[0]
-    return MODEL_FALLBACK
-
-
 def _build_chat_request(
     tool_request: MCPToolRequest, orchestrator: Orchestrator
 ) -> ChatCompletionRequest:
-    model_id = _default_model_id(orchestrator)
+    model_id = resolve_model_id(orchestrator)
     return ChatCompletionRequest(
         model=model_id,
         messages=[

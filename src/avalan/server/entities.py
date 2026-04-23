@@ -70,7 +70,7 @@ class ToolFunction(BaseModel):
 
 
 class ContentText(BaseModel):
-    type: Literal["text"]
+    type: Literal["text", "input_text"]
     text: str
 
 
@@ -130,8 +130,12 @@ class ReasoningConfig(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str = Field(
-        ..., description="ID of the model to use for generating the completion"
+    model: str | None = Field(
+        None,
+        description=(
+            "ID of the model to use for generating the completion. When"
+            " omitted, use the server's configured model."
+        ),
     )
     messages: list[ChatMessage] = Field(
         ..., description="List of messages in the conversation"
@@ -200,7 +204,13 @@ class ChatCompletionRequest(BaseModel):
 
 
 class ResponsesRequest(BaseModel):
-    model: str
+    model: str | None = Field(
+        None,
+        description=(
+            "ID of the model to use for generating the response. When"
+            " omitted, use the server's configured model."
+        ),
+    )
     input: list[ChatMessage] = Field(...)
     temperature: float | None = 1.0
     top_p: float | None = 1.0

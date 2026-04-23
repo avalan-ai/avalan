@@ -9,13 +9,15 @@ from avalan.server.entities import (
     ChatCompletionResponse,
     ChatCompletionUsage,
     ChatMessage,
+    ContentText,
 )
 
 
 class ChatEntitiesTestCase(TestCase):
     def test_request_defaults(self) -> None:
         msg = ChatMessage(role=MessageRole.USER, content="hi")
-        req = ChatCompletionRequest(model="m", messages=[msg])
+        req = ChatCompletionRequest(messages=[msg])
+        self.assertIsNone(req.model)
         self.assertEqual(req.temperature, 1.0)
         self.assertEqual(req.top_p, 1.0)
         self.assertEqual(req.n, 1)
@@ -25,6 +27,15 @@ class ChatEntitiesTestCase(TestCase):
         msg = ChatMessage(role=MessageRole.USER, content="hi")
         with self.assertRaises(ValidationError):
             ChatCompletionRequest(model="m", messages=[msg], temperature=3.0)
+
+    def test_chat_message_accepts_input_text_blocks(self) -> None:
+        msg = ChatMessage(
+            role=MessageRole.USER,
+            content=[ContentText(type="input_text", text="hi")],
+        )
+
+        self.assertEqual(msg.content[0].type, "input_text")
+        self.assertEqual(msg.content[0].text, "hi")
 
     def test_response_serialization(self) -> None:
         msg = ChatMessage(role=MessageRole.ASSISTANT, content="ok")

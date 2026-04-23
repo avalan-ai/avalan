@@ -1,4 +1,5 @@
 from dataclasses import asdict, is_dataclass
+from datetime import date, datetime, time
 from decimal import Decimal
 from json import dumps
 from logging import Logger, getLogger
@@ -34,6 +35,8 @@ def to_json(item: Any) -> str:
         if is_dataclass(o):
             assert not isinstance(o, type)
             return asdict(o)
+        elif isinstance(o, (date, datetime, time)):
+            return o.isoformat()
         elif isinstance(o, (Decimal, UUID)):
             return str(o)
         raise TypeError(

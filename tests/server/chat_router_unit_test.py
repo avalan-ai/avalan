@@ -102,6 +102,23 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         settings = orch.await_args.kwargs["settings"]
         self.assertEqual(settings.reasoning.effort, ReasoningEffort.XHIGH)
 
+    async def test_create_chat_completion_uses_orchestrator_model(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.model_ids = {"server-model"}
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ChatCompletionRequest(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+
+        self.assertEqual(resp.model, "server-model")
+
     async def test_create_response_forwards_reasoning_effort(self) -> None:
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
@@ -118,6 +135,21 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
         settings = orch.await_args.kwargs["settings"]
         self.assertEqual(settings.reasoning.effort, ReasoningEffort.HIGH)
+
+    async def test_create_response_uses_orchestrator_model(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.model_ids = {"server-model"}
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ResponsesRequest(
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.responses.create_response(req, logger, orch)
+
+        self.assertEqual(resp["model"], "server-model")
 
     async def test_dependency_get_orchestrator(self) -> None:
         req = type(
@@ -314,6 +346,33 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(msg.content, list)
         self.assertEqual(len(msg.content), 1)
         self.assertIsInstance(msg.content[0], MessageContentText)
+        self.assertEqual(msg.content[0].text, "hello")
+
+    async def test_response_message_content_input_text_object(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ResponsesRequest(
+            model="m",
+            input=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=[ContentText(type="input_text", text="hello")],
+                )
+            ],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.responses.create_response(req, logger, orch)
+
+        msg = orch.await_args.args[0][0]
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 1)
+        self.assertIsInstance(msg.content[0], MessageContentText)
+        self.assertEqual(msg.content[0].type, "text")
         self.assertEqual(msg.content[0].text, "hello")
 
     async def test_message_content_list(self) -> None:

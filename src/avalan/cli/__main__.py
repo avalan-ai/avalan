@@ -1389,6 +1389,14 @@ class CLI:
             help="Use this as developer prompt",
         )
         model_run_parser.add_argument(
+            "--input-file",
+            action="append",
+            help=(
+                "Attach a local file as native input for text generation. "
+                "May be specified multiple times."
+            ),
+        )
+        model_run_parser.add_argument(
             "--text-context",
             type=str,
             help="Context string for question answering",

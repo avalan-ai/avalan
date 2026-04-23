@@ -617,9 +617,53 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                 {"type": "input_text", "text": "hi"},
                 {
                     "type": "input_file",
-                    "file_data": "YWJj",
+                    "file_data": "data:application/pdf;base64,YWJj",
                     "filename": "report.pdf",
                 },
+            ],
+        )
+
+    async def test_mixed_message_content_with_pdf_file_data_uses_data_url(
+        self,
+    ):
+        content = [
+            MessageContentText(type="text", text="hi"),
+            MessageContentFile(
+                type="file",
+                file={
+                    "file_data": "YWJj",
+                    "filename": "report.pdf",
+                    "mime_type": "application/pdf",
+                },
+            ),
+        ]
+        await self._assert_messages(
+            content,
+            [
+                {"type": "input_text", "text": "hi"},
+                {
+                    "type": "input_file",
+                    "file_data": "data:application/pdf;base64,YWJj",
+                    "filename": "report.pdf",
+                },
+            ],
+        )
+
+    async def test_pdf_file_data_uses_data_url_when_inferred_from_filename(
+        self,
+    ):
+        content = MessageContentFile(
+            type="file",
+            file={"file_data": "YWJj", "filename": "report.pdf"},
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_file",
+                    "file_data": "data:application/pdf;base64,YWJj",
+                    "filename": "report.pdf",
+                }
             ],
         )
 

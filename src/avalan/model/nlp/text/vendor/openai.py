@@ -18,6 +18,7 @@ from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
+from mimetypes import guess_type
 from typing import Any, AsyncIterator, cast
 
 from diffusers import DiffusionPipeline
@@ -277,13 +278,28 @@ class OpenAIClient(TextGenerationVendor):
         file_url = file.get("file_url") or file.get("url")
         file_data = file.get("file_data") or file.get("data")
         filename = file.get("filename")
+        mime_type = file.get("mime_type")
 
         if isinstance(file_id, str):
             payload["file_id"] = file_id
         elif isinstance(file_url, str):
             payload["file_url"] = file_url
         elif isinstance(file_data, str):
-            payload["file_data"] = file_data
+            file_mime_type = (
+                mime_type
+                if isinstance(mime_type, str)
+                else (
+                    guess_type(filename)[0]
+                    if isinstance(filename, str)
+                    else None
+                )
+            )
+            payload["file_data"] = (
+                file_data
+                if file_data.startswith("data:")
+                or not isinstance(file_mime_type, str)
+                else f"data:{file_mime_type};base64,{file_data}"
+            )
         else:
             raise AssertionError(
                 "OpenAI file blocks require file_id, file_url, or file_data"
