@@ -1714,6 +1714,64 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
 > [!TIP]
 > Use `--protocol openai:responses,completion` to enable both OpenAI Responses and Completions endpoints, or narrow the surface by specifying just `responses` or `completion` after the colon.
 
+##### Example: Match a PDF invoice to database records
+
+You can also serve a database-enabled agent and send it a PDF attachment
+through the same OpenAI-compatible endpoint. This is useful when the agent
+needs to inspect the document, understand your schema, and look up the matching
+record in PostgreSQL.
+
+```bash
+avalan agent serve \
+    --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-5.4" \
+    --reasoning-effort xhigh \
+    --tool "database" \
+    --tool-database-dsn "postgresql+asyncpg://root:password@localhost:5432/invoices_demo" \
+    --developer 'You are a helpful assistant that answers questions using the PostgreSQL database tools. Inspect the schema first, then query precisely. Stay read-only. Imported invoices are in table `invoice_import_items` and the customer account reference is stored in field `account_reference`.' \
+    --run-max-new-tokens 25000 \
+    --protocol openai:responses,completion \
+    --host 127.0.0.1 \
+    --port 9001 \
+    -vvv
+```
+
+Now query your agent with a PDF document:
+
+```bash
+echo "The attached invoice may match a customer record in the database. Find the matching account and return its account reference ID." \
+    | avalan model run "ai://openai" \
+        --base-url "http://127.0.0.1:9001/v1" \
+        --input-file docs/examples/playground/invoice.pdf
+```
+
+Or call the OpenAI Responses endpoint directly with streaming SSE events:
+
+```bash
+pdf=docs/examples/playground/invoice.pdf
+jq -n \
+    --arg filename "${pdf##*/}" \
+    --arg data "data:application/pdf;base64,$(base64 < "$pdf" | tr -d '\n')" '
+    {
+      input: [{
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "The attached invoice may match a customer record in the database. Find the matching account and return its account reference ID."
+          },
+          {
+            type: "input_file",
+            filename: $filename,
+            file_data: $data
+          }
+        ]
+      }],
+      stream: true
+}' | curl -N "http://127.0.0.1:9001/v1/responses" \
+    -H "Content-Type: application/json" \
+    -d @-
+```
+
 #### MCP server
 
 Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
