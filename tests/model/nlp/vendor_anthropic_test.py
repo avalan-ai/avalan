@@ -420,6 +420,82 @@ def test_document_source_variants(anthropic_mod):
     }
 
 
+def test_document_source_rejects_missing_source_and_invalid_utf8(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+    invalid_utf8 = b64encode(b"\xff\xfe").decode("ascii")
+
+    assert mod.AnthropicClient._document_source(
+        {
+            "file_data": invalid_utf8,
+            "mime_type": "text/plain",
+        }
+    ) == {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": invalid_utf8,
+    }
+
+    with pytest.raises(
+        AssertionError,
+        match="Anthropic file blocks require file_id, file_url, or file_data",
+    ):
+        mod.AnthropicClient._document_source({"title": "Doc"})
+
+
+def test_output_config_and_content_block_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    assert mod.AnthropicClient._output_config(
+        GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.NONE)
+        )
+    ) == {"effort": "low"}
+    assert mod.AnthropicClient._output_config(
+        GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH)
+        )
+    ) == {"effort": "high"}
+    assert mod.AnthropicClient._content_block(
+        {"type": "text", "text": "hello"}
+    ) == {"type": "text", "text": "hello"}
+    assert mod.AnthropicClient._content_block(
+        {"type": "other", "value": 1}
+    ) == {"type": "other", "value": 1}
+
+
+def test_image_source_and_files_api_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    assert mod.AnthropicClient._image_source(
+        {"url": "https://example.com/image.png"}
+    ) == {"type": "url", "url": "https://example.com/image.png"}
+    assert mod.AnthropicClient._image_source(
+        {"data": "YWJj", "mime_type": "image/jpeg"}
+    ) == {
+        "type": "base64",
+        "media_type": "image/jpeg",
+        "data": "YWJj",
+    }
+    with pytest.raises(
+        AssertionError,
+        match="Anthropic image blocks require file_id, url, or data",
+    ):
+        mod.AnthropicClient._image_source({})
+
+    assert mod.AnthropicClient._uses_files_api(
+        [
+            Message(
+                role=MessageRole.USER,
+                content=MessageContentImage(
+                    type="image_url", image_url={"file_id": "img_1"}
+                ),
+            )
+        ]
+    )
+
+
 def test_tool_schemas_variants(anthropic_mod):
     mod, _ = anthropic_mod
 

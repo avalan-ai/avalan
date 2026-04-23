@@ -197,6 +197,13 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(model_id, "request-model")
 
+    def test_resolve_model_id_falls_back_to_default(self) -> None:
+        routers = importlib.import_module("avalan.server.routers")
+
+        model_id = routers.resolve_model_id(SimpleNamespace())
+
+        self.assertEqual(model_id, routers.MODEL_FALLBACK)
+
     async def test_dependency_get_orchestrator(self) -> None:
         req = type(
             "Req",
@@ -519,6 +526,28 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             msg.content[0].file,
             {"file_id": "file-2", "filename": "report.pdf"},
+        )
+
+    def test_to_message_content_preserves_top_level_file_fields(self) -> None:
+        from avalan.server.routers import to_message_content
+
+        content = to_message_content(
+            ContentFile(
+                type="input_file",
+                file_url="https://example.com/report.pdf",
+                file_data="YWJj",
+                filename="report.pdf",
+            )
+        )
+
+        self.assertIsInstance(content, MessageContentFile)
+        self.assertEqual(
+            content.file,
+            {
+                "file_url": "https://example.com/report.pdf",
+                "file_data": "YWJj",
+                "filename": "report.pdf",
+            },
         )
 
     async def test_to_message_content_invalid_type(self) -> None:

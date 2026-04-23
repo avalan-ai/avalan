@@ -156,6 +156,15 @@ class CliModelTestCase(TestCase):
             ),
         )
 
+    def test_text_generation_input_rejects_missing_file(self) -> None:
+        missing = Path("tests/__missing_input__.pdf").resolve()
+        self.assertFalse(missing.exists())
+
+        with self.assertRaisesRegex(
+            AssertionError, f"Input file not found: {missing}"
+        ):
+            model_cmds._text_generation_input("Summarize", [str(missing)])
+
     def test_model_install_secret_creates_secret(self):
         args = Namespace(skip_display_reasoning_time=False, model="m")
         engine_uri = SimpleNamespace(
@@ -1433,6 +1442,58 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         tg_patch.assert_awaited_once()
         self.assertEqual(tg_patch.await_args.kwargs["input_string"], "")
+
+    async def test_run_rejects_input_file_for_non_text_modality(self):
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"%PDF-1.7")
+            tmp.flush()
+
+            args = Namespace(
+                model="id",
+                device="cpu",
+                max_new_tokens=1,
+                quiet=True,
+                input_file=[tmp.name],
+                skip_hub_access_check=False,
+            )
+            console = MagicMock()
+            theme = MagicMock()
+            theme._ = lambda s: s
+            theme.icons = {}
+            hub = MagicMock()
+            logger = MagicMock()
+            engine_uri = SimpleNamespace(model_id="id", is_local=False)
+            load_cm = MagicMock()
+            load_cm.__enter__.return_value = MagicMock(config=MagicMock())
+            load_cm.__exit__.return_value = False
+
+            with (
+                patch.object(model_cmds, "ModelManager") as manager_cls,
+                patch.object(
+                    model_cmds,
+                    "get_model_settings",
+                    return_value={
+                        "engine_uri": engine_uri,
+                        "modality": Modality.EMBEDDING,
+                    },
+                ),
+            ):
+                manager = manager_cls.return_value.__enter__.return_value
+                manager.parse_uri.return_value = engine_uri
+                manager.load.return_value = load_cm
+                manager_cls.get_operation_from_arguments.return_value = (
+                    SimpleNamespace(
+                        modality=Modality.EMBEDDING, requires_input=False
+                    )
+                )
+
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "--input-file is only supported for text generation",
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
 
     async def test_model_run_use_cache_cli(self):
         for use_cache in (True, False):

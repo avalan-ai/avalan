@@ -621,6 +621,24 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    def test_format_content_document_in_list(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+        blocks = client._format_content(
+            [
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "file_data": "YWJj",
+                        "filename": "report.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                )
+            ]
+        )
+
+        self.assertEqual(blocks[0], {"text": ""})
+        self.assertEqual(blocks[1]["document"]["source"], {"bytes": b"abc"})
+
     def test_document_source_variants(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
         self.assertEqual(
@@ -655,10 +673,26 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             ),
             {"text": "alpha,beta"},
         )
+        self.assertEqual(
+            client._document_source({"file_data": b"abc"}),
+            {"bytes": b"abc"},
+        )
         with self.assertRaises(AssertionError):
             client._document_source(
                 {"file_url": "https://example.com/report.pdf"}
             )
+
+    def test_document_helper_variants(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+
+        self.assertEqual(
+            client._document_format({"filename": "summary.MD"}), "md"
+        )
+        self.assertEqual(
+            client._document_format({"title": "sheet.XLSX"}), "xlsx"
+        )
+        self.assertIsNone(client._document_format({"title": "notes"}))
+        self.assertIsNone(client._file_uri({}))
 
     def test_tool_schemas_ignore_non_function(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())

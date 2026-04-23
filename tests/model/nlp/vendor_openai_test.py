@@ -690,6 +690,54 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
         kwargs = create_mock.await_args.kwargs
         self.assertEqual(kwargs["reasoning"], {"effort": "xhigh"})
 
+    def test_helper_methods_cover_additional_reasoning_and_file_paths(self):
+        self.assertEqual(
+            self.mod.OpenAIClient._reasoning_config(
+                GenerationSettings(
+                    reasoning=ReasoningSettings(effort=ReasoningEffort.MAX)
+                )
+            ),
+            {"effort": "xhigh"},
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._content_block(
+                {"type": "unknown", "value": 1}
+            ),
+            {"type": "unknown", "value": 1},
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._file_block(
+                {"file_id": "file-1", "filename": "report.pdf"}
+            ),
+            {
+                "type": "input_file",
+                "file_id": "file-1",
+                "filename": "report.pdf",
+            },
+        )
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._file_block({})
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._image_block({})
+        self.assertEqual(
+            self.mod.OpenAIClient._non_stream_response_content(
+                {"output": None}
+            ),
+            "",
+        )
+
+    def test_template_messages_skips_entries_without_content_key(self):
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+
+        with patch.object(
+            self.mod.TextGenerationVendor,
+            "_template_messages",
+            return_value=[{"role": "assistant"}],
+        ):
+            templated = client._template_messages([])
+
+        self.assertEqual(templated, [{"role": "assistant"}])
+
     async def test_non_stream_tool_call_output(self):
         response = SimpleNamespace(
             output=[

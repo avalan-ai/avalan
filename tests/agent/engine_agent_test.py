@@ -305,6 +305,23 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(second.content, "world")
         manager.assert_awaited_once()
 
+    async def test_sync_messages_appends_last_output_when_memory_enabled(
+        self,
+    ) -> None:
+        agent, _, memory, _ = self._make_agent()
+        agent._last_output = TextGenerationResponse(
+            lambda: "assistant",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+
+        await agent.sync_messages()
+
+        self.assertEqual(len(memory.recent_messages), 1)
+        synced = memory.recent_messages[0].message
+        self.assertEqual(synced.role, MessageRole.ASSISTANT)
+        self.assertEqual(synced.content, "assistant")
+
 
 class EngineAgentCallTestCase(IsolatedAsyncioTestCase):
     def setUp(self):

@@ -445,6 +445,41 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             {"thinking_level": "high"},
         )
 
+    def test_helper_methods_cover_reasoning_and_part_fallbacks(self):
+        self.assertEqual(
+            self.mod.GoogleClient._thinking_config(
+                "gemini-3-flash",
+                GenerationSettings(
+                    reasoning=ReasoningSettings(effort=ReasoningEffort.NONE)
+                ),
+            ),
+            {"thinking_level": "minimal"},
+        )
+        self.assertEqual(
+            self.mod.GoogleClient._thinking_config(
+                "gemini-3-flash",
+                GenerationSettings(
+                    reasoning=ReasoningSettings(
+                        effort=ReasoningEffort.MEDIUM
+                    )
+                ),
+            ),
+            {"thinking_level": "medium"},
+        )
+        self.assertEqual(
+            self.mod.GoogleClient._message_role(str(MessageRole.DEVELOPER)),
+            str(MessageRole.USER),
+        )
+        self.assertEqual(
+            self.mod.GoogleClient._parts({"type": "text", "text": "one"}),
+            [{"text": "one"}],
+        )
+        self.assertEqual(self.mod.GoogleClient._parts(123), [{"text": "123"}])
+        self.assertEqual(
+            self.mod.GoogleClient._part({"type": "unknown", "value": 1}),
+            {"text": "{'type': 'unknown', 'value': 1}"},
+        )
+
 
 class HuggingfaceTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
