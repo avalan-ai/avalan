@@ -10,6 +10,17 @@ from pydantic import BaseModel, Field, model_validator
 JSONType = Literal["bool", "float", "int", "object", "string"]
 
 
+def _has_non_empty_file_source(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    if not value.strip():
+        return False
+    if value.startswith("data:"):
+        _, separator, payload = value.rpartition(",")
+        return bool(separator and payload.strip())
+    return True
+
+
 @dataclass(kw_only=True, frozen=True)
 class OrchestratorContext:
     participant_id: UUID
@@ -91,11 +102,19 @@ class ContentFile(BaseModel):
     def validate_source(self) -> "ContentFile":
         nested = self.file or {}
         has_source = any(
-            isinstance(value, str)
+            _has_non_empty_file_source(value)
             for value in (
-                nested.get("file_data") or nested.get("data"),
+                (
+                    nested.get("file_data")
+                    if "file_data" in nested
+                    else nested.get("data")
+                ),
                 nested.get("file_id"),
-                nested.get("file_url") or nested.get("url"),
+                (
+                    nested.get("file_url")
+                    if "file_url" in nested
+                    else nested.get("url")
+                ),
                 self.file_data,
                 self.file_id,
                 self.file_url,
