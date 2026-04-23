@@ -17,7 +17,7 @@ from .....tool.manager import ToolManager
 from .....utils import to_json
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
+from . import TextGenerationVendorModel, _decode_text_file_data
 
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, cast
@@ -342,7 +342,7 @@ class AnthropicClient(TextGenerationVendor):
                 return {
                     "type": "text",
                     "media_type": resolved_mime_type,
-                    "data": file_data,
+                    "data": _decode_text_file_data(file_data),
                 }
             return {
                 "type": "base64",

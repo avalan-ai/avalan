@@ -1,3 +1,4 @@
+from base64 import b64encode
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from importlib import import_module, reload
@@ -644,6 +645,15 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                 }
             ),
             {"text": "plain text"},
+        )
+        self.assertEqual(
+            client._document_source(
+                {
+                    "file_data": b64encode(b"alpha,beta").decode("ascii"),
+                    "mime_type": "text/csv",
+                }
+            ),
+            {"text": "alpha,beta"},
         )
         with self.assertRaises(AssertionError):
             client._document_source(

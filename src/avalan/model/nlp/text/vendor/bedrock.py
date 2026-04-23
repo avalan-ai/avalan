@@ -18,7 +18,7 @@ from .....tool.manager import ToolManager
 from .....utils import to_json
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
+from . import TextGenerationVendorModel, _decode_text_file_data
 
 from base64 import b64decode
 from contextlib import AsyncExitStack
@@ -601,7 +601,7 @@ class BedrockClient(TextGenerationVendor):
             return {"bytes": bytes(data)}
         if isinstance(data, str):
             if mime_type is not None and mime_type.startswith("text/"):
-                return {"text": data}
+                return {"text": _decode_text_file_data(data)}
             return {"bytes": b64decode(data)}
 
         file_uri = BedrockClient._file_uri(file)

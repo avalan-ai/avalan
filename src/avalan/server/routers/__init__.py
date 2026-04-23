@@ -98,13 +98,13 @@ async def orchestrate(
 def resolve_model_id(
     orchestrator: Orchestrator, request_model: str | None = None
 ) -> str:
+    if request_model:
+        return request_model
     model_ids = getattr(orchestrator, "model_ids", None)
     if model_ids:
         candidates = sorted(str(model_id) for model_id in model_ids)
         if candidates:
             return candidates[0]
-    if request_model:
-        return request_model
     return MODEL_FALLBACK
 
 

@@ -1,6 +1,7 @@
 import importlib
 import sys
 from logging import Logger, getLogger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
@@ -119,6 +120,24 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(resp.model, "server-model")
 
+    async def test_create_chat_completion_prefers_request_model(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.model_ids = {"alpha", "server-model"}
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ChatCompletionRequest(
+            model="request-model",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+
+        self.assertEqual(resp.model, "request-model")
+
     async def test_create_response_forwards_reasoning_effort(self) -> None:
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
@@ -150,6 +169,33 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             resp = await self.responses.create_response(req, logger, orch)
 
         self.assertEqual(resp["model"], "server-model")
+
+    async def test_create_response_prefers_request_model(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.model_ids = {"alpha", "server-model"}
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ResponsesRequest(
+            model="request-model",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.responses.create_response(req, logger, orch)
+
+        assert isinstance(resp, dict)
+        self.assertEqual(resp["model"], "request-model")
+
+    def test_resolve_model_id_prefers_request_model(self) -> None:
+        routers = importlib.import_module("avalan.server.routers")
+
+        model_id = routers.resolve_model_id(
+            SimpleNamespace(model_ids={"alpha", "beta"}),
+            "request-model",
+        )
+
+        self.assertEqual(model_id, "request-model")
 
     async def test_dependency_get_orchestrator(self) -> None:
         req = type(

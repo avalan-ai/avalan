@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import sys
 import types
+from base64 import b64encode
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -395,6 +396,16 @@ def test_document_source_variants(anthropic_mod):
     assert mod.AnthropicClient._document_source(
         {
             "data": "hello",
+            "mime_type": "text/plain",
+        }
+    ) == {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": "hello",
+    }
+    assert mod.AnthropicClient._document_source(
+        {
+            "file_data": b64encode(b"hello").decode("ascii"),
             "mime_type": "text/plain",
         }
     ) == {
