@@ -1,4 +1,5 @@
 from ..entities import (
+    ChatSettings,
     EngineMessage,
     EngineUri,
     GenerationSettings,
@@ -9,6 +10,9 @@ from ..entities import (
     Operation,
     OperationParameters,
     OperationTextParameters,
+    ReasoningEffort,
+    ReasoningSettings,
+    ReasoningTag,
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager
@@ -217,6 +221,7 @@ class EngineAgent(ABC):
             settings_dict.setdefault("temperature", None)
             settings_dict.setdefault("do_sample", False)
         settings_dict.update(kwargs)
+        settings_dict = self._normalize_generation_settings(settings_dict)
         settings = GenerationSettings(**settings_dict)
         assert settings
 
@@ -342,6 +347,28 @@ class EngineAgent(ABC):
             self._last_output = output
 
         return output
+
+    @staticmethod
+    def _normalize_generation_settings(
+        settings_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(settings_dict)
+        chat_settings = normalized.get("chat_settings")
+        if isinstance(chat_settings, dict):
+            normalized["chat_settings"] = ChatSettings(**chat_settings)
+
+        reasoning = normalized.get("reasoning")
+        if isinstance(reasoning, dict):
+            reasoning_config = dict(reasoning)
+            effort = reasoning_config.get("effort")
+            if isinstance(effort, str):
+                reasoning_config["effort"] = ReasoningEffort(effort)
+            tag = reasoning_config.get("tag")
+            if isinstance(tag, str):
+                reasoning_config["tag"] = ReasoningTag(tag)
+            normalized["reasoning"] = ReasoningSettings(**reasoning_config)
+
+        return normalized
 
     async def sync_messages(self) -> None:
         if self._last_output and (

@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.entities import (
+    ChatSettings,
     EngineMessage,
     EngineUri,
     GenerationSettings,
     Message,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
+    ReasoningTag,
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
@@ -258,6 +262,34 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         ].operation.generation_settings
         self.assertEqual(used_settings.top_p, 0.5)
 
+    async def test_run_normalizes_nested_settings_from_dicts(self):
+        agent, _, _, manager = self._make_agent()
+        message = Message(role=MessageRole.USER, content="hi")
+        context = self._make_context(message)
+
+        await agent._run(
+            context,
+            message,
+            chat_settings={"enable_thinking": False},
+            reasoning={"effort": "xhigh", "tag": "think"},
+        )
+
+        manager.assert_awaited_once()
+        used_settings = manager.await_args.args[
+            0
+        ].operation.generation_settings
+        self.assertEqual(
+            used_settings.chat_settings,
+            ChatSettings(enable_thinking=False),
+        )
+        self.assertEqual(
+            used_settings.reasoning,
+            ReasoningSettings(
+                effort=ReasoningEffort.XHIGH,
+                tag=ReasoningTag.THINK,
+            ),
+        )
+
     async def test_run_with_list_of_strings_converts_to_user_messages(self):
         agent, _, memory, manager = self._make_agent()
         context = self._make_context("unused")
@@ -272,6 +304,23 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(second.role, MessageRole.USER)
         self.assertEqual(second.content, "world")
         manager.assert_awaited_once()
+
+    async def test_sync_messages_appends_last_output_when_memory_enabled(
+        self,
+    ) -> None:
+        agent, _, memory, _ = self._make_agent()
+        agent._last_output = TextGenerationResponse(
+            lambda: "assistant",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+
+        await agent.sync_messages()
+
+        self.assertEqual(len(memory.recent_messages), 1)
+        synced = memory.recent_messages[0].message
+        self.assertEqual(synced.role, MessageRole.ASSISTANT)
+        self.assertEqual(synced.content, "assistant")
 
 
 class EngineAgentCallTestCase(IsolatedAsyncioTestCase):

@@ -12,7 +12,7 @@ from ...server.entities import ResponsesRequest
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
-from . import orchestrate
+from . import orchestrate, resolve_model_id
 
 from enum import Enum, auto
 from logging import Logger
@@ -40,6 +40,7 @@ async def create_response(
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
+    model_id = resolve_model_id(orchestrator, request.model)
 
     response, response_id, timestamp = await orchestrate(
         request, logger, orchestrator
@@ -57,7 +58,7 @@ async def create_response(
                         "response": {
                             "id": str(response_id),
                             "created_at": timestamp,
-                            "model": request.model,
+                            "model": model_id,
                             "type": "response",
                             "status": "in_progress",
                         },
@@ -121,7 +122,7 @@ async def create_response(
     body = {
         "id": str(response_id),
         "created": timestamp,
-        "model": request.model,
+        "model": model_id,
         "type": "response",
         "output": [{"content": [{"type": "output_text", "text": text}]}],
         "usage": {

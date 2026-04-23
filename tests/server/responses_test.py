@@ -7,6 +7,7 @@ from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
 
 from avalan.agent.orchestrator import Orchestrator
+from avalan.entities import MessageContentFile, MessageContentText
 from avalan.model import TextGenerationResponse
 
 
@@ -27,8 +28,12 @@ class StreamingOrchestrator(Orchestrator):
 class SimpleOrchestrator(Orchestrator):
     def __init__(self) -> None:  # type: ignore[no-untyped-def]
         self.synced = False
+        self._model_ids = {"server-model"}
+        self.last_messages = None
 
     async def __call__(self, messages, settings=None):
+        self.last_messages = messages
+
         def output_fn(**_):
             return "c"
 
@@ -113,13 +118,13 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
 
         client = self.TestClient(app)
         payload = {
-            "model": "m",
             "input": [{"role": "user", "content": "hi"}],
             "stream": False,
         }
         resp = client.post("/responses", json=payload)
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
+        self.assertEqual(body["model"], "server-model")
         self.assertEqual(body["output"][0]["content"][0]["text"], "c")
         self.assertTrue(orchestrator.synced)
         self.assertEqual(
@@ -129,4 +134,44 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                 "output_text_tokens": 1,
                 "total_tokens": 4,
             },
+        )
+
+    async def test_non_streaming_response_accepts_input_text_blocks(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        payload = {
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Find the claim"},
+                        {
+                            "type": "input_file",
+                            "file_id": "file-1",
+                            "filename": "report.pdf",
+                        },
+                    ],
+                }
+            ],
+            "stream": False,
+        }
+        resp = client.post("/responses", json=payload)
+
+        self.assertEqual(resp.status_code, 200)
+        assert orchestrator.last_messages is not None
+        message = orchestrator.last_messages[0]
+        assert isinstance(message.content, list)
+        self.assertEqual(
+            message.content,
+            [
+                MessageContentText(type="text", text="Find the claim"),
+                MessageContentFile(
+                    type="file",
+                    file={"file_id": "file-1", "filename": "report.pdf"},
+                ),
+            ],
         )

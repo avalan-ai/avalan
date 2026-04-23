@@ -13,7 +13,7 @@ from ...server.entities import (
 )
 from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
-from . import orchestrate
+from . import orchestrate, resolve_model_id
 
 from logging import Logger
 from typing import AsyncIterator
@@ -36,6 +36,7 @@ async def create_chat_completion(
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
+    model_id = resolve_model_id(orchestrator, request.model)
 
     logger.info(
         "Processing chat completion request for orchestrator %s",
@@ -72,7 +73,7 @@ async def create_chat_completion(
                 chunk = ChatCompletionChunk(
                     id=response_id,
                     created=timestamp,
-                    model=request.model,
+                    model=model_id,
                     choices=[choice],
                 )
                 yield sse_message(chunk.model_dump_json())
@@ -104,7 +105,7 @@ async def create_chat_completion(
     final_response = ChatCompletionResponse(
         id=response_id,
         created=timestamp,
-        model=request.model,
+        model=model_id,
         choices=choices,
         usage=usage,
     )

@@ -83,6 +83,27 @@ class CliParallelOptionTestCase(TestCase):
         self.assertEqual(args.parallel_count, 5)
 
 
+class CliModelRunOptionTestCase(TestCase):
+    def test_input_file_argument(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "model",
+                "run",
+                "model-id",
+                "--input-file",
+                "doc-1.pdf",
+                "--input-file",
+                "doc-2.pdf",
+            ]
+        )
+
+        self.assertEqual(args.input_file, ["doc-1.pdf", "doc-2.pdf"])
+
+
 class CliAgentPortTestCase(TestCase):
     def setUp(self) -> None:
         self.logger = MagicMock()

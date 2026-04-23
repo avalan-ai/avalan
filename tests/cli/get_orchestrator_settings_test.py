@@ -187,6 +187,32 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         )
         self.assertEqual(result.engine_config, {"backend": "transformers"})
 
+    def test_reasoning_settings(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            run_reasoning_effort="xhigh",
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message="dsn",
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000005")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(result.call_options["reasoning"]["effort"], "xhigh")
+        self.assertEqual(result.engine_config, {"backend": "transformers"})
+
     def test_permanent_memory_cli_with_description(self):
         args = Namespace(
             name="agent",

@@ -2,6 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import (
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -31,10 +32,19 @@ class VendorTemplateMessagesTestCase(IsolatedAsyncioTestCase):
             ),
             Message(
                 role=MessageRole.USER,
+                content=MessageContentFile(
+                    type="file", file={"file_id": "file-1"}
+                ),
+            ),
+            Message(
+                role=MessageRole.USER,
                 content=[
                     MessageContentText(type="text", text="a"),
                     MessageContentImage(
                         type="image_url", image_url={"url": "http://b"}
+                    ),
+                    MessageContentFile(
+                        type="file", file={"file_url": "http://file"}
                     ),
                 ],
             ),
@@ -59,10 +69,20 @@ class VendorTemplateMessagesTestCase(IsolatedAsyncioTestCase):
                 {
                     "role": "user",
                     "content": [
+                        {"type": "file", "file": {"file_id": "file-1"}}
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
                         {"type": "text", "text": "a"},
                         {
                             "type": "image_url",
                             "image_url": {"url": "http://b"},
+                        },
+                        {
+                            "type": "file",
+                            "file": {"file_url": "http://file"},
                         },
                     ],
                 },

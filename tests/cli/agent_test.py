@@ -805,6 +805,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             run_top_p=0.82,
             run_use_cache=True,
             run_cache_strategy="hybrid",
+            run_reasoning_effort="xhigh",
             run_chat_add_generation_prompt=False,
             run_chat_enable_thinking=True,
             tool=["math.calculator"],
@@ -838,6 +839,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[run.chat]", output)
         self.assertIn("add_generation_prompt = false", output)
         self.assertIn("enable_thinking = true", output)
+        self.assertIn("[run.reasoning]", output)
+        self.assertIn('effort = "xhigh"', output)
         self.assertIn("[tool]", output)
         self.assertIn('format = "json"', output)
         self.assertIn('"math.calculator"', output)
@@ -2239,6 +2242,42 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     settings.call_options["cache_strategy"], strat
                 )
+
+    async def test_run_engine_uri_reasoning_effort_cli(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.run_reasoning_effort = "xhigh"
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args,
+                self.console,
+                self.theme,
+                self.hub,
+                self.logger,
+                1,
+            )
+
+        settings = fs_patch.call_args.args[0]
+        self.assertEqual(settings.call_options["reasoning"]["effort"], "xhigh")
 
     async def test_run_spec_use_cache(self):
         captured = {}

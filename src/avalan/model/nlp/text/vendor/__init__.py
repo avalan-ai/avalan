@@ -10,6 +10,8 @@ from .....model.vendor import TextGenerationVendor
 from .....tool.manager import ToolManager
 
 from abc import ABC, abstractmethod
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from contextlib import AsyncExitStack
 from dataclasses import replace
 from importlib import import_module
@@ -25,6 +27,17 @@ from transformers.tokenization_utils_base import BatchEncoding
 class _TiktokenEncoding(Protocol):
     def encode(self, text: str) -> list[int]:
         """Encode the provided text into token IDs."""
+
+
+def _decode_text_file_data(data: str) -> str:
+    try:
+        decoded = b64decode(data, validate=True)
+    except (BinasciiError, ValueError):
+        return data
+    try:
+        return decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
 
 
 class TextGenerationVendorModel(TextGenerationModel, ABC):

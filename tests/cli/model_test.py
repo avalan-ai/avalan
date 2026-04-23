@@ -1,7 +1,10 @@
 import asyncio
 from argparse import Namespace
+from base64 import b64encode
 from datetime import datetime, timezone
 from logging import getLogger
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
@@ -22,8 +25,11 @@ from avalan.entities import (
     GenerationSettings,
     ImageEntity,
     Message,
+    MessageContentFile,
+    MessageContentText,
     MessageRole,
     Modality,
+    ReasoningEffort,
     ReasoningSettings,
     Token,
     TokenDetail,
@@ -100,6 +106,64 @@ class CliModelTestCase(TestCase):
             "weight_type": "fp16",
         }
         self.assertEqual(result, expected)
+
+    def test_text_generation_input_includes_local_files(self) -> None:
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"%PDF-1.7")
+            tmp.flush()
+
+            result = model_cmds._text_generation_input("Summarize", [tmp.name])
+
+        self.assertIsInstance(result, Message)
+        self.assertEqual(result.role, MessageRole.USER)
+        assert isinstance(result.content, list)
+        self.assertEqual(
+            result.content[0],
+            MessageContentText(type="text", text="Summarize"),
+        )
+        self.assertEqual(
+            result.content[1],
+            MessageContentFile(
+                type="file",
+                file={
+                    "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
+                    "filename": Path(tmp.name).name,
+                    "mime_type": "application/pdf",
+                },
+            ),
+        )
+
+    def test_text_generation_input_uses_files_without_prompt(self) -> None:
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"doc")
+            tmp.flush()
+
+            result = model_cmds._text_generation_input(None, [tmp.name])
+
+        self.assertIsInstance(result, Message)
+        self.assertEqual(result.role, MessageRole.USER)
+        assert isinstance(result.content, list)
+        self.assertEqual(len(result.content), 1)
+        self.assertEqual(
+            result.content[0],
+            MessageContentFile(
+                type="file",
+                file={
+                    "file_data": b64encode(b"doc").decode("ascii"),
+                    "filename": Path(tmp.name).name,
+                    "mime_type": "application/pdf",
+                },
+            ),
+        )
+
+    def test_text_generation_input_rejects_missing_file(self) -> None:
+        missing = Path("tests/__missing_input__.pdf").resolve()
+        self.assertFalse(missing.exists())
+
+        with self.assertRaisesRegex(
+            AssertionError, f"Input file not found: {missing}"
+        ):
+            model_cmds._text_generation_input("Summarize", [str(missing)])
 
     def test_model_install_secret_creates_secret(self):
         args = Namespace(skip_display_reasoning_time=False, model="m")
@@ -1280,6 +1344,157 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         lm.assert_awaited_once()
         tg_patch.assert_awaited_once()
 
+    async def test_run_remote_model_with_input_file_and_no_prompt(self):
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"%PDF-1.7")
+            tmp.flush()
+
+            args = Namespace(
+                skip_display_reasoning_time=False,
+                model="id",
+                device="cpu",
+                max_new_tokens=1,
+                quiet=False,
+                skip_hub_access_check=False,
+                no_repl=True,
+                do_sample=False,
+                enable_gradient_calculation=False,
+                min_p=None,
+                repetition_penalty=1.0,
+                temperature=1.0,
+                top_k=1,
+                top_p=1.0,
+                use_cache=True,
+                stop_on_keyword=None,
+                system=None,
+                skip_special_tokens=False,
+                display_tokens=0,
+                tool_events=2,
+                display_events=False,
+                display_tools=False,
+                display_tools_events=2,
+                input_file=[tmp.name],
+            )
+            console = MagicMock()
+            theme = MagicMock()
+            theme._ = lambda s: s
+            theme.icons = {"user_input": ">"}
+            theme.model.return_value = "panel"
+            hub = MagicMock()
+            hub.can_access.return_value = True
+            hub.model.return_value = "hub_model"
+            logger = MagicMock()
+
+            engine_uri = SimpleNamespace(model_id="id", is_local=False)
+            lm = AsyncMock(return_value="resp")
+            lm.config = MagicMock()
+            lm.config.__repr__ = lambda self=None: "cfg"
+
+            load_cm = MagicMock()
+            load_cm.__enter__.return_value = lm
+            load_cm.__exit__.return_value = False
+
+            manager = RealModelManager(hub, logger)
+            manager.parse_uri = MagicMock(return_value=engine_uri)
+            manager.load = MagicMock(return_value=load_cm)
+
+            with (
+                patch.object(model_cmds, "ModelManager", return_value=manager),
+                patch(
+                    "avalan.cli.commands.model.ModelManager."
+                    "get_operation_from_arguments",
+                    new=RealModelManager.get_operation_from_arguments,
+                ),
+                patch.object(
+                    model_cmds,
+                    "get_model_settings",
+                    return_value={
+                        "engine_uri": engine_uri,
+                        "modality": Modality.TEXT_GENERATION,
+                    },
+                ),
+                patch.object(model_cmds, "get_input", return_value=None),
+                patch.object(
+                    model_cmds, "token_generation", new_callable=AsyncMock
+                ) as tg_patch,
+            ):
+                await model_cmds.model_run(
+                    args, console, theme, hub, 5, logger
+                )
+
+        lm.assert_awaited_once()
+        request_input = lm.await_args.args[0]
+        self.assertIsInstance(request_input, Message)
+        self.assertEqual(request_input.role, MessageRole.USER)
+        assert isinstance(request_input.content, list)
+        self.assertEqual(
+            request_input.content,
+            [
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
+                        "filename": Path(tmp.name).name,
+                        "mime_type": "application/pdf",
+                    },
+                )
+            ],
+        )
+        tg_patch.assert_awaited_once()
+        self.assertEqual(tg_patch.await_args.kwargs["input_string"], "")
+
+    async def test_run_rejects_input_file_for_non_text_modality(self):
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"%PDF-1.7")
+            tmp.flush()
+
+            args = Namespace(
+                model="id",
+                device="cpu",
+                max_new_tokens=1,
+                quiet=True,
+                input_file=[tmp.name],
+                skip_hub_access_check=False,
+            )
+            console = MagicMock()
+            theme = MagicMock()
+            theme._ = lambda s: s
+            theme.icons = {}
+            hub = MagicMock()
+            logger = MagicMock()
+            engine_uri = SimpleNamespace(model_id="id", is_local=False)
+            load_cm = MagicMock()
+            load_cm.__enter__.return_value = MagicMock(config=MagicMock())
+            load_cm.__exit__.return_value = False
+
+            with (
+                patch.object(model_cmds, "ModelManager") as manager_cls,
+                patch.object(
+                    model_cmds,
+                    "get_model_settings",
+                    return_value={
+                        "engine_uri": engine_uri,
+                        "modality": Modality.EMBEDDING,
+                    },
+                ),
+            ):
+                manager = manager_cls.return_value.__enter__.return_value
+                manager.parse_uri.return_value = engine_uri
+                manager.load.return_value = load_cm
+                manager_cls.get_operation_from_arguments.return_value = (
+                    SimpleNamespace(
+                        modality=Modality.EMBEDDING, requires_input=False
+                    )
+                )
+
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "--input-file is only supported for text generation",
+                ):
+                    await model_cmds.model_run(
+                        args, console, theme, hub, 5, logger
+                    )
+
     async def test_model_run_use_cache_cli(self):
         for use_cache in (True, False):
             args = Namespace(
@@ -1439,6 +1654,99 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                 self.assertIsNone(settings.cache_strategy)
             else:
                 self.assertEqual(settings.cache_strategy, strat)
+
+    async def test_model_run_reasoning_effort_cli(self):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            cache_strategy=None,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=False,
+            display_tools=False,
+            display_tools_events=2,
+            start_thinking=False,
+            chat_disable_thinking=False,
+            no_reasoning=False,
+            reasoning_tag=None,
+            reasoning_effort="xhigh",
+            reasoning_max_new_tokens=None,
+            reasoning_stop_on_max_new_tokens=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = MagicMock()
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+        captured: dict[str, GenerationSettings] = {}
+
+        async def manager_call(self, model_task):
+            operation = model_task.operation
+            captured["settings"] = operation.generation_settings
+            return TextGenerationResponse(
+                lambda: "resp",
+                logger=getLogger(),
+                use_async_generator=False,
+                generation_settings=operation.generation_settings,
+                settings=operation.generation_settings,
+            )
+
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(RealModelManager, "__call__", manager_call),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ),
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        settings = captured["settings"]
+        self.assertEqual(
+            settings.reasoning, ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
 
     async def test_model_run_sets_output_hidden_states(self):
         args = Namespace(

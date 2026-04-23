@@ -1,8 +1,10 @@
 import logging
 from dataclasses import dataclass
+from datetime import date, datetime, time
 from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
 from avalan.compat import override
@@ -48,6 +50,22 @@ class UtilsToJsonTestCase(TestCase):
         self.assertEqual(
             to_json(Dummy(Decimal("1.23"))),
             '{"value": "1.23"}',
+        )
+
+    def test_to_json_temporal_and_uuid_types(self) -> None:
+        self.assertEqual(
+            to_json(
+                {
+                    "date": date(2025, 9, 19),
+                    "datetime": datetime(2025, 9, 19, 12, 34, 56),
+                    "time": time(12, 34, 56),
+                    "id": UUID("019b7589-672b-766d-81c6-1da5efd5f49a"),
+                }
+            ),
+            '{"date": "2025-09-19", '
+            '"datetime": "2025-09-19T12:34:56", '
+            '"time": "12:34:56", '
+            '"id": "019b7589-672b-766d-81c6-1da5efd5f49a"}',
         )
 
     def test_to_json_unsupported_type(self) -> None:

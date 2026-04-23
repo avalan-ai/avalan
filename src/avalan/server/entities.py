@@ -1,4 +1,4 @@
-from ..entities import MessageRole, OrchestratorSettings
+from ..entities import MessageRole, OrchestratorSettings, ReasoningEffort
 from ..tool.context import ToolSettingsContext
 
 from dataclasses import dataclass
@@ -8,6 +8,17 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
+
+
+def _has_non_empty_file_source(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    if not value.strip():
+        return False
+    if value.startswith("data:"):
+        _, separator, payload = value.rpartition(",")
+        return bool(separator and payload.strip())
+    return True
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -70,13 +81,50 @@ class ToolFunction(BaseModel):
 
 
 class ContentText(BaseModel):
-    type: Literal["text"]
+    type: Literal["text", "input_text"]
     text: str
 
 
 class ContentImage(BaseModel):
     type: Literal["image_url"]
     image_url: dict[str, str]
+
+
+class ContentFile(BaseModel):
+    type: Literal["file", "input_file"]
+    file: dict[str, Any] | None = None
+    file_data: str | None = None
+    file_id: str | None = None
+    file_url: str | None = None
+    filename: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "ContentFile":
+        nested = self.file or {}
+        has_source = any(
+            _has_non_empty_file_source(value)
+            for value in (
+                (
+                    nested.get("file_data")
+                    if "file_data" in nested
+                    else nested.get("data")
+                ),
+                nested.get("file_id"),
+                (
+                    nested.get("file_url")
+                    if "file_url" in nested
+                    else nested.get("url")
+                ),
+                self.file_data,
+                self.file_id,
+                self.file_url,
+            )
+        )
+        if not has_source:
+            raise ValueError(
+                "File content requires file_id, file_url, file_data, or file"
+            )
+        return self
 
 
 ResponseFormat = Annotated[
@@ -87,7 +135,7 @@ ResponseFormat = Annotated[
 Tool = Annotated[ToolFunction, Field(discriminator="type")]
 
 ContentPart = Annotated[
-    ContentText | ContentImage, Field(discriminator="type")
+    ContentText | ContentImage | ContentFile, Field(discriminator="type")
 ]
 
 
@@ -96,9 +144,17 @@ class ChatMessage(BaseModel):
     content: str | list[ContentPart]
 
 
+class ReasoningConfig(BaseModel):
+    effort: ReasoningEffort | None = None
+
+
 class ChatCompletionRequest(BaseModel):
-    model: str = Field(
-        ..., description="ID of the model to use for generating the completion"
+    model: str | None = Field(
+        None,
+        description=(
+            "ID of the model to use for generating the completion. When"
+            " omitted, use the server's configured model."
+        ),
     )
     messages: list[ChatMessage] = Field(
         ..., description="List of messages in the conversation"
@@ -156,6 +212,10 @@ class ChatCompletionRequest(BaseModel):
     response_format: ResponseFormat | None = Field(
         None, description="Format to use for model response"
     )
+    reasoning_effort: ReasoningEffort | None = Field(
+        None,
+        description="Reasoning effort for supported reasoning models",
+    )
     tools: list[Tool] | None = None
     tool_choice: (
         Literal["auto", "none", "required"] | str | dict[str, object] | None
@@ -163,7 +223,13 @@ class ChatCompletionRequest(BaseModel):
 
 
 class ResponsesRequest(BaseModel):
-    model: str
+    model: str | None = Field(
+        None,
+        description=(
+            "ID of the model to use for generating the response. When"
+            " omitted, use the server's configured model."
+        ),
+    )
     input: list[ChatMessage] = Field(...)
     temperature: float | None = 1.0
     top_p: float | None = 1.0
@@ -172,6 +238,7 @@ class ResponsesRequest(BaseModel):
     stop: str | list[str] | None = None
     max_tokens: int | None = None
     response_format: ResponseFormat | None = None
+    reasoning: ReasoningConfig | None = None
 
     @property
     def messages(self) -> list[ChatMessage]:

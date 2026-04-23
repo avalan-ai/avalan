@@ -33,6 +33,7 @@ from ..entities import (
     GenerationCacheStrategy,
     Modality,
     ParallelStrategy,
+    ReasoningEffort,
     ReasoningTag,
     TextGenerationLoaderClass,
     TimestepSpacing,
@@ -1388,6 +1389,14 @@ class CLI:
             help="Use this as developer prompt",
         )
         model_run_parser.add_argument(
+            "--input-file",
+            action="append",
+            help=(
+                "Attach a local file as native input for text generation. "
+                "May be specified multiple times."
+            ),
+        )
+        model_run_parser.add_argument(
             "--text-context",
             type=str,
             help="Context string for question answering",
@@ -1463,6 +1472,12 @@ class CLI:
             type=str,
             choices=[t.value for t in ReasoningTag],
             help="Reasoning tag style",
+        )
+        model_run_parser.add_argument(
+            "--reasoning-effort",
+            type=str,
+            choices=[e.value for e in ReasoningEffort],
+            help="Reasoning effort level",
         )
         model_run_parser.add_argument(
             "--reasoning-max-new-tokens",
@@ -1890,6 +1905,14 @@ class CLI:
                 "tokens with probabilities that add up to top_p or higher "
                 "are kept for generation."
             ),
+        )
+        group.add_argument(
+            "--reasoning-effort",
+            "--run-reasoning-effort",
+            type=str,
+            choices=[e.value for e in ReasoningEffort],
+            dest="run_reasoning_effort",
+            help="Reasoning effort level",
         )
         group.add_argument(
             "--tool", type=str, action="append", help="Enable tool"

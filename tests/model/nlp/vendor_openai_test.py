@@ -6,13 +6,17 @@ from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 from avalan.entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
     ReasoningToken,
     Token,
     ToolCall,
@@ -304,7 +308,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(t5.call.arguments, {})
         self.assertEqual(
             t5.token,
-            '<tool_call>{"name": "pkg.func", "arguments": {}}</tool_call>',
+            '<tool_call>{"name": "pkg.func", "arguments": {}, "id":'
+            ' "c1"}</tool_call>',
         )
         t6 = await stream.__anext__()
         self.assertIsInstance(t6, Token)
@@ -540,7 +545,35 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
     async def test_image_message_content(self):
         content = MessageContentImage(type="image_url", image_url={"url": "u"})
         await self._assert_messages(
-            content, [{"type": "image_url", "image_url": {"url": "u"}}]
+            content, [{"type": "input_image", "image_url": "u"}]
+        )
+
+    async def test_image_message_content_from_file_id(self):
+        content = MessageContentImage(
+            type="image_url", image_url={"file_id": "file-img"}
+        )
+        await self._assert_messages(
+            content, [{"type": "input_image", "file_id": "file-img"}]
+        )
+
+    async def test_image_message_content_from_base64(self):
+        content = MessageContentImage(
+            type="image_url",
+            image_url={
+                "data": "YWJj",
+                "detail": "high",
+                "mime_type": "image/jpeg",
+            },
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64,YWJj",
+                    "detail": "high",
+                }
+            ],
         )
 
     async def test_mixed_message_content(self):
@@ -551,10 +584,159 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
         await self._assert_messages(
             content,
             [
-                {"type": "text", "text": "hi"},
-                {"type": "image_url", "image_url": {"url": "u"}},
+                {"type": "input_text", "text": "hi"},
+                {"type": "input_image", "image_url": "u"},
             ],
         )
+
+    async def test_file_message_content(self):
+        content = MessageContentFile(
+            type="file", file={"file_url": "https://example.com/a.pdf"}
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_file",
+                    "file_url": "https://example.com/a.pdf",
+                }
+            ],
+        )
+
+    async def test_mixed_message_content_with_file_data(self):
+        content = [
+            MessageContentText(type="text", text="hi"),
+            MessageContentFile(
+                type="file",
+                file={"file_data": "YWJj", "filename": "report.pdf"},
+            ),
+        ]
+        await self._assert_messages(
+            content,
+            [
+                {"type": "input_text", "text": "hi"},
+                {
+                    "type": "input_file",
+                    "file_data": "data:application/pdf;base64,YWJj",
+                    "filename": "report.pdf",
+                },
+            ],
+        )
+
+    async def test_mixed_message_content_with_pdf_file_data_uses_data_url(
+        self,
+    ):
+        content = [
+            MessageContentText(type="text", text="hi"),
+            MessageContentFile(
+                type="file",
+                file={
+                    "file_data": "YWJj",
+                    "filename": "report.pdf",
+                    "mime_type": "application/pdf",
+                },
+            ),
+        ]
+        await self._assert_messages(
+            content,
+            [
+                {"type": "input_text", "text": "hi"},
+                {
+                    "type": "input_file",
+                    "file_data": "data:application/pdf;base64,YWJj",
+                    "filename": "report.pdf",
+                },
+            ],
+        )
+
+    async def test_pdf_file_data_uses_data_url_when_inferred_from_filename(
+        self,
+    ):
+        content = MessageContentFile(
+            type="file",
+            file={"file_data": "YWJj", "filename": "report.pdf"},
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_file",
+                    "file_data": "data:application/pdf;base64,YWJj",
+                    "filename": "report.pdf",
+                }
+            ],
+        )
+
+    async def test_reasoning_effort_is_forwarded(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
+
+        await client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings,
+            use_async_generator=False,
+        )
+
+        kwargs = create_mock.await_args.kwargs
+        self.assertEqual(kwargs["reasoning"], {"effort": "xhigh"})
+
+    def test_helper_methods_cover_additional_reasoning_and_file_paths(self):
+        self.assertEqual(
+            self.mod.OpenAIClient._reasoning_config(
+                GenerationSettings(
+                    reasoning=ReasoningSettings(effort=ReasoningEffort.MAX)
+                )
+            ),
+            {"effort": "xhigh"},
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._content_block(
+                {"type": "unknown", "value": 1}
+            ),
+            {"type": "unknown", "value": 1},
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._file_block(
+                {"file_id": "file-1", "filename": "report.pdf"}
+            ),
+            {
+                "type": "input_file",
+                "file_id": "file-1",
+                "filename": "report.pdf",
+            },
+        )
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._file_block({})
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._image_block({})
+        self.assertEqual(
+            self.mod.OpenAIClient._non_stream_response_content(
+                {"output": None}
+            ),
+            "",
+        )
+
+    def test_template_messages_skips_entries_without_content_key(self):
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+
+        with patch.object(
+            self.mod.TextGenerationVendor,
+            "_template_messages",
+            return_value=[{"role": "assistant"}],
+        ):
+            templated = client._template_messages([])
+
+        self.assertEqual(templated, [{"role": "assistant"}])
 
     async def test_non_stream_tool_call_output(self):
         response = SimpleNamespace(
@@ -666,6 +848,45 @@ class TemplateAndToolSchemaTestCase(TestCase):
                     "type": "function_call_output",
                     "call_id": "c2",
                     "output": '{"x": 3}',
+                },
+            ],
+        )
+
+    def test_template_messages_tool_results_stringify_uuid_call_id(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        call_id = UUID("11111111-1111-1111-1111-111111111111")
+        call = ToolCall(
+            id=call_id,
+            name="pkg.func",
+            arguments={"entity_id": call_id},
+        )
+        result = ToolCallResult(
+            id="c1",
+            name="pkg.func",
+            call=call,
+            result={"entity_id": call_id},
+        )
+        message = Message(role=MessageRole.TOOL, tool_call_result=result)
+
+        templated = client._template_messages([message])
+
+        self.assertEqual(
+            templated,
+            [
+                {
+                    "type": "function_call",
+                    "name": "pkg__func",
+                    "call_id": str(call_id),
+                    "arguments": (
+                        '{"entity_id": "11111111-1111-1111-1111-111111111111"}'
+                    ),
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": str(call_id),
+                    "output": (
+                        '{"entity_id": "11111111-1111-1111-1111-111111111111"}'
+                    ),
                 },
             ],
         )

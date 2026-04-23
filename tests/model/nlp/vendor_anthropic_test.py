@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import sys
 import types
+from base64 import b64encode
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -10,8 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from avalan.entities import (
+    GenerationSettings,
     Message,
+    MessageContentFile,
+    MessageContentImage,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
     ReasoningToken,
     Token,
     ToolCall,
@@ -228,6 +234,33 @@ def test_client_non_stream_tool_messages(anthropic_mod):
     assert all(msg["role"] != "tool" for msg in kwargs["messages"])
 
 
+def test_client_forwards_reasoning_effort(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="ok")]
+    )
+    stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        return_value=response
+    )
+
+    asyncio.run(
+        client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings=GenerationSettings(
+                reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+            ),
+            use_async_generator=False,
+        )
+    )
+
+    kwargs = stub.AsyncAnthropic.return_value.messages.create.await_args.kwargs
+    assert kwargs["output_config"] == {"effort": "max"}
+
+
 def test_template_messages_and_exclude_roles(anthropic_mod):
     mod, _ = anthropic_mod
     exit_stack = AsyncExitStack()
@@ -294,6 +327,173 @@ def test_template_messages_tool_error_details(anthropic_mod):
     tool_result = templated[2]["content"][0]
     assert tool_result["tool_use_id"] == "call1"
     assert tool_result["is_error"] is True
+
+
+def test_file_content_translation_and_beta_header(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "citations": True,
+                        "context": "ctx",
+                        "file_id": "file_1",
+                        "title": "Doc",
+                    },
+                ),
+                MessageContentImage(
+                    type="image_url", image_url={"file_id": "img_1"}
+                ),
+            ],
+        )
+    ]
+
+    stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")]
+        )
+    )
+
+    asyncio.run(client("model", messages, use_async_generator=False))
+
+    create_mock = stub.AsyncAnthropic.return_value.messages.create
+    create_mock.assert_awaited_once()
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["extra_headers"] == {
+        "anthropic-beta": "files-api-2025-04-14"
+    }
+    assert kwargs["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {"type": "file", "file_id": "file_1"},
+                    "title": "Doc",
+                    "context": "ctx",
+                    "citations": {"enabled": True},
+                },
+                {
+                    "type": "image",
+                    "source": {"type": "file", "file_id": "img_1"},
+                },
+            ],
+        }
+    ]
+
+
+def test_document_source_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    assert mod.AnthropicClient._document_source(
+        {"url": "https://example.com/doc.pdf"}
+    ) == {"type": "url", "url": "https://example.com/doc.pdf"}
+    assert mod.AnthropicClient._document_source(
+        {
+            "data": "hello",
+            "mime_type": "text/plain",
+        }
+    ) == {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": "hello",
+    }
+    assert mod.AnthropicClient._document_source(
+        {
+            "file_data": b64encode(b"hello").decode("ascii"),
+            "mime_type": "text/plain",
+        }
+    ) == {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": "hello",
+    }
+    assert mod.AnthropicClient._document_source({"file_data": "YWJj"}) == {
+        "type": "base64",
+        "media_type": "application/pdf",
+        "data": "YWJj",
+    }
+
+
+def test_document_source_rejects_missing_source_and_invalid_utf8(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+    invalid_utf8 = b64encode(b"\xff\xfe").decode("ascii")
+
+    assert mod.AnthropicClient._document_source(
+        {
+            "file_data": invalid_utf8,
+            "mime_type": "text/plain",
+        }
+    ) == {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": invalid_utf8,
+    }
+
+    with pytest.raises(
+        AssertionError,
+        match="Anthropic file blocks require file_id, file_url, or file_data",
+    ):
+        mod.AnthropicClient._document_source({"title": "Doc"})
+
+
+def test_output_config_and_content_block_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    assert mod.AnthropicClient._output_config(
+        GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.NONE)
+        )
+    ) == {"effort": "low"}
+    assert mod.AnthropicClient._output_config(
+        GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH)
+        )
+    ) == {"effort": "high"}
+    assert mod.AnthropicClient._content_block(
+        {"type": "text", "text": "hello"}
+    ) == {"type": "text", "text": "hello"}
+    assert mod.AnthropicClient._content_block(
+        {"type": "other", "value": 1}
+    ) == {"type": "other", "value": 1}
+
+
+def test_image_source_and_files_api_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    assert mod.AnthropicClient._image_source(
+        {"url": "https://example.com/image.png"}
+    ) == {"type": "url", "url": "https://example.com/image.png"}
+    assert mod.AnthropicClient._image_source(
+        {"data": "YWJj", "mime_type": "image/jpeg"}
+    ) == {
+        "type": "base64",
+        "media_type": "image/jpeg",
+        "data": "YWJj",
+    }
+    with pytest.raises(
+        AssertionError,
+        match="Anthropic image blocks require file_id, url, or data",
+    ):
+        mod.AnthropicClient._image_source({})
+
+    assert mod.AnthropicClient._uses_files_api(
+        [
+            Message(
+                role=MessageRole.USER,
+                content=MessageContentImage(
+                    type="image_url", image_url={"file_id": "img_1"}
+                ),
+            )
+        ]
+    )
 
 
 def test_tool_schemas_variants(anthropic_mod):

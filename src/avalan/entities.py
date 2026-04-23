@@ -194,6 +194,16 @@ class ReasoningTag(StrEnum):
     CHANNEL = "channel"
 
 
+class ReasoningEffort(StrEnum):
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QuantizationSettings:
@@ -251,6 +261,7 @@ class EngineUri:
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningSettings:
+    effort: ReasoningEffort | None = None
     max_new_tokens: int | None = None
     enabled: bool = True
     stop_on_max_new_tokens: bool = False
@@ -471,6 +482,19 @@ class MessageContentText:
     text: str
 
 
+class MessageFile(TypedDict, total=False):
+    citations: bool
+    context: str
+    data: str
+    file_data: str
+    file_id: str
+    file_url: str
+    filename: str
+    mime_type: str
+    title: str
+    url: str
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class MessageContentImage:
@@ -478,7 +502,14 @@ class MessageContentImage:
     image_url: dict[str, str]
 
 
-MessageContent = MessageContentText | MessageContentImage
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class MessageContentFile:
+    type: Literal["file"]
+    file: MessageFile
+
+
+MessageContent = MessageContentText | MessageContentImage | MessageContentFile
 
 
 @final

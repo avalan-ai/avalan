@@ -283,6 +283,23 @@ class ToolCallParserTagTestCase(TestCase):
             ]
             self.assertEqual(self.parser(text), expected)
 
+    def test_single_preserves_embedded_id(self):
+        text = (
+            '<tool_call>{"name": "calculator", '
+            '"arguments": {"expression": "1 + 1"}, '
+            '"id": "call_123"}</tool_call>'
+        )
+        with patch("avalan.tool.parser.uuid4") as uuid4_mock:
+            expected = [
+                ToolCall(
+                    id="call_123",
+                    name="calculator",
+                    arguments={"expression": "1 + 1"},
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
+        uuid4_mock.assert_not_called()
+
     def test_multiple(self):
         text = (
             '<tool_call>{"name": "calculator", "arguments": {"expression":'

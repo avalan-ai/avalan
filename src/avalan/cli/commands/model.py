@@ -5,6 +5,11 @@ from ...cli.commands.cache import cache_delete, cache_download
 from ...cli.theme import Theme
 from ...entities import (
     GenerationSettings,  # noqa: F401
+    Message,
+    MessageContent,
+    MessageContentFile,
+    MessageContentText,
+    MessageRole,
     Modality,
     Model,
     ReasoningToken,
@@ -33,10 +38,13 @@ from asyncio import (
     sleep,
     to_thread,
 )
+from base64 import b64encode
 from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
+from mimetypes import guess_type
+from pathlib import Path
 from time import perf_counter
 from typing import Any, AsyncGenerator, Awaitable, cast
 
@@ -53,6 +61,34 @@ def _supports_optional_stdin(modality: Modality) -> bool:
     return modality in {
         Modality.VISION_ENCODER_DECODER,
     }
+
+
+def _text_generation_input(
+    input_string: str | None, file_paths: list[str] | None
+) -> Message | str | None:
+    if not file_paths:
+        return input_string
+
+    content: list[MessageContent] = []
+    if input_string:
+        content.append(MessageContentText(type="text", text=input_string))
+
+    for file_path in file_paths:
+        path = Path(file_path)
+        assert path.is_file(), f"Input file not found: {file_path}"
+        mime_type = guess_type(path.name)[0] or "application/octet-stream"
+        content.append(
+            MessageContentFile(
+                type="file",
+                file={
+                    "file_data": b64encode(path.read_bytes()).decode("ascii"),
+                    "filename": path.name,
+                    "mime_type": mime_type,
+                },
+            )
+        )
+
+    return Message(role=MessageRole.USER, content=content)
 
 
 def model_display(
@@ -198,11 +234,19 @@ async def model_run(
             logger.debug("Loaded model %s", model.config.__repr__())
 
             tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
+            input_file_paths = cast(
+                list[str] | None, getattr(args, "input_file", None)
+            )
+            if input_file_paths:
+                assert (
+                    operation.modality == Modality.TEXT_GENERATION
+                ), "--input-file is only supported for text generation"
 
             should_read_input = operation.requires_input or (
                 _supports_optional_stdin(operation.modality)
                 and has_input(console)
             )
+            input_string: str | None = None
             if should_read_input:
                 input_string = get_input(
                     console,
@@ -211,11 +255,22 @@ async def model_run(
                     is_quiet=args.quiet,
                     tty_path=tty_path,
                 )
-                if operation.requires_input and not input_string:
+                if (
+                    operation.requires_input
+                    and not input_string
+                    and not input_file_paths
+                ):
                     return
 
-                if input_string:
-                    operation = replace(operation, input=input_string)
+            if operation.modality == Modality.TEXT_GENERATION:
+                operation = replace(
+                    operation,
+                    input=_text_generation_input(
+                        input_string, input_file_paths
+                    ),
+                )
+            elif input_string:
+                operation = replace(operation, input=input_string)
 
             context = ModelCallContext(
                 specification=Specification(role=None, goal=None),
@@ -268,7 +323,7 @@ async def model_run(
                     orchestrator=None,
                     event_stats=None,
                     lm=cast(TextGenerationModel, model),
-                    input_string=cast(str, operation.input),
+                    input_string=input_string or "",
                     refresh_per_second=refresh_per_second,
                     response=cast(TextGenerationResponse, output),
                     dtokens_pick=(

@@ -5,8 +5,11 @@ from ...agent.orchestrator.response.orchestrator_response import (
 from ...entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    MessageFile,
+    ReasoningSettings,
 )
 from ...entities import (
     ReasoningToken as ReasoningToken,
@@ -16,6 +19,7 @@ from ...entities import (
 )
 from ...server.entities import (
     ChatCompletionRequest,
+    ContentFile,
     ContentImage,
     ContentText,
     ResponsesRequest,
@@ -29,13 +33,19 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 MessageContentInput: TypeAlias = (
-    str | ContentImage | ContentText | list[ContentImage | ContentText]
+    str
+    | ContentFile
+    | ContentImage
+    | ContentText
+    | list[ContentFile | ContentImage | ContentText]
 )
 MessageContentOutput: TypeAlias = (
     MessageContentText
+    | MessageContentFile
     | MessageContentImage
-    | list[MessageContentText | MessageContentImage]
+    | list[MessageContentFile | MessageContentText | MessageContentImage]
 )
+MODEL_FALLBACK = "default"
 
 
 async def orchestrate(
@@ -64,6 +74,14 @@ async def orchestrate(
         stop_strings=request.stop,
         top_p=request.top_p,
         num_return_sequences=request.n,
+        reasoning=ReasoningSettings(
+            effort=(
+                request.reasoning.effort
+                if isinstance(request, ResponsesRequest)
+                and request.reasoning is not None
+                else getattr(request, "reasoning_effort", None)
+            )
+        ),
         response_format=(
             request.response_format.model_dump(
                 by_alias=True, exclude_none=True
@@ -77,19 +95,44 @@ async def orchestrate(
     return response, str(response_id), timestamp
 
 
+def resolve_model_id(
+    orchestrator: Orchestrator, request_model: str | None = None
+) -> str:
+    if request_model:
+        return request_model
+    model_ids = getattr(orchestrator, "model_ids", None)
+    if model_ids:
+        candidates = sorted(str(model_id) for model_id in model_ids)
+        if candidates:
+            return candidates[0]
+    return MODEL_FALLBACK
+
+
 def to_message_content(item: MessageContentInput) -> MessageContentOutput:
     if isinstance(item, list):
         return [
             cast(
-                MessageContentText | MessageContentImage, to_message_content(i)
+                MessageContentFile | MessageContentText | MessageContentImage,
+                to_message_content(i),
             )
             for i in item
-            if isinstance(i, (ContentImage, ContentText))
+            if isinstance(i, (ContentFile, ContentImage, ContentText))
         ]
+    if isinstance(item, ContentFile):
+        file_data = cast(MessageFile, dict(item.file or {}))
+        if item.file_id is not None:
+            file_data["file_id"] = item.file_id
+        if item.file_url is not None:
+            file_data["file_url"] = item.file_url
+        if item.file_data is not None:
+            file_data["file_data"] = item.file_data
+        if item.filename is not None:
+            file_data["filename"] = item.filename
+        return MessageContentFile(type="file", file=file_data)
     if isinstance(item, ContentImage):
         return MessageContentImage(type=item.type, image_url=item.image_url)
     if isinstance(item, ContentText):
-        return MessageContentText(type=item.type, text=item.text)
+        return MessageContentText(type="text", text=item.text)
     if isinstance(item, str):
         return MessageContentText(type="text", text=item)
     raise TypeError(f"Unsupported content type: {type(item).__name__}")

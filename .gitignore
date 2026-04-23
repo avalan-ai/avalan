@@ -1,4 +1,5 @@
 build/
+docs/examples/playground
 docs/images/*.mov
 __pycache__/
 .codex/
