@@ -5,8 +5,10 @@ from ...agent.orchestrator.response.orchestrator_response import (
 from ...entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    MessageFile,
 )
 from ...entities import (
     ReasoningToken as ReasoningToken,
@@ -16,6 +18,7 @@ from ...entities import (
 )
 from ...server.entities import (
     ChatCompletionRequest,
+    ContentFile,
     ContentImage,
     ContentText,
     ResponsesRequest,
@@ -29,12 +32,17 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 MessageContentInput: TypeAlias = (
-    str | ContentImage | ContentText | list[ContentImage | ContentText]
+    str
+    | ContentFile
+    | ContentImage
+    | ContentText
+    | list[ContentFile | ContentImage | ContentText]
 )
 MessageContentOutput: TypeAlias = (
     MessageContentText
+    | MessageContentFile
     | MessageContentImage
-    | list[MessageContentText | MessageContentImage]
+    | list[MessageContentFile | MessageContentText | MessageContentImage]
 )
 
 
@@ -81,11 +89,23 @@ def to_message_content(item: MessageContentInput) -> MessageContentOutput:
     if isinstance(item, list):
         return [
             cast(
-                MessageContentText | MessageContentImage, to_message_content(i)
+                MessageContentFile | MessageContentText | MessageContentImage,
+                to_message_content(i),
             )
             for i in item
-            if isinstance(i, (ContentImage, ContentText))
+            if isinstance(i, (ContentFile, ContentImage, ContentText))
         ]
+    if isinstance(item, ContentFile):
+        file_data = cast(MessageFile, dict(item.file or {}))
+        if item.file_id is not None:
+            file_data["file_id"] = item.file_id
+        if item.file_url is not None:
+            file_data["file_url"] = item.file_url
+        if item.file_data is not None:
+            file_data["file_data"] = item.file_data
+        if item.filename is not None:
+            file_data["filename"] = item.filename
+        return MessageContentFile(type="file", file=file_data)
     if isinstance(item, ContentImage):
         return MessageContentImage(type=item.type, image_url=item.image_url)
     if isinstance(item, ContentText):

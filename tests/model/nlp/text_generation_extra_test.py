@@ -7,6 +7,7 @@ import torch
 from avalan.entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -197,6 +198,20 @@ class TokenizeInputContentImageTestCase(TestCase):
         token_out.to.assert_called_once_with("cpu")
         self.assertIs(result, token_out)
 
+    def test_file_content_plain(self) -> None:
+        model, tokenizer, token_out = self._setup(False)
+        message = Message(
+            role=MessageRole.USER,
+            content=MessageContentFile(
+                type="file", file={"file_id": "file-1"}
+            ),
+        )
+        result = model._tokenize_input(message, None, context=None)
+        tokenizer.assert_called_once()
+        self.assertEqual(tokenizer.call_args[0][0], "None\n\n\n")
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
 
 class TokenizeInputContentListTestCase(TestCase):
     def _setup(
@@ -269,6 +284,42 @@ class TokenizeInputContentListTestCase(TestCase):
         result = model._tokenize_input(message, None, context=None)
         tokenizer.assert_called_once()
         self.assertEqual(tokenizer.call_args[0][0], "None\n\na\nb\n")
+        token_out.to.assert_called_once_with("cpu")
+        self.assertIs(result, token_out)
+
+    def test_list_content_with_file_template_ignores_file(self) -> None:
+        model, tokenizer, token_out = self._setup(True)
+        message = Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentText(type="text", text="a"),
+                MessageContentFile(
+                    type="file", file={"file_url": "http://file"}
+                ),
+                MessageContentText(type="text", text="b"),
+            ],
+        )
+        result = model._tokenize_input(message, None, context=None)
+        tokenizer.apply_chat_template.assert_called_once()
+        args, kwargs = tokenizer.apply_chat_template.call_args
+        self.assertEqual(
+            args[0],
+            [
+                {
+                    "role": MessageRole.USER,
+                    "content": [
+                        {"type": "text", "text": "a"},
+                        {"type": "text", "text": "b"},
+                    ],
+                    "thinking": "",
+                    "arguments": None,
+                    "name": None,
+                    "tool_calls": [],
+                    "tool_call_result": None,
+                    "tool_call_error": None,
+                }
+            ],
+        )
         token_out.to.assert_called_once_with("cpu")
         self.assertIs(result, token_out)
 

@@ -3,6 +3,7 @@ from ....entities import (
     Input,
     Message,
     MessageContent,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -426,6 +427,9 @@ class TextGenerationModel(BaseNLPModel):
                     ]
                 return ""
 
+            if isinstance(content, MessageContentFile):
+                return ""
+
             if isinstance(content, list):
                 if self._tokenizer.chat_template:
                     blocks: list[dict[str, object]] = []
@@ -437,6 +441,8 @@ class TextGenerationModel(BaseNLPModel):
                                     "image_url": c.image_url,
                                 }
                             )
+                        elif isinstance(c, MessageContentFile):
+                            continue
                         else:
                             assert isinstance(c, MessageContentText)
                             blocks.append({"type": "text", "text": c.text})

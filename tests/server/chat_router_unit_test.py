@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -18,6 +19,7 @@ from avalan.model import TextGenerationResponse
 from avalan.server.entities import (
     ChatCompletionRequest,
     ChatMessage,
+    ContentFile,
     ContentImage,
     ContentText,
 )
@@ -301,6 +303,74 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(msg.content[0].text, "hi")
         self.assertIsInstance(msg.content[1], MessageContentImage)
         self.assertEqual(msg.content[1].image_url, {"url": "img"})
+
+    async def test_message_content_file_object(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=[
+                        ContentFile(
+                            type="file",
+                            file={"file_id": "file-1", "title": "Doc"},
+                        )
+                    ],
+                )
+            ],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        msg = orch.await_args.args[0][0]
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 1)
+        self.assertIsInstance(msg.content[0], MessageContentFile)
+        self.assertEqual(
+            msg.content[0].file, {"file_id": "file-1", "title": "Doc"}
+        )
+
+    async def test_message_content_input_file_object(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=[
+                        ContentFile(
+                            type="input_file",
+                            file_id="file-2",
+                            filename="report.pdf",
+                        )
+                    ],
+                )
+            ],
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.chat.create_chat_completion(req, logger, orch)
+
+        msg = orch.await_args.args[0][0]
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 1)
+        self.assertIsInstance(msg.content[0], MessageContentFile)
+        self.assertEqual(
+            msg.content[0].file,
+            {"file_id": "file-2", "filename": "report.pdf"},
+        )
 
     async def test_to_message_content_invalid_type(self) -> None:
         from avalan.server.routers import to_message_content

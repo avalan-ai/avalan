@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from avalan.entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
+    MessageContentImage,
+    MessageContentText,
     MessageRole,
     ReasoningToken,
     Token,
@@ -324,6 +327,101 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             loaded = model._load_model()
         ClientMock.assert_called_once_with(api_key="tok")
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_call_supports_file_and_image_parts(self):
+        client = self.mod.GoogleClient("k")
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="sys"),
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(type="text", text="Summarize this"),
+                    MessageContentFile(
+                        type="file",
+                        file={
+                            "file_url": "https://example.com/files/1",
+                            "filename": "report.pdf",
+                            "mime_type": "application/pdf",
+                        },
+                    ),
+                    MessageContentFile(
+                        type="file",
+                        file={
+                            "file_data": "YWJj",
+                            "filename": "inline.pdf",
+                            "mime_type": "application/pdf",
+                        },
+                    ),
+                    MessageContentImage(
+                        type="image_url",
+                        image_url={
+                            "data": "aW1hZ2U=",
+                            "mime_type": "image/jpeg",
+                        },
+                    ),
+                ],
+            ),
+            Message(role=MessageRole.ASSISTANT, content="Earlier reply"),
+        ]
+        settings = GenerationSettings(
+            max_new_tokens=64,
+            temperature=0.2,
+            top_p=0.8,
+            top_k=4,
+            stop_strings="STOP",
+        )
+
+        await client("gemini-2.5-flash", messages, settings)
+
+        stream_mock = client._client.aio.models.generate_content_stream
+        kwargs = stream_mock.await_args.kwargs
+        self.assertEqual(kwargs["model"], "gemini-2.5-flash")
+        self.assertEqual(
+            kwargs["config"],
+            {
+                "system_instruction": "sys",
+                "max_output_tokens": 64,
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "top_k": 4,
+                "stop_sequences": ["STOP"],
+            },
+        )
+        self.assertEqual(
+            kwargs["contents"],
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this"},
+                        {
+                            "file_data": {
+                                "file_uri": "https://example.com/files/1",
+                                "mime_type": "application/pdf",
+                                "display_name": "report.pdf",
+                            }
+                        },
+                        {
+                            "inline_data": {
+                                "data": "YWJj",
+                                "mime_type": "application/pdf",
+                                "display_name": "inline.pdf",
+                            }
+                        },
+                        {
+                            "inline_data": {
+                                "data": "aW1hZ2U=",
+                                "mime_type": "image/jpeg",
+                            }
+                        },
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [{"text": "Earlier reply"}],
+                },
+            ],
+        )
 
 
 class HuggingfaceTestCase(IsolatedAsyncioTestCase):

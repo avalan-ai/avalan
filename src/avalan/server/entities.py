@@ -79,6 +79,35 @@ class ContentImage(BaseModel):
     image_url: dict[str, str]
 
 
+class ContentFile(BaseModel):
+    type: Literal["file", "input_file"]
+    file: dict[str, Any] | None = None
+    file_data: str | None = None
+    file_id: str | None = None
+    file_url: str | None = None
+    filename: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "ContentFile":
+        nested = self.file or {}
+        has_source = any(
+            isinstance(value, str)
+            for value in (
+                nested.get("file_data") or nested.get("data"),
+                nested.get("file_id"),
+                nested.get("file_url") or nested.get("url"),
+                self.file_data,
+                self.file_id,
+                self.file_url,
+            )
+        )
+        if not has_source:
+            raise ValueError(
+                "File content requires file_id, file_url, file_data, or file"
+            )
+        return self
+
+
 ResponseFormat = Annotated[
     ResponseFormatText | ResponseFormatJSONObject | ResponseFormatJSONSchema,
     Field(discriminator="type"),
@@ -87,7 +116,7 @@ ResponseFormat = Annotated[
 Tool = Annotated[ToolFunction, Field(discriminator="type")]
 
 ContentPart = Annotated[
-    ContentText | ContentImage, Field(discriminator="type")
+    ContentText | ContentImage | ContentFile, Field(discriminator="type")
 ]
 
 

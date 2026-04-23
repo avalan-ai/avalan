@@ -6,7 +6,8 @@ TemplateMessageRole = Literal[
 
 
 class TemplateMessageContent(TypedDict, total=False):
-    type: Literal["image_url", "text"]
+    type: Literal["file", "image_url", "text"]
+    file: dict[str, object] | None
     text: str | None
     image_url: dict[str, str] | None
 

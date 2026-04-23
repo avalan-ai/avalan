@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from avalan.entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -590,6 +591,64 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(fallback, {"type": "url", "url": "blob"})
         other = client._format_content(123)
         self.assertEqual(other, [{"text": "123"}])
+
+    def test_format_content_document(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+        blocks = client._format_content(
+            MessageContentFile(
+                type="file",
+                file={
+                    "citations": True,
+                    "context": "Focus on the appendix",
+                    "file_data": "YWJj",
+                    "filename": "Quarterly.Report.pdf",
+                    "mime_type": "application/pdf",
+                },
+            )
+        )
+        self.assertEqual(blocks[0], {"text": ""})
+        self.assertEqual(
+            blocks[1],
+            {
+                "document": {
+                    "citations": {"enabled": True},
+                    "context": "Focus on the appendix",
+                    "format": "pdf",
+                    "name": "Quarterly Report",
+                    "source": {"bytes": b"abc"},
+                }
+            },
+        )
+
+    def test_document_source_variants(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+        self.assertEqual(
+            client._document_source(
+                {
+                    "file_url": "s3://bucket/path/report.pdf",
+                    "bucket_owner": "123456789012",
+                }
+            ),
+            {
+                "s3Location": {
+                    "uri": "s3://bucket/path/report.pdf",
+                    "bucketOwner": "123456789012",
+                }
+            },
+        )
+        self.assertEqual(
+            client._document_source(
+                {
+                    "file_data": "plain text",
+                    "mime_type": "text/plain",
+                }
+            ),
+            {"text": "plain text"},
+        )
+        with self.assertRaises(AssertionError):
+            client._document_source(
+                {"file_url": "https://example.com/report.pdf"}
+            )
 
     def test_tool_schemas_ignore_non_function(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())

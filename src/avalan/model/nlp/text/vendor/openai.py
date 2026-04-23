@@ -200,6 +200,16 @@ class OpenAIClient(TextGenerationVendor):
             messages, do_exclude_roles
         )
         messages_out = cast(list[dict[str, Any]], template_messages)
+        for message in messages_out:
+            if "content" not in message:
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                message["content"] = [
+                    OpenAIClient._content_block(block)
+                    for block in content
+                    if isinstance(block, dict)
+                ]
         for result in tool_results:
             assert result is not None
             call_message = {
@@ -223,6 +233,74 @@ class OpenAIClient(TextGenerationVendor):
             }
             messages_out.append(result_message)
         return messages_out
+
+    @staticmethod
+    def _content_block(block: dict[str, Any]) -> dict[str, Any]:
+        block_type = block.get("type")
+        match block_type:
+            case "file":
+                file = block.get("file")
+                assert isinstance(file, dict), "File blocks require file data"
+                return OpenAIClient._file_block(file)
+            case "image_url":
+                image = block.get("image_url")
+                assert isinstance(
+                    image, dict
+                ), "Image blocks require image data"
+                return OpenAIClient._image_block(image)
+            case "text":
+                text = block.get("text")
+                assert isinstance(text, str), "Text blocks require text"
+                return {"type": "input_text", "text": text}
+            case _:
+                return block
+
+    @staticmethod
+    def _file_block(file: dict[str, Any]) -> dict[str, Any]:
+        payload: dict[str, Any] = {"type": "input_file"}
+        file_id = file.get("file_id")
+        file_url = file.get("file_url") or file.get("url")
+        file_data = file.get("file_data") or file.get("data")
+        filename = file.get("filename")
+
+        if isinstance(file_id, str):
+            payload["file_id"] = file_id
+        elif isinstance(file_url, str):
+            payload["file_url"] = file_url
+        elif isinstance(file_data, str):
+            payload["file_data"] = file_data
+        else:
+            raise AssertionError(
+                "OpenAI file blocks require file_id, file_url, or file_data"
+            )
+
+        if isinstance(filename, str):
+            payload["filename"] = filename
+        return payload
+
+    @staticmethod
+    def _image_block(image: dict[str, Any]) -> dict[str, Any]:
+        payload: dict[str, Any] = {"type": "input_image"}
+        file_id = image.get("file_id")
+        image_url = image.get("url") or image.get("uri")
+        image_data = image.get("data")
+        mime_type = image.get("mime_type") or "image/png"
+        detail = image.get("detail")
+
+        if isinstance(file_id, str):
+            payload["file_id"] = file_id
+        elif isinstance(image_url, str):
+            payload["image_url"] = image_url
+        elif isinstance(image_data, str):
+            payload["image_url"] = f"data:{mime_type};base64,{image_data}"
+        else:
+            raise AssertionError(
+                "OpenAI image blocks require file_id, url, or data"
+            )
+
+        if isinstance(detail, str):
+            payload["detail"] = detail
+        return payload
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:

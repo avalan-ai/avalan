@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from avalan.entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -540,7 +541,35 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
     async def test_image_message_content(self):
         content = MessageContentImage(type="image_url", image_url={"url": "u"})
         await self._assert_messages(
-            content, [{"type": "image_url", "image_url": {"url": "u"}}]
+            content, [{"type": "input_image", "image_url": "u"}]
+        )
+
+    async def test_image_message_content_from_file_id(self):
+        content = MessageContentImage(
+            type="image_url", image_url={"file_id": "file-img"}
+        )
+        await self._assert_messages(
+            content, [{"type": "input_image", "file_id": "file-img"}]
+        )
+
+    async def test_image_message_content_from_base64(self):
+        content = MessageContentImage(
+            type="image_url",
+            image_url={
+                "data": "YWJj",
+                "detail": "high",
+                "mime_type": "image/jpeg",
+            },
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64,YWJj",
+                    "detail": "high",
+                }
+            ],
         )
 
     async def test_mixed_message_content(self):
@@ -551,8 +580,42 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
         await self._assert_messages(
             content,
             [
-                {"type": "text", "text": "hi"},
-                {"type": "image_url", "image_url": {"url": "u"}},
+                {"type": "input_text", "text": "hi"},
+                {"type": "input_image", "image_url": "u"},
+            ],
+        )
+
+    async def test_file_message_content(self):
+        content = MessageContentFile(
+            type="file", file={"file_url": "https://example.com/a.pdf"}
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_file",
+                    "file_url": "https://example.com/a.pdf",
+                }
+            ],
+        )
+
+    async def test_mixed_message_content_with_file_data(self):
+        content = [
+            MessageContentText(type="text", text="hi"),
+            MessageContentFile(
+                type="file",
+                file={"file_data": "YWJj", "filename": "report.pdf"},
+            ),
+        ]
+        await self._assert_messages(
+            content,
+            [
+                {"type": "input_text", "text": "hi"},
+                {
+                    "type": "input_file",
+                    "file_data": "YWJj",
+                    "filename": "report.pdf",
+                },
             ],
         )
 

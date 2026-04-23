@@ -2,6 +2,7 @@ from .....entities import (
     GenerationSettings,
     Message,
     MessageContent,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     MessageRole,
@@ -19,9 +20,11 @@ from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
 
+from base64 import b64decode
 from contextlib import AsyncExitStack
 from json import dumps
-from typing import Any, AsyncIterator, NoReturn
+from re import sub
+from typing import Any, AsyncIterator, Mapping, NoReturn
 
 from aioboto3 import Session as Boto3Session
 from diffusers import DiffusionPipeline
@@ -77,6 +80,25 @@ def _geo_inference_prefix(region_name: str | None) -> str | None:
     if region_name.startswith("eu-"):
         return "eu."
     return None
+
+
+_BEDROCK_XLSX_MIME_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+_BEDROCK_DOCX_MIME_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+_BEDROCK_DOCUMENT_FORMATS = {
+    "application/msword": "doc",
+    "application/pdf": "pdf",
+    "application/vnd.ms-excel": "xls",
+    _BEDROCK_XLSX_MIME_TYPE: "xlsx",
+    _BEDROCK_DOCX_MIME_TYPE: "docx",
+    "text/csv": "csv",
+    "text/html": "html",
+    "text/markdown": "md",
+    "text/plain": "txt",
+}
 
 
 class BedrockStream(TextGenerationVendorStream):
@@ -511,6 +533,10 @@ class BedrockClient(TextGenerationVendor):
             return [{"text": content}]
         if isinstance(content, MessageContentText):
             return [{"text": content.text}]
+        if isinstance(content, MessageContentFile):
+            return self._ensure_document_prompt(
+                [{"document": self._document_block(content.file)}]
+            )
         if isinstance(content, MessageContentImage):
             return [
                 {"image": {"source": self._image_source(content.image_url)}}
@@ -520,6 +546,10 @@ class BedrockClient(TextGenerationVendor):
             for block in content:
                 if isinstance(block, MessageContentText):
                     blocks.append({"text": block.text})
+                elif isinstance(block, MessageContentFile):
+                    blocks.append(
+                        {"document": self._document_block(block.file)}
+                    )
                 elif isinstance(block, MessageContentImage):
                     blocks.append(
                         {
@@ -528,8 +558,115 @@ class BedrockClient(TextGenerationVendor):
                             }
                         }
                     )
-            return blocks
+            return self._ensure_document_prompt(blocks)
         return [{"text": str(content)}]
+
+    @staticmethod
+    def _ensure_document_prompt(
+        blocks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        has_document = any("document" in block for block in blocks)
+        has_text = any("text" in block for block in blocks)
+        if has_document and not has_text:
+            return [{"text": ""}, *blocks]
+        return blocks
+
+    @staticmethod
+    def _document_block(file: Mapping[str, Any]) -> dict[str, Any]:
+        block: dict[str, Any] = {
+            "name": BedrockClient._document_name(file),
+            "source": BedrockClient._document_source(file),
+        }
+        document_format = BedrockClient._document_format(file)
+        if document_format:
+            block["format"] = document_format
+        citations = file.get("citations")
+        if isinstance(citations, bool):
+            block["citations"] = {"enabled": citations}
+        context = file.get("context")
+        if isinstance(context, str):
+            block["context"] = context
+        return block
+
+    @staticmethod
+    def _document_source(file: Mapping[str, Any]) -> dict[str, Any]:
+        mime_type_value = file.get("mime_type")
+        mime_type = (
+            mime_type_value.lower()
+            if isinstance(mime_type_value, str) and mime_type_value
+            else None
+        )
+        data = file.get("file_data", file.get("data"))
+        if isinstance(data, (bytes, bytearray)):
+            return {"bytes": bytes(data)}
+        if isinstance(data, str):
+            if mime_type is not None and mime_type.startswith("text/"):
+                return {"text": data}
+            return {"bytes": b64decode(data)}
+
+        file_uri = BedrockClient._file_uri(file)
+        assert (
+            file_uri is not None
+        ), "Bedrock documents require inline data or a file URL"
+        assert file_uri.startswith(
+            "s3://"
+        ), "Bedrock document URLs must use s3:// URIs"
+        s3_location: dict[str, Any] = {"uri": file_uri}
+        bucket_owner = file.get("bucket_owner")
+        if isinstance(bucket_owner, str):
+            s3_location["bucketOwner"] = bucket_owner
+        return {"s3Location": s3_location}
+
+    @staticmethod
+    def _document_name(file: Mapping[str, Any]) -> str:
+        name = "Document"
+        for key in ("title", "filename"):
+            value = file.get(key)
+            if isinstance(value, str) and value.strip():
+                name = value.strip().rsplit(".", 1)[0]
+                break
+        sanitized = sub(r"[^0-9A-Za-z\s\-\(\)\[\]]", " ", name)
+        normalized = sub(r"\s+", " ", sanitized).strip()
+        return normalized or "Document"
+
+    @staticmethod
+    def _document_format(file: Mapping[str, Any]) -> str | None:
+        mime_type_value = file.get("mime_type")
+        if isinstance(mime_type_value, str):
+            mime_type = mime_type_value.lower()
+            document_format = _BEDROCK_DOCUMENT_FORMATS.get(mime_type)
+            if document_format:
+                return document_format
+
+        for key in ("filename", "title"):
+            value = file.get(key)
+            if not isinstance(value, str):
+                continue
+            suffix = value.rsplit(".", 1)
+            if len(suffix) != 2:
+                continue
+            extension = suffix[1].lower()
+            if extension in {
+                "csv",
+                "doc",
+                "docx",
+                "html",
+                "md",
+                "pdf",
+                "txt",
+                "xls",
+                "xlsx",
+            }:
+                return extension
+        return None
+
+    @staticmethod
+    def _file_uri(file: Mapping[str, Any]) -> str | None:
+        for key in ("file_url", "url", "uri"):
+            value = file.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
 
     def _image_source(self, image_url: dict[str, Any]) -> dict[str, Any]:
         if "url" in image_url:

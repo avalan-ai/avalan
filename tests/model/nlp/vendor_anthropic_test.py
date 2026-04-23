@@ -11,6 +11,8 @@ import pytest
 
 from avalan.entities import (
     Message,
+    MessageContentFile,
+    MessageContentImage,
     MessageRole,
     ReasoningToken,
     Token,
@@ -294,6 +296,87 @@ def test_template_messages_tool_error_details(anthropic_mod):
     tool_result = templated[2]["content"][0]
     assert tool_result["tool_use_id"] == "call1"
     assert tool_result["is_error"] is True
+
+
+def test_file_content_translation_and_beta_header(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "citations": True,
+                        "context": "ctx",
+                        "file_id": "file_1",
+                        "title": "Doc",
+                    },
+                ),
+                MessageContentImage(
+                    type="image_url", image_url={"file_id": "img_1"}
+                ),
+            ],
+        )
+    ]
+
+    stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")]
+        )
+    )
+
+    asyncio.run(client("model", messages, use_async_generator=False))
+
+    create_mock = stub.AsyncAnthropic.return_value.messages.create
+    create_mock.assert_awaited_once()
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["extra_headers"] == {
+        "anthropic-beta": "files-api-2025-04-14"
+    }
+    assert kwargs["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {"type": "file", "file_id": "file_1"},
+                    "title": "Doc",
+                    "context": "ctx",
+                    "citations": {"enabled": True},
+                },
+                {
+                    "type": "image",
+                    "source": {"type": "file", "file_id": "img_1"},
+                },
+            ],
+        }
+    ]
+
+
+def test_document_source_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    assert mod.AnthropicClient._document_source(
+        {"url": "https://example.com/doc.pdf"}
+    ) == {"type": "url", "url": "https://example.com/doc.pdf"}
+    assert mod.AnthropicClient._document_source(
+        {
+            "data": "hello",
+            "mime_type": "text/plain",
+        }
+    ) == {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": "hello",
+    }
+    assert mod.AnthropicClient._document_source({"file_data": "YWJj"}) == {
+        "type": "base64",
+        "media_type": "application/pdf",
+        "data": "YWJj",
+    }
 
 
 def test_tool_schemas_variants(anthropic_mod):

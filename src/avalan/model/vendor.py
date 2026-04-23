@@ -2,6 +2,7 @@ from ..entities import (
     GenerationSettings,
     Message,
     MessageContent,
+    MessageContentFile,
     MessageContentImage,
     MessageContentText,
     Token,
@@ -52,6 +53,8 @@ class TextGenerationVendor(ABC):
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage] | list[dict[str, Any]]:
         def _block(c: MessageContent) -> dict[str, Any]:
+            if isinstance(c, MessageContentFile):
+                return {"type": "file", "file": dict(c.file)}
             if isinstance(c, MessageContentImage):
                 return {"type": "image_url", "image_url": c.image_url}
             return {"type": "text", "text": c.text}
@@ -69,6 +72,9 @@ class TextGenerationVendor(ABC):
                 return content.text
 
             if isinstance(content, MessageContentImage):
+                return [_block(content)]
+
+            if isinstance(content, MessageContentFile):
                 return [_block(content)]
 
             return str(content)

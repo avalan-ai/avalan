@@ -1,6 +1,8 @@
 from .....entities import (
     GenerationSettings,
     Message,
+    MessageContentFile,
+    MessageContentImage,
     MessageRole,
     ReasoningToken,
     Token,
@@ -153,6 +155,9 @@ class AnthropicClient(TextGenerationVendor):
             "tools": AnthropicClient._tool_schemas(tool) if tool else [],
             "tool_choice": {"type": "auto"},
         }
+        extra_headers = AnthropicClient._extra_headers(messages)
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
 
         try:
             if use_async_generator:
@@ -186,6 +191,14 @@ class AnthropicClient(TextGenerationVendor):
             list[dict[str, Any]],
             super()._template_messages(messages, do_exclude_roles),
         )
+        for message in template_messages:
+            content = message.get("content")
+            if isinstance(content, list):
+                message["content"] = [
+                    AnthropicClient._content_block(block)
+                    for block in content
+                    if isinstance(block, dict)
+                ]
         last_message = next(
             (
                 m
@@ -224,7 +237,7 @@ class AnthropicClient(TextGenerationVendor):
         for result in tool_results:
             if result is None:
                 continue
-            content: dict[str, Any] = {
+            tool_result_content: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": result.call.id,
                 "content": to_json(
@@ -234,10 +247,10 @@ class AnthropicClient(TextGenerationVendor):
                 ),
             }
             if isinstance(result, ToolCallError):
-                content["is_error"] = True
+                tool_result_content["is_error"] = True
             result_message: dict[str, Any] = {
                 "role": "user",
-                "content": [content],
+                "content": [tool_result_content],
             }
             if last_message_index is not None:
                 template_messages.insert(
@@ -253,6 +266,115 @@ class AnthropicClient(TextGenerationVendor):
             template_messages.pop()
 
         return cast(list[TemplateMessage], template_messages)
+
+    @staticmethod
+    def _content_block(block: dict[str, Any]) -> dict[str, Any]:
+        block_type = block.get("type")
+        match block_type:
+            case "file":
+                file = block.get("file")
+                assert isinstance(file, dict), "File blocks require file data"
+                return AnthropicClient._document_block(file)
+            case "image_url":
+                image = block.get("image_url")
+                assert isinstance(
+                    image, dict
+                ), "Image blocks require image data"
+                return {
+                    "type": "image",
+                    "source": AnthropicClient._image_source(image),
+                }
+            case "text":
+                return block
+            case _:
+                return block
+
+    @staticmethod
+    def _document_block(file: dict[str, Any]) -> dict[str, Any]:
+        source = AnthropicClient._document_source(file)
+        block: dict[str, Any] = {"type": "document", "source": source}
+        title = file.get("title")
+        context = file.get("context")
+        citations = file.get("citations")
+        if isinstance(title, str):
+            block["title"] = title
+        if isinstance(context, str):
+            block["context"] = context
+        if isinstance(citations, bool):
+            block["citations"] = {"enabled": citations}
+        return block
+
+    @staticmethod
+    def _document_source(file: dict[str, Any]) -> dict[str, Any]:
+        file_id = file.get("file_id")
+        file_url = file.get("file_url") or file.get("url")
+        file_data = file.get("file_data") or file.get("data")
+        mime_type = file.get("mime_type")
+        if isinstance(file_id, str):
+            return {"type": "file", "file_id": file_id}
+        if isinstance(file_url, str):
+            return {"type": "url", "url": file_url}
+        if isinstance(file_data, str):
+            resolved_mime_type = (
+                mime_type if isinstance(mime_type, str) else "application/pdf"
+            )
+            if resolved_mime_type == "text/plain":
+                return {
+                    "type": "text",
+                    "media_type": resolved_mime_type,
+                    "data": file_data,
+                }
+            return {
+                "type": "base64",
+                "media_type": resolved_mime_type,
+                "data": file_data,
+            }
+        raise AssertionError(
+            "Anthropic file blocks require file_id, file_url, or file_data"
+        )
+
+    @staticmethod
+    def _image_source(image: dict[str, Any]) -> dict[str, Any]:
+        file_id = image.get("file_id")
+        image_url = image.get("url") or image.get("uri")
+        image_data = image.get("data")
+        mime_type = image.get("mime_type") or "image/png"
+        if isinstance(file_id, str):
+            return {"type": "file", "file_id": file_id}
+        if isinstance(image_url, str):
+            return {"type": "url", "url": image_url}
+        if isinstance(image_data, str):
+            return {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": image_data,
+            }
+        raise AssertionError(
+            "Anthropic image blocks require file_id, url, or data"
+        )
+
+    @staticmethod
+    def _extra_headers(messages: list[Message]) -> dict[str, str] | None:
+        if AnthropicClient._uses_files_api(messages):
+            return {"anthropic-beta": "files-api-2025-04-14"}
+        return None
+
+    @staticmethod
+    def _uses_files_api(messages: list[Message]) -> bool:
+        def _content_uses_file_api(
+            content: object,
+        ) -> bool:
+            if isinstance(content, MessageContentFile):
+                return isinstance(content.file.get("file_id"), str)
+            if isinstance(content, MessageContentImage):
+                return isinstance(content.image_url.get("file_id"), str)
+            if isinstance(content, list):
+                return any(_content_uses_file_api(block) for block in content)
+            return False
+
+        return any(
+            _content_uses_file_api(message.content) for message in messages
+        )
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
