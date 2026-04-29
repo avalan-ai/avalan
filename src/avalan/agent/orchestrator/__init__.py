@@ -264,9 +264,13 @@ class Orchestrator:
         )
 
         self._last_engine_agent = engine_agent
+        last_prompt = engine_agent.last_prompt
+        response_input = (
+            last_prompt[0] if isinstance(last_prompt, tuple) else messages
+        )
 
         return OrchestratorResponse(
-            messages,
+            response_input,
             result,
             engine_agent,
             operation,

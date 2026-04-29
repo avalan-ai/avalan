@@ -14,16 +14,29 @@ from torch import Tensor, inference_mode
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageTextToText,
-    AutoModelForVision2Seq,
     AutoProcessor,
     Gemma3ForConditionalGeneration,
     Qwen2VLForConditionalGeneration,
 )
 from transformers.tokenization_utils_base import BatchEncoding
 
+AutoModelForVision2Seq = AutoModelForImageTextToText
+
 
 class ImageToTextModel(TransformerModel):
     _processor: Any
+
+    @staticmethod
+    def _generation_kwargs(
+        settings: GenerationSettings | None,
+    ) -> dict[str, int]:
+        if not settings:
+            return {}
+        if settings.max_new_tokens is not None:
+            return {"max_new_tokens": settings.max_new_tokens}
+        if settings.max_length is not None:
+            return {"max_length": settings.max_length}
+        return {}
 
     def _load_model(
         self,
@@ -32,8 +45,7 @@ class ImageToTextModel(TransformerModel):
             Any,
             cast(Any, AutoImageProcessor).from_pretrained(
                 self._model_id,
-                # default behavior in transformers v4.48
-                use_fast=True,
+                backend="torchvision",
             ),
         )
         model = cast(
@@ -62,6 +74,7 @@ class ImageToTextModel(TransformerModel):
         self,
         image_source: object,
         *,
+        settings: GenerationSettings | None = None,
         skip_special_tokens: bool = True,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
@@ -73,7 +86,9 @@ class ImageToTextModel(TransformerModel):
         inputs.to(self._device)
 
         with inference_mode():
-            output_ids = self._model.generate(**inputs)
+            output_ids = self._model.generate(
+                **inputs, **self._generation_kwargs(settings)
+            )
 
         output = self._tokenizer.decode(
             output_ids[0], skip_special_tokens=skip_special_tokens
@@ -99,7 +114,7 @@ class ImageTextToTextModel(ImageToTextModel):
             Any,
             cast(Any, AutoProcessor).from_pretrained(
                 self._model_id,
-                use_fast=True,
+                backend="torchvision",
             ),
         )
 

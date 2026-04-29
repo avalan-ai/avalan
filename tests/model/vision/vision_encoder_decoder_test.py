@@ -72,7 +72,7 @@ class VisionEncoderDecoderModelInstantiationTestCase(TestCase):
 
             self.assertIs(model.model, model_instance)
             processor_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, backend="torchvision"
             )
             model_mock.assert_called_once_with(
                 self.model_id,

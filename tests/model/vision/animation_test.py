@@ -61,7 +61,12 @@ class TextToAnimationModelInstantiationTestCase(TestCase):
                 load_mock.return_value
             )
             pipe_mock.assert_called_once_with(
-                "base", motion_adapter=adapter_instance, torch_dtype="dtype"
+                "base",
+                feature_extractor=None,
+                image_encoder=None,
+                motion_adapter=adapter_instance,
+                torch_dtype="dtype",
+                use_safetensors=False,
             )
             pipe_instance.to.assert_called_once_with("cpu")
 

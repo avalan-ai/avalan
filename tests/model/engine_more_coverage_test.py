@@ -62,6 +62,42 @@ class UsesTokenizerPropertyTestCase(TestCase):
         self.assertFalse(engine.uses_tokenizer)
 
 
+class PipelineMetadataTestCase(TestCase):
+    def test_pipeline_with_non_callable_parameters_skips_metadata(
+        self,
+    ) -> None:
+        class DummyPipeline:
+            parameters: dict[str, object] = {}
+
+            def eval(self) -> None:
+                pass
+
+        class DummyEngine(Engine):
+            def __init__(self) -> None:
+                self.fake_model = DummyPipeline()
+                super().__init__(
+                    "id",
+                    EngineSettings(
+                        auto_load_model=True,
+                        auto_load_tokenizer=False,
+                        enable_eval=False,
+                    ),
+                )
+
+            async def __call__(self, input, **kwargs):
+                return "out"
+
+            def _load_model(self):
+                return self.fake_model
+
+        with patch("avalan.model.engine.DiffusionPipeline", DummyPipeline):
+            engine = DummyEngine()
+
+        self.assertTrue(engine._loaded_model)
+        self.assertIsNone(engine.parameter_count)
+        self.assertIsNone(engine.parameter_types)
+
+
 class ContextLevelErrorTestCase(TestCase):
     def test_enter_exit_level_error(self) -> None:
         engine = MinimalEngine(

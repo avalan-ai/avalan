@@ -122,6 +122,25 @@ class Engine(ABC):
     def weight(weight_type: WeightType) -> Literal["auto"] | dtype:
         return Engine._WEIGHTS.get(weight_type, "auto")
 
+    @staticmethod
+    def _get_config_dtype(config: object) -> dtype:
+        missing = object()
+        config_dtype = getattr(config, "dtype", missing)
+        if config_dtype is not missing:
+            return cast(dtype, config_dtype or float32)
+
+        if hasattr(config, "torch_dtype"):
+            return cast(dtype, getattr(config, "torch_dtype") or float32)
+
+        return float32
+
+    def _decode_token(self, token_id: int | None) -> str | None:
+        return (
+            cast(str, self._tokenizer.decode(token_id))
+            if self._tokenizer is not None and token_id is not None
+            else None
+        )
+
     def __init__(
         self,
         model_id: str | None,
@@ -137,7 +156,7 @@ class Engine(ABC):
             else Engine.get_default_device()
         )
         self._transformers_logging_logger = (
-            transformers_logging.get_logger()
+            cast(Logger, transformers_logging.get_logger())
             if self._settings.change_transformers_logging_level
             else None
         )
@@ -403,21 +422,19 @@ class Engine(ABC):
 
             self._loaded_model = True
 
+        parameters = (
+            getattr(self._model, "parameters", None)
+            if not is_mlx and self._model
+            else None
+        )
         self._parameter_types = (
-            {
-                str(param.dtype).replace("torch.", "")
-                for param in self._model.parameters()
-            }
-            if not is_mlx
-            and self._model
-            and hasattr(self._model, "parameters")
+            {str(param.dtype).replace("torch.", "") for param in parameters()}
+            if callable(parameters)
             else None
         )
         self._parameter_count = (
-            sum(p.numel() for p in self._model.parameters())
-            if not is_mlx
-            and self._model
-            and hasattr(self._model, "parameters")
+            sum(p.numel() for p in parameters())
+            if callable(parameters)
             else None
         )
 
@@ -434,28 +451,22 @@ class Engine(ABC):
             )
 
             if mc:
+                bos_token_id = getattr(mc, "bos_token_id", None)
+                eos_token_id = getattr(mc, "eos_token_id", None)
+                pad_token_id = getattr(mc, "pad_token_id", None)
+                sep_token_id = getattr(mc, "sep_token_id", None)
                 config = ModelConfig(
                     architectures=getattr(mc, "architectures", None),
                     attribute_map=cast(
                         dict[str, str], getattr(mc, "attribute_map", {})
                     ),
-                    bos_token_id=getattr(mc, "bos_token_id", None),
-                    bos_token=(
-                        self._tokenizer.decode(mc.bos_token_id)
-                        if self._tokenizer
-                        and hasattr(mc, "bos_token_id")
-                        and mc.bos_token_id
-                        else None
-                    ),
+                    bos_token_id=bos_token_id,
+                    bos_token=self._decode_token(bos_token_id),
                     decoder_start_token_id=getattr(
                         mc, "decoder_start_token_id", None
                     ),
-                    eos_token_id=getattr(mc, "eos_token_id", None),
-                    eos_token=(
-                        self._tokenizer.decode(mc.eos_token_id)
-                        if self._tokenizer and mc.eos_token_id
-                        else None
-                    ),
+                    eos_token_id=eos_token_id,
+                    eos_token=self._decode_token(eos_token_id),
                     finetuning_task=getattr(mc, "finetuning_task", None),
                     hidden_size=(
                         mc.hidden_size if hasattr(mc, "hidden_size") else None
@@ -499,19 +510,11 @@ class Engine(ABC):
                     output_hidden_states=cast(
                         bool, getattr(mc, "output_hidden_states", False)
                     ),
-                    pad_token_id=getattr(mc, "pad_token_id", None),
-                    pad_token=(
-                        self._tokenizer.decode(mc.pad_token_id)
-                        if self._tokenizer and mc.pad_token_id
-                        else None
-                    ),
+                    pad_token_id=pad_token_id,
+                    pad_token=self._decode_token(pad_token_id),
                     prefix=getattr(mc, "prefix", None),
-                    sep_token_id=getattr(mc, "sep_token_id", None),
-                    sep_token=(
-                        self._tokenizer.decode(mc.sep_token_id)
-                        if self._tokenizer and mc.sep_token_id
-                        else None
-                    ),
+                    sep_token_id=sep_token_id,
+                    sep_token=self._decode_token(sep_token_id),
                     state_size=(
                         len(self._model.state_dict().keys())
                         if hasattr(self._model, "state_dict")
@@ -521,14 +524,7 @@ class Engine(ABC):
                     task_specific_params=getattr(
                         mc, "task_specific_params", None
                     ),
-                    torch_dtype=cast(
-                        dtype,
-                        (
-                            mc.torch_dtype
-                            if hasattr(mc, "torch_dtype") and mc.torch_dtype
-                            else float32
-                        ),
-                    ),
+                    torch_dtype=Engine._get_config_dtype(mc),
                     vocab_size=(
                         mc.vocab_size if hasattr(mc, "vocab_size") else None
                     ),

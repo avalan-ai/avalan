@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 from unittest import TestCase
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+from torch import float32
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 
 from avalan.entities import (
@@ -23,7 +24,10 @@ from avalan.model.engine import (
 
 class DummyEngine(Engine):
     def __init__(
-        self, model_id: str = "id", settings: EngineSettings | None = None
+        self,
+        model_id: str = "id",
+        settings: EngineSettings | None = None,
+        model_config: object | None = None,
     ):
         settings = settings or EngineSettings(
             auto_load_model=False, auto_load_tokenizer=False
@@ -33,7 +37,7 @@ class DummyEngine(Engine):
         self.fake_model.eval = MagicMock()
         self.fake_model.resize_token_embeddings = MagicMock()
         self.fake_model.state_dict.return_value = {}
-        self.fake_model.config = ModelConfig(
+        default_model_config = ModelConfig(
             architectures=None,
             attribute_map={},
             bos_token_id=None,
@@ -64,6 +68,9 @@ class DummyEngine(Engine):
             vocab_size=None,
             tokenizer_class=None,
         )
+        self.fake_model.config = (
+            model_config if model_config is not None else default_model_config
+        )
 
         class DummyTokenizer(PreTrainedTokenizerFast):
             def __init__(self):
@@ -81,6 +88,9 @@ class DummyEngine(Engine):
         )
         self.fake_tokenizer.__len__ = MagicMock(return_value=0)
         self.fake_tokenizer._tokenizer = MagicMock()
+        self.fake_tokenizer.decode = MagicMock(
+            side_effect=lambda token_id: f"token-{token_id}"
+        )
 
         super().__init__(model_id, settings)
 
@@ -304,6 +314,46 @@ class EngineLoadTestCase(TestCase):
         ):
             engine._load(load_tokenizer=False, tokenizer_name_or_path=None)
         self.assertIsInstance(engine._config, SentenceTransformerModelConfig)
+
+    def test_model_config_omits_optional_token_ids(self):
+        config = types.SimpleNamespace(
+            bos_token_id=0,
+            eos_token_id=2,
+            model_type="roberta",
+            pad_token_id=1,
+        )
+        engine = DummyEngine(
+            settings=TransformerEngineSettings(
+                auto_load_model=True,
+                auto_load_tokenizer=True,
+            ),
+            model_config=config,
+        )
+        self.assertIsInstance(engine._config, ModelConfig)
+        self.assertEqual(engine._config.bos_token, "token-0")
+        self.assertEqual(engine._config.eos_token, "token-2")
+        self.assertEqual(engine._config.pad_token, "token-1")
+        self.assertIsNone(engine._config.sep_token_id)
+        self.assertIsNone(engine._config.sep_token)
+
+    def test_model_config_uses_dtype_without_torch_dtype_property(self):
+        class Config:
+            dtype = None
+
+            @property
+            def torch_dtype(self):
+                raise AssertionError("torch_dtype should not be accessed")
+
+        engine = DummyEngine(
+            settings=TransformerEngineSettings(
+                auto_load_model=True,
+                auto_load_tokenizer=False,
+            ),
+            model_config=Config(),
+        )
+
+        self.assertIsInstance(engine._config, ModelConfig)
+        self.assertEqual(engine._config.torch_dtype, float32)
 
 
 class GetDeviceMemoryTestCase(TestCase):

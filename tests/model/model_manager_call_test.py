@@ -269,7 +269,13 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         )
                     ),
                 ),
-                (("img.png",), {"skip_special_tokens": False}),
+                (
+                    ("img.png",),
+                    {
+                        "settings": self.settings,
+                        "skip_special_tokens": False,
+                    },
+                ),
             ),
             (
                 Modality.VISION_ENCODER_DECODER,

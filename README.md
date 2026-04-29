@@ -719,10 +719,10 @@ echo "
 Here is the Spanish version:
 
 ```text
-Lionel Messi, conocido también como Leo Messi, es un futbolista argentino
+Lionel Messi, conocido comúnmente como Leo Messi, es un futbolista argentino
 profesional que representa a la Argentina en el equipo nacional de Argentina.
-Considerado por muchos como el futbolista más grande de todos los tiempos,
-Messi ha conseguido un éxito sin precedentes durante su carrera.
+Considerado por muchos como el mejor futbolista de todos los tiempos, Messi ha
+conseguido un éxito sin precedentes en toda su carrera.
 ```
 
 The SDK call mirrors the CLI parameters:

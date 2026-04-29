@@ -93,6 +93,29 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.orch.tool, self.tool)
         self.assertIs(self.orch.event_manager, self.event_manager)
 
+    async def test_call_response_uses_effective_agent_prompt(self):
+        captured = {}
+        effective_messages = [
+            Message(role=MessageRole.USER, content="previous"),
+            Message(role=MessageRole.ASSISTANT, content="25"),
+            Message(role=MessageRole.USER, content="and that times two?"),
+        ]
+        self.engine_agent.last_prompt = (effective_messages, None, None)
+
+        def response_factory(input_value, *args, **kwargs):
+            del args, kwargs
+            captured["input"] = input_value
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch("and that times two?")
+
+        self.assertEqual(resp, "resp")
+        self.assertIs(captured["input"], effective_messages)
+
     async def test_call_triggers_events(self):
         self.engine_agent.return_value = "ok"
         resp = await self.orch("hi")

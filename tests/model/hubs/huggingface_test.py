@@ -4,11 +4,20 @@ from types import SimpleNamespace
 from unittest import TestCase, main
 from unittest.mock import MagicMock, call, patch
 
+from httpx import Request, Response
 from huggingface_hub.errors import GatedRepoError
 
 from avalan.entities import HubCache, HubCacheDeletion, Model, User
 from avalan.model.hubs import HubAccessDeniedException
 from avalan.model.hubs.huggingface import HuggingfaceHub
+
+
+def gated_repo_error() -> GatedRepoError:
+    response = Response(
+        403,
+        request=Request("GET", "https://huggingface.co/model"),
+    )
+    return GatedRepoError("denied", response=response)
 
 
 class HuggingfaceHubTestCase(TestCase):
@@ -114,7 +123,7 @@ class HuggingfaceHubTestCase(TestCase):
     def test_can_access(self):
         self.assertTrue(self.hub.can_access("model"))
         self.hf_instance.auth_check.assert_called_with("model")
-        self.hf_instance.auth_check.side_effect = GatedRepoError("denied")
+        self.hf_instance.auth_check.side_effect = gated_repo_error()
         self.assertFalse(self.hub.can_access("model"))
 
     def test_download(self):
@@ -128,13 +137,22 @@ class HuggingfaceHubTestCase(TestCase):
             force_download=False,
             max_workers=8,
             local_dir=None,
-            local_dir_use_symlinks=False,
         )
-        self.hf_instance.snapshot_download.side_effect = GatedRepoError(
-            "denied"
-        )
+        self.hf_instance.snapshot_download.side_effect = gated_repo_error()
         with self.assertRaises(HubAccessDeniedException):
             self.hub.download("model")
+
+    def test_download_rejects_local_dir_symlinks(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "local_dir_use_symlinks is no longer supported",
+        ):
+            self.hub.download("model", local_dir_use_symlinks=True)
+
+    def test_download_accepts_false_local_dir_symlinks(self):
+        self.hf_instance.snapshot_download.return_value = "/path"
+        path = self.hub.download("model", local_dir_use_symlinks=False)
+        self.assertEqual(path, "/path")
 
     def test_download_all(self):
         self.hf_instance.list_repo_files.return_value = ["a", "b"]
@@ -209,15 +227,11 @@ class HuggingfaceHubTestCase(TestCase):
                 )
             )
         self.hf_instance.list_models.assert_called_once_with(
-            model_name=["n1", "n2"],
-            filter="f",
-            search=["s"],
-            library=["lib"],
+            filter=["f", "lib", "en", "tag"],
+            search="n1 n2 s",
             author="a",
             gated=True,
-            language=["en"],
-            task=["t"],
-            tags=["tag"],
+            pipeline_tag="t",
             limit=1,
             full=True,
         )

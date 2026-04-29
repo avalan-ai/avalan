@@ -86,7 +86,7 @@ class ImageToTextModelInstantiationTestCase(TestCase):
             self.assertIs(model.model, model_instance)
             self.assertIs(model._processor, processor_instance)
             processor_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, backend="torchvision"
             )
             tp_mock.assert_called_once_with(settings.parallel)
             dist_mock.assert_called_once_with(settings.distributed_config)
@@ -118,6 +118,27 @@ class ImageToTextModelTokenizeInputTestCase(TestCase):
             )
             with self.assertRaises(NotImplementedError):
                 model._tokenize_input("input")
+
+
+class ImageToTextModelGenerationKwargsTestCase(TestCase):
+    def test_generation_kwargs(self):
+        self.assertEqual(ImageToTextModel._generation_kwargs(None), {})
+        self.assertEqual(
+            ImageToTextModel._generation_kwargs(
+                GenerationSettings(max_new_tokens=5)
+            ),
+            {"max_new_tokens": 5},
+        )
+        self.assertEqual(
+            ImageToTextModel._generation_kwargs(GenerationSettings()),
+            {"max_length": 20},
+        )
+        self.assertEqual(
+            ImageToTextModel._generation_kwargs(
+                GenerationSettings(max_length=None)
+            ),
+            {},
+        )
 
 
 class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
@@ -170,7 +191,9 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 logger=logger_mock,
             )
 
-            result = await model("img.jpg")
+            result = await model(
+                "img.jpg", settings=GenerationSettings(max_new_tokens=5)
+            )
 
             self.assertEqual(result, "decoded")
             processor_instance.assert_called_once_with(
@@ -180,7 +203,8 @@ class ImageToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 processor_instance.return_value.to_called_with, model._device
             )
             model_instance.generate.assert_called_once_with(
-                **processor_instance.return_value
+                **processor_instance.return_value,
+                max_new_tokens=5,
             )
             tokenizer_instance.decode.assert_called_once_with(
                 [1, 2, 3], skip_special_tokens=True

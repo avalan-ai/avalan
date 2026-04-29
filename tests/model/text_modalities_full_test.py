@@ -51,6 +51,10 @@ class RecordingLoader:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
 
+    @classmethod
+    def is_available(cls) -> bool:
+        return True
+
 
 @pytest.fixture()
 def local_engine_uri() -> EngineUri:
@@ -132,17 +136,7 @@ def test_get_mlx_model_module_missing(monkeypatch: pytest.MonkeyPatch) -> None:
         "avalan.model.modalities.text.find_spec", lambda name: object()
     )
 
-    original_import = __import__
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.startswith("mlx_lm"):
-            raise ModuleNotFoundError
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr("builtins.__import__", fake_import)
-    monkeypatch.delitem(modules, "avalan.model.nlp.text.mlxlm", raising=False)
-    monkeypatch.delitem(modules, "mlx_lm", raising=False)
-    monkeypatch.delitem(modules, "mlx_lm.sample_utils", raising=False)
+    monkeypatch.setitem(modules, "avalan.model.nlp.text.mlxlm", None)
     assert _get_mlx_model() is None
 
 
@@ -156,6 +150,24 @@ def test_get_mlx_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
     stub.MlxLmModel = RecordingLoader
     monkeypatch.setitem(modules, module_name, stub)
     assert _get_mlx_model() is RecordingLoader
+
+
+def test_get_mlx_model_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    _get_mlx_model.cache_clear()
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.find_spec", lambda name: object()
+    )
+
+    class UnavailableLoader:
+        @classmethod
+        def is_available(cls) -> bool:
+            return False
+
+    module_name = "avalan.model.nlp.text.mlxlm"
+    stub = ModuleType(module_name)
+    stub.MlxLmModel = UnavailableLoader
+    monkeypatch.setitem(modules, module_name, stub)
+    assert _get_mlx_model() is None
 
 
 def test_text_generation_load_engine_mlx(

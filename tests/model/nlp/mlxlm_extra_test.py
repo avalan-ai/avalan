@@ -152,6 +152,32 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(prompt, "prompt")
         self.assertEqual(sampler, make_sampler.return_value)
 
+    def test_get_sampler_and_prompt_tensor(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "prompt"
+        tensor = getattr(sys.modules["torch"], "tensor")
+        inputs = tensor([[1, 2, 3]])
+        settings = GenerationSettings()
+        with patch("avalan.model.nlp.text.mlxlm.make_sampler") as make_sampler:
+            sampler, prompt = model._get_sampler_and_prompt(
+                inputs,
+                settings,
+                False,
+            )
+            make_sampler.assert_called_once_with(temp=1.0, top_p=1.0, top_k=50)
+
+        prompt_ids = model._tokenizer.decode.call_args.args[0]
+        self.assertEqual(len(prompt_ids), 3)
+        self.assertEqual(prompt, "prompt")
+        self.assertEqual(sampler, make_sampler.return_value)
+
 
 class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -381,7 +407,7 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         model._tokenizer = MagicMock()
 
         with self.assertRaisesRegex(
-            ValueError, "Expected tokenized inputs to be a mapping"
+            ValueError, "Expected tokenized inputs to be a mapping or tensor"
         ):
             model._get_sampler_and_prompt(
                 object(),

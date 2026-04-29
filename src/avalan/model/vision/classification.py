@@ -24,8 +24,7 @@ class ImageClassificationModel(BaseVisionModel):
             Any,
             cast(Any, AutoImageProcessor).from_pretrained(
                 self._model_id,
-                # default behavior in transformers v4.48
-                use_fast=True,
+                backend="torchvision",
             ),
         )
         assert self._model_id

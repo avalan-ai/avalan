@@ -151,7 +151,7 @@ class SequenceToSequenceModel(BaseNLPModel):
         model = cast(PreTrainedModel, self._model)
         inputs = tokenizer(input, return_tensors=tensor_format)
         model_inputs = cast(BatchEncoding, inputs.to(model.device))
-        return model_inputs["input_ids"]
+        return cast(Tensor, model_inputs["input_ids"])
 
     async def __call__(
         self,

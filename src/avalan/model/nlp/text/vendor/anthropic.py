@@ -4,10 +4,12 @@ from .....entities import (
     MessageContentFile,
     MessageContentImage,
     MessageRole,
+    MessageToolCall,
     ReasoningEffort,
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCall,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -152,10 +154,11 @@ class AnthropicClient(TextGenerationVendor):
             "system": system_prompt,
             "messages": template_messages,
             "max_tokens": settings.max_new_tokens,
-            "temperature": settings.temperature,
             "tools": AnthropicClient._tool_schemas(tool) if tool else [],
             "tool_choice": {"type": "auto"},
         }
+        if settings.temperature is not None:
+            kwargs["temperature"] = settings.temperature
         extra_headers = AnthropicClient._extra_headers(messages)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
@@ -184,84 +187,75 @@ class AnthropicClient(TextGenerationVendor):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage]:
-        tool_results = [
-            message.tool_call_result or message.tool_call_error
-            for message in messages
-            if message.role == MessageRole.TOOL
-            and (message.tool_call_result or message.tool_call_error)
-        ]
-        do_exclude_roles = [*(exclude_roles or []), "tool"]
-        template_messages = cast(
-            list[dict[str, Any]],
-            super()._template_messages(messages, do_exclude_roles),
-        )
-        for message in template_messages:
-            content = message.get("content")
-            if isinstance(content, list):
-                message["content"] = [
-                    AnthropicClient._content_block(block)
-                    for block in content
-                    if isinstance(block, dict)
-                ]
-        last_message = next(
-            (
-                m
-                for m in reversed(template_messages)
-                if m["role"] == str(MessageRole.ASSISTANT)
-            ),
-            None,
-        )
-        last_message_index = (
-            template_messages.index(last_message) if last_message else None
-        )
-        if last_message_index is not None and last_message:
-            template_messages[last_message_index] = {
-                "role": last_message["role"],
-                "content": [
-                    (
-                        {"type": "text", "text": last_message["content"]}
-                        if isinstance(last_message["content"], str)
-                        else last_message["content"]
-                    ),
-                    *[
-                        {
-                            "type": "tool_use",
-                            "id": r.call.id,
-                            "name": TextGenerationVendor.encode_tool_name(
-                                r.call.name
-                            ),
-                            "input": r.call.arguments,
-                        }
-                        for r in tool_results
-                        if r is not None
-                    ],
-                ],
-            }
-
-        for result in tool_results:
-            if result is None:
+        template_messages: list[dict[str, Any]] = []
+        excluded_roles = set(exclude_roles or [])
+        tool_call_ids: set[str] = set()
+        last_assistant_index: int | None = None
+        for message in messages:
+            if str(message.role) in excluded_roles:
                 continue
-            tool_result_content: dict[str, Any] = {
-                "type": "tool_result",
-                "tool_use_id": result.call.id,
-                "content": to_json(
-                    result.result
-                    if isinstance(result, ToolCallResult)
-                    else result.message
-                ),
-            }
-            if isinstance(result, ToolCallError):
-                tool_result_content["is_error"] = True
-            result_message: dict[str, Any] = {
-                "role": "user",
-                "content": [tool_result_content],
-            }
-            if last_message_index is not None:
-                template_messages.insert(
-                    last_message_index + 1, result_message
+
+            if message.role == MessageRole.TOOL:
+                result = message.tool_call_result or message.tool_call_error
+                if not isinstance(result, (ToolCallResult, ToolCallError)):
+                    if not isinstance(message, Message):
+                        fallback_messages = self._message_templates(
+                            message, [*excluded_roles, "tool"]
+                        )
+                        for fallback_message in fallback_messages:
+                            fallback_message["content"] = (
+                                AnthropicClient._content_blocks(
+                                    fallback_message.get("content")
+                                )
+                            )
+                        template_messages.extend(fallback_messages)
+                    continue
+                call_id = str(result.call.id)
+                if call_id not in tool_call_ids:
+                    tool_use_block = AnthropicClient._tool_use_block(
+                        result.call
+                    )
+                    if last_assistant_index is not None:
+                        assistant_message = template_messages[
+                            last_assistant_index
+                        ]
+                        content = AnthropicClient._content_blocks(
+                            assistant_message.get("content")
+                        )
+                        content.append(tool_use_block)
+                        assistant_message["content"] = content
+                    else:
+                        template_messages.append(
+                            {
+                                "role": str(MessageRole.ASSISTANT),
+                                "content": [tool_use_block],
+                            }
+                        )
+                        last_assistant_index = len(template_messages) - 1
+                    tool_call_ids.add(call_id)
+                template_messages.append(
+                    AnthropicClient._tool_result_message(result)
                 )
-            else:
-                template_messages.append(result_message)
+                last_assistant_index = None
+                continue
+
+            formatted = self._message_template(message)
+            if message.tool_calls:
+                content = AnthropicClient._content_blocks(
+                    formatted.get("content"),
+                    empty_when_none=message.content is None,
+                )
+                for tool_call in message.tool_calls:
+                    content.append(AnthropicClient._tool_use_block(tool_call))
+                    if tool_call.id is not None:
+                        tool_call_ids.add(str(tool_call.id))
+                formatted["content"] = content
+            template_messages.append(formatted)
+            last_assistant_index = (
+                len(template_messages) - 1
+                if message.role == MessageRole.ASSISTANT
+                else None
+            )
 
         # @TODO Ensure this doesn't happen from upstream
         if len(template_messages) > 1 and (
@@ -270,6 +264,68 @@ class AnthropicClient(TextGenerationVendor):
             template_messages.pop()
 
         return cast(list[TemplateMessage], template_messages)
+
+    def _message_template(self, message: Message) -> dict[str, Any]:
+        return self._message_templates(message)[0]
+
+    def _message_templates(
+        self,
+        message: object,
+        exclude_roles: list[TemplateMessageRole | str] | None = None,
+    ) -> list[dict[str, Any]]:
+        templates = cast(
+            list[dict[str, Any]],
+            super()._template_messages(
+                cast(Any, [message]), cast(Any, exclude_roles)
+            ),
+        )
+        for template in templates:
+            content = template.get("content")
+            if isinstance(content, list):
+                template["content"] = [
+                    AnthropicClient._content_block(block)
+                    for block in content
+                    if isinstance(block, dict)
+                ]
+        return templates
+
+    @staticmethod
+    def _content_blocks(
+        content: Any, *, empty_when_none: bool = False
+    ) -> list[dict[str, Any]]:
+        if isinstance(content, list):
+            return [block for block in content if isinstance(block, dict)]
+        if empty_when_none:
+            return []
+        if content is None:
+            return []
+        return [{"type": "text", "text": str(content)}]
+
+    @staticmethod
+    def _tool_use_block(call: ToolCall | MessageToolCall) -> dict[str, Any]:
+        return {
+            "type": "tool_use",
+            "id": str(call.id) if call.id is not None else "",
+            "name": TextGenerationVendor.encode_tool_name(call.name),
+            "input": call.arguments or {},
+        }
+
+    @staticmethod
+    def _tool_result_message(
+        result: ToolCallResult | ToolCallError,
+    ) -> dict[str, Any]:
+        tool_result_content: dict[str, Any] = {
+            "type": "tool_result",
+            "tool_use_id": str(result.call.id),
+            "content": to_json(
+                result.result
+                if isinstance(result, ToolCallResult)
+                else result.message
+            ),
+        }
+        if isinstance(result, ToolCallError):
+            tool_result_content["is_error"] = True
+        return {"role": "user", "content": [tool_result_content]}
 
     @staticmethod
     def _output_config(

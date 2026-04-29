@@ -18,6 +18,7 @@ from avalan.entities import (
     Input,
     Message,
     MessageRole,
+    MessageToolCall,
     ReasoningSettings,
     ReasoningToken,
     Token,
@@ -496,6 +497,144 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, "r")
         agent.assert_awaited_once()
         tool.assert_awaited_once()
+
+    async def test_iteration_carries_tool_messages_to_nested_tool_call(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        first_call = ToolCall(
+            id="call1",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        second_call = ToolCall(
+            id="call2",
+            name="calc",
+            arguments={"expression": "50 * 2"},
+        )
+
+        async def outer_gen():
+            yield ToolCallToken(token="<tool_call />", call=first_call)
+
+        async def first_inner_gen():
+            yield ToolCallToken(token="<tool_call />", call=second_call)
+
+        async def second_inner_gen():
+            yield "done"
+
+        settings = GenerationSettings()
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        first_inner_response = TextGenerationResponse(
+            lambda **_: first_inner_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        second_inner_response = TextGenerationResponse(
+            lambda **_: second_inner_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        agent.side_effect = [first_inner_response, second_inner_response]
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+
+        async def tool_exec(call, context: ToolCallContext):
+            result = "50" if call.id == "call1" else "100"
+            return ToolCallResult(
+                id=f"{call.id}-result",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result=result,
+            )
+
+        tool.side_effect = tool_exec
+
+        resp = _make_response(
+            [
+                Message(role=MessageRole.USER, content="previous"),
+                Message(role=MessageRole.ASSISTANT, content="25"),
+                Message(role=MessageRole.USER, content="and that times two?"),
+            ],
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        tokens = []
+        async for token in resp:
+            tokens.append(token)
+
+        self.assertIn("done", tokens)
+        self.assertEqual(agent.await_count, 2)
+        self.assertEqual(tool.await_count, 2)
+
+        first_context = agent.await_args_list[0].args[0]
+        second_context = agent.await_args_list[1].args[0]
+        assert isinstance(first_context.input, list)
+        assert isinstance(second_context.input, list)
+        self.assertEqual(
+            [message.role for message in first_context.input],
+            [
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL,
+            ],
+        )
+        self.assertEqual(
+            [message.role for message in second_context.input],
+            [
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL,
+            ],
+        )
+        first_tool_call = second_context.input[3].tool_calls
+        second_tool_call = second_context.input[5].tool_calls
+        self.assertEqual(
+            first_tool_call,
+            [
+                MessageToolCall(
+                    id="call1",
+                    name="calc",
+                    arguments={"expression": "25 * 2"},
+                )
+            ],
+        )
+        self.assertEqual(
+            second_tool_call,
+            [
+                MessageToolCall(
+                    id="call2",
+                    name="calc",
+                    arguments={"expression": "50 * 2"},
+                )
+            ],
+        )
 
 
 class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):

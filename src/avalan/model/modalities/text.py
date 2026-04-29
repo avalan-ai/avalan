@@ -50,7 +50,7 @@ def _get_mlx_model() -> type[TextGenerationModel] | None:
         from ..nlp.text.mlxlm import MlxLmModel as loader
     except ModuleNotFoundError:
         return None
-    return loader
+    return loader if loader.is_available() else None
 
 
 @ModalityRegistry.register(Modality.TEXT_GENERATION)

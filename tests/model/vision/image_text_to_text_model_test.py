@@ -79,7 +79,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
             self.assertIs(model.model, model_instance)
             self.assertIs(model._processor, processor_instance)
             processor_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, backend="torchvision"
             )
             wt_mock.assert_called_once_with(settings.weight_type)
             model_mock.assert_called_once_with(
@@ -125,7 +125,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
             self.assertIs(model.model, model_instance)
             self.assertIs(model._processor, processor_instance)
             processor_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, backend="torchvision"
             )
             wt_mock.assert_called_once_with(settings.weight_type)
             model_mock.assert_called_once_with(
@@ -170,7 +170,7 @@ class ImageTextToTextModelInstantiationTestCase(TestCase):
 
             self.assertIs(model.model, model_instance)
             processor_mock.assert_called_once_with(
-                self.model_id, use_fast=True
+                self.model_id, backend="torchvision"
             )
             wt_mock.assert_called_once_with(settings.weight_type)
             gemma_mock.assert_called_once_with(

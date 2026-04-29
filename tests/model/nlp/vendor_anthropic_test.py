@@ -16,6 +16,7 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentImage,
     MessageRole,
+    MessageToolCall,
     ReasoningEffort,
     ReasoningSettings,
     ReasoningToken,
@@ -177,6 +178,45 @@ def test_client_call_and_model(anthropic_mod):
     assert loaded is ClientMock.return_value
 
 
+def test_client_omits_unset_temperature_and_forwards_explicit(
+    anthropic_mod,
+):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="ok")]
+    )
+    create_mock = AsyncMock(return_value=response)
+    stub.AsyncAnthropic.return_value.messages.create = create_mock
+
+    asyncio.run(
+        client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings=GenerationSettings(max_new_tokens=32, temperature=None),
+            use_async_generator=False,
+        )
+    )
+
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["max_tokens"] == 32
+    assert "temperature" not in kwargs
+
+    create_mock.reset_mock()
+    asyncio.run(
+        client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings=GenerationSettings(max_new_tokens=32, temperature=0.25),
+            use_async_generator=False,
+        )
+    )
+
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["temperature"] == 0.25
+
+
 def test_client_non_stream_tool_messages(anthropic_mod):
     mod, stub = anthropic_mod
     exit_stack = AsyncExitStack()
@@ -302,6 +342,97 @@ def test_template_messages_and_exclude_roles(anthropic_mod):
         ]
     )
     assert len(dup) == 1
+
+
+def test_template_messages_keep_tool_results_with_matching_calls(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+    client = mod.AnthropicClient("k", exit_stack=AsyncExitStack())
+
+    first_call = ToolCall(
+        id="call1", name="math.calculator", arguments={"expression": "50 / 2"}
+    )
+    second_call = ToolCall(
+        id="call2", name="math.calculator", arguments={"expression": "25 * 2"}
+    )
+    first_result = ToolCallResult(
+        id="result1",
+        name="math.calculator",
+        call=first_call,
+        result="25",
+    )
+    second_result = ToolCallResult(
+        id="result2",
+        name="math.calculator",
+        call=second_call,
+        result="50",
+    )
+
+    templated = client._template_messages(
+        [
+            Message(role=MessageRole.USER, content="first"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="calculating",
+                tool_calls=[
+                    MessageToolCall(
+                        id="call1",
+                        name="math.calculator",
+                        arguments={"expression": "50 / 2"},
+                    )
+                ],
+            ),
+            Message(role=MessageRole.TOOL, tool_call_result=first_result),
+            Message(role=MessageRole.ASSISTANT, content="25"),
+            Message(role=MessageRole.USER, content="and that times two?"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="calculating again",
+                tool_calls=[
+                    MessageToolCall(
+                        id="call2",
+                        name="math.calculator",
+                        arguments={"expression": "25 * 2"},
+                    )
+                ],
+            ),
+            Message(role=MessageRole.TOOL, tool_call_result=second_result),
+        ],
+    )
+
+    assistant_tool_messages = [
+        message
+        for message in templated
+        if message["role"] == str(MessageRole.ASSISTANT)
+        and isinstance(message["content"], list)
+        and any(
+            block.get("type") == "tool_use"
+            for block in message["content"]
+            if isinstance(block, dict)
+        )
+    ]
+    tool_result_messages = [
+        message
+        for message in templated
+        if message["role"] == str(MessageRole.USER)
+        and isinstance(message["content"], list)
+        and message["content"]
+        and message["content"][0].get("type") == "tool_result"
+    ]
+
+    assert [
+        block["id"]
+        for block in assistant_tool_messages[0]["content"]
+        if block.get("type") == "tool_use"
+    ] == ["call1"]
+    assert [
+        block["id"]
+        for block in assistant_tool_messages[1]["content"]
+        if block.get("type") == "tool_use"
+    ] == ["call2"]
+    assert tool_result_messages[0]["content"][0]["tool_use_id"] == "call1"
+    assert tool_result_messages[1]["content"][0]["tool_use_id"] == "call2"
 
 
 def test_template_messages_tool_error_details(anthropic_mod):
