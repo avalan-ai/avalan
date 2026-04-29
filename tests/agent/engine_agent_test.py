@@ -161,6 +161,12 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             memory.recent_messages[1].message.role, MessageRole.USER
         )
+        prompt = agent.last_prompt
+        self.assertIsNotNone(prompt)
+        self.assertEqual(
+            [message.role for message in prompt[0]],
+            [MessageRole.ASSISTANT, MessageRole.USER],
+        )
 
         manager.assert_awaited_once()
         task = manager.await_args.args[0]
@@ -304,6 +310,30 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(second.role, MessageRole.USER)
         self.assertEqual(second.content, "world")
         manager.assert_awaited_once()
+
+    async def test_run_child_context_uses_explicit_messages(self) -> None:
+        last_response = TextGenerationResponse(
+            lambda: "tool call",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        agent, _, memory, manager = self._make_agent(last_response)
+        message = Message(role=MessageRole.USER, content="hi")
+        parent_context = self._make_context(message)
+        child_context = ModelCallContext(
+            specification=parent_context.specification,
+            input=[message],
+            parent=parent_context,
+        )
+
+        await agent._run(child_context, [message])
+
+        self.assertEqual(memory.recent_messages, [])
+        task = manager.await_args.args[0]
+        self.assertEqual(task.operation.input, [message])
+        self.assertIs(task.context, child_context)
+        self.assertEqual(agent.last_prompt, ([message], None, None))
+        self.assertEqual(agent._last_output, "out")
 
     async def test_sync_messages_appends_last_output_when_memory_enabled(
         self,

@@ -77,6 +77,10 @@ class EngineAgent(ABC):
     def output(self) -> TextGenerationResponse | None:
         return self._last_output
 
+    @property
+    def last_prompt(self) -> tuple[Input, str | None, str | None] | None:
+        return self._last_prompt
+
     async def input_token_count(self) -> int | None:
         if not self._last_prompt:
             return None
@@ -252,16 +256,12 @@ class EngineAgent(ABC):
                 )
             input_value = input_messages
 
-        # Should always be stored, with or without memory.
-        # Persist the normalized shape so token counting uses the same
-        # representation passed to generation.
-        self._last_prompt = (input_value, system_prompt, developer_prompt)
-
         # Transform input (by adding memory, if necessary)
-        if (
+        should_use_memory = not context.parent and (
             self._memory.has_permanent_message
             or self._memory.has_recent_message
-        ) and isinstance(input_value, list):
+        )
+        if should_use_memory and isinstance(input_value, list):
             # Handle last message if not already consumed
 
             previous_message: Message | None = None
@@ -288,6 +288,7 @@ class EngineAgent(ABC):
             input_value = [rm.message for rm in self._memory.recent_messages]
 
         # Have model generate output from input
+        self._last_prompt = (input_value, system_prompt, developer_prompt)
 
         operation = Operation(
             generation_settings=settings,

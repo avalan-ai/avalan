@@ -249,9 +249,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         role=MessageRole.ASSISTANT,
                         tool_calls=[
                             MessageToolCall(
-                                id=tool_result.call.id,
+                                id=str(tool_result.call.id),
                                 name=tool_result.name,
-                                arguments=tool_result.arguments,
+                                arguments=cast(Any, tool_result.arguments),
                             )
                         ],
                     )
@@ -296,12 +296,20 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
 
             messages = (
-                cast(list[Message], self._input)
+                list(cast(list[Message], self._input))
                 if isinstance(self._input, list)
                 else [self._input]
             )
 
             messages.extend(tool_messages)
+            self._input = cast(Input, messages)
+            self._tool_context = ToolCallContext(
+                input=self._input,
+                agent_id=self._agent_id,
+                participant_id=self._participant_id,
+                session_id=self._session_id,
+                calls=list(self._call_history),
+            )
 
             event_tool_model_run = Event(
                 type=EventType.TOOL_MODEL_RUN,
@@ -452,46 +460,64 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     async def _react_process(
         self, output: str, results: list[ToolCallResult | ToolCallError]
     ) -> TextGenerationResponse:
-        tool_messages = [
-            Message(
-                role=MessageRole.TOOL,
-                name=result.name,
-                arguments=result.arguments,
-                content=(
-                    result.message
-                    if isinstance(result, ToolCallError)
-                    else (
-                        result.result
-                        if isinstance(result.result, str)
-                        else (
-                            dumps(
-                                (
-                                    asdict(result.result)
-                                    if is_dataclass(result.result)
-                                    else result.result
-                                ),
-                                default=lambda o: (
-                                    b64encode(o).decode()
-                                    if isinstance(
-                                        o, (bytes, bytearray, memoryview)
-                                    )
-                                    else str(o)
-                                ),
-                            )
-                            if result.result is not None
-                            else ""
+        tool_messages: list[Message] = []
+        for result in results:
+            tool_messages.append(
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=[
+                        MessageToolCall(
+                            id=str(result.call.id),
+                            name=result.name,
+                            arguments=cast(Any, result.arguments),
                         )
-                    )
-                ),
-                tool_call_result=(
-                    result if isinstance(result, ToolCallResult) else None
-                ),
-                tool_call_error=(
-                    result if isinstance(result, ToolCallError) else None
-                ),
+                    ],
+                )
             )
-            for result in results
-        ]
+            tool_messages.append(
+                Message(
+                    role=MessageRole.TOOL,
+                    name=result.name,
+                    arguments=result.arguments,
+                    content=(
+                        result.message
+                        if isinstance(result, ToolCallError)
+                        else (
+                            result.result
+                            if isinstance(result.result, str)
+                            else (
+                                dumps(
+                                    (
+                                        asdict(result.result)
+                                        if is_dataclass(result.result)
+                                        else result.result
+                                    ),
+                                    default=lambda o: (
+                                        b64encode(o).decode()
+                                        if isinstance(
+                                            o,
+                                            (
+                                                bytes,
+                                                bytearray,
+                                                memoryview,
+                                            ),
+                                        )
+                                        else str(o)
+                                    ),
+                                )
+                                if result.result is not None
+                                else ""
+                            )
+                        )
+                    ),
+                    tool_call_result=(
+                        result if isinstance(result, ToolCallResult) else None
+                    ),
+                    tool_call_error=(
+                        result if isinstance(result, ToolCallError) else None
+                    ),
+                )
+            )
 
         assert self._input and (
             (
@@ -502,7 +528,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         )
 
         messages = (
-            cast(list[Message], self._input)
+            list(cast(list[Message], self._input))
             if isinstance(self._input, list)
             else [self._input]
         )
