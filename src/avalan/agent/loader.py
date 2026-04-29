@@ -26,6 +26,11 @@ from ..tool.code import HAS_CODE_DEPENDENCIES, CodeToolSet
 from ..tool.context import ToolSettingsContext
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.database.toolset import DatabaseToolSet
+from ..tool.graph import (
+    HAS_GRAPH_DEPENDENCIES,
+    GraphToolSet,
+    GraphToolSettings,
+)
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
@@ -421,9 +426,18 @@ class OrchestratorLoader:
                 ), "tool.database section must be a mapping"
                 database_settings = DatabaseToolSettings(**database_config)
 
+            graph_settings = None
+            graph_config = tool_section.get("graph")
+            if graph_config:
+                assert isinstance(
+                    graph_config, dict
+                ), "tool.graph section must be a mapping"
+                graph_settings = GraphToolSettings(**graph_config)
+
             if tool_settings:
                 browser_settings = tool_settings.browser or browser_settings
                 database_settings = tool_settings.database or database_settings
+                graph_settings = tool_settings.graph or graph_settings
                 extra = tool_settings.extra
             else:
                 extra = None
@@ -431,6 +445,7 @@ class OrchestratorLoader:
             tool_settings = ToolSettingsContext(
                 browser=browser_settings,
                 database=database_settings,
+                graph=graph_settings,
                 extra=extra,
             )
 
@@ -556,17 +571,26 @@ class OrchestratorLoader:
 
         browser_settings = tool_settings.browser if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None
+        graph_settings = tool_settings.graph if tool_settings else None
 
         _l(
-            "Tool settings: browser=%s, database=%s",
+            "Tool settings: browser=%s, database=%s, graph=%s",
             browser_settings,
             database_settings,
+            graph_settings,
         )
 
         available_toolsets = [
             MathToolSet(namespace="math"),
             MemoryToolSet(memory, namespace="memory"),
         ]
+        if HAS_GRAPH_DEPENDENCIES:
+            available_toolsets.append(
+                GraphToolSet(
+                    settings=graph_settings or GraphToolSettings(),
+                    namespace="graph",
+                )
+            )
         if HAS_CODE_DEPENDENCIES:
             available_toolsets.append(CodeToolSet(namespace="code"))
         if HAS_BROWSER_DEPENDENCIES:

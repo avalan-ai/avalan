@@ -101,6 +101,7 @@ class FancyTheme(Theme):
             "events": ":bookmark_tabs:",
             "tool_calls": ":hammer:",
             "tool_call_results": ":package:",
+            "tool_tokens": ":hammer:",
             "ttft": ":seedling:",
             "ttnt": ":alarm_clock:",
             "ttsr": ":thinking_face:",
@@ -1711,13 +1712,14 @@ class FancyTheme(Theme):
         tool_event_calls: list[Event] | None,
         tool_event_results: list[Event] | None,
         tool_running_spinner: Spinner | None,
-        ttft: float,
+        ttft: float | None,
         ttnt: float | None,
         ttsr: float | None,
         elapsed: float,
         console_width: int,
         logger: Logger,
         event_stats: EventStats | None = None,
+        tool_token_count: int = 0,
         maximum_frames: int | None = None,
         logits_count: int | None = None,
         tool_events_limit: int | None = None,
@@ -1751,6 +1753,7 @@ class FancyTheme(Theme):
         think_wrapped_output = (
             "\n".join(think_section).rstrip() if think_section else None
         )
+        tokens_rate = total_tokens / elapsed if elapsed > 0 else 0.0
 
         tool_section = (
             tool_wrapped[-(tool_height - 2 * tool_padding) :]
@@ -1810,6 +1813,18 @@ class FancyTheme(Theme):
                     ),
                     (
                         _f(
+                            "tool_tokens",
+                            _n(
+                                "{total_tokens} tool token",
+                                "{total_tokens} tool tokens",
+                                tool_token_count,
+                            ).format(total_tokens=tool_token_count),
+                        )
+                        if tool_token_count
+                        else None
+                    ),
+                    (
+                        _f(
                             "ttft",
                             _("ttft: {ttft} s").format(ttft=f"{ttft:.2f}"),
                         )
@@ -1835,7 +1850,7 @@ class FancyTheme(Theme):
                     _f(
                         "tokens_rate",
                         _("{tokens_rate} t/s").format(
-                            tokens_rate=f"{total_tokens / elapsed:.2f}"
+                            tokens_rate=f"{tokens_rate:.2f}"
                         ),
                     ),
                     (
@@ -1957,6 +1972,20 @@ class FancyTheme(Theme):
             if wrapped_output
             else None
         )
+        stats_panel = (
+            Panel(
+                progress_title,
+                title=_("Token stats"),
+                title_align="left",
+                padding=(0, 1),
+                expand=True,
+                box=box.SQUARE,
+                border_style="bright_black",
+                style="gray35 on gray3",
+            )
+            if not think_panel and not answer_panel
+            else None
+        )
 
         tool_running_panel: RenderableType | None = None
 
@@ -1971,6 +2000,7 @@ class FancyTheme(Theme):
         if display_token_size is None or tokens is None:
             quick_renderables: list[RenderableType] = _lf(
                 [
+                    stats_panel,
                     think_panel,
                     tool_panel,
                     tool_running_panel,
@@ -2181,6 +2211,7 @@ class FancyTheme(Theme):
 
             renderables: list[RenderableType] = _lf(
                 [
+                    stats_panel,
                     think_panel,
                     tool_panel,
                     tool_running_panel,

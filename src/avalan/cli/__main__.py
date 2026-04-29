@@ -49,6 +49,7 @@ from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
+from ..tool.graph import GraphToolSettings
 from ..utils import logger_replace
 
 import gettext
@@ -730,6 +731,11 @@ class CLI:
             prefix="database",
             settings_cls=DatabaseToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_run_parser,
+            prefix="graph",
+            settings_cls=GraphToolSettings,
+        )
 
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
@@ -747,6 +753,11 @@ class CLI:
             agent_serve_parser,
             prefix="database",
             settings_cls=DatabaseToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            agent_serve_parser,
+            prefix="graph",
+            settings_cls=GraphToolSettings,
         )
 
         agent_proxy_parser = agent_command_parsers.add_parser(
@@ -766,6 +777,11 @@ class CLI:
             prefix="database",
             settings_cls=DatabaseToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_proxy_parser,
+            prefix="graph",
+            settings_cls=GraphToolSettings,
+        )
 
         agent_init_parser = agent_command_parsers.add_parser(
             name="init",
@@ -773,6 +789,11 @@ class CLI:
             parents=[global_parser],
         )
         CLI._add_agent_settings_arguments(agent_init_parser)
+        CLI._add_tool_settings_arguments(
+            agent_init_parser,
+            prefix="graph",
+            settings_cls=GraphToolSettings,
+        )
 
         # Cache command
         cache_parser = command_parsers.add_parser(
@@ -1885,7 +1906,7 @@ class CLI:
         )
         group.add_argument(
             "--run-temperature",
-            default=0.7,
+            default=None,
             type=float,
             help="Temperature [0, 1]",
         )

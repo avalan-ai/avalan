@@ -39,7 +39,7 @@ class Backend(StrEnum):
     VLLM = "vllm"
 
 
-ToolValue = bool | float | int | str | None
+ToolValue = bool | float | int | str | None | list[Any] | dict[str, Any]
 
 Vendor = Literal[
     "anthropic",

@@ -458,10 +458,16 @@ def test_output_config_and_content_block_variants(anthropic_mod):
         )
     ) == {"effort": "high"}
     assert mod.AnthropicClient._content_block(
-        {"type": "text", "text": "hello"}
+        {
+            "type": "text",
+            "text": "hello",
+        }
     ) == {"type": "text", "text": "hello"}
     assert mod.AnthropicClient._content_block(
-        {"type": "other", "value": 1}
+        {
+            "type": "other",
+            "value": 1,
+        }
     ) == {"type": "other", "value": 1}
 
 
@@ -472,7 +478,10 @@ def test_image_source_and_files_api_variants(anthropic_mod):
         {"url": "https://example.com/image.png"}
     ) == {"type": "url", "url": "https://example.com/image.png"}
     assert mod.AnthropicClient._image_source(
-        {"data": "YWJj", "mime_type": "image/jpeg"}
+        {
+            "data": "YWJj",
+            "mime_type": "image/jpeg",
+        }
     ) == {
         "type": "base64",
         "media_type": "image/jpeg",

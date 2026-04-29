@@ -94,6 +94,18 @@ def test_code_module_import_fallbacks_are_initialized() -> None:
     importlib.reload(module)
 
 
+def test_graph_module_import_fallbacks_are_initialized() -> None:
+    module = _reload_with_blocked_imports(
+        "avalan.tool.graph",
+        ("matplotlib",),
+    )
+
+    assert module.HAS_GRAPH_DEPENDENCIES is False
+    assert module._Figure is None
+
+    importlib.reload(module)
+
+
 def test_database_module_import_fallbacks_and_guards() -> None:
     module = _reload_with_blocked_imports(
         "avalan.tool.database",

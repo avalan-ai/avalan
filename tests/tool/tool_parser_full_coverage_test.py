@@ -181,7 +181,9 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             "listed",
         )
 
-    def test_resolve_text_source_returns_none_for_invalid_serialized_text(self):
+    def test_resolve_text_source_returns_none_for_invalid_serialized_text(
+        self,
+    ):
         parser = ToolCallParser()
 
         self.assertIsNone(
@@ -225,7 +227,7 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             ToolCallParser.ToolCallBufferStatus.PREFIX,
         )
         self.assertEqual(
-            parser.tool_call_status("<tool_call name=\"calculator\""),
+            parser.tool_call_status('<tool_call name="calculator"'),
             ToolCallParser.ToolCallBufferStatus.OPEN,
         )
         self.assertEqual(
@@ -274,9 +276,7 @@ class ToolCallParserFullCoverageTestCase(TestCase):
 
     def test_tag_parser_regex_fallback_skips_invalid_payload_shape(self):
         parser = ToolCallParser()
-        text = (
-            '<tool_call>{"name": 1, "arguments": {}}</tool_call></extra>'
-        )
+        text = '<tool_call>{"name": 1, "arguments": {}}</tool_call></extra>'
 
         self.assertIsNone(parser(text))
 
@@ -314,7 +314,10 @@ class ToolCallParserFullCoverageTestCase(TestCase):
         self.assertIsNone(ToolCallParser._tool_call_from_payload("bad"))
         self.assertIsNone(
             ToolCallParser._tool_call_from_payload(
-                {"name": "calculator", "arguments": []}
+                {
+                    "name": "calculator",
+                    "arguments": [],
+                }
             )
         )
 
