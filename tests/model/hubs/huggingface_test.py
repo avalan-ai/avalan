@@ -142,6 +142,18 @@ class HuggingfaceHubTestCase(TestCase):
         with self.assertRaises(HubAccessDeniedException):
             self.hub.download("model")
 
+    def test_download_rejects_local_dir_symlinks(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "local_dir_use_symlinks is no longer supported",
+        ):
+            self.hub.download("model", local_dir_use_symlinks=True)
+
+    def test_download_accepts_false_local_dir_symlinks(self):
+        self.hf_instance.snapshot_download.return_value = "/path"
+        path = self.hub.download("model", local_dir_use_symlinks=False)
+        self.assertEqual(path, "/path")
+
     def test_download_all(self):
         self.hf_instance.list_repo_files.return_value = ["a", "b"]
         files = self.hub.download_all("model")
