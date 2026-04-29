@@ -49,7 +49,7 @@ from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
-from ..tool.graph import GraphToolSettings
+from ..tool.graph_settings import GraphToolSettings
 from ..utils import logger_replace
 
 import gettext

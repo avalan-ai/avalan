@@ -1,16 +1,16 @@
 from ..compat import override
 from ..entities import ToolCallContext
 from . import Tool, ToolSet
+from .graph_settings import GraphToolSettings
 
 from base64 import b64encode
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
 from io import BytesIO
 from math import isfinite
 from os import environ
 from pathlib import Path
 from tempfile import gettempdir
-from typing import Any, Literal, final
+from typing import Any, Literal
 
 environ.setdefault("MPLCONFIGDIR", f"{gettempdir()}/avalan-matplotlib")
 environ.setdefault("XDG_CACHE_HOME", f"{gettempdir()}/avalan-cache")
@@ -37,15 +37,6 @@ GRAPH_MIME_TYPES: dict[GraphOutputFormat, str] = {
     "svg": "image/svg+xml",
     "pdf": "application/pdf",
 }
-
-
-@final
-@dataclass(frozen=True, kw_only=True, slots=True)
-class GraphToolSettings(dict[str, object]):
-    file: str | None = None
-
-    def __post_init__(self) -> None:
-        self["file"] = self.file
 
 
 class GraphRenderer:

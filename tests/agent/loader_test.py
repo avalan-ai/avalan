@@ -18,7 +18,7 @@ from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
-from avalan.tool.graph import GraphToolSettings
+from avalan.tool.graph_settings import GraphToolSettings
 
 
 class LoaderPropertyTestCase(IsolatedAsyncioTestCase):

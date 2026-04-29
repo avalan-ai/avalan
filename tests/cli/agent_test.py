@@ -44,7 +44,7 @@ from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
-from avalan.tool.graph import GraphToolSettings
+from avalan.tool.graph_settings import GraphToolSettings
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.parser import ToolCallParser
 
