@@ -22,8 +22,7 @@ class SemanticSegmentationModel(BaseVisionModel):
             Any,
             cast(Any, AutoImageProcessor).from_pretrained(
                 self._model_id,
-                # default behavior in transformers v4.48
-                use_fast=True,
+                backend="torchvision",
             ),
         )
         assert self._model_id
@@ -38,7 +37,7 @@ class SemanticSegmentationModel(BaseVisionModel):
                 ),
             ),
         )
-        model.eval()
+        cast(Any, model).eval()
         return model
 
     async def __call__(

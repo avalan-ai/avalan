@@ -25,7 +25,7 @@ class VisionEncoderDecoderModel(ImageToTextModel):
             Any,
             cast(Any, AutoImageProcessor).from_pretrained(
                 self._model_id,
-                use_fast=True,
+                backend="torchvision",
             ),
         )
         model = cast(

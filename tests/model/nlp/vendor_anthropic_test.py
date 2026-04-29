@@ -177,6 +177,45 @@ def test_client_call_and_model(anthropic_mod):
     assert loaded is ClientMock.return_value
 
 
+def test_client_omits_unset_temperature_and_forwards_explicit(
+    anthropic_mod,
+):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="ok")]
+    )
+    create_mock = AsyncMock(return_value=response)
+    stub.AsyncAnthropic.return_value.messages.create = create_mock
+
+    asyncio.run(
+        client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings=GenerationSettings(max_new_tokens=32, temperature=None),
+            use_async_generator=False,
+        )
+    )
+
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["max_tokens"] == 32
+    assert "temperature" not in kwargs
+
+    create_mock.reset_mock()
+    asyncio.run(
+        client(
+            "model",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings=GenerationSettings(max_new_tokens=32, temperature=0.25),
+            use_async_generator=False,
+        )
+    )
+
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["temperature"] == 0.25
+
+
 def test_client_non_stream_tool_messages(anthropic_mod):
     mod, stub = anthropic_mod
     exit_stack = AsyncExitStack()

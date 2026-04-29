@@ -10,4 +10,4 @@ def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
     vendors = optional_deps["vendors"]
 
     assert "aioboto3>=15.0.0,<16.0.0" in vendors
-    assert "diffusers>=0.34.0,<0.35.0" in vendors
+    assert "diffusers>=0.37.1,<0.38.0" in vendors

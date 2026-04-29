@@ -1,4 +1,5 @@
 from ...agent.orchestrator import Orchestrator
+from ...cli.download import DownloadCompleteColumn
 from ...cli.theme import Data, Spinner, Theme
 from ...entities import (
     EngineMessage,
@@ -49,7 +50,6 @@ from rich.padding import Padding
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
-    MofNCompleteColumn,
     SpinnerColumn,
     TimeElapsedColumn,
 )
@@ -549,7 +549,7 @@ class FancyTheme(Theme):
             ),
             cast(RenderableType, BarColumn(bar_width=None)),
             "[",
-            cast(RenderableType, MofNCompleteColumn()),
+            cast(RenderableType, DownloadCompleteColumn()),
             "-",
             cast(RenderableType, TimeElapsedColumn()),
             "]",

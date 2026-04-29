@@ -76,7 +76,7 @@ class ImageClassificationModelInstantiationTestCase(TestCase):
             self.assertIs(model._processor, processor_instance)
             processor_mock.assert_called_once_with(
                 self.model_id,
-                use_fast=True,
+                backend="torchvision",
             )
             model_mock.assert_called_once_with(
                 self.model_id,

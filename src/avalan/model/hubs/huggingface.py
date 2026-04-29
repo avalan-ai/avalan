@@ -157,11 +157,6 @@ class HuggingfaceHub:
                 force_download=False,
                 max_workers=workers,
                 local_dir=local_dir,
-                local_dir_use_symlinks=(
-                    local_dir_use_symlinks
-                    if local_dir_use_symlinks is not None
-                    else False
-                ),
             )
             return path
         except GatedRepoError as e:
@@ -196,18 +191,31 @@ class HuggingfaceHub:
         tags: str | list[str] | None = None,
         limit: int | None = None,
     ) -> Iterable[Model]:
+        def _as_list(value: str | list[str] | None) -> list[str]:
+            if value is None:
+                return []
+            return value if isinstance(value, list) else [value]
+
+        search_terms = _as_list(name) + _as_list(search)
+        filter_terms = (
+            _as_list(filter)
+            + _as_list(library)
+            + _as_list(language)
+            + _as_list(tags)
+        )
+        task_terms = _as_list(task)
+        pipeline_tag = task_terms[0] if len(task_terms) == 1 else None
+        if len(task_terms) != 1:
+            filter_terms += task_terms
+
         yield from (
             HuggingfaceHub._model(model_info)
             for model_info in self._hf.list_models(
-                model_name=name,
-                filter=filter,
-                search=search,
-                library=library,
+                filter=filter_terms or None,
+                search=" ".join(search_terms) or None,
                 author=author,
                 gated=gated,
-                language=language,
-                task=task,
-                tags=tags,
+                pipeline_tag=pipeline_tag,
                 limit=limit,
                 full=True,
             )

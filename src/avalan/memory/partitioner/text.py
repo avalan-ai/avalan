@@ -5,6 +5,7 @@ from ...model.nlp.sentence import SentenceTransformerModel
 from collections.abc import Callable
 from logging import Logger
 from re import split
+from typing import cast
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
@@ -94,8 +95,11 @@ class TextPartitioner(Partitioner):
                         start : start + self._window_size
                     ]
                     section_length = len(window_token_ids)
-                    section = self._tokenizer.decode(
-                        window_token_ids, skip_special_tokens=True
+                    section = cast(
+                        str,
+                        self._tokenizer.decode(
+                            window_token_ids, skip_special_tokens=True
+                        ),
                     )
                     embeddings = await self._model(section)
                     partitions.append(

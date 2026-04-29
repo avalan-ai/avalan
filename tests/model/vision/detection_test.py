@@ -1,4 +1,5 @@
 from logging import Logger
+from os import environ
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, PropertyMock, call, patch
 
@@ -8,9 +9,12 @@ from transformers import PreTrainedModel
 from avalan.entities import EngineSettings, ImageEntity
 from avalan.model.engine import Engine
 from avalan.model.vision.detection import (
+    _DISABLE_SAFETENSORS_CONVERSION,
+    AutoConfig,
     AutoImageProcessor,
     AutoModelForObjectDetection,
     ObjectDetectionModel,
+    PretrainedConfig,
 )
 
 importorskip("torch", reason="torch not installed")
@@ -60,31 +64,110 @@ class ObjectDetectionModelInstantiationTestCase(TestCase):
             patch.object(
                 AutoModelForObjectDetection, "from_pretrained"
             ) as model_mock,
+            patch.object(
+                PretrainedConfig, "get_config_dict"
+            ) as get_config_dict_mock,
+            patch.object(AutoConfig, "from_pretrained") as config_mock,
         ):
+            config_instance = MagicMock()
+            get_config_dict_mock.return_value = ({"model_type": "vit"}, {})
+            config_mock.return_value = config_instance
+
             processor_instance = MagicMock()
             processor_mock.return_value = processor_instance
 
             model_instance = MagicMock(spec=PreTrainedModel)
-            model_mock.return_value = model_instance
 
-            model = ObjectDetectionModel(
-                self.model_id,
-                EngineSettings(),
-                logger=logger_mock,
-            )
+            def load_model(*args, **kwargs):
+                self.assertEqual(environ[_DISABLE_SAFETENSORS_CONVERSION], "1")
+                return model_instance
+
+            model_mock.side_effect = load_model
+
+            with patch.dict(environ, {}, clear=True):
+                model = ObjectDetectionModel(
+                    self.model_id,
+                    EngineSettings(),
+                    logger=logger_mock,
+                )
+
+                self.assertNotIn(_DISABLE_SAFETENSORS_CONVERSION, environ)
+
             self.assertIs(model.model, model_instance)
             processor_mock.assert_called_once_with(
                 self.model_id,
                 revision="no_timm",
-                use_fast=True,
+                backend="torchvision",
             )
             model_mock.assert_called_once_with(
                 self.model_id,
+                config=config_instance,
                 revision="no_timm",
                 device_map=Engine.get_default_device(),
                 tp_plan=None,
                 distributed_config=None,
             )
+            get_config_dict_mock.assert_called_once_with(
+                self.model_id,
+                revision="no_timm",
+            )
+            config_mock.assert_called_once_with(
+                self.model_id,
+                revision="no_timm",
+            )
+
+    def test_load_config_normalizes_detr_null_dilation(self):
+        logger_mock = MagicMock(spec=Logger)
+        config_instance = MagicMock()
+        config_dict = {
+            "model_type": "detr",
+            "dilation": None,
+            "num_queries": 42,
+        }
+        with (
+            patch.object(
+                PretrainedConfig, "get_config_dict"
+            ) as get_config_dict_mock,
+            patch.object(AutoConfig, "for_model") as for_model_mock,
+            patch.object(AutoConfig, "from_pretrained") as config_mock,
+        ):
+            get_config_dict_mock.return_value = (config_dict, {})
+            for_model_mock.return_value = config_instance
+            model = ObjectDetectionModel(
+                self.model_id,
+                EngineSettings(auto_load_model=False),
+                logger=logger_mock,
+            )
+
+            config = model._load_config()
+
+            self.assertIs(config, config_instance)
+            self.assertEqual(config_dict["dilation"], None)
+            get_config_dict_mock.assert_called_once_with(
+                self.model_id,
+                revision="no_timm",
+            )
+            for_model_mock.assert_called_once_with(
+                "detr",
+                dilation=False,
+                num_queries=42,
+            )
+            config_mock.assert_not_called()
+
+    def test_disable_safetensors_conversion_restores_existing_value(self):
+        logger_mock = MagicMock(spec=Logger)
+        model = ObjectDetectionModel(
+            self.model_id,
+            EngineSettings(auto_load_model=False),
+            logger=logger_mock,
+        )
+        with patch.dict(
+            environ, {_DISABLE_SAFETENSORS_CONVERSION: "0"}, clear=True
+        ):
+            with model._disable_safetensors_conversion():
+                self.assertEqual(environ[_DISABLE_SAFETENSORS_CONVERSION], "1")
+
+            self.assertEqual(environ[_DISABLE_SAFETENSORS_CONVERSION], "0")
 
 
 class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
@@ -99,11 +182,19 @@ class ObjectDetectionModelCallTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 AutoModelForObjectDetection, "from_pretrained"
             ) as model_mock,
+            patch.object(
+                PretrainedConfig, "get_config_dict"
+            ) as get_config_dict_mock,
+            patch.object(AutoConfig, "from_pretrained") as config_mock,
             patch(
                 "avalan.model.vision.detection.BaseVisionModel._get_image"
             ) as get_image_mock,
             patch("avalan.model.vision.detection.tensor") as tensor_mock,
         ):
+            config_instance = MagicMock()
+            get_config_dict_mock.return_value = ({"model_type": "vit"}, {})
+            config_mock.return_value = config_instance
+
             # mock processor
             processor_instance = MagicMock()
             processor_instance.return_value = DummyInputs(

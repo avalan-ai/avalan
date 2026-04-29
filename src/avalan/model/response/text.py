@@ -9,6 +9,7 @@ from ..stream import TextGenerationSingleStream
 from . import InvalidJsonResponseException
 from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
 
+from collections.abc import Mapping
 from inspect import iscoroutine
 from io import StringIO
 from json import JSONDecodeError, loads
@@ -78,12 +79,49 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             self._reasoning_parser = None
 
         if "inputs" in kwargs:
-            inputs = kwargs["inputs"]
-            self._input_token_count = (
-                len(inputs["input_ids"][0])
-                if inputs and "input_ids" in inputs
-                else 0
+            self._input_token_count = self._count_input_tokens(
+                kwargs["inputs"]
             )
+
+    @staticmethod
+    def _count_input_tokens(inputs: Any) -> int:
+        if inputs is None:
+            return 0
+
+        input_ids = (
+            inputs.get("input_ids") if isinstance(inputs, Mapping) else inputs
+        )
+        if input_ids is None:
+            return 0
+
+        token_ids = TextGenerationResponse._first_input_sequence(input_ids)
+        try:
+            return len(token_ids)
+        except TypeError:
+            try:
+                return len(input_ids)
+            except TypeError:
+                return 0
+
+    @staticmethod
+    def _first_input_sequence(input_ids: Any) -> Any:
+        shape = getattr(input_ids, "shape", None)
+        if shape is not None:
+            try:
+                if len(shape) <= 1:
+                    return input_ids
+            except TypeError:
+                pass
+        elif isinstance(input_ids, (list, tuple)):
+            if not input_ids:
+                return []
+            first = input_ids[0]
+            return first if isinstance(first, (list, tuple)) else input_ids
+
+        try:
+            return input_ids[0]
+        except (IndexError, KeyError, TypeError):
+            return input_ids
 
     def _ensure_non_stream_prefetched(self) -> None:
         if self._use_async_generator:

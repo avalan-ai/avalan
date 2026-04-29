@@ -10,10 +10,11 @@ from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
 from logging import Logger, getLogger
+from types import MethodType
 from typing import Any, Literal, cast
 
 from diffusers import DiffusionPipeline
-from torch import inference_mode
+from torch import float32, inference_mode
 from transformers import PreTrainedModel
 
 
@@ -47,6 +48,7 @@ class TextToImageModel(BaseVisionModel):
             ),
         )
         cast(Any, base).to(self._device)
+        self._replace_deprecated_upcast_vae(base)
 
         refiner = cast(
             DiffusionPipeline,
@@ -60,10 +62,20 @@ class TextToImageModel(BaseVisionModel):
             ),
         )
         cast(Any, refiner).to(self._device)
+        self._replace_deprecated_upcast_vae(refiner)
 
         self._base = base
 
         return refiner
+
+    @staticmethod
+    def _replace_deprecated_upcast_vae(pipeline: DiffusionPipeline) -> None:
+        assert pipeline
+
+        def upcast_vae(self: DiffusionPipeline) -> None:
+            cast(Any, self).vae.to(dtype=float32)
+
+        cast(Any, pipeline).upcast_vae = MethodType(upcast_vae, pipeline)
 
     async def __call__(
         self,

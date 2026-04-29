@@ -126,7 +126,7 @@ class AudioGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             )
             inputs.to.assert_called_once_with(model._device)
             model_instance.generate.assert_called_once_with(
-                **inputs, max_new_tokens=3
+                **inputs, max_new_tokens=3, remove_invalid_values=True
             )
             from_numpy_mock.assert_called_once_with("waveform")
             from_numpy_result.unsqueeze.assert_called_once_with(0)

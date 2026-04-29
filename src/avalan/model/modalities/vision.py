@@ -201,6 +201,7 @@ class VisionImageToTextModality:
 
         return await model(
             operation.parameters["vision"].path,
+            settings=operation.generation_settings,
             skip_special_tokens=skip_special_tokens,
         )
 

@@ -59,8 +59,11 @@ class TextToAnimationModel(BaseVisionModel):
             cast(Any, AnimateDiffPipeline)
             .from_pretrained(
                 self._settings.base_model_id,
+                feature_extractor=None,
+                image_encoder=None,
                 motion_adapter=adapter,
                 torch_dtype=dtype,
+                use_safetensors=False,
             )
             .to(self._device),
         )

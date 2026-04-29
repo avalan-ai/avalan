@@ -152,10 +152,11 @@ class AnthropicClient(TextGenerationVendor):
             "system": system_prompt,
             "messages": template_messages,
             "max_tokens": settings.max_new_tokens,
-            "temperature": settings.temperature,
             "tools": AnthropicClient._tool_schemas(tool) if tool else [],
             "tool_choice": {"type": "auto"},
         }
+        if settings.temperature is not None:
+            kwargs["temperature"] = settings.temperature
         extra_headers = AnthropicClient._extra_headers(messages)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers

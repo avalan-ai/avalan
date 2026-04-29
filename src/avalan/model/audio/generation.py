@@ -58,7 +58,9 @@ class AudioGenerationModel(BaseAudioModel):
 
         with inference_mode():
             audio_tokens = self._model.generate(
-                **inputs, max_new_tokens=max_new_tokens
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                remove_invalid_values=True,
             )
 
         sampling_rate = self._model.config.audio_encoder.sampling_rate

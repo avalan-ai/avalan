@@ -1,6 +1,8 @@
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
+from torch import tensor
+
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
@@ -41,6 +43,18 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         # calling again should not trigger callback again
         await resp.to_str()
         self.assertEqual(called, 1)
+
+    async def test_input_token_count_accepts_tensor_inputs(self) -> None:
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: "ok",
+            logger=getLogger(),
+            use_async_generator=False,
+            generation_settings=settings,
+            settings=settings,
+            inputs=tensor([[1, 2, 3]]),
+        )
+        self.assertEqual(resp.input_token_count, 3)
 
     async def test_single_stream_and_output_count(self) -> None:
         settings = GenerationSettings()

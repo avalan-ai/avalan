@@ -4,6 +4,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, call, patch
 
 from diffusers import DiffusionPipeline
+from torch import float32
 
 from avalan.entities import (
     TransformerEngineSettings,
@@ -33,8 +34,9 @@ class TextToImageModelInstantiationTestCase(TestCase):
         ):
             base_instance = MagicMock(spec=DiffusionPipeline)
             base_instance.text_encoder_2 = "te2"
-            base_instance.vae = "vae"
+            base_instance.vae = MagicMock()
             refiner_instance = MagicMock(spec=DiffusionPipeline)
+            refiner_instance.vae = base_instance.vae
             pipeline_mock.side_effect = [base_instance, refiner_instance]
 
             settings = TransformerEngineSettings(
@@ -68,6 +70,15 @@ class TextToImageModelInstantiationTestCase(TestCase):
             )
             base_instance.to.assert_called_once_with("cpu")
             refiner_instance.to.assert_called_once_with("cpu")
+            base_instance.upcast_vae()
+            refiner_instance.upcast_vae()
+            base_instance.vae.to.assert_has_calls(
+                [
+                    call(dtype=float32),
+                    call(dtype=float32),
+                ]
+            )
+            self.assertEqual(base_instance.vae.to.call_count, 2)
 
 
 class TextToImageModelCallTestCase(IsolatedAsyncioTestCase):
