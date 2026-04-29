@@ -156,6 +156,12 @@ async def main() -> None:
         response = await model("Give me two facts about Leo Messi.")
         print(response)
 
+        async for token in await model(
+            "Give me two more facts about Leo Messi.",
+            stream=True,
+        ):
+            print(token, end="", flush=True)
+
 asyncio.run(main())
 ```
 
