@@ -24,7 +24,7 @@ from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
-from ...tool.graph import GraphToolSettings
+from ...tool.graph_settings import GraphToolSettings
 
 from argparse import Namespace
 from contextlib import AsyncExitStack

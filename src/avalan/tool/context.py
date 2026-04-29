@@ -1,6 +1,6 @@
 from .browser import BrowserToolSettings
 from .database import DatabaseToolSettings
-from .graph import GraphToolSettings
+from .graph_settings import GraphToolSettings
 
 from dataclasses import dataclass
 from typing import final

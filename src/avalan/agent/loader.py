@@ -29,8 +29,8 @@ from ..tool.database.toolset import DatabaseToolSet
 from ..tool.graph import (
     HAS_GRAPH_DEPENDENCIES,
     GraphToolSet,
-    GraphToolSettings,
 )
+from ..tool.graph_settings import GraphToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
