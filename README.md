@@ -1144,7 +1144,7 @@ For a runnable script, see [docs/examples/vision_text_to_video.py](docs/examples
 
 ## Tools
 
-Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. Avalan ships native helpers for `math.calculator`, `code.run`, `browser.open`, `database.*`, memory, and MCP integrations so agents can reason with numbers, execute code, browse the web, and interact with SQL databases from a single prompt.
+Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. Avalan ships native helpers for `math.calculator`, `graph.*`, `code.run`, `browser.open`, `database.*`, memory, and MCP integrations so agents can reason with numbers, generate charts, execute code, browse the web, and interact with SQL databases from a single prompt.
 
 > [!NOTE]
 > Keep a human in the loop by adding `--tools-confirm` when you run an agent. Avalan will ask you to confirm each tool call before it executes, so you retain control over side effects.
@@ -1197,6 +1197,37 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
       --conversation
 ```
 
+### Graph toolset (`graph.*`)
+
+Use the graph toolset when an agent should turn structured numbers into static charts that can be embedded in a response or decoded by another tool. Charts render through Matplotlib's headless backend and return JSON-compatible metadata with a base64 data URI. Pass `--tool-graph-file path/to/chart.png` when you also want each rendered chart saved to a local file.
+
+**Available tools**
+
+- `graph.pie(labels: list[str], values: list[float]) -> dict[str, object]`: Create a pie chart from labels and non-negative values.
+- `graph.bar(categories: list[str], values: list[float] | None = None, series: dict[str, list[float]] | None = None) -> dict[str, object]`: Create a vertical, horizontal, grouped, or stacked bar chart.
+- `graph.line(x_labels: list[str], values: list[float] | None = None, series: dict[str, list[float]] | None = None) -> dict[str, object]`: Create a line chart from ordered labels and one or more numeric series.
+- `graph.scatter(x: list[float], y: list[float]) -> dict[str, object]`: Create a scatter plot from paired numeric values.
+- `graph.histogram(values: list[float], bins: int = 10) -> dict[str, object]`: Create a histogram from numeric values.
+
+#### Example: `graph.bar`
+
+```bash
+echo 'Generate a monthly bar graph for the total revenue from checks successfully matched to their claims for the organization `Example Legal Group`' | \
+    avalan agent run \
+      --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-5.4" \
+      --reasoning-effort xhigh \
+      --tool "database" \
+      --tool "graph.bar" \
+      --tool-database-dsn "postgresql+asyncpg://root:password@localhost:5432/example_app" \
+      --tool-graph-file "./monthly-revenue.png" \
+      --developer "You are a helpful assistant that answers questions using tools. Inspect the schema first, then query precisely.
+Stay read-only." \
+      --run-max-new-tokens 25000 \
+      --stats \
+      --display-tools \
+      --display-events
+```
+
 ### Code toolset (`code.*`)
 
 Reach for the code toolset when the agent should write, execute, or refactor source code in a controlled environment. Execution happens inside a RestrictedPython sandbox and pattern searches are backed by the `ast-grep` CLI, enabling agents to safely prototype logic, manipulate files, or build refactoring plans.
@@ -1231,7 +1262,7 @@ echo "Create a python function to uppercase a string, split it spaces, and then 
 
 Connect the database toolset when an agent must inspect schemas, understand query plans, or run SQL against an external data source. Tools share a pooled SQLAlchemy engine, enforce optional read-only policies, and normalize identifier casing so that agents can explore data safely.
 
-When your agent needs live access to data, configure the database toolset. In the example below we point the agent to a Supabase database, and after prompting for sales data we'll see the agent executing `database.tables` and `database.inspect` to understand the schema, before running SQL with `database.run`:
+When your agent needs live access to data, configure the database toolset. In the example below we point the agent to a Supabase database, and after prompting for sales data we'll see the agent executing `database.tables` and `database.inspect` to understand the schema, before running SQL with `database.run`. For an end-to-end database-to-chart workflow, see the `graph.bar` example above.
 
 > [!IMPORTANT]
 > Database sessions are read-only by default (`read_only = true`) and only permit `SELECT` statements unless you relax the policy. Adjust these safeguards with the database tool settings—for example, set `allowed_commands = ["select", "insert"]` (or pass `--tool-database-allowed-commands select,insert` on the CLI) and toggle `read_only` in your agent specification when you need to allow writes.

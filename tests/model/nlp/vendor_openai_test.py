@@ -701,13 +701,19 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             self.mod.OpenAIClient._content_block(
-                {"type": "unknown", "value": 1}
+                {
+                    "type": "unknown",
+                    "value": 1,
+                }
             ),
             {"type": "unknown", "value": 1},
         )
         self.assertEqual(
             self.mod.OpenAIClient._file_block(
-                {"file_id": "file-1", "filename": "report.pdf"}
+                {
+                    "file_id": "file-1",
+                    "filename": "report.pdf",
+                }
             ),
             {
                 "type": "input_file",

@@ -18,6 +18,7 @@ from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
+from avalan.tool.graph_settings import GraphToolSettings
 
 
 class LoaderPropertyTestCase(IsolatedAsyncioTestCase):
@@ -377,6 +378,45 @@ dsn = \"sqlite:///db.sqlite\"
                 self.assertEqual(dbs.dsn, "sqlite:///db.sqlite")
             await stack.aclose()
 
+    async def test_load_graph_tool_settings(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.graph]
+file = \"/tmp/chart.png\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(path, agent_id=uuid4())
+
+                tool_settings = lfs_patch.call_args.kwargs["tool_settings"]
+                graph = tool_settings.graph
+                self.assertIsInstance(graph, GraphToolSettings)
+                self.assertEqual(graph.file, "/tmp/chart.png")
+            await stack.aclose()
+
     async def test_tool_format_setting(self):
         config = """
 [agent]
@@ -657,6 +697,7 @@ uri = \"ai://local/model\"
             tool_settings = ToolSettingsContext(
                 browser=BrowserToolSettings(engine="webkit"),
                 database=DatabaseToolSettings(dsn="sqlite:///db.sqlite"),
+                graph=GraphToolSettings(file="/tmp/chart.png"),
                 extra={"x": 1},
             )
 
@@ -679,6 +720,7 @@ uri = \"ai://local/model\"
                 passed = fs_patch.call_args.kwargs["tool_settings"]
                 self.assertEqual(passed.browser.engine, "webkit")
                 self.assertEqual(passed.database.dsn, "sqlite:///db.sqlite")
+                self.assertEqual(passed.graph.file, "/tmp/chart.png")
                 self.assertEqual(passed.extra, {"x": 1})
             await stack.aclose()
 
@@ -1704,6 +1746,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
 
         browser_tool = MagicMock()
         code_tool = MagicMock()
+        graph_tool = MagicMock()
         math_tool = MagicMock()
         memory_tool = MagicMock()
         db_tool = MagicMock()
@@ -1735,6 +1778,10 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 "avalan.agent.loader.BrowserToolSet", return_value=browser_tool
             ),
             patch("avalan.agent.loader.CodeToolSet", return_value=code_tool),
+            patch(
+                "avalan.agent.loader.GraphToolSet", return_value=graph_tool
+            ) as graph_patch,
+            patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", True),
             patch("avalan.agent.loader.MathToolSet", return_value=math_tool),
             patch(
                 "avalan.agent.loader.MemoryToolSet", return_value=memory_tool
@@ -1760,6 +1807,10 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 settings=db_settings, namespace="database"
             )
             available = tm_patch.call_args.kwargs["available_toolsets"]
+            graph_patch.assert_called_once_with(
+                settings=GraphToolSettings(), namespace="graph"
+            )
+            self.assertIn(graph_tool, available)
             self.assertIn(db_tool, available)
         await stack.aclose()
 
@@ -1804,6 +1855,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
 
         browser_settings = BrowserToolSettings()
         db_settings = DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        graph_settings = GraphToolSettings(file="/tmp/chart.png")
 
         with (
             patch(
@@ -1845,16 +1897,20 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             result = await loader.from_settings(
                 settings,
                 tool_settings=ToolSettingsContext(
-                    browser=browser_settings, database=db_settings
+                    browser=browser_settings,
+                    database=db_settings,
+                    graph=graph_settings,
                 ),
             )
 
             self.assertEqual(result, "orch")
             logger.log.assert_any_call(
                 DEBUG,
-                "<OrchestratorLoader> Tool settings: browser=%s, database=%s",
+                "<OrchestratorLoader> Tool settings: browser=%s, database=%s,"
+                " graph=%s",
                 browser_settings,
                 db_settings,
+                graph_settings,
             )
         await stack.aclose()
 

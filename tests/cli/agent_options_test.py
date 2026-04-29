@@ -53,11 +53,37 @@ class AgentParserOptionsTestCase(TestCase):
         args = self.parser.parse_args(["agent", "run", "spec.toml"])
         self.assertTrue(args.participant)
         self.assertIsNone(args.id)
+        self.assertIsNone(args.run_temperature)
 
     def test_serve_parser_defaults(self) -> None:
         args = self.parser.parse_args(["agent", "serve", "spec.toml"])
         self.assertTrue(args.participant)
         self.assertIsNone(args.id)
+        self.assertIsNone(args.run_temperature)
+
+    def test_run_parser_accepts_temperature(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "run",
+                "spec.toml",
+                "--run-temperature",
+                "0.5",
+            ]
+        )
+        self.assertEqual(args.run_temperature, 0.5)
+
+    def test_run_parser_accepts_graph_file(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "run",
+                "spec.toml",
+                "--tool-graph-file",
+                "chart.png",
+            ]
+        )
+        self.assertEqual(args.tool_graph_file, "chart.png")
 
     def test_serve_parser_protocol_option(self) -> None:
         args = self.parser.parse_args(

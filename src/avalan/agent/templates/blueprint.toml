@@ -114,6 +114,15 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% endfor %}
 {% endif %}
 
+{% if graph_tool %}
+[tool.graph]
+{% for k, v in graph_tool.items() %}
+{% if v is string %}
+{{ k }} = "{{ v }}"
+{% endif %}
+{% endfor %}
+{% endif %}
+
 {% if database_tool %}
 [tool.database]
 {% for k, v in database_tool.items() %}

@@ -192,14 +192,59 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 console_width=80,
                 logger=MagicMock(),
                 event_stats=es,
+                tool_token_count=3,
             )
             _, frame = await gen.__anext__()
         subtitle = frame.renderables[0].subtitle
         self.assertIn("2 tokens in", subtitle)
         self.assertIn("2 tokens out", subtitle)
+        self.assertIn("3 tool tokens", subtitle)
         self.assertIn("2 events", subtitle)
         self.assertIn("2 tool calls", subtitle)
         self.assertIn("2 results", subtitle)
+
+    async def test_progress_panel_without_text_output(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        es = EventStats()
+        es.triggers = {}
+        es.total_triggers = 3
+        with patch(
+            "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
+        ):
+            gen = theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                thinking_text_tokens=[],
+                tool_text_tokens=[],
+                answer_text_tokens=[],
+                tokens=None,
+                input_token_count=4,
+                total_tokens=0,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=None,
+                ttnt=None,
+                ttsr=None,
+                elapsed=2.0,
+                console_width=80,
+                logger=MagicMock(),
+                event_stats=es,
+            )
+            _, frame = await gen.__anext__()
+
+        self.assertEqual(len(frame.renderables), 1)
+        panel = frame.renderables[0]
+        self.assertIn("Token stats", str(panel.title))
+        self.assertIn("4 tokens in", str(panel.renderable))
+        self.assertIn("0 tokens out", str(panel.renderable))
+        self.assertIn("3 events", str(panel.renderable))
 
 
 class FancyThemeTestCase(IsolatedAsyncioTestCase):

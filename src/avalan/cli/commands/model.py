@@ -5,6 +5,7 @@ from ...cli.commands.cache import cache_delete, cache_download
 from ...cli.theme import Theme
 from ...entities import (
     GenerationSettings,  # noqa: F401
+    Input,
     Message,
     MessageContent,
     MessageContentFile,
@@ -666,19 +667,26 @@ async def _token_stream(
     tool_event_results: list[Event] = []
     completed_call_ids: set[str] = set()
     total_tokens = 0
+    tool_tokens = 0
     frame_minimum_pause_ms = (
         100 if display_pause > 0 and display_tokens > 0 else 0
     )
 
+    def _input_token_count(input_value: Input) -> int | None:
+        count = lm.input_token_count(input_value)
+        return count or None
+
+    def _tool_token_count(token_text: str) -> int:
+        if not token_text:
+            return 0
+        return _input_token_count(token_text) or 1
+
     input_token_count = (
         response.input_token_count
-        if response.input_token_count
-        else (
-            orchestrator.input_token_count
-            if orchestrator
-            else lm.input_token_count(input_string)
-        )
+        or (orchestrator.input_token_count if orchestrator else None)
+        or _input_token_count(input_string)
     )
+    display_input_token_count = input_token_count or 0
     assert lm.model_id is not None
     ttft: float | None = None
     ttnt: float | None = None
@@ -693,9 +701,11 @@ async def _token_stream(
     reasoning_time = None
 
     async for token in response:
+        is_event = False
         is_reasoning_token = isinstance(token, ReasoningToken)
 
         if isinstance(token, Event):
+            is_event = True
             event = token
             tool_events.append(event)
             if event.type == EventType.TOOL_MODEL_RESPONSE:
@@ -706,8 +716,23 @@ async def _token_stream(
                 assert event.payload is not None
                 inner_response = event.payload["response"]
                 assert isinstance(inner_response, TextGenerationResponse)
-                if inner_response.input_token_count:
-                    input_token_count = inner_response.input_token_count
+                next_input_token_count = (
+                    inner_response.input_token_count
+                    or cast(
+                        int | None,
+                        event.payload.get("input_token_count"),
+                    )
+                    or (
+                        _input_token_count(
+                            cast(Input, event.payload["messages"])
+                        )
+                        if "messages" in event.payload
+                        else None
+                    )
+                )
+                if next_input_token_count:
+                    display_input_token_count += next_input_token_count
+                    input_token_count = next_input_token_count
             elif event.type == EventType.TOOL_RESULT:
                 tool_event_results.append(event)
                 if event.payload and "call" in event.payload:
@@ -726,6 +751,7 @@ async def _token_stream(
             text_token = token.token if isinstance(token, Token) else token
             if isinstance(token, ToolCallToken):
                 tool_text_tokens.append(text_token)
+                tool_tokens += _tool_token_count(text_token)
             elif is_reasoning_token:
                 if not started_reasoning:
                     started_reasoning = perf_counter()
@@ -756,12 +782,16 @@ async def _token_stream(
                 )
 
         elapsed = perf_counter() - start
-        total_tokens += 1
+        is_tool_call_token = isinstance(token, ToolCallToken)
+        if not is_event and not is_tool_call_token:
+            total_tokens += 1
 
-        if ttft is None:
+        if not is_event and not is_tool_call_token and ttft is None:
             ttft = elapsed
         if (
-            ttnt is None
+            not is_event
+            and not is_tool_call_token
+            and ttnt is None
             and display_time_to_n_token
             and total_tokens >= display_time_to_n_token
         ):
@@ -771,7 +801,11 @@ async def _token_stream(
         if display_reasoning_time and reasoning_time:
             ttsr = reasoning_time
 
-        if display_tokens and isinstance(token, Token):
+        if (
+            display_tokens
+            and isinstance(token, Token)
+            and not isinstance(token, ToolCallToken)
+        ):
             tokens.append(token)
         limit_answer_height = not getattr(
             args, "display_answer_height_expand", False
@@ -819,7 +853,7 @@ async def _token_stream(
             tool_text_tokens,
             answer_text_tokens,
             tokens or None,
-            input_token_count or 0,
+            display_input_token_count,
             total_tokens,
             tool_events,
             tool_event_calls,
@@ -832,6 +866,7 @@ async def _token_stream(
             console.width,
             logger,
             event_stats,
+            tool_token_count=tool_tokens,
             height=answer_height,
             tool_events_limit=tool_events_limit,
             limit_answer_height=limit_answer_height,

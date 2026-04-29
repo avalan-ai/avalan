@@ -459,9 +459,7 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             self.mod.GoogleClient._thinking_config(
                 "gemini-3-flash",
                 GenerationSettings(
-                    reasoning=ReasoningSettings(
-                        effort=ReasoningEffort.MEDIUM
-                    )
+                    reasoning=ReasoningSettings(effort=ReasoningEffort.MEDIUM)
                 ),
             ),
             {"thinking_level": "medium"},

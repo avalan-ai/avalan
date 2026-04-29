@@ -44,6 +44,7 @@ from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
+from avalan.tool.graph_settings import GraphToolSettings
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.parser import ToolCallParser
 
@@ -376,7 +377,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_tool_settings",
-                side_effect=[browser_settings, None],
+                side_effect=[browser_settings, None, None],
             ) as gts,
             patch.object(
                 agent_cmds, "agents_server", return_value=server
@@ -391,6 +392,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 call(
                     args, prefix="database", settings_cls=DatabaseToolSettings
                 ),
+                call(args, prefix="graph", settings_cls=GraphToolSettings),
             ]
         )
         asrv.assert_called_once_with(
@@ -407,7 +409,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             specs_path=None,
             settings=settings,
             tool_settings=ToolSettingsContext(
-                browser=browser_settings, database=None
+                browser=browser_settings, database=None, graph=None
             ),
             host="0.0.0.0",
             port=80,
@@ -1343,6 +1345,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         tool_settings = fs_patch.call_args.kwargs["tool_settings"]
         self.assertIsNone(tool_settings.browser)
         self.assertIsNone(tool_settings.database)
+        self.assertIsNone(tool_settings.graph)
         ff_patch.assert_not_called()
 
     async def test_run_sets_hidden_states(self):
@@ -1444,6 +1447,42 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bs.search_context, 5)
         dbs = tool_settings.database
         self.assertIsNone(dbs)
+        self.assertIsNone(tool_settings.graph)
+
+    async def test_run_with_graph_settings(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.tool_graph_file = "/tmp/chart.png"
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        tool_settings = fs_patch.call_args.kwargs["tool_settings"]
+        graph = tool_settings.graph
+        self.assertIsInstance(graph, GraphToolSettings)
+        self.assertEqual(graph.file, "/tmp/chart.png")
 
     async def test_run_start_session_and_print_recent(self):
         self.args.session = None

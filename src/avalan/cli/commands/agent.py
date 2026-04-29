@@ -24,6 +24,7 @@ from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
+from ...tool.graph_settings import GraphToolSettings
 
 from argparse import Namespace
 from contextlib import AsyncExitStack
@@ -201,9 +202,13 @@ def _tool_settings_from_mapping(
     mapping: Mapping[str, object] | Namespace,
     *,
     prefix: str | None = None,
-    settings_cls: type[BrowserToolSettings] | type[DatabaseToolSettings],
+    settings_cls: (
+        type[BrowserToolSettings]
+        | type[DatabaseToolSettings]
+        | type[GraphToolSettings]
+    ),
     open_files: bool = True,
-) -> BrowserToolSettings | DatabaseToolSettings | None:
+) -> BrowserToolSettings | DatabaseToolSettings | GraphToolSettings | None:
     """Return tool settings from a mapping using dataclass ``settings_cls``."""
     values: dict[str, object] = {}
     for field in fields(settings_cls):
@@ -234,7 +239,7 @@ def _tool_settings_from_mapping(
         return None
 
     settings = cast(
-        BrowserToolSettings | DatabaseToolSettings,
+        BrowserToolSettings | DatabaseToolSettings | GraphToolSettings,
         cast(Any, settings_cls)(**values),
     )
     return settings
@@ -260,13 +265,27 @@ def get_tool_settings(
 ) -> DatabaseToolSettings | None: ...
 
 
+@overload
 def get_tool_settings(
     args: Namespace,
     *,
     prefix: str,
-    settings_cls: type[BrowserToolSettings] | type[DatabaseToolSettings],
+    settings_cls: type[GraphToolSettings],
     open_files: bool = True,
-) -> BrowserToolSettings | DatabaseToolSettings | None:
+) -> GraphToolSettings | None: ...
+
+
+def get_tool_settings(
+    args: Namespace,
+    *,
+    prefix: str,
+    settings_cls: (
+        type[BrowserToolSettings]
+        | type[DatabaseToolSettings]
+        | type[GraphToolSettings]
+    ),
+    open_files: bool = True,
+) -> BrowserToolSettings | DatabaseToolSettings | GraphToolSettings | None:
     return _tool_settings_from_mapping(
         args, prefix=prefix, settings_cls=settings_cls, open_files=open_files
     )
@@ -356,8 +375,13 @@ async def agent_message_search(
                 database_settings = get_tool_settings(
                     args, prefix="database", settings_cls=DatabaseToolSettings
                 )
+                graph_settings = get_tool_settings(
+                    args, prefix="graph", settings_cls=GraphToolSettings
+                )
                 tool_settings = ToolSettingsContext(
-                    browser=browser_settings, database=database_settings
+                    browser=browser_settings,
+                    database=database_settings,
+                    graph=graph_settings,
                 )
                 orchestrator = await loader.from_settings(
                     settings, tool_settings=tool_settings
@@ -504,8 +528,13 @@ async def agent_run(
             database_settings = get_tool_settings(
                 args, prefix="database", settings_cls=DatabaseToolSettings
             )
+            graph_settings = get_tool_settings(
+                args, prefix="graph", settings_cls=GraphToolSettings
+            )
             tool_settings = ToolSettingsContext(
-                browser=browser_settings, database=database_settings
+                browser=browser_settings,
+                database=database_settings,
+                graph=graph_settings,
             )
             tool_format = (
                 ToolFormat(args.tool_format) if args.tool_format else None
@@ -700,6 +729,7 @@ async def agent_serve(
     settings: OrchestratorSettings | None = None
     browser_settings: BrowserToolSettings | None = None
     database_settings: DatabaseToolSettings | None = None
+    graph_settings: GraphToolSettings | None = None
 
     protocols = OrchestratorLoader.resolve_serve_protocols(
         specs_path=specs_path,
@@ -722,9 +752,14 @@ async def agent_serve(
         database_settings = get_tool_settings(
             args, prefix="database", settings_cls=DatabaseToolSettings
         )
+        graph_settings = get_tool_settings(
+            args, prefix="graph", settings_cls=GraphToolSettings
+        )
 
     tool_settings = ToolSettingsContext(
-        browser=browser_settings, database=database_settings
+        browser=browser_settings,
+        database=database_settings,
+        graph=graph_settings,
     )
 
     server = agents_server(
@@ -855,6 +890,12 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         settings_cls=DatabaseToolSettings,
         open_files=False,
     )
+    graph_tool = get_tool_settings(
+        args,
+        prefix="graph",
+        settings_cls=GraphToolSettings,
+        open_files=False,
+    )
 
     env = Environment(
         loader=FileSystemLoader(
@@ -869,6 +910,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         orchestrator=settings,
         browser_tool=browser_tool,
         database_tool=database_tool,
+        graph_tool=graph_tool,
         tool_format=tool_format,
     )
     console.print(Syntax(rendered, "toml"))

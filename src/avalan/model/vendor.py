@@ -9,6 +9,7 @@ from ..entities import (
     TokenDetail,
     ToolCall,
     ToolCallToken,
+    ToolValue,
 )
 from ..tool.manager import ToolManager
 from .message import (
@@ -135,7 +136,7 @@ class TextGenerationVendor(ABC):
         call = ToolCall(
             id=cast(Any, call_id_value),
             name=name,
-            arguments=cast(dict[str, str | int | float | bool | None], args),
+            arguments=cast(dict[str, ToolValue], args),
         )
         token_payload: dict[str, Any] = {
             "name": name,
