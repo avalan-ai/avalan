@@ -149,7 +149,7 @@ class HuggingfaceHub:
         local_dir: str | None = None,
         local_dir_use_symlinks: bool | None = None,
     ) -> str:
-        if local_dir_use_symlinks is not None:
+        if local_dir_use_symlinks is True:
             raise ValueError(
                 "local_dir_use_symlinks is no longer supported by "
                 "huggingface_hub.snapshot_download; remove "
