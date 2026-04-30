@@ -276,6 +276,63 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(first, ToolCallToken)
         self.assertIsInstance(second, ToolCallToken)
 
+    async def test_harmony_streaming_emits_flush_tool_event(self) -> None:
+        engine = _DummyEngine()
+        engine.tokenizer.encode.return_value = [1]
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def gen() -> AsyncIterator[str]:
+            yield (
+                "<|start|>assistant<|channel|>commentary "
+                "to=functions.browser.open <|constrain|>json<|message|>"
+                '{"url":"https://example.com"}'
+            )
+
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        tool_manager = MagicMock(spec=ToolManager)
+        tool_manager.is_potential_tool_call.side_effect = (
+            base_parser.is_potential_tool_call
+        )
+        tool_manager.tool_call_status.side_effect = (
+            base_parser.tool_call_status
+        )
+        tool_manager.get_calls.side_effect = base_parser
+        tool_manager.tool_format = ToolFormat.HARMONY
+        tool_manager.is_empty = False
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool_manager,
+        )
+
+        iterator = resp.__aiter__()
+        first = await wait_for(iterator.__anext__(), 1)
+        second = await wait_for(iterator.__anext__(), 1)
+
+        self.assertIsInstance(first, ToolCallToken)
+        self.assertEqual(second.type, EventType.TOOL_PROCESS)
+        call = second.payload[0]
+        self.assertEqual(call.name, "browser.open")
+        self.assertEqual(call.arguments, {"url": "https://example.com"})
+
 
 @dataclass
 class Example:

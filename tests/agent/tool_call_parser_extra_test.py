@@ -108,6 +108,38 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[-1], "done")
         self.assertFalse(parser._inside_call)
 
+    async def test_harmony_flush_emits_event_for_missing_call_closure(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.return_value = True
+        manager.tool_format = ToolFormat.HARMONY
+        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        manager.get_calls.side_effect = base_parser
+        event_manager = MagicMock()
+        event_manager.trigger = AsyncMock()
+
+        parser = ToolCallResponseParser(manager, event_manager)
+        text = (
+            "<|start|>assistant<|channel|>commentary "
+            "to=functions.browser.open <|constrain|>json<|message|>"
+            '{"url":"https://example.com"}'
+        )
+        tokens = await parser.push(text)
+        flushed = await parser.flush()
+
+        self.assertEqual(len(tokens), 1)
+        self.assertIsInstance(tokens[0], ToolCallToken)
+        self.assertEqual(len(flushed), 1)
+        event = flushed[0]
+        self.assertEqual(event.type, EventType.TOOL_PROCESS)
+        call = event.payload[0]
+        self.assertEqual(call.name, "browser.open")
+        self.assertEqual(call.arguments, {"url": "https://example.com"})
+        manager.get_calls.assert_any_call(text + "<|call|>")
+        trigger_event = event_manager.trigger.await_args_list[0].args[0]
+        self.assertEqual(trigger_event.type, EventType.TOOL_DETECT)
+        self.assertFalse(parser._inside_call)
+
     async def test_pending_tokens_flushed_on_status_none(self):
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = False
