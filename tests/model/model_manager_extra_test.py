@@ -257,3 +257,31 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
         manager.__exit__(None, None, None)
         await asyncio.sleep(0)
         manager._stack.aclose.assert_awaited_once()
+
+    async def test_exit_with_running_loop_skips_close_on_interrupt(self):
+        hub = MagicMock(spec=HuggingfaceHub)
+        logger = MagicMock(spec=Logger)
+        manager = ModelManager(hub, logger)
+        manager._stack = AsyncMock()
+
+        manager.__exit__(KeyboardInterrupt, KeyboardInterrupt(), None)
+        await asyncio.sleep(0)
+
+        manager._stack.aclose.assert_not_awaited()
+        self.assertIsNone(manager._pending_exit_task)
+
+    async def test_aexit_cancels_pending_close_on_interrupt(self):
+        hub = MagicMock(spec=HuggingfaceHub)
+        logger = MagicMock(spec=Logger)
+        manager = ModelManager(hub, logger)
+        pending = asyncio.create_task(asyncio.sleep(10))
+        manager._pending_exit_task = pending
+
+        result = await manager.__aexit__(
+            KeyboardInterrupt, KeyboardInterrupt(), None
+        )
+        await asyncio.sleep(0)
+
+        self.assertFalse(result)
+        self.assertTrue(pending.cancelled())
+        self.assertIsNone(manager._pending_exit_task)

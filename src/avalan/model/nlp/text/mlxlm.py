@@ -10,24 +10,20 @@ from ....tool.manager import ToolManager
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
 
-from asyncio import sleep
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, replace
 from functools import lru_cache
 from importlib import import_module
 from importlib.util import find_spec
 from logging import Logger, getLogger
-from queue import Empty, Full, Queue
 from subprocess import DEVNULL, TimeoutExpired, run
 from sys import executable, modules
-from threading import Thread
-from typing import Any, AsyncGenerator, AsyncIterator, Literal, cast
+from typing import Any, AsyncGenerator, Literal, cast
 
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
 
 _MLX_IMPORT_CHECK_TIMEOUT_SECONDS = 10
-_MLX_STREAM_POLL_SECONDS = 0.05
 
 
 def _mlx_unavailable_message() -> str:
@@ -77,13 +73,8 @@ def make_sampler(*args: Any, **kwargs: Any) -> Any:
     return make_sampler_fn(*args, **kwargs)
 
 
-class _MlxLmStreamError:
-    def __init__(self, exception: BaseException) -> None:
-        self.exception = exception
-
-
 class MlxLmStream(TextGenerationVendorStream):
-    """Async wrapper around a synchronous token generator."""
+    """Wrap a synchronous MLX token generator on the consumer thread."""
 
     _SENTINEL = object()
 
@@ -92,8 +83,6 @@ class MlxLmStream(TextGenerationVendorStream):
         generator: Iterator[object] | Callable[[], Iterator[object]],
     ) -> None:
         self._closed = False
-        self._queue: Queue[object] = Queue(maxsize=1)
-        self._thread: Thread | None = None
         if isinstance(generator, Iterator):
             self._iterator: Iterator[object] | None = generator
             self._iterator_factory: Callable[[], Iterator[object]] | None = (
@@ -122,73 +111,28 @@ class MlxLmStream(TextGenerationVendorStream):
     def __del__(self) -> None:
         self.close()
 
-    def __call__(
-        self, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[Token | TokenDetail | str]:
-        return self
-
     def close(self) -> None:
         """Mark the stream as closed."""
         self._closed = True
 
-    def _iterator_instance(self) -> Iterator[object]:
+    def _next_chunk(self) -> object:
         if self._iterator is None:
             iterator_factory = self._iterator_factory
             assert iterator_factory is not None
             self._iterator = iter(iterator_factory())
-        return self._iterator
-
-    def _put(self, item: object) -> None:
-        while not self._closed:
-            try:
-                self._queue.put(item, timeout=_MLX_STREAM_POLL_SECONDS)
-                return
-            except Full:
-                continue
-
-    def _stream_chunks(self) -> None:
-        try:
-            for chunk in self._iterator_instance():
-                if self._closed:
-                    break
-                self._put(chunk)
-        except BaseException as exc:
-            self._put(_MlxLmStreamError(exc))
-        finally:
-            self._put(self._SENTINEL)
-
-    def _ensure_thread(self) -> None:
-        if self._thread:
-            return
-
-        self._thread = Thread(
-            target=self._stream_chunks,
-            name="mlx-lm-stream",
-            daemon=True,
-        )
-        self._thread.start()
+        return next(self._iterator, self._SENTINEL)
 
     async def _next_raw(self) -> object:
         if self._closed:
             return self._SENTINEL
-        self._ensure_thread()
-
-        while True:
-            if self._closed:
-                return self._SENTINEL
-            try:
-                chunk = self._queue.get_nowait()
-            except Empty:
-                await sleep(_MLX_STREAM_POLL_SECONDS)
-                continue
-
-            if chunk is self._SENTINEL:
-                self.close()
-                return chunk
-            if isinstance(chunk, _MlxLmStreamError):
-                self.close()
-                raise chunk.exception
-            return chunk
+        try:
+            chunk = self._next_chunk()
+        except Exception:
+            self.close()
+            raise
+        if chunk is self._SENTINEL:
+            self.close()
+        return chunk
 
     async def __anext__(self) -> str:
         chunk = await self._next_raw()

@@ -27,14 +27,15 @@ from . import ModelSettings, get_model_settings
 
 from argparse import Namespace
 from asyncio import (
-    Event as EventSignal,
-)
-from asyncio import (
+    CancelledError,
     as_completed,
     create_task,
     gather,
     sleep,
     to_thread,
+)
+from asyncio import (
+    Event as EventSignal,
 )
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -455,6 +456,7 @@ async def token_generation(
                 continue
             text_token = token.token if isinstance(token, Token) else token
             console.print(text_token, end="")
+            await sleep(0)
         return
 
     stop_signal = EventSignal()
@@ -464,72 +466,20 @@ async def token_generation(
     if not orchestrator or (
         not args.display_events and not args.display_tools
     ):
-        with Live(
-            refresh_per_second=refresh_per_second,
-            screen=args.record,
-            console=console,
-        ) as live:
-            if live_container is not None:
-                live_container["live"] = live
-            await _token_stream(
-                args,
-                console,
-                live,
-                None,
-                None,
-                theme,
-                logger,
-                orchestrator,
-                event_stats,
-                lm,
-                input_string,
-                response,
-                display_tokens=display_tokens,
-                dtokens_pick=dtokens_pick,
+        try:
+            with Live(
                 refresh_per_second=refresh_per_second,
-                stop_signal=stop_signal,
-                tool_events_limit=tool_events_limit,
-                with_stats=with_stats,
-            )
-        if live_container is not None:
-            live_container["live"] = None
-    else:
-        events_height = 6
-        tools_height = 10
-        empty = ""
-        group = Group(empty, empty, empty)
-        events_group_index = 0
-        tools_group_index = 1
-        tokens_group_index = 2
-
-        with Live(
-            group,
-            refresh_per_second=refresh_per_second,
-            screen=args.record,
-            console=console,
-        ) as live:
-            if live_container is not None:
-                live_container["live"] = live
-            await gather(
-                _event_stream(
+                screen=args.record,
+                console=console,
+            ) as live:
+                if live_container is not None:
+                    live_container["live"] = live
+                await _token_stream(
                     args,
                     console,
                     live,
-                    group,
-                    events_group_index,
-                    tools_group_index,
-                    orchestrator,
-                    theme,
-                    events_height=events_height,
-                    tools_height=tools_height,
-                    stop_signal=stop_signal,
-                ),
-                _token_stream(
-                    args,
-                    console,
-                    live,
-                    group,
-                    tokens_group_index,
+                    None,
+                    None,
                     theme,
                     logger,
                     orchestrator,
@@ -543,10 +493,87 @@ async def token_generation(
                     stop_signal=stop_signal,
                     tool_events_limit=tool_events_limit,
                     with_stats=with_stats,
-                ),
-            )
-        if live_container is not None:
-            live_container["live"] = None
+                )
+        finally:
+            if live_container is not None:
+                live_container["live"] = None
+    else:
+        events_height = 6
+        tools_height = 10
+        empty = ""
+        group = Group(empty, empty, empty)
+        events_group_index = 0
+        tools_group_index = 1
+        tokens_group_index = 2
+
+        try:
+            with Live(
+                group,
+                refresh_per_second=refresh_per_second,
+                screen=args.record,
+                console=console,
+            ) as live:
+                if live_container is not None:
+                    live_container["live"] = live
+                event_task = create_task(
+                    _event_stream(
+                        args,
+                        console,
+                        live,
+                        group,
+                        events_group_index,
+                        tools_group_index,
+                        orchestrator,
+                        theme,
+                        events_height=events_height,
+                        tools_height=tools_height,
+                        stop_signal=stop_signal,
+                    )
+                )
+                token_task = create_task(
+                    _token_stream(
+                        args,
+                        console,
+                        live,
+                        group,
+                        tokens_group_index,
+                        theme,
+                        logger,
+                        orchestrator,
+                        event_stats,
+                        lm,
+                        input_string,
+                        response,
+                        display_tokens=display_tokens,
+                        dtokens_pick=dtokens_pick,
+                        refresh_per_second=refresh_per_second,
+                        stop_signal=stop_signal,
+                        tool_events_limit=tool_events_limit,
+                        with_stats=with_stats,
+                    )
+                )
+                token_error: BaseException | None = None
+                try:
+                    await token_task
+                except BaseException as exc:
+                    token_error = exc
+                    raise
+                finally:
+                    stop_signal.set()
+                    if not event_task.done():
+                        event_task.cancel()
+                    event_results = await gather(
+                        event_task, return_exceptions=True
+                    )
+                    if token_error is None:
+                        for result in event_results:
+                            if isinstance(
+                                result, BaseException
+                            ) and not isinstance(result, CancelledError):
+                                raise result
+        finally:
+            if live_container is not None:
+                live_container["live"] = None
 
 
 async def _event_stream(
@@ -672,237 +699,244 @@ async def _token_stream(
     started_reasoning = perf_counter() if response.is_thinking else None
     reasoning_time = None
 
-    async for token in response:
-        is_event = False
-        is_reasoning_token = isinstance(token, ReasoningToken)
+    try:
+        async for token in response:
+            is_event = False
+            is_reasoning_token = isinstance(token, ReasoningToken)
 
-        if isinstance(token, Event):
-            is_event = True
-            event = token
-            tool_events.append(event)
-            if event.type == EventType.TOOL_MODEL_RESPONSE:
-                tokens = []
-                answer_text_tokens = []
-                tool_text_tokens = []
-                thinking_text_tokens = []
-                assert event.payload is not None
-                inner_response = event.payload["response"]
-                assert isinstance(inner_response, TextGenerationResponse)
-                next_input_token_count = (
-                    inner_response.input_token_count
-                    or cast(
-                        int | None,
-                        event.payload.get("input_token_count"),
-                    )
-                    or (
-                        _input_token_count(
-                            cast(Input, event.payload["messages"])
+            if isinstance(token, Event):
+                is_event = True
+                event = token
+                tool_events.append(event)
+                if event.type == EventType.TOOL_MODEL_RESPONSE:
+                    tokens = []
+                    answer_text_tokens = []
+                    tool_text_tokens = []
+                    thinking_text_tokens = []
+                    assert event.payload is not None
+                    inner_response = event.payload["response"]
+                    assert isinstance(inner_response, TextGenerationResponse)
+                    next_input_token_count = (
+                        inner_response.input_token_count
+                        or cast(
+                            int | None,
+                            event.payload.get("input_token_count"),
                         )
-                        if "messages" in event.payload
-                        else None
-                    )
-                )
-                if next_input_token_count:
-                    display_input_token_count += next_input_token_count
-                    input_token_count = next_input_token_count
-            elif event.type == EventType.TOOL_RESULT:
-                tool_event_results.append(event)
-                if event.payload and "call" in event.payload:
-                    completed_call_ids.add(event.payload["call"].id)
-            else:
-                tool_event_calls.append(event)
-        else:
-            if (
-                display_reasoning_time
-                and not is_reasoning_token
-                and started_reasoning is not None
-            ):
-                reasoning_time = perf_counter() - started_reasoning
-                started_reasoning = None
-
-            text_token = token.token if isinstance(token, Token) else token
-            if isinstance(token, ToolCallToken):
-                tool_text_tokens.append(text_token)
-                tool_tokens += _tool_token_count(text_token)
-            elif is_reasoning_token:
-                if not started_reasoning:
-                    started_reasoning = perf_counter()
-                thinking_text_tokens.append(text_token)
-            else:
-                answer_text_tokens.append(text_token)
-
-        tool_running_spinner = None
-        if tool_event_calls or tool_event_results:
-            tool_calling_names = [
-                str(getattr(c, "name", ""))
-                for e in tool_event_calls
-                for c in cast(list[object], e.payload or [])
-                if str(getattr(c, "id", "")) not in completed_call_ids
-            ]
-            if tool_calling_names:
-                tool_running_spinner = Spinner(
-                    theme.get_spinner("tool_running") or "dots",
-                    text="[cyan]"
-                    + theme._n(
-                        "Running tool {tool_names}...",
-                        "Running tools {tool_names}...",
-                        len(tool_calling_names),
-                    ).format(tool_names=", ".join(tool_calling_names))
-                    + "[/cyan]",
-                    style="cyan",
-                    speed=1.0,
-                )
-
-        elapsed = perf_counter() - start
-        is_tool_call_token = isinstance(token, ToolCallToken)
-        if not is_event and not is_tool_call_token:
-            total_tokens += 1
-
-        if not is_event and not is_tool_call_token and ttft is None:
-            ttft = elapsed
-        if (
-            not is_event
-            and not is_tool_call_token
-            and ttnt is None
-            and display_time_to_n_token
-            and total_tokens >= display_time_to_n_token
-        ):
-            ttnt = elapsed
-
-        ttsr = None
-        if display_reasoning_time and reasoning_time:
-            ttsr = reasoning_time
-
-        if (
-            display_tokens
-            and isinstance(token, Token)
-            and not isinstance(token, ToolCallToken)
-        ):
-            tokens.append(token)
-        limit_answer_height = not getattr(
-            args, "display_answer_height_expand", False
-        )
-        answer_height = getattr(args, "display_answer_height", 12)
-
-        token_frames_result = theme.tokens(
-            lm.model_id,
-            lm.tokenizer_config.tokens if lm.tokenizer_config else None,
-            (
-                lm.tokenizer_config.special_tokens
-                if lm.tokenizer_config
-                else None
-            ),
-            display_tokens,
-            args.display_probabilities if dtokens_pick > 0 else False,
-            dtokens_pick,
-            # Which tokens to mark as interesting
-            lambda dtoken: (
-                (
-                    dtoken.probability is not None
-                    and dtoken.probability < args.display_probabilities_maximum
-                    or len(
-                        [
-                            t
-                            for t in cast(
-                                list[Token],
-                                getattr(dtoken, "tokens", []) or [],
+                        or (
+                            _input_token_count(
+                                cast(Input, event.payload["messages"])
                             )
-                            if t.id != dtoken.id
-                            and t.probability is not None
-                            and t.probability
-                            >= args.display_probabilities_sample_minimum
-                        ]
+                            if "messages" in event.payload
+                            else None
+                        )
                     )
-                    > 0
-                )
-                if display_tokens
-                and args.display_probabilities
-                and args.display_probabilities_maximum > 0
-                and args.display_probabilities_maximum > 0
-                else False
-            ),
-            thinking_text_tokens,
-            tool_text_tokens,
-            answer_text_tokens,
-            tokens or None,
-            display_input_token_count,
-            total_tokens,
-            tool_events,
-            tool_event_calls,
-            tool_event_results,
-            cast(Any, tool_running_spinner),
-            ttft,
-            ttnt,
-            ttsr,
-            elapsed,
-            console.width,
-            logger,
-            event_stats,
-            tool_token_count=tool_tokens,
-            height=answer_height,
-            tool_events_limit=tool_events_limit,
-            limit_answer_height=limit_answer_height,
-            maximum_frames=1,
-            start_thinking=start_thinking,
-        )
+                    if next_input_token_count:
+                        display_input_token_count += next_input_token_count
+                        input_token_count = next_input_token_count
+                elif event.type == EventType.TOOL_RESULT:
+                    tool_event_results.append(event)
+                    if event.payload and "call" in event.payload:
+                        completed_call_ids.add(event.payload["call"].id)
+                else:
+                    tool_event_calls.append(event)
+            else:
+                if (
+                    display_reasoning_time
+                    and not is_reasoning_token
+                    and started_reasoning is not None
+                ):
+                    reasoning_time = perf_counter() - started_reasoning
+                    started_reasoning = None
 
-        token_frames_stream: AsyncGenerator[
-            tuple[Token | None, RenderableType], None
-        ]
-        if isinstance(token_frames_result, Awaitable):
-            token_frames_stream = await cast(
-                Awaitable[
-                    AsyncGenerator[tuple[Token | None, RenderableType], None]
-                ],
-                token_frames_result,
-            )
-        else:
-            token_frames_stream = token_frames_result
+                text_token = token.token if isinstance(token, Token) else token
+                if isinstance(token, ToolCallToken):
+                    tool_text_tokens.append(text_token)
+                    tool_tokens += _tool_token_count(text_token)
+                elif is_reasoning_token:
+                    if not started_reasoning:
+                        started_reasoning = perf_counter()
+                    thinking_text_tokens.append(text_token)
+                else:
+                    answer_text_tokens.append(text_token)
 
-        token_frame_list = [
-            token_frame async for token_frame in token_frames_stream
-        ]
+            tool_running_spinner = None
+            if tool_event_calls or tool_event_results:
+                tool_calling_names = [
+                    str(getattr(c, "name", ""))
+                    for e in tool_event_calls
+                    for c in cast(list[object], e.payload or [])
+                    if str(getattr(c, "id", "")) not in completed_call_ids
+                ]
+                if tool_calling_names:
+                    tool_running_spinner = Spinner(
+                        theme.get_spinner("tool_running") or "dots",
+                        text="[cyan]"
+                        + theme._n(
+                            "Running tool {tool_names}...",
+                            "Running tools {tool_names}...",
+                            len(tool_calling_names),
+                        ).format(tool_names=", ".join(tool_calling_names))
+                        + "[/cyan]",
+                        style="cyan",
+                        speed=1.0,
+                    )
 
-        token_frames = [token_frame_list[0]]
+            elapsed = perf_counter() - start
+            is_tool_call_token = isinstance(token, ToolCallToken)
+            if not is_event and not is_tool_call_token:
+                total_tokens += 1
 
-        for current_dtoken, frame in token_frames:
-            _render_frame(
-                args, console, live, frame, group, tokens_group_index
-            )
-
-            if current_dtoken and current_dtoken != last_current_dtoken:
-                last_current_dtoken = current_dtoken
-                if display_pause > 0:
-                    await sleep(display_pause / 1000)
-                elif frame_minimum_pause_ms > 0:
-                    await sleep(
-                        frame_minimum_pause_ms / 1000
-                    )  # pragma: no cover - unreachable
-            elif (
-                dtokens_pick > 0
-                and not args.display_probabilities
-                and display_pause > 0
+            if not is_event and not is_tool_call_token and ttft is None:
+                ttft = elapsed
+            if (
+                not is_event
+                and not is_tool_call_token
+                and ttnt is None
+                and display_time_to_n_token
+                and total_tokens >= display_time_to_n_token
             ):
-                await sleep(display_pause / 1000)
+                ttnt = elapsed
 
-        if (
-            dtokens_pick > 0
-            and args.display_probabilities
-            and token_frame_list
-            and len(token_frame_list) > 0
-        ):
-            for current_dtoken, frame in token_frame_list[1:]:
+            ttsr = None
+            if display_reasoning_time and reasoning_time:
+                ttsr = reasoning_time
+
+            if (
+                display_tokens
+                and isinstance(token, Token)
+                and not isinstance(token, ToolCallToken)
+            ):
+                tokens.append(token)
+            limit_answer_height = not getattr(
+                args, "display_answer_height_expand", False
+            )
+            answer_height = getattr(args, "display_answer_height", 12)
+
+            token_frames_result = theme.tokens(
+                lm.model_id,
+                lm.tokenizer_config.tokens if lm.tokenizer_config else None,
+                (
+                    lm.tokenizer_config.special_tokens
+                    if lm.tokenizer_config
+                    else None
+                ),
+                display_tokens,
+                args.display_probabilities if dtokens_pick > 0 else False,
+                dtokens_pick,
+                # Which tokens to mark as interesting
+                lambda dtoken: (
+                    (
+                        dtoken.probability is not None
+                        and dtoken.probability
+                        < args.display_probabilities_maximum
+                        or len(
+                            [
+                                t
+                                for t in cast(
+                                    list[Token],
+                                    getattr(dtoken, "tokens", []) or [],
+                                )
+                                if t.id != dtoken.id
+                                and t.probability is not None
+                                and t.probability
+                                >= args.display_probabilities_sample_minimum
+                            ]
+                        )
+                        > 0
+                    )
+                    if display_tokens
+                    and args.display_probabilities
+                    and args.display_probabilities_maximum > 0
+                    and args.display_probabilities_maximum > 0
+                    else False
+                ),
+                thinking_text_tokens,
+                tool_text_tokens,
+                answer_text_tokens,
+                tokens or None,
+                display_input_token_count,
+                total_tokens,
+                tool_events,
+                tool_event_calls,
+                tool_event_results,
+                cast(Any, tool_running_spinner),
+                ttft,
+                ttnt,
+                ttsr,
+                elapsed,
+                console.width,
+                logger,
+                event_stats,
+                tool_token_count=tool_tokens,
+                height=answer_height,
+                tool_events_limit=tool_events_limit,
+                limit_answer_height=limit_answer_height,
+                maximum_frames=1,
+                start_thinking=start_thinking,
+            )
+
+            token_frames_stream: AsyncGenerator[
+                tuple[Token | None, RenderableType], None
+            ]
+            if isinstance(token_frames_result, Awaitable):
+                token_frames_stream = await cast(
+                    Awaitable[
+                        AsyncGenerator[
+                            tuple[Token | None, RenderableType], None
+                        ]
+                    ],
+                    token_frames_result,
+                )
+            else:
+                token_frames_stream = token_frames_result
+
+            token_frame_list = [
+                token_frame async for token_frame in token_frames_stream
+            ]
+
+            token_frames = [token_frame_list[0]]
+
+            for current_dtoken, frame in token_frames:
                 _render_frame(
                     args, console, live, frame, group, tokens_group_index
                 )
 
-                if current_dtoken and display_pause > 0:
+                if current_dtoken and current_dtoken != last_current_dtoken:
+                    last_current_dtoken = current_dtoken
+                    if display_pause > 0:
+                        await sleep(display_pause / 1000)
+                    elif frame_minimum_pause_ms > 0:
+                        await sleep(
+                            frame_minimum_pause_ms / 1000
+                        )  # pragma: no cover - unreachable
+                elif (
+                    dtokens_pick > 0
+                    and not args.display_probabilities
+                    and display_pause > 0
+                ):
                     await sleep(display_pause / 1000)
-                elif frame_minimum_pause_ms > 0:
-                    await sleep(frame_minimum_pause_ms / 1000)
 
-    if stop_signal:
-        stop_signal.set()
+            if (
+                dtokens_pick > 0
+                and args.display_probabilities
+                and token_frame_list
+                and len(token_frame_list) > 0
+            ):
+                for current_dtoken, frame in token_frame_list[1:]:
+                    _render_frame(
+                        args, console, live, frame, group, tokens_group_index
+                    )
+
+                    if current_dtoken and display_pause > 0:
+                        await sleep(display_pause / 1000)
+                    elif frame_minimum_pause_ms > 0:
+                        await sleep(frame_minimum_pause_ms / 1000)
+            await sleep(0)
+    except (CancelledError, KeyboardInterrupt):
+        raise
+    finally:
+        if stop_signal:
+            stop_signal.set()
 
 
 def _render_frame(

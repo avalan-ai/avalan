@@ -1,11 +1,14 @@
+import asyncio
 import logging
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from contextlib import ExitStack
 from pathlib import Path
+from threading import Event as ThreadEvent
+from time import perf_counter
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from avalan.cli import CommandAbortException
 from avalan.cli.__main__ import CLI, HuggingfaceHub
@@ -746,8 +749,91 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 CLI, "_main", AsyncMock(side_effect=CommandAbortException)
             ),
         ):
-            await self.cli()
+            with self.assertRaises(CommandAbortException):
+                await self.cli()
         console_patch.return_value.print.assert_called()
+
+    async def test_call_handles_keyboard_interrupt(self):
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=SimpleNamespace(
+                    gettext=lambda s: s, ngettext=lambda s, p, n: s
+                ),
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch(
+                "avalan.cli.__main__.Console", return_value=MagicMock()
+            ) as console_patch,
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch.object(
+                CLI, "_main", AsyncMock(side_effect=KeyboardInterrupt)
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                await self.cli()
+        console_patch.return_value.print.assert_called()
+
+    def test_direct_keyboard_interrupts_installs_default_sigint_handler(self):
+        cli_module = sys.modules[CLI.__module__]
+        thread = object()
+        with (
+            patch.object(cli_module, "current_thread", return_value=thread),
+            patch.object(cli_module, "main_thread", return_value=thread),
+            patch.object(
+                cli_module, "set_signal_handler", return_value="previous"
+            ) as set_signal_handler,
+        ):
+            with cli_module._direct_keyboard_interrupts():
+                pass
+
+        set_signal_handler.assert_has_calls(
+            [
+                call(cli_module.SIGINT, cli_module.default_int_handler),
+                call(cli_module.SIGINT, "previous"),
+            ]
+        )
+
+    def test_direct_keyboard_interrupts_restores_after_interrupt(self):
+        cli_module = sys.modules[CLI.__module__]
+        thread = object()
+
+        with (
+            patch.object(cli_module, "current_thread", return_value=thread),
+            patch.object(cli_module, "main_thread", return_value=thread),
+            patch.object(
+                cli_module, "set_signal_handler", return_value="previous"
+            ) as set_signal_handler,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                with cli_module._direct_keyboard_interrupts():
+                    raise KeyboardInterrupt()
+
+        set_signal_handler.assert_has_calls(
+            [
+                call(cli_module.SIGINT, cli_module.default_int_handler),
+                call(cli_module.SIGINT, "previous"),
+            ]
+        )
+
+    def test_direct_keyboard_interrupts_skips_non_main_thread(self):
+        cli_module = sys.modules[CLI.__module__]
+        with (
+            patch.object(cli_module, "current_thread", return_value=object()),
+            patch.object(cli_module, "main_thread", return_value=object()),
+            patch.object(
+                cli_module, "set_signal_handler"
+            ) as set_signal_handler,
+        ):
+            with cli_module._direct_keyboard_interrupts():
+                pass
+
+        set_signal_handler.assert_not_called()
 
 
 class CliMainFunctionTestCase(TestCase):
@@ -791,3 +877,106 @@ class CliMainFunctionTestCase(TestCase):
 
             main()
         cli._print_bye.assert_called_once_with()
+
+    def test_main_handles_cancelled_error(self):
+        cli = MagicMock()
+        with (
+            patch(
+                "avalan.cli.__main__.run_in_loop",
+                side_effect=asyncio.CancelledError,
+            ),
+            patch("avalan.cli.__main__.CLI", return_value=cli),
+        ):
+            from avalan.cli.__main__ import main
+
+            main()
+        cli._print_bye.assert_called_once_with()
+
+    def test_main_handles_abort_exception(self):
+        cli = MagicMock()
+        with (
+            patch(
+                "avalan.cli.__main__.run_in_loop",
+                side_effect=CommandAbortException,
+            ),
+            patch("avalan.cli.__main__.CLI", return_value=cli),
+        ):
+            from avalan.cli.__main__ import main
+
+            main()
+        cli._print_bye.assert_called_once_with()
+
+    def test_run_in_loop_bounds_interrupt_cleanup(self):
+        cli_module = sys.modules[CLI.__module__]
+
+        async def stubborn_task() -> None:
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                await asyncio.Event().wait()
+
+        async def interrupted() -> None:
+            asyncio.create_task(stubborn_task())
+            raise KeyboardInterrupt()
+
+        with (
+            patch.object(cli_module, "_INTERRUPT_DRAIN_TIMEOUT", 0.01),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(interrupted())
+
+    def test_run_in_loop_signal_handler_interrupts_immediately(self):
+        cli_module = sys.modules[CLI.__module__]
+        thread = object()
+        captured: dict[str, object] = {}
+
+        def set_handler(_signal: int, handler: object) -> str:
+            if callable(handler):
+                captured["handler"] = handler
+            return "previous"
+
+        async def interrupted() -> None:
+            handler = captured["handler"]
+            assert callable(handler)
+            handler(cli_module.SIGINT, None)
+            self.fail("signal handler should raise")
+
+        with (
+            patch.object(cli_module, "current_thread", return_value=thread),
+            patch.object(cli_module, "main_thread", return_value=thread),
+            patch.object(
+                cli_module, "set_signal_handler", side_effect=set_handler
+            ) as set_signal_handler,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(interrupted())
+
+        self.assertEqual(set_signal_handler.call_count, 2)
+        self.assertEqual(
+            set_signal_handler.call_args_list[-1],
+            call(cli_module.SIGINT, "previous"),
+        )
+
+    def test_run_in_loop_skips_executor_shutdown_on_interrupt(self):
+        cli_module = sys.modules[CLI.__module__]
+        ready = ThreadEvent()
+        release = ThreadEvent()
+
+        def blocked_worker() -> None:
+            ready.set()
+            release.wait(timeout=5)
+
+        async def interrupted() -> None:
+            asyncio.create_task(asyncio.to_thread(blocked_worker))
+            while not ready.is_set():
+                await asyncio.sleep(0)
+            raise KeyboardInterrupt()
+
+        start = perf_counter()
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                cli_module.run_in_loop(interrupted())
+        finally:
+            release.set()
+
+        self.assertLess(perf_counter() - start, 1)

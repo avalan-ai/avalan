@@ -302,6 +302,11 @@ class Engine(ABC):
                 "Restored transformers logging level to %s",
                 self._transformers_logging_level,
             )
+        interrupted_exit = exc_type is not None and issubclass(
+            exc_type, (asyncio.CancelledError, KeyboardInterrupt)
+        )
+        if interrupted_exit:
+            return False
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

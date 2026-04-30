@@ -60,8 +60,19 @@ from argparse import (
     _ArgumentGroup,
     _SubParsersAction,
 )
-from asyncio import run as run_in_loop
+from asyncio import (
+    FIRST_COMPLETED,
+    all_tasks,
+    ensure_future,
+    gather,
+    new_event_loop,
+    set_event_loop,
+    wait,
+    wait_for,
+)
 from asyncio.exceptions import CancelledError
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
 from dataclasses import fields
 from gettext import translation
 from importlib.util import find_spec
@@ -79,8 +90,12 @@ from logging import (
 from os import environ, getenv
 from os.path import join
 from pathlib import Path
+from signal import SIGINT, default_int_handler
+from signal import signal as set_signal_handler
 from subprocess import run
+from threading import current_thread, main_thread
 from tomllib import load as toml_load
+from types import FrameType
 from typing import Callable, Protocol, TextIO, cast, get_args, get_origin
 from typing import get_args as get_type_args
 from uuid import uuid4
@@ -112,6 +127,130 @@ is_torch_flex_attn_available = cast(
     Callable[[], bool],
     getattr(transformer_utils, "is_torch_flex_attn_available", lambda: False),
 )
+
+_INTERRUPT_DRAIN_TIMEOUT = 0.5
+_LOOP_HANDLES_SIGINT = False
+
+
+@contextmanager
+def _direct_keyboard_interrupts() -> Iterator[None]:
+    if _LOOP_HANDLES_SIGINT or current_thread() is not main_thread():
+        yield
+        return
+
+    previous_handler = set_signal_handler(SIGINT, default_int_handler)
+    try:
+        yield
+    finally:
+        set_signal_handler(SIGINT, previous_handler)
+
+
+def run_in_loop(awaitable: Awaitable[object]) -> None:
+    loop = new_event_loop()
+    interrupted = False
+    installed_signal_handler = False
+    previous_signal_handler = None
+    previous_loop_handles_sigint = _LOOP_HANDLES_SIGINT
+    main_task = ensure_future(awaitable, loop=loop)
+    interrupt_signal = loop.create_future()
+
+    async def run_until_interrupt() -> object:
+        done, _ = await wait(
+            {main_task, interrupt_signal}, return_when=FIRST_COMPLETED
+        )
+        if interrupt_signal in done:
+            if not main_task.done():
+                main_task.cancel()
+            raise KeyboardInterrupt()
+        return await main_task
+
+    def mark_interrupted() -> None:
+        nonlocal interrupted
+        interrupted = True
+
+    def request_interrupt() -> None:
+        mark_interrupted()
+        if not interrupt_signal.done():
+            interrupt_signal.set_result(None)
+        if not main_task.done():
+            main_task.cancel()
+
+    def request_interrupt_from_signal(
+        _signum: int, _frame: FrameType | None
+    ) -> None:
+        mark_interrupted()
+        try:
+            loop.call_soon_threadsafe(request_interrupt)
+        except RuntimeError:
+            request_interrupt()
+        raise KeyboardInterrupt()
+
+    try:
+        set_event_loop(loop)
+        if current_thread() is main_thread():
+            previous_signal_handler = set_signal_handler(
+                SIGINT, request_interrupt_from_signal
+            )
+            installed_signal_handler = True
+        globals()["_LOOP_HANDLES_SIGINT"] = installed_signal_handler
+        runner_task = ensure_future(run_until_interrupt(), loop=loop)
+        try:
+            loop.run_until_complete(runner_task)
+        except (
+            CancelledError,
+            KeyboardInterrupt,
+            CommandAbortException,
+        ):
+            interrupted = True
+            raise
+        finally:
+            pending = [task for task in all_tasks(loop) if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                pending_gather = gather(*pending, return_exceptions=True)
+                if interrupted:
+                    try:
+                        loop.run_until_complete(
+                            wait_for(
+                                pending_gather,
+                                timeout=_INTERRUPT_DRAIN_TIMEOUT,
+                            )
+                        )
+                    except (
+                        CancelledError,
+                        KeyboardInterrupt,
+                        TimeoutError,
+                    ):
+                        pass
+                else:
+                    loop.run_until_complete(pending_gather)
+            if interrupted:
+                try:
+                    loop.run_until_complete(
+                        wait_for(
+                            loop.shutdown_asyncgens(),
+                            timeout=_INTERRUPT_DRAIN_TIMEOUT,
+                        )
+                    )
+                except (
+                    CancelledError,
+                    KeyboardInterrupt,
+                    TimeoutError,
+                ):
+                    pass
+            else:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.run_until_complete(loop.shutdown_default_executor())
+            if main_task.done() and not main_task.cancelled():
+                main_task.exception()
+    finally:
+        if installed_signal_handler:
+            assert previous_signal_handler is not None
+            set_signal_handler(SIGINT, previous_signal_handler)
+        globals()["_LOOP_HANDLES_SIGINT"] = previous_loop_handles_sigint
+        set_event_loop(None)
+        loop.close()
 
 
 class CLI:
@@ -2084,10 +2223,16 @@ class CLI:
 
         hub = HuggingfaceHub(access_token, args.cache_dir, self._logger)
 
-        try:
-            await self._main(args, theme, console, hub)
-        except (CancelledError, KeyboardInterrupt, CommandAbortException):
-            self._print_bye(console, theme, quiet=args.quiet)
+        with _direct_keyboard_interrupts():
+            try:
+                await self._main(args, theme, console, hub)
+            except (
+                CancelledError,
+                KeyboardInterrupt,
+                CommandAbortException,
+            ):
+                self._print_bye(console, theme, quiet=args.quiet)
+                raise
         if args.parallel and "LOCAL_RANK" in environ:
             try:
                 destroy_process_group()
@@ -2330,7 +2475,7 @@ def main() -> None:
     cli = CLI(logger)
     try:
         run_in_loop(cli())
-    except KeyboardInterrupt:
+    except (CancelledError, KeyboardInterrupt, CommandAbortException):
         cli._print_bye()
 
 

@@ -1,3 +1,4 @@
+from ...cli import CommandAbortException
 from ...entities import (
     EngineMessage as EngineMessage,
 )
@@ -42,6 +43,11 @@ from uuid import UUID, uuid4
 
 
 class Orchestrator:
+    _INTERRUPTED_EXIT_EXCEPTIONS = (
+        asyncio.CancelledError,
+        KeyboardInterrupt,
+        CommandAbortException,
+    )
     _id: UUID
     _name: str | None
     _operations: list[AgentOperation]
@@ -330,18 +336,24 @@ class Orchestrator:
         exc_value: BaseException | None,
         traceback: Any | None,
     ) -> bool | None:
-        await self.sync_messages()
+        interrupted_exit = exc_type is not None and issubclass(
+            exc_type, self._INTERRUPTED_EXIT_EXCEPTIONS
+        )
+
+        if not interrupted_exit:
+            await self.sync_messages()
 
         if self._exit_memory:
             self._memory.__exit__(exc_type, exc_value, traceback)
 
         result = self._engines_stack.__exit__(exc_type, exc_value, traceback)
-        for engine in self._engines:
-            wait_closed = getattr(engine, "wait_closed", None)
-            if wait_closed:
-                close_result = wait_closed()
-                if isawaitable(close_result):
-                    await close_result
+        if not interrupted_exit:
+            for engine in self._engines:
+                wait_closed = getattr(engine, "wait_closed", None)
+                if wait_closed:
+                    close_result = wait_closed()
+                    if isawaitable(close_result):
+                        await close_result
         self._engines.clear()
         return result
 

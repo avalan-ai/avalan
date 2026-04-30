@@ -11,6 +11,7 @@ from ..entities import (
 from . import Tool, ToolSet
 from .parser import ToolCallParser
 
+from asyncio import CancelledError, wait_for
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from types import TracebackType
@@ -19,6 +20,8 @@ from uuid import uuid4
 
 
 class ToolManager:
+    _INTERRUPT_CLOSE_TIMEOUT = 0.5
+
     _parser: ToolCallParser
     _stack: AsyncExitStack
     _tools: dict[str, Callable[..., Any]] | None = None
@@ -134,7 +137,20 @@ class ToolManager:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        return await self._stack.__aexit__(exc_type, exc_value, traceback)
+        interrupted_exit = exc_type is not None and issubclass(
+            exc_type, (CancelledError, KeyboardInterrupt)
+        )
+        close = self._stack.__aexit__(exc_type, exc_value, traceback)
+        if not interrupted_exit:
+            return await close
+
+        try:
+            await wait_for(close, timeout=self._INTERRUPT_CLOSE_TIMEOUT)
+        except (CancelledError, TimeoutError):
+            return False
+        except Exception:
+            return False
+        return False
 
     async def __call__(
         self, call: ToolCall, context: ToolCallContext
@@ -215,7 +231,7 @@ class ToolManager:
                 arguments=call.arguments,
                 result=result,
             )
-        except BaseException as exc:
+        except Exception as exc:
             return ToolCallError(
                 id=uuid4(),
                 call=call,

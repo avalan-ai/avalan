@@ -1,4 +1,5 @@
 import unittest
+from asyncio import CancelledError
 from dataclasses import asdict
 from json import dumps
 from os.path import join
@@ -167,9 +168,36 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         engine.wait_closed = AsyncMock()
         self.orch._engines = [engine]
         result = await self.orch.__aexit__(None, None, None)
+        agent.sync_messages.assert_awaited_once()
         self.memory.__exit__.assert_called_once_with(None, None, None)
         engine.wait_closed.assert_awaited_once()
         self.assertEqual(result, "done")
+
+    async def test_aexit_skips_message_sync_on_keyboard_interrupt(self):
+        agent = MagicMock(engine=MagicMock(model_id="m"))
+        agent.sync_messages = AsyncMock()
+        self.orch._last_engine_agent = agent
+        self.orch._engines_stack.__exit__ = MagicMock(return_value=False)
+        engine = MagicMock()
+        engine.wait_closed = AsyncMock()
+        self.orch._engines = [engine]
+
+        await self.orch.__aexit__(KeyboardInterrupt, KeyboardInterrupt(), None)
+
+        agent.sync_messages.assert_not_awaited()
+        engine.wait_closed.assert_not_awaited()
+        self.memory.__exit__.assert_called_once()
+        self.orch._engines_stack.__exit__.assert_called_once()
+
+    async def test_aexit_skips_message_sync_on_cancelled_error(self):
+        agent = MagicMock(engine=MagicMock(model_id="m"))
+        agent.sync_messages = AsyncMock()
+        self.orch._last_engine_agent = agent
+        self.orch._engines_stack.__exit__ = MagicMock(return_value=False)
+
+        await self.orch.__aexit__(CancelledError, CancelledError(), None)
+
+        agent.sync_messages.assert_not_awaited()
 
 
 class OrchestratorInputTokenCountTestCase(unittest.IsolatedAsyncioTestCase):
