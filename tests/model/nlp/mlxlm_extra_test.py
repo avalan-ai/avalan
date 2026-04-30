@@ -1,8 +1,9 @@
 import importlib
 import sys
 import types
+from asyncio import wait_for
 from logging import getLogger
-from threading import get_ident
+from threading import Event, get_ident
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
@@ -39,7 +40,7 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
                 await stream.__anext__()
         del sys.modules["avalan.model"].TextGenerationModel
 
-    async def test_stream_factory_stays_on_event_loop_thread(self) -> None:
+    async def test_stream_factory_stays_on_worker_thread(self) -> None:
         stub = types.ModuleType("mlx_lm")
         stub.generate = MagicMock()
         stub.load = MagicMock()
@@ -84,8 +85,40 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
 
         del sys.modules["avalan.model"].TextGenerationModel
         self.assertTrue(owner_threads)
-        self.assertEqual(owner_threads, [get_ident()])
-        self.assertEqual(set(next_threads), {get_ident()})
+        self.assertNotEqual(owner_threads, [get_ident()])
+        self.assertEqual(set(next_threads), set(owner_threads))
+
+    async def test_stream_next_does_not_block_event_loop(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        release = Event()
+
+        def chunks():
+            release.wait(1)
+            yield "late"
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(chunks())
+            with self.assertRaises(TimeoutError):
+                await wait_for(stream.__anext__(), 0.05)
+            stream.close()
+            release.set()
+
+        del sys.modules["avalan.model"].TextGenerationModel
 
 
 class MlxLmModelTestCase(IsolatedAsyncioTestCase):

@@ -125,6 +125,10 @@ class CLI:
         self._version = version()
         self._license = license()
         self._logger = logger
+        self._abort_console: Console | None = None
+        self._abort_printed = False
+        self._abort_quiet = False
+        self._abort_theme: Theme | None = None
 
         cache_dir = HuggingfaceHub.DEFAULT_CACHE_DIR
         default_locale, _ = getlocale()
@@ -2053,6 +2057,9 @@ class CLI:
         console = Console(
             theme=RichTheme(styles=rich_theme_styles), record=args.record
         )
+        self._abort_console = console
+        self._abort_quiet = args.quiet
+        self._abort_theme = theme
 
         if args.help_full:
             return self._help(console, self._parser)
@@ -2080,14 +2087,34 @@ class CLI:
         try:
             await self._main(args, theme, console, hub)
         except (CancelledError, KeyboardInterrupt, CommandAbortException):
-            if not args.quiet:
-                console.print(theme.bye())
+            self._print_bye(console, theme, quiet=args.quiet)
         if args.parallel and "LOCAL_RANK" in environ:
             try:
                 destroy_process_group()
             except AssertionError:
                 # Process group might be dead already
                 pass
+
+    def _print_bye(
+        self,
+        console: Console | None = None,
+        theme: Theme | None = None,
+        *,
+        quiet: bool | None = None,
+    ) -> None:
+        if self._abort_printed:
+            return
+
+        is_quiet = self._abort_quiet if quiet is None else quiet
+        if is_quiet:
+            return
+
+        self._abort_printed = True
+        bye_console = console or self._abort_console or Console()
+        bye_theme = theme or self._abort_theme
+        bye_console.print(
+            bye_theme.bye() if bye_theme else ":vulcan_salute: bye :)"
+        )
 
     def _help(
         self,
@@ -2301,7 +2328,10 @@ def main() -> None:
     logger = getLogger(name())
 
     cli = CLI(logger)
-    run_in_loop(cli())
+    try:
+        run_in_loop(cli())
+    except KeyboardInterrupt:
+        cli._print_bye()
 
 
 if __name__ == "__main__":

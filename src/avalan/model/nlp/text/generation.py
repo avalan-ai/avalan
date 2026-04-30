@@ -20,12 +20,14 @@ from ....model.vendor import TextGenerationVendor
 from ....tool.manager import ToolManager
 from ....tool.parser import ToolCallParser
 
-from asyncio import sleep
+from asyncio import CancelledError, sleep
 from dataclasses import asdict, replace
 from importlib.util import find_spec
 from logging import Logger, getLogger
+from threading import Event as ThreadEvent
 from threading import Thread
-from typing import Any, AsyncGenerator, Literal, cast
+from time import perf_counter
+from typing import Any, AsyncGenerator, AsyncIterator, Literal, cast
 
 from diffusers import DiffusionPipeline
 from torch import Tensor, log_softmax, softmax, topk
@@ -42,6 +44,20 @@ from transformers.generation.stopping_criteria import StoppingCriteria
 from transformers.tokenization_utils_base import BatchEncoding
 
 _TOOL_MESSAGE_PARSER = ToolCallParser()
+_STREAMER_TIMEOUT_SECONDS = 0.1
+_STREAM_THREAD_JOIN_TIMEOUT_SECONDS = 2.0
+
+
+class _StopOnEventCriteria(StoppingCriteria):
+    def __init__(self, event: ThreadEvent) -> None:
+        self._event = event
+
+    def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
+        return self._event.is_set()
+
+
+def _is_event_loop_closed_error(exc: RuntimeError) -> bool:
+    return str(exc) == "Event loop is closed"
 
 
 class TextGenerationModel(BaseNLPModel):
@@ -112,7 +128,7 @@ class TextGenerationModel(BaseNLPModel):
             low_cpu_mem_usage=(
                 True if self._device else settings.low_cpu_mem_usage
             ),
-            torch_dtype=Engine.weight(settings.weight_type),
+            dtype=Engine.weight(settings.weight_type),
             device_map=self._device,
             token=settings.access_token,
             quantization_config=bnb_config,
@@ -221,14 +237,28 @@ class TextGenerationModel(BaseNLPModel):
         **kwargs: object,
     ) -> AsyncGenerator[str, None]:
         _l = self._log
+        stop_event = ThreadEvent()
+        thread_errors: list[BaseException] = []
+        stream_stopping_criterias = list(stopping_criterias or [])
+        stream_stopping_criterias.append(_StopOnEventCriteria(stop_event))
 
         streamer = AsyncTextIteratorStreamer(
             self._tokenizer,
             skip_prompt=True,
+            timeout=_STREAMER_TIMEOUT_SECONDS,
             decode_kwargs={"skip_special_tokens": skip_special_tokens},
         )
 
         _l("Created generator async text token streamer")
+
+        def finish_stream() -> None:
+            try:
+                streamer.on_finalized_text("", stream_end=True)
+            except RuntimeError as exc:
+                if not (
+                    stop_event.is_set() and _is_event_loop_closed_error(exc)
+                ):
+                    raise
 
         def generate_stream() -> None:
             _l(
@@ -236,26 +266,66 @@ class TextGenerationModel(BaseNLPModel):
                 f"{'with' if settings.do_sample else 'without'} sample "
                 f"and {settings.temperature} temperature"
             )
-            self._generate_output(
-                inputs,
-                settings,
-                stopping_criterias,
-                streamer=streamer,
-            )
+            try:
+                self._generate_output(
+                    inputs,
+                    settings,
+                    stream_stopping_criterias,
+                    streamer=streamer,
+                )
+            except RuntimeError as exc:
+                if stop_event.is_set() and _is_event_loop_closed_error(exc):
+                    return
+                thread_errors.append(exc)
+                finish_stream()
+            except Exception as exc:
+                # Thread targets cannot raise back into the consumer, so
+                # capture worker failures and wake the async iterator.
+                thread_errors.append(exc)
+                finish_stream()
 
         thread = Thread(
-            target=generate_stream, name=f"{self._model_id}/generate_stream"
+            target=generate_stream,
+            name=f"{self._model_id}/generate_stream",
+            daemon=True,
         )
         thread.start()
 
         _l(f"Generation thread #{thread.ident} ({thread.name}) started")
 
-        async for token in streamer:
-            yield token
+        stream = cast(AsyncIterator[str], streamer)
+        try:
+            while True:
+                if thread_errors:
+                    raise thread_errors[0]
+                try:
+                    yield await stream.__anext__()
+                except TimeoutError:
+                    if thread_errors:
+                        raise thread_errors[0]
+                    if not thread.is_alive():
+                        break
+                except StopAsyncIteration:
+                    break
+        except (CancelledError, GeneratorExit):
+            stop_event.set()
+            raise
+        finally:
+            stop_event.set()
+            await self._wait_for_stream_thread(thread)
 
-        thread.join()
+        if thread_errors:
+            raise thread_errors[0]
+
+        await self._wait_for_stream_thread(thread)
 
         _l(f"Generation thread #{thread.ident} ({thread.name}) finished")
+
+    @staticmethod
+    async def _wait_for_stream_thread(thread: Thread) -> None:
+        deadline = perf_counter() + _STREAM_THREAD_JOIN_TIMEOUT_SECONDS
+        while thread.is_alive() and perf_counter() < deadline:
+            await sleep(_STREAMER_TIMEOUT_SECONDS)
 
     def _string_output(
         self,

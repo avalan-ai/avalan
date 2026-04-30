@@ -777,3 +777,17 @@ class CliMainFunctionTestCase(TestCase):
                 ],
                 "false",
             )
+
+    def test_main_handles_keyboard_interrupt(self):
+        cli = MagicMock()
+        with (
+            patch(
+                "avalan.cli.__main__.run_in_loop",
+                side_effect=KeyboardInterrupt,
+            ),
+            patch("avalan.cli.__main__.CLI", return_value=cli),
+        ):
+            from avalan.cli.__main__ import main
+
+            main()
+        cli._print_bye.assert_called_once_with()
