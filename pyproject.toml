@@ -193,6 +193,7 @@ version = "1.4.1"
 optional = true
 
 [tool.poetry.group.test.dependencies]
+matplotlib = ">=3.8.0,<4.0.0"
 pytest = ">=8.4.1,<9.0.0"
 pytest-cov = ">=6.2.1,<7.0.0"
 
