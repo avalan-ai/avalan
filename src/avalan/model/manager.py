@@ -96,11 +96,6 @@ class ModelManager:
     _event_manager: EventManager | None
     _pending_exit_task: asyncio.Task[None] | None
 
-    _INTERRUPTED_EXIT_EXCEPTIONS = (
-        asyncio.CancelledError,
-        KeyboardInterrupt,
-    )
-
     def __init__(
         self,
         hub: HuggingfaceHub,
@@ -123,12 +118,6 @@ class ModelManager:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> Literal[False]:
-        interrupted_exit = exc_type is not None and issubclass(
-            exc_type, self._INTERRUPTED_EXIT_EXCEPTIONS
-        )
-        if interrupted_exit:
-            return False
-
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -146,17 +135,9 @@ class ModelManager:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
-        interrupted_exit = exc_type is not None and issubclass(
-            exc_type, self._INTERRUPTED_EXIT_EXCEPTIONS
-        )
         if self._pending_exit_task is not None:
-            if interrupted_exit:
-                self._pending_exit_task.cancel()
-            else:
-                await self._pending_exit_task
+            await self._pending_exit_task
             self._pending_exit_task = None
-        if interrupted_exit:
-            return False
         return bool(
             await self._stack.__aexit__(exc_type, exc_value, traceback)
         )

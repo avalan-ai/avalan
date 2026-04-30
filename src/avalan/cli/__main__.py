@@ -421,13 +421,11 @@ class CLI:
                 "If specified, no welcome screen and only model output is "
                 "displayed in model run (sets "
             )
-            + ", ".join(
-                [
-                    "--disable-loading-progress-bar",
-                    "--skip-hub-access-check",
-                    "--skip-special-tokens",
-                ]
-            )
+            + ", ".join([
+                "--disable-loading-progress-bar",
+                "--skip-hub-access-check",
+                "--skip-special-tokens",
+            ])
             + " automatically)",
         )
         global_parser.add_argument(
@@ -2223,22 +2221,24 @@ class CLI:
 
         hub = HuggingfaceHub(access_token, args.cache_dir, self._logger)
 
-        with _direct_keyboard_interrupts():
-            try:
-                await self._main(args, theme, console, hub)
-            except (
-                CancelledError,
-                KeyboardInterrupt,
-                CommandAbortException,
-            ):
-                self._print_bye(console, theme, quiet=args.quiet)
-                raise
-        if args.parallel and "LOCAL_RANK" in environ:
-            try:
-                destroy_process_group()
-            except AssertionError:
-                # Process group might be dead already
-                pass
+        try:
+            with _direct_keyboard_interrupts():
+                try:
+                    await self._main(args, theme, console, hub)
+                except (
+                    CancelledError,
+                    KeyboardInterrupt,
+                    CommandAbortException,
+                ):
+                    self._print_bye(console, theme, quiet=args.quiet)
+                    raise
+        finally:
+            if args.parallel and "LOCAL_RANK" in environ:
+                try:
+                    destroy_process_group()
+                except AssertionError:
+                    # Process group might be dead already
+                    pass
 
     def _print_bye(
         self,

@@ -23,9 +23,9 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
         sampler_mod.make_sampler = MagicMock()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         with patch.dict(
             sys.modules,
             {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
@@ -39,7 +39,7 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
                 await stream.__anext__()
         del sys.modules["avalan.model"].TextGenerationModel
 
-    async def test_stream_factory_stays_on_consumer_thread(self) -> None:
+    async def test_stream_factory_stays_on_worker_thread(self) -> None:
         stub = types.ModuleType("mlx_lm")
         stub.generate = MagicMock()
         stub.load = MagicMock()
@@ -48,12 +48,11 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
         sampler_mod.make_sampler = MagicMock()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         owner_threads: list[int] = []
         next_threads: list[int] = []
-        consumer_thread = get_ident()
 
         class ThreadBoundIterator:
             def __init__(self) -> None:
@@ -85,7 +84,7 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
 
         del sys.modules["avalan.model"].TextGenerationModel
         self.assertTrue(owner_threads)
-        self.assertEqual(owner_threads, [consumer_thread])
+        self.assertEqual(len(set(owner_threads)), 1)
         self.assertEqual(set(next_threads), set(owner_threads))
 
     async def test_stream_close_short_circuits_iteration(self) -> None:
@@ -97,9 +96,9 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
         sampler_mod.make_sampler = MagicMock()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
 
         with patch.dict(
             sys.modules,
@@ -130,9 +129,9 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.mlxlm")
         )
@@ -270,9 +269,9 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.mlxlm")
         )
@@ -318,12 +317,10 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-        self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
-            [
-                MagicMock(text="a"),
-                MagicMock(text="b"),
-            ]
-        )
+        self.stub.stream_generate.side_effect = lambda *a, **kw: iter([
+            MagicMock(text="a"),
+            MagicMock(text="b"),
+        ])
         chunks = []
         async for c in model._stream_generator(
             {"input_ids": [[1]]}, GenerationSettings(), False
@@ -437,9 +434,9 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.mlxlm")
         )
@@ -452,12 +449,10 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
 
     async def test_stream_handles_token_and_text_chunks(self) -> None:
         stream = self.mod.MlxLmStream(
-            iter(
-                [
-                    self.mod.Token(token="tok"),
-                    types.SimpleNamespace(text="txt"),
-                ]
-            )
+            iter([
+                self.mod.Token(token="tok"),
+                types.SimpleNamespace(text="txt"),
+            ])
         )
 
         self.assertEqual(await stream.__anext__(), "tok")
@@ -482,12 +477,10 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-        self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
-            [
-                self.mod.Token(token="z"),
-                types.SimpleNamespace(text="y"),
-            ]
-        )
+        self.stub.stream_generate.side_effect = lambda *a, **kw: iter([
+            self.mod.Token(token="z"),
+            types.SimpleNamespace(text="y"),
+        ])
         chunks = []
         async for chunk in model._stream_generator(
             {"input_ids": [[1]]}, GenerationSettings(), False

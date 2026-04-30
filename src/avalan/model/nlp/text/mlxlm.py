@@ -10,6 +10,7 @@ from ....tool.manager import ToolManager
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
 
+from asyncio import Queue, create_task, get_running_loop, to_thread
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, replace
 from functools import lru_cache
@@ -74,7 +75,7 @@ def make_sampler(*args: Any, **kwargs: Any) -> Any:
 
 
 class MlxLmStream(TextGenerationVendorStream):
-    """Wrap a synchronous MLX token generator on the consumer thread."""
+    """Bridge synchronous MLX generation from a dedicated worker thread."""
 
     _SENTINEL = object()
 
@@ -92,9 +93,9 @@ class MlxLmStream(TextGenerationVendorStream):
             self._iterator = None
             self._iterator_factory = generator
 
-        async def _generator() -> (
-            AsyncGenerator[Token | TokenDetail | str, None]
-        ):
+        async def _generator() -> AsyncGenerator[
+            Token | TokenDetail | str, None
+        ]:
             while True:
                 item = await self._next_raw()
                 if item is self._SENTINEL:
@@ -125,8 +126,22 @@ class MlxLmStream(TextGenerationVendorStream):
     async def _next_raw(self) -> object:
         if self._closed:
             return self._SENTINEL
+
+        queue: Queue[object] = Queue(maxsize=1)
+        loop = get_running_loop()
+
+        def _pull_chunk() -> None:
+            try:
+                chunk = self._next_chunk()
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+                return
+            loop.call_soon_threadsafe(queue.put_nowait, chunk)
+
         try:
-            chunk = self._next_chunk()
+            pull_task = create_task(to_thread(_pull_chunk))
+            chunk = await queue.get()
+            await pull_task
         except Exception:
             self.close()
             raise
