@@ -7,10 +7,6 @@ from ...entities import (
     GenerationSettings,  # noqa: F401
     Input,
     Message,
-    MessageContent,
-    MessageContentFile,
-    MessageContentText,
-    MessageRole,
     Modality,
     Model,
     ReasoningToken,
@@ -21,6 +17,7 @@ from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.input import text_generation_input_from_files
 from ...model.manager import ModelManager
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
@@ -39,13 +36,10 @@ from asyncio import (
     sleep,
     to_thread,
 )
-from base64 import b64encode
 from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
-from mimetypes import guess_type
-from pathlib import Path
 from time import perf_counter
 from typing import Any, AsyncGenerator, Awaitable, cast
 
@@ -67,29 +61,7 @@ def _supports_optional_stdin(modality: Modality) -> bool:
 def _text_generation_input(
     input_string: str | None, file_paths: list[str] | None
 ) -> Message | str | None:
-    if not file_paths:
-        return input_string
-
-    content: list[MessageContent] = []
-    if input_string:
-        content.append(MessageContentText(type="text", text=input_string))
-
-    for file_path in file_paths:
-        path = Path(file_path)
-        assert path.is_file(), f"Input file not found: {file_path}"
-        mime_type = guess_type(path.name)[0] or "application/octet-stream"
-        content.append(
-            MessageContentFile(
-                type="file",
-                file={
-                    "file_data": b64encode(path.read_bytes()).decode("ascii"),
-                    "filename": path.name,
-                    "mime_type": mime_type,
-                },
-            )
-        )
-
-    return Message(role=MessageRole.USER, content=content)
+    return text_generation_input_from_files(input_string, file_paths)
 
 
 def model_display(

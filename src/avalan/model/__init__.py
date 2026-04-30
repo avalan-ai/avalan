@@ -5,6 +5,9 @@ from ..entities import (
 )
 from .call import ModelCall as ModelCall
 from .call import ModelCallContext as ModelCallContext
+from .input import (
+    text_generation_input_from_files as text_generation_input_from_files,
+)
 from .response.text import TextGenerationResponse
 from .vendor import TextGenerationVendorStream
 
