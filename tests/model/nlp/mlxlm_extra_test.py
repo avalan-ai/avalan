@@ -255,6 +255,33 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             chunks.append(c)
         self.assertEqual(chunks, ["a", "b"])
 
+    def test_input_ids_from_inputs_validation(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "include input_ids"
+        ):
+            self.mod.MlxLmModel._input_ids_from_inputs({})
+        with self.assertRaisesRegex(
+            ValueError, "mapping or tensor"
+        ):
+            self.mod.MlxLmModel._input_ids_from_inputs("bad")
+
+    def test_first_prompt_sequence_fallbacks(self) -> None:
+        class BadShape:
+            shape = [2, 1]
+
+            def __getitem__(self, _):
+                raise TypeError("bad index")
+
+        bad_shape = BadShape()
+        self.assertIs(
+            self.mod.MlxLmModel._first_prompt_sequence(bad_shape), bad_shape
+        )
+        self.assertEqual(
+            self.mod.MlxLmModel._first_prompt_sequence([[1], [2]]), [1]
+        )
+        self.assertEqual(self.mod.MlxLmModel._first_prompt_sequence([1]), [1])
+        self.assertEqual(self.mod.MlxLmModel._first_prompt_sequence("x"), "x")
+
     def test_string_output(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
@@ -414,3 +441,51 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
                 GenerationSettings(),
                 False,
             )
+
+
+class MlxImportGuardTestCase(IsolatedAsyncioTestCase):
+    async def test_import_guard_behaviors(self) -> None:
+        mod = importlib.import_module("avalan.model.nlp.text.mlxlm")
+        mod._mlx_lm_import_is_safe.cache_clear()
+        with patch.object(mod, "find_spec", return_value=None):
+            self.assertFalse(mod._mlx_lm_import_is_safe())
+        mod._mlx_lm_import_is_safe.cache_clear()
+        self.assertIn("mlx-lm", mod._mlx_unavailable_message())
+
+        with patch.object(mod, "find_spec", side_effect=ValueError("bad")):
+            self.assertFalse(mod._mlx_lm_import_is_safe())
+        mod._mlx_lm_import_is_safe.cache_clear()
+
+        with patch.object(mod, "find_spec", return_value=True), patch.object(
+            mod, "run", return_value=MagicMock(returncode=1)
+        ):
+            self.assertFalse(mod._mlx_lm_import_is_safe())
+        mod._mlx_lm_import_is_safe.cache_clear()
+
+        with patch.object(mod, "_mlx_lm_import_is_safe", return_value=False):
+            with self.assertRaises(ModuleNotFoundError):
+                mod._require_mlx_lm()
+            with self.assertRaises(ModuleNotFoundError):
+                mod.make_sampler()
+
+    async def test_first_prompt_sequence_remaining_paths(self) -> None:
+        mod = importlib.import_module("avalan.model.nlp.text.mlxlm")
+
+        class OneDimensional:
+            shape = (2,)
+
+        one_dimensional = OneDimensional()
+        self.assertIs(
+            mod.MlxLmModel._first_prompt_sequence(one_dimensional),
+            one_dimensional,
+        )
+
+        class KeyErrorIndex:
+            def __getitem__(self, _):
+                raise KeyError("k")
+
+        key_error_index = KeyErrorIndex()
+        self.assertIs(
+            mod.MlxLmModel._first_prompt_sequence(key_error_index),
+            key_error_index,
+        )
