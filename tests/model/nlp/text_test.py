@@ -119,7 +119,7 @@ class TextGenerationModelTestCase(TestCase):
                     attn_implementation=None,
                     output_hidden_states=False,
                     trust_remote_code=False,
-                    torch_dtype="auto",
+                    dtype="auto",
                     state_dict=None,
                     local_files_only=False,
                     low_cpu_mem_usage=True,
