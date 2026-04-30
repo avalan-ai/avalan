@@ -17,7 +17,7 @@ from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.hubs.huggingface import HuggingfaceHub
-from ...model.input import text_generation_input_from_files
+from ...model.input import input_files
 from ...model.manager import ModelManager
 from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
@@ -61,7 +61,7 @@ def _supports_optional_stdin(modality: Modality) -> bool:
 def _text_generation_input(
     input_string: str | None, file_paths: list[str] | None
 ) -> Message | str | None:
-    return text_generation_input_from_files(input_string, file_paths)
+    return input_files(input_string, file_paths)
 
 
 def model_display(

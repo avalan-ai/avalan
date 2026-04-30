@@ -11,7 +11,7 @@ from mimetypes import guess_type
 from pathlib import Path
 
 
-def text_generation_input_from_files(
+def input_files(
     input_text: str | None, file_paths: list[str] | None
 ) -> Message | str | None:
     """Build text-generation input from text and local file paths."""
