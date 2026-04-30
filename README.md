@@ -1781,32 +1781,31 @@ echo "The attached invoice may match a customer record in the database. Find the
         --input-file docs/examples/playground/invoice.pdf
 ```
 
-Or call the OpenAI Responses endpoint directly with streaming SSE events:
+Or call the OpenAI Responses endpoint directly with the SDK:
 
-```sh
-pdf=docs/examples/playground/invoice.pdf
-jq -n \
-    --arg filename "${pdf##*/}" \
-    --arg data "data:application/pdf;base64,$(base64 < "$pdf" | tr -d '\n')" '
-    {
-      input: [{
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: "The attached invoice may match a customer record in the database. Find the matching account and return its account reference ID."
-          },
-          {
-            type: "input_file",
-            filename: $filename,
-            file_data: $data
-          }
-        ]
-      }],
-      stream: true
-}' | curl -N "http://127.0.0.1:9001/v1/responses" \
-    -H "Content-Type: application/json" \
-    -d @-
+```python
+from asyncio import run
+from avalan.model import input_files
+from openai import AsyncOpenAI
+
+
+async def main() -> None:
+    client = AsyncOpenAI(base_url="http://127.0.0.1:9001/v1", api_key="none")
+    response = await client.responses.create(
+        model="gpt-5.4",
+        input=input_files(
+            "The attached invoice may match a customer record in the database. "
+            "Find the matching account and return its account reference ID.",
+            ["docs/examples/playground/invoice.pdf"],
+        ),
+        stream=True,
+    )
+
+    async for event in response:
+        print(event)
+
+
+run(main())
 ```
 
 #### MCP server
