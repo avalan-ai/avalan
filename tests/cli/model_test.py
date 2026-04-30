@@ -188,6 +188,11 @@ class CliModelTestCase(TestCase):
         self.assertFalse(
             model_cmds._supports_optional_stdin(Modality.TEXT_GENERATION)
         )
+        self.assertFalse(
+            model_cmds._supports_optional_stdin(
+                Modality.VISION_IMAGE_CLASSIFICATION
+            )
+        )
 
     def test_model_install_secret_creates_secret(self):
         args = Namespace(skip_display_reasoning_time=False, model="m")

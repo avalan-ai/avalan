@@ -16,6 +16,45 @@ async def _gen():
 
 
 class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
+    async def test_count_input_tokens_fallback_paths(self):
+        class NoLen:
+            def __len__(self):
+                raise TypeError("no len")
+
+        self.assertEqual(TextGenerationResponse._count_input_tokens(None), 0)
+        self.assertEqual(
+            TextGenerationResponse._count_input_tokens({"input_ids": None}), 0
+        )
+        self.assertEqual(
+            TextGenerationResponse._count_input_tokens(NoLen()),
+            0,
+        )
+
+    async def test_first_input_sequence_edge_paths(self):
+        class BadShape:
+            shape = object()
+
+            def __getitem__(self, _):
+                raise TypeError("bad index")
+
+        self.assertEqual(
+            TextGenerationResponse._first_input_sequence([]),
+            [],
+        )
+        bad_shape = BadShape()
+        self.assertIs(
+            TextGenerationResponse._first_input_sequence(bad_shape), bad_shape
+        )
+
+        class OneDimensional:
+            shape = (3,)
+
+        one_dimensional = OneDimensional()
+        self.assertIs(
+            TextGenerationResponse._first_input_sequence(one_dimensional),
+            one_dimensional,
+        )
+
     async def test_parser_queue_precedence(self):
         settings = GenerationSettings()
         resp = TextGenerationResponse(

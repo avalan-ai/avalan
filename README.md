@@ -83,14 +83,14 @@ your workflow; the examples later in this README may require additional extras.
 
 Hosted APIs plus tool-enabled or served agents:
 
-```bash
+```sh
 python3 -m pip install -U "avalan[agent,server,tool,vendors]"
 ```
 
 Broader local development setup with the capabilities used throughout this
 README:
 
-```bash
+```sh
 python3 -m pip install -U "avalan[agent,audio,memory,server,tool,translation,vendors,vision]"
 ```
 
@@ -105,28 +105,28 @@ For the leanest install, omit the extras list entirely.
 
 ### 🍺 Homebrew (macOS)
 
-```bash
+```sh
 brew tap avalan-ai/avalan
 brew install avalan
 ```
 
 ### 🛠️ From Source with Poetry
 
-```bash
+```sh
 poetry install --all-extras --with test
 ```
 
 > [!TIP]
 > On macOS ensure the Xcode command line tools are present and install the build dependencies before compiling extras that rely on `sentencepiece`:
 >
-> ```bash
+> ```sh
 > xcode-select --install
 > brew install cmake pkg-config protobuf sentencepiece
 > ```
 
 When you need bleeding-edge `transformers` features, install the latest nightly:
 
-```bash
+```sh
 poetry run pip install --no-cache-dir "git+https://github.com/huggingface/transformers"
 ```
 
@@ -136,7 +136,7 @@ poetry run pip install --no-cache-dir "git+https://github.com/huggingface/transf
 
 Export a vendor key, then run:
 
-```bash
+```sh
 export OPENAI_API_KEY=...
 echo "Who are you, and who is Leo Messi?" \
     | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
@@ -184,7 +184,7 @@ custom endpoints.
 Avalan supports popular vendor models through
 [engine URIs](docs/ai_uri.md). The example below uses OpenAI's GPT-4o:
 
-```bash
+```sh
 echo "Who are you, and who is Leo Messi?" \
     | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
         --system "You are Aurora, a helpful assistant" \
@@ -202,7 +202,7 @@ filters. The following command looks for up to three text-generation models that
 run with the `mlx` backend, match the term `DeepSeek-R1`, and were published by
 the MLX community:
 
-```bash
+```sh
 avalan model search --name DeepSeek-R1 \
     --library mlx \
     --task text-generation \
@@ -229,7 +229,7 @@ The command returns three matching models:
 
 Install the first model:
 
-```bash
+```sh
 avalan model install mlx-community/DeepSeek-R1-Distill-Qwen-14B
 ```
 
@@ -258,7 +258,7 @@ Test the model we just installed, specifying `mlx` as the backend:
 > Nvidia GPUs, models that run on the backend `vllm` are also orders of
 > magnitude faster.
 
-```bash
+```sh
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run 'mlx-community/DeepSeek-R1-Distill-Qwen-14B' \
         --temperature 0.6 \
@@ -334,7 +334,7 @@ task you need:
 
 Determine the sentiment (neutral, happy, angry, sad) of a given audio file:
 
-```bash
+```sh
 avalan model run "superb/hubert-base-superb-er" \
     --modality audio_classification \
     --path docs/examples/playground/oprah.wav \
@@ -372,7 +372,7 @@ For a runnable script, see [docs/examples/audio_classification.py](docs/examples
 
 Transcribe speech from an audio file:
 
-```bash
+```sh
 avalan model run "facebook/wav2vec2-base-960h" \
     --modality audio_speech_recognition \
     --path docs/examples/playground/oprah.wav \
@@ -402,7 +402,7 @@ For a runnable script, see [docs/examples/audio_speech_recognition.py](docs/exam
 
 Generate speech in Oprah's voice from a text prompt. The example uses an 18-second clip from her [eulogy for Rosa Parks](https://www.americanrhetoric.com/speeches/oprahwinfreyonrosaparks.htm) as a reference:
 
-```bash
+```sh
 echo "[S1] Leo Messi is the greatest football player of all times." | \
     avalan model run "nari-labs/Dia-1.6B-0626" \
             --modality audio_text_to_speech \
@@ -434,7 +434,7 @@ For a runnable script, see [docs/examples/audio_text_to_speech.py](docs/examples
 
 Create a short melody from a text prompt:
 
-```bash
+```sh
 echo "A funky riff about Leo Messi." |
     avalan model run "facebook/musicgen-small" \
         --modality audio_generation \
@@ -458,7 +458,7 @@ For a runnable script, see [docs/examples/audio_generation.py](docs/examples/aud
 
 Answer a question based on context using a question answering model:
 
-```bash
+```sh
 echo "What sport does Leo play?" \
     | avalan model run "deepset/roberta-base-squad2" \
         --modality "text_question_answering" \
@@ -489,7 +489,7 @@ For a runnable script, see [docs/examples/question_answering.py](docs/examples/q
 
 Classify the sentiment of short text:
 
-```bash
+```sh
 echo "We love Leo Messi." \
     | avalan model run "distilbert-base-uncased-finetuned-sst-2-english" \
         --modality "text_sequence_classification"
@@ -516,7 +516,7 @@ For a runnable script, see [docs/examples/sequence_classification.py](docs/examp
 
 Summarize text using a sequence-to-sequence model:
 
-```bash
+```sh
 echo "
     Andres Cuccittini, commonly known as Andy Cucci, is an Argentine
     professional footballer who plays as a forward for the Argentina
@@ -562,7 +562,7 @@ For a runnable script, see [docs/examples/seq2seq_summarization.py](docs/example
 
 Run a local model and control sampling with `--temperature`, `--top-p`, and `--top-k`. The example instructs the assistant to act as "Aurora" and limits the output to 100 tokens:
 
-```bash
+```sh
 echo "Who are you, and who is Leo Messi?" \
     | avalan model run "meta-llama/Meta-Llama-3-8B-Instruct" \
         --system "You are Aurora, a helpful assistant" \
@@ -595,7 +595,7 @@ with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as model:
 
 Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
 
-```bash
+```sh
 echo "Who are you, and who is Leo Messi?" \
     | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
         --system "You are Aurora, a helpful assistant" \
@@ -630,7 +630,7 @@ Amazon Bedrock models use the same workflow. With your AWS credentials
 configured (for example with `AWS_PROFILE` or environment variables),
 you can target any Bedrock region via `--base-url`:
 
-```bash
+```sh
 echo "Summarize the latest AWS re:Invent keynote in three bullet points." \
       | avalan model run "ai://bedrock/us.amazon.nova-lite-v1:0" \
           --base-url "us-east-1" \
@@ -662,7 +662,7 @@ These highlights capture some of the major themes and announcements from the key
 Classify tokens with labels for Named Entity Recognition (NER) or
 Part-of-Speech (POS):
 
-```bash
+```sh
 echo "
     Lionel Messi, commonly known as Leo Messi, is an Argentine
     professional footballer widely regarded as one of the
@@ -708,7 +708,7 @@ For a runnable script, see [docs/examples/token_classification.py](docs/examples
 
 Translate text between languages with a sequence-to-sequence model:
 
-```bash
+```sh
 echo "
     Lionel Messi, commonly known as Leo Messi, is an Argentine
     professional footballer who plays as a forward for the Argentina
@@ -757,7 +757,7 @@ For a runnable script, see [docs/examples/seq2seq_translation.py](docs/examples/
 
 Answer questions to extract information from an image, without using OCR.
 
-```bash
+```sh
 echo "<s_docvqa><s_question>
     What is the FACTURA Number?
 </s_question><s_answer>" | \
@@ -793,7 +793,7 @@ For a runnable script, see [docs/examples/vision_encoder_decoder.py](docs/exampl
 
 Classify an image, such as determining whether it is a hot dog, or not a hot dog 🤓:
 
-```bash
+```sh
 avalan model run "microsoft/resnet-50" \
     --modality vision_image_classification \
     --path docs/examples/playground/cat.jpg
@@ -824,7 +824,7 @@ For a runnable script, see [docs/examples/vision_image_classification.py](docs/e
 
 Generate a caption for an image:
 
-```bash
+```sh
 avalan model run "salesforce/blip-image-captioning-base" \
     --modality vision_image_to_text \
     --path docs/examples/playground/Example_Image_1.jpg
@@ -851,7 +851,7 @@ For a runnable script, see [docs/examples/vision_image_to_text.py](docs/examples
 
 Provide an image and an instruction to an `image-text-to-text` model:
 
-```bash
+```sh
 echo "Transcribe the text on this image, keeping format" | \
     avalan model run "ai://local/google/gemma-3-12b-it" \
         --modality vision_image_text_to_text \
@@ -895,7 +895,7 @@ For a runnable script, see [docs/examples/vision_ocr.py](docs/examples/vision_oc
 
 Detect objects in an image and list them with accuracy scores:
 
-```bash
+```sh
 avalan model run "facebook/detr-resnet-50" \
     --modality vision_object_detection \
     --path docs/examples/playground/kitchen.jpg \
@@ -947,7 +947,7 @@ For a runnable script, see [docs/examples/vision_object_detection.py](docs/examp
 
 Classify each pixel using a semantic segmentation model:
 
-```bash
+```sh
 avalan model run "nvidia/segformer-b0-finetuned-ade-512-512" \
     --modality vision_semantic_segmentation \
     --path docs/examples/playground/kitchen.jpg
@@ -1022,7 +1022,7 @@ For a runnable script, see [docs/examples/vision_semantic_segmentation.py](docs/
 
 Create an animation from a prompt using a base model for styling:
 
-```bash
+```sh
 echo 'A tabby cat slowly walking' | \
     avalan model run "ByteDance/AnimateDiff-Lightning" \
         --modality vision_text_to_animation \
@@ -1062,7 +1062,7 @@ For a runnable script, see [docs/examples/vision_text_to_animation.py](docs/exam
 
 Create an image from a text prompt:
 
-```bash
+```sh
 echo 'Leo Messi petting a purring tubby cat' | \
     avalan model run "stabilityai/stable-diffusion-xl-base-1.0" \
         --modality vision_text_to_image \
@@ -1101,7 +1101,7 @@ For a runnable script, see [docs/examples/vision_text_to_image.py](docs/examples
 
 Create an MP4 video from a prompt, using a negative prompt for guardrails and an image as reference:
 
-```bash
+```sh
 echo 'A cute little penguin takes out a book and starts reading it' | \
     avalan model run "Lightricks/LTX-Video-0.9.7-dev" \
         --modality vision_text_to_video \
@@ -1167,7 +1167,7 @@ Use the math toolset whenever your agent needs deterministic arithmetic or algeb
 
 The example below uses a local 8B LLM, enables recent memory, and loads a calculator tool. The agent begins with a math question and stays open for follow-ups:
 
-```bash
+```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
@@ -1188,7 +1188,7 @@ Notice the GPU utilization at the bottom:
 
 You can give your GPU some breathing type by running the same on a vendor model, like Anthropic:
 
-```bash
+```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
   | avalan agent run \
       --engine-uri "ai://$ANTHROPIC_API_KEY@anthropic/claude-sonnet-4-6" \
@@ -1217,7 +1217,7 @@ Use the graph toolset when an agent should turn structured numbers into static c
 
 #### Example: `graph.bar`
 
-```bash
+```sh
 echo 'Generate a monthly bar graph for the total revenue from checks successfully matched to their claims for the organization `Example Legal Group`' | \
     avalan agent run \
       --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-5.4" \
@@ -1247,7 +1247,7 @@ Reach for the code toolset when the agent should write, execute, or refactor sou
 
 Below is an agent that leverages the `code.run` tool to execute Python code generated by the model and display the result:
 
-```bash
+```sh
 echo "Create a python function to uppercase a string, split it spaces, and then return the words joined by a dash, and execute the function with the string 'Leo Messi is the greatest footballer of all times'" \
   | avalan agent run \
       --engine-uri 'ai://local/openai/gpt-oss-20b' \
@@ -1273,7 +1273,7 @@ When your agent needs live access to data, configure the database toolset. In th
 > [!IMPORTANT]
 > Database sessions are read-only by default (`read_only = true`) and only permit `SELECT` statements unless you relax the policy. Adjust these safeguards with the database tool settings—for example, set `allowed_commands = ["select", "insert"]` (or pass `--tool-database-allowed-commands select,insert` on the CLI) and toggle `read_only` in your agent specification when you need to allow writes.
 
-```bash
+```sh
 echo "Get me revenue per product, sorting by highest selling" | \
     avalan agent run \
       --engine-uri "ai://local/openai/gpt-oss-20b" \
@@ -1312,7 +1312,7 @@ Use the browser toolset to capture live information from the web or intranet sit
 
 Tools give agents real-time knowledge. This example uses an 8B model and a browser tool to find avalan's latest release:
 
-```bash
+```sh
 echo "What's avalan's latest release on https://github.com/avalan-ai/avalan/releases" | \
     avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
@@ -1331,7 +1331,7 @@ You may need to update playwright browser images with `poetry run playwright ins
 
 When using the browser tool to extract knowledge, be mindful of your context window. With OpenAI's gpt-oss-20b, the model processes 7261 input tokens before producing a final response. When browser context search is enabled (using `--tool-browser-search` and `--tool-browser-search-context`), that number decreases to 1443 input tokens, and the response time improves proportionally:
 
-```bash
+```sh
 echo "What's avalan's latest release on https://github.com/avalan-ai/avalan/releases" | \
     avalan agent run \
       --engine-uri 'ai://local/openai/gpt-oss-20b' \
@@ -1388,7 +1388,7 @@ Avalan supports several reasoning approaches for guiding agents through complex 
 
 Reasoning models that emit thinking tags are natively supported. Here's OpenAI's gpt-oss 20B solving a simple calculation:
 
-```bash
+```sh
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run 'ai://local/openai/gpt-oss-20b' \
         --max-new-tokens 1024 \
@@ -1401,7 +1401,7 @@ The response includes the model reasoning, and its final answer:
 
 Some of them, like `DeepSeek-R1-Distill-Qwen-14B`, assume the model starts thinking without a thinking tag, so we'll use `--start-thinking`:
 
-```bash
+```sh
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B' \
         --temperature 0.6 \
@@ -1417,7 +1417,7 @@ Nvidia's Nemotron reasoning model solves the same problem easily and doesn't req
 > [!TIP]
 > Endless reasoning rants can be stopped by setting `--reasoning-max-new-tokens` to the maximum number of reasoning tokens allowed, and adding `--reasoning-stop-on-max-new-tokens` to finish generation when that limit is reached.
 
-```bash
+```sh
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run "nvidia/OpenReasoning-Nemotron-14B" \
         --weight "bf16" \
@@ -1429,7 +1429,7 @@ echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
 
 When using reasoning models, be mindful of your total token limit. Some reasoning models include limit recommendations on their model cards, like the following model from Z.ai:
 
-```bash
+```sh
 echo 'What is (4 + 6) and then that result times 5, divided by 2?' | \
     avalan model run 'zai-org/GLM-Z1-32B-0414' \
         --temperature 0.6 \
@@ -1446,7 +1446,7 @@ ReACT interleaves reasoning with tool use so an agent can think through steps an
 
 You can direct an agent to read specific locations for knowledge:
 
-```bash
+```sh
 echo "Tell me what avalan does based on the web page https://raw.githubusercontent.com/avalan-ai/avalan/refs/heads/main/README.md" | \
     avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
@@ -1504,7 +1504,7 @@ Avalan offers a unified memory API with native implementations for PostgreSQL
 
 Start a chat session and tell the agent your name. The `--memory-permanent-message` option specifies where messages are stored, `--id` uniquely identifies the agent, and `--participant` sets the user ID:
 
-```bash
+```sh
 echo "Hi Tool, my name is Leo. Nice to meet you." \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
@@ -1521,7 +1521,7 @@ echo "Hi Tool, my name is Leo. Nice to meet you." \
 
 Enable persistent memory and the `memory.message.read` tool so the agent can recall earlier messages. It should discover that your name is `Leo` from the previous conversation:
 
-```bash
+```sh
 echo "Hi Tool, based on our previous conversations, what's my name?" \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
@@ -1539,7 +1539,7 @@ echo "Hi Tool, based on our previous conversations, what's my name?" \
 
 Agents can use knowledge stores to solve problems. Index the rules of the "Truco" card game directly from a website. The `--dsn` parameter sets the store location and `--namespace` chooses the knowledge namespace:
 
-```bash
+```sh
 avalan memory document index \
     --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
     --dsn "postgresql://root:password@localhost/avalan" \
@@ -1554,7 +1554,7 @@ Create an agent, give it access to the indexed memory store and the `memory` too
 > If you rather create a permanent agent, see the equivalent
 > [agent_memory.toml](docs/examples/agent_memory.toml) agent definition.
 
-```bash
+```sh
 echo "What does the memory stored in namespace games.cards.truco say about retrucar?" | \
   avalan agent run \
     --engine-uri "ai://local/openai/gpt-oss-20b" \
@@ -1599,7 +1599,7 @@ In short, **retrucar** is a counter‑raise that can only be made by the team th
 
 PDF files are natively supported by memories. Let's index an arxiv paper (in its PDF format) from September 2025, considerably after the training date of the model we'll later use to query it:
 
-```bash
+```sh
 avalan memory document index \
     --participant "c67d6ec7-b6ea-40db-bf1a-6de6f9e0bb58" \
     --dsn "postgresql://root:password@localhost/avalan" \
@@ -1610,7 +1610,7 @@ avalan memory document index \
 
 Now let's ask the memory agent about that paper (notice the description added when defining the memory store with `--memory-permanent`):
 
-```bash
+```sh
 echo "What papers do you have in memory?" | \
   avalan agent run \
     --engine-uri "ai://local/openai/gpt-oss-20b" \
@@ -1689,7 +1689,7 @@ You can now run your agent. Let's give it a gettext translation template file,
 have our agent translate it for us, and show a visual difference of what the
 agent changed:
 
-```bash
+```sh
 icdiff locale/avalan.pot <(
     cat locale/avalan.pot |
         avalan agent run docs/examples/agent_gettext_translator.toml --quiet
@@ -1715,7 +1715,7 @@ All three interfaces support real-time reasoning plus token and tool streaming, 
 
 Serve your agents on an OpenAI API–compatible endpoint:
 
-```bash
+```sh
 avalan agent serve docs/examples/agent_tool.toml -vvv
 ```
 
@@ -1729,7 +1729,7 @@ Agents listen on port 9001 by default.
 
 Or build an agent from inline settings and expose its OpenAI API endpoints:
 
-```bash
+```sh
 avalan agent serve \
     --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
     --tool "math.calculator" \
@@ -1744,7 +1744,7 @@ avalan agent serve \
 You can call your tool streaming agent's OpenAI-compatible endpoint just like
 the real API; simply change `--base-url`:
 
-```bash
+```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
@@ -1758,7 +1758,7 @@ through the same OpenAI-compatible endpoint. This is useful when the agent
 needs to inspect the document, understand your schema, and look up the matching
 record in PostgreSQL.
 
-```bash
+```sh
 avalan agent serve \
     --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-5.4" \
     --reasoning-effort xhigh \
@@ -1774,7 +1774,7 @@ avalan agent serve \
 
 Now query your agent with a PDF document:
 
-```bash
+```sh
 echo "The attached invoice may match a customer record in the database. Find the matching account and return its account reference ID." \
     | avalan model run "ai://openai" \
         --base-url "http://127.0.0.1:9001/v1" \
@@ -1783,7 +1783,7 @@ echo "The attached invoice may match a customer record in the database. Find the
 
 Or call the OpenAI Responses endpoint directly with streaming SSE events:
 
-```bash
+```sh
 pdf=docs/examples/playground/invoice.pdf
 jq -n \
     --arg filename "${pdf##*/}" \
@@ -1891,7 +1891,7 @@ The command `agent proxy` serves as a quick way to serve an agent that:
 
 For example, to proxy OpenAI's gpt-4o, do:
 
-```bash
+```sh
 avalan agent proxy \
     --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-4o" \
     --run-max-new-tokens 1024 \
@@ -1902,7 +1902,7 @@ Like `agent serve`, the proxy listens on port 9001 by default.
 
 And you can connect to it from another terminal using `--base-url`:
 
-```bash
+```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
