@@ -238,6 +238,29 @@ class HuggingfaceHubTestCase(TestCase):
         m.assert_called_once_with(info)
         self.assertEqual(models, ["x"])
 
+    def test_models_with_multi_task_and_none_inputs(self):
+        self.hf_instance.list_models.return_value = []
+        list(
+            self.hub.models(
+                filter=None,
+                name=None,
+                search=None,
+                library=None,
+                language=None,
+                task=["a", "b"],
+                tags=None,
+            )
+        )
+        self.hf_instance.list_models.assert_called_once_with(
+            filter=["a", "b"],
+            search=None,
+            author=None,
+            gated=None,
+            pipeline_tag=None,
+            limit=None,
+            full=True,
+        )
+
     def test_login(self):
         self.hub.login()
         self.mock_login.assert_called_once_with("token")

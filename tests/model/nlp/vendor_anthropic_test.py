@@ -848,3 +848,12 @@ def test_non_stream_response_content_ignores_non_list_content(anthropic_mod):
     response = {"content": "not-a-list"}
 
     assert mod.AnthropicClient._non_stream_response_content(response) == ""
+
+
+def test_content_blocks_variants(anthropic_mod):
+    mod, _ = anthropic_mod
+    assert mod.AnthropicClient._content_blocks([{"a": 1}, "x"]) == [{"a": 1}]
+    assert mod.AnthropicClient._content_blocks(
+        "v", empty_when_none=True
+    ) == []
+    assert mod.AnthropicClient._content_blocks(None) == []
