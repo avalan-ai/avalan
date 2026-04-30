@@ -10,8 +10,7 @@ from ....tool.manager import ToolManager
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
 
-from asyncio import to_thread
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, replace
 from functools import lru_cache
 from importlib import import_module
@@ -19,7 +18,7 @@ from importlib.util import find_spec
 from logging import Logger, getLogger
 from subprocess import DEVNULL, TimeoutExpired, run
 from sys import executable, modules
-from typing import Any, AsyncGenerator, Callable, Iterator, Literal, cast
+from typing import Any, AsyncGenerator, Literal, cast
 
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
@@ -79,11 +78,27 @@ class MlxLmStream(TextGenerationVendorStream):
 
     _SENTINEL = object()
 
-    def __init__(self, generator: Iterator[object]) -> None:
+    def __init__(
+        self,
+        generator: Iterator[object] | Callable[[], Iterator[object]],
+    ) -> None:
+        self._closed = False
+        if isinstance(generator, Iterator):
+            self._iterator: Iterator[object] | None = generator
+            self._iterator_factory: Callable[[], Iterator[object]] | None = (
+                None
+            )
+        else:
+            self._iterator = None
+            self._iterator_factory = generator
+
         async def _generator() -> (
             AsyncGenerator[Token | TokenDetail | str, None]
         ):
-            for item in generator:
+            while True:
+                item = await self._next_raw()
+                if item is self._SENTINEL:
+                    return
                 if isinstance(item, (Token, TokenDetail, str)):
                     yield item
                     continue
@@ -92,12 +107,36 @@ class MlxLmStream(TextGenerationVendorStream):
                     yield text
 
         super().__init__(_generator())
-        self._iterator = generator
+
+    def __del__(self) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Mark the stream as closed."""
+        self._closed = True
+
+    def _next_chunk(self) -> object:
+        if self._iterator is None:
+            iterator_factory = self._iterator_factory
+            assert iterator_factory is not None
+            self._iterator = iter(iterator_factory())
+        return next(self._iterator, self._SENTINEL)
+
+    async def _next_raw(self) -> object:
+        if self._closed:
+            return self._SENTINEL
+        try:
+            chunk = self._next_chunk()
+        except Exception:
+            self.close()
+            raise
+        if chunk is self._SENTINEL:
+            self.close()
+        return chunk
 
     async def __anext__(self) -> str:
-        sentinel = type(self)._SENTINEL
-        chunk = await to_thread(next, self._iterator, sentinel)
-        if chunk is sentinel:
+        chunk = await self._next_raw()
+        if chunk is self._SENTINEL:
             raise StopAsyncIteration
         if isinstance(chunk, str):
             return chunk
@@ -151,17 +190,21 @@ class MlxLmModel(TextGenerationModel):
         stream_generate_fn = cast(
             Callable[..., Iterator[object]], getattr(mlx_lm, "stream_generate")
         )
-        iterator = stream_generate_fn(
-            self._model,
-            self._tokenizer,
-            prompt,
-            sampler=sampler,
-            max_tokens=settings.max_new_tokens,
+        stream = MlxLmStream(
+            lambda: stream_generate_fn(
+                self._model,
+                self._tokenizer,
+                prompt,
+                sampler=sampler,
+                max_tokens=settings.max_new_tokens,
+            )
         )
-        stream = MlxLmStream(iter(iterator))
-        async for chunk in stream:
-            if isinstance(chunk, str):
-                yield chunk
+        try:
+            async for chunk in stream:
+                if isinstance(chunk, str):
+                    yield chunk
+        finally:
+            stream.close()
 
     def _string_output(
         self,

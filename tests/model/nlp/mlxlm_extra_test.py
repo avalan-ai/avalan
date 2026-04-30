@@ -2,6 +2,7 @@ import importlib
 import sys
 import types
 from logging import getLogger
+from threading import get_ident
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +38,54 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(StopAsyncIteration):
                 await stream.__anext__()
         del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_factory_stays_on_event_loop_thread(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        owner_threads: list[int] = []
+        next_threads: list[int] = []
+
+        class ThreadBoundIterator:
+            def __init__(self) -> None:
+                self._owner_thread = get_ident()
+                self._items = iter(["a", "b"])
+                owner_threads.append(self._owner_thread)
+
+            def __iter__(self) -> "ThreadBoundIterator":
+                return self
+
+            def __next__(self) -> str:
+                thread_id = get_ident()
+                next_threads.append(thread_id)
+                if thread_id != self._owner_thread:
+                    raise RuntimeError("iterator moved threads")
+                return next(self._items)
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(lambda: ThreadBoundIterator())
+            self.assertEqual(await stream.__anext__(), "a")
+            self.assertEqual(await stream.__anext__(), "b")
+            with self.assertRaises(StopAsyncIteration):
+                await stream.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+        self.assertTrue(owner_threads)
+        self.assertEqual(owner_threads, [get_ident()])
+        self.assertEqual(set(next_threads), {get_ident()})
 
 
 class MlxLmModelTestCase(IsolatedAsyncioTestCase):
@@ -256,13 +305,9 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(chunks, ["a", "b"])
 
     def test_input_ids_from_inputs_validation(self) -> None:
-        with self.assertRaisesRegex(
-            ValueError, "include input_ids"
-        ):
+        with self.assertRaisesRegex(ValueError, "include input_ids"):
             self.mod.MlxLmModel._input_ids_from_inputs({})
-        with self.assertRaisesRegex(
-            ValueError, "mapping or tensor"
-        ):
+        with self.assertRaisesRegex(ValueError, "mapping or tensor"):
             self.mod.MlxLmModel._input_ids_from_inputs("bad")
 
     def test_first_prompt_sequence_fallbacks(self) -> None:
@@ -456,8 +501,9 @@ class MlxImportGuardTestCase(IsolatedAsyncioTestCase):
             self.assertFalse(mod._mlx_lm_import_is_safe())
         mod._mlx_lm_import_is_safe.cache_clear()
 
-        with patch.object(mod, "find_spec", return_value=True), patch.object(
-            mod, "run", return_value=MagicMock(returncode=1)
+        with (
+            patch.object(mod, "find_spec", return_value=True),
+            patch.object(mod, "run", return_value=MagicMock(returncode=1)),
         ):
             self.assertFalse(mod._mlx_lm_import_is_safe())
         mod._mlx_lm_import_is_safe.cache_clear()
