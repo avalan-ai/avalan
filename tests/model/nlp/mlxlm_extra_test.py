@@ -113,6 +113,38 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
 
         del sys.modules["avalan.model"].TextGenerationModel
 
+    async def test_stream_propagates_generation_error(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
+
+        class BrokenIterator:
+            def __iter__(self) -> "BrokenIterator":
+                return self
+
+            def __next__(self) -> str:
+                raise ValueError("bad generation")
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(lambda: BrokenIterator())
+            with self.assertRaisesRegex(ValueError, "bad generation"):
+                await stream.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
 
 class MlxLmModelTestCase(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
