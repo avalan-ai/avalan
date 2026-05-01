@@ -10,6 +10,10 @@ from base64 import b64encode
 from mimetypes import guess_type
 from pathlib import Path
 
+_MIME_TYPES_BY_SUFFIX = {
+    ".md": "text/markdown",
+}
+
 
 def input_files(
     input_text: str | None, file_paths: list[str] | None
@@ -25,7 +29,11 @@ def input_files(
     for file_path in file_paths:
         path = Path(file_path)
         assert path.is_file(), f"Input file not found: {file_path}"
-        mime_type = guess_type(path.name)[0] or "application/octet-stream"
+        mime_type = (
+            _MIME_TYPES_BY_SUFFIX.get(path.suffix.lower())
+            or guess_type(path.name)[0]
+            or "application/octet-stream"
+        )
         content.append(
             MessageContentFile(
                 type="file",

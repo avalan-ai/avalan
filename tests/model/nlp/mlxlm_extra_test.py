@@ -2,6 +2,7 @@ import importlib
 import sys
 import types
 from logging import getLogger
+from threading import get_ident
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
@@ -22,9 +23,9 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
         sampler_mod.make_sampler = MagicMock()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         with patch.dict(
             sys.modules,
             {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
@@ -36,6 +37,112 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(await stream.__anext__(), "b")
             with self.assertRaises(StopAsyncIteration):
                 await stream.__anext__()
+        del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_factory_stays_on_worker_thread(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
+        owner_threads: list[int] = []
+        next_threads: list[int] = []
+
+        class ThreadBoundIterator:
+            def __init__(self) -> None:
+                self._owner_thread = get_ident()
+                self._items = iter(["a", "b"])
+                owner_threads.append(self._owner_thread)
+
+            def __iter__(self) -> "ThreadBoundIterator":
+                return self
+
+            def __next__(self) -> str:
+                thread_id = get_ident()
+                next_threads.append(thread_id)
+                if thread_id != self._owner_thread:
+                    raise RuntimeError("iterator moved threads")
+                return next(self._items)
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(lambda: ThreadBoundIterator())
+            self.assertEqual(await stream.__anext__(), "a")
+            self.assertEqual(await stream.__anext__(), "b")
+            with self.assertRaises(StopAsyncIteration):
+                await stream.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+        self.assertTrue(owner_threads)
+        self.assertEqual(len(set(owner_threads)), 1)
+        self.assertEqual(set(next_threads), set(owner_threads))
+
+    async def test_stream_close_short_circuits_iteration(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(iter(["late"]))
+            stream.close()
+            with self.assertRaises(StopAsyncIteration):
+                await stream.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_propagates_generation_error(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
+
+        class BrokenIterator:
+            def __iter__(self) -> "BrokenIterator":
+                return self
+
+            def __next__(self) -> str:
+                raise ValueError("bad generation")
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(lambda: BrokenIterator())
+            with self.assertRaisesRegex(ValueError, "bad generation"):
+                await stream.__anext__()
+
         del sys.modules["avalan.model"].TextGenerationModel
 
 
@@ -54,9 +161,9 @@ class MlxLmModelTestCase(IsolatedAsyncioTestCase):
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.mlxlm")
         )
@@ -194,9 +301,9 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.mlxlm")
         )
@@ -242,12 +349,10 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-        self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
-            [
-                MagicMock(text="a"),
-                MagicMock(text="b"),
-            ]
-        )
+        self.stub.stream_generate.side_effect = lambda *a, **kw: iter([
+            MagicMock(text="a"),
+            MagicMock(text="b"),
+        ])
         chunks = []
         async for c in model._stream_generator(
             {"input_ids": [[1]]}, GenerationSettings(), False
@@ -255,14 +360,54 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             chunks.append(c)
         self.assertEqual(chunks, ["a", "b"])
 
+    async def test_stream_generator_uses_calling_thread(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._model = "m"
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "p"
+        calling_thread = get_ident()
+        factory_threads: list[int] = []
+        next_threads: list[int] = []
+
+        class ThreadRecorder:
+            def __init__(self) -> None:
+                self._items = iter([
+                    types.SimpleNamespace(text="a"),
+                    types.SimpleNamespace(text="b"),
+                ])
+
+            def __iter__(self) -> "ThreadRecorder":
+                return self
+
+            def __next__(self) -> object:
+                next_threads.append(get_ident())
+                return next(self._items)
+
+        def stream_generate(*_args: object, **_kwargs: object) -> object:
+            factory_threads.append(get_ident())
+            return ThreadRecorder()
+
+        self.stub.stream_generate.side_effect = stream_generate
+        chunks = []
+        async for c in model._stream_generator(
+            {"input_ids": [[1]]}, GenerationSettings(), False
+        ):
+            chunks.append(c)
+
+        self.assertEqual(chunks, ["a", "b"])
+        self.assertEqual(factory_threads, [calling_thread])
+        self.assertEqual(set(next_threads), {calling_thread})
+
     def test_input_ids_from_inputs_validation(self) -> None:
-        with self.assertRaisesRegex(
-            ValueError, "include input_ids"
-        ):
+        with self.assertRaisesRegex(ValueError, "include input_ids"):
             self.mod.MlxLmModel._input_ids_from_inputs({})
-        with self.assertRaisesRegex(
-            ValueError, "mapping or tensor"
-        ):
+        with self.assertRaisesRegex(ValueError, "mapping or tensor"):
             self.mod.MlxLmModel._input_ids_from_inputs("bad")
 
     def test_first_prompt_sequence_fallbacks(self) -> None:
@@ -365,9 +510,9 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         self.patch.start()
         from avalan.model.nlp.text import generation as gen_mod
 
-        sys.modules["avalan.model"].TextGenerationModel = (
-            gen_mod.TextGenerationModel
-        )
+        sys.modules[
+            "avalan.model"
+        ].TextGenerationModel = gen_mod.TextGenerationModel
         importlib.reload(
             importlib.import_module("avalan.model.nlp.text.mlxlm")
         )
@@ -380,12 +525,10 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
 
     async def test_stream_handles_token_and_text_chunks(self) -> None:
         stream = self.mod.MlxLmStream(
-            iter(
-                [
-                    self.mod.Token(token="tok"),
-                    types.SimpleNamespace(text="txt"),
-                ]
-            )
+            iter([
+                self.mod.Token(token="tok"),
+                types.SimpleNamespace(text="txt"),
+            ])
         )
 
         self.assertEqual(await stream.__anext__(), "tok")
@@ -399,6 +542,14 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(only_text[0], self.mod.Token)
         self.assertEqual(only_text[1], "b")
 
+    async def test_stream_raises_base_exception_chunk(self) -> None:
+        stream = self.mod.MlxLmStream(iter([RuntimeError("bad chunk")]))
+
+        with self.assertRaisesRegex(RuntimeError, "bad chunk"):
+            await stream.__anext__()
+
+        self.assertTrue(stream._closed)
+
     async def test_stream_generator_normalizes_token_and_text(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
@@ -410,12 +561,10 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-        self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
-            [
-                self.mod.Token(token="z"),
-                types.SimpleNamespace(text="y"),
-            ]
-        )
+        self.stub.stream_generate.side_effect = lambda *a, **kw: iter([
+            self.mod.Token(token="z"),
+            types.SimpleNamespace(text="y"),
+        ])
         chunks = []
         async for chunk in model._stream_generator(
             {"input_ids": [[1]]}, GenerationSettings(), False
@@ -456,8 +605,16 @@ class MlxImportGuardTestCase(IsolatedAsyncioTestCase):
             self.assertFalse(mod._mlx_lm_import_is_safe())
         mod._mlx_lm_import_is_safe.cache_clear()
 
-        with patch.object(mod, "find_spec", return_value=True), patch.object(
-            mod, "run", return_value=MagicMock(returncode=1)
+        with (
+            patch.object(mod, "find_spec", return_value=True),
+            patch.object(mod, "run", return_value=MagicMock(returncode=1)),
+        ):
+            self.assertFalse(mod._mlx_lm_import_is_safe())
+        mod._mlx_lm_import_is_safe.cache_clear()
+
+        with (
+            patch.object(mod, "find_spec", return_value=True),
+            patch.object(mod, "run", side_effect=OSError("missing python")),
         ):
             self.assertFalse(mod._mlx_lm_import_is_safe())
         mod._mlx_lm_import_is_safe.cache_clear()

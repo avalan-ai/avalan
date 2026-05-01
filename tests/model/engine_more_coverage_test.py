@@ -131,6 +131,20 @@ class ContextAsyncExitTestCase(IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         engine._exit_stack.aclose.assert_awaited_once()
 
+    async def test_exit_with_running_loop_closes_on_interrupt(
+        self,
+    ) -> None:
+        engine = MinimalEngine(
+            "id",
+            EngineSettings(auto_load_model=False, auto_load_tokenizer=False),
+        )
+        engine._exit_stack = AsyncMock()
+
+        engine.__exit__(KeyboardInterrupt, KeyboardInterrupt(), None)
+        await asyncio.sleep(0)
+
+        engine._exit_stack.aclose.assert_awaited_once()
+
 
 class MlxLoadTestCase(TestCase):
     def test_mlx_branch(self) -> None:

@@ -1,6 +1,6 @@
 """Parser emitting events for detected tool calls."""
 
-from ....entities import ToolCallToken
+from ....entities import ToolCallToken, ToolFormat
 from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....tool.manager import ToolManager
@@ -101,7 +101,30 @@ class ToolCallResponseParser:
         return result + [event]
 
     async def flush(self) -> Iterable[Any]:
-        result = []
+        result: list[Any] = []
+        if (
+            self._inside_call
+            and self._tool_manager.tool_format is ToolFormat.HARMONY
+        ):
+            calls = self._tool_manager.get_calls(
+                self._buffer.getvalue() + "<|call|>"
+            )
+            if calls:
+                if self._event_manager:
+                    await self._event_manager.trigger(
+                        Event(type=EventType.TOOL_DETECT)
+                    )
+
+                event = Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=cast(dict[str, Any], calls),
+                    started=perf_counter(),
+                )
+                self._buffer = StringIO()
+                self._tag_buffer = ""
+                self._inside_call = False
+                result.append(event)
+
         if self._pending_tokens:
             result.extend(self._pending_tokens)
             self._pending_tokens.clear()

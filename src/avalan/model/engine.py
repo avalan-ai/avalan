@@ -560,7 +560,9 @@ class Engine(ABC):
         return (
             "cuda"
             if cuda.is_available()
-            else "mps" if mps.is_available() else "cpu"
+            else "mps"
+            if mps.is_available()
+            else "cpu"
         )
 
     @staticmethod

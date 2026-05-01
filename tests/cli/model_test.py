@@ -494,6 +494,51 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         console.print.assert_called_once_with("t", end="")
 
+    async def test_token_generation_raises_event_stream_error(self):
+        class DummyLive:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        args = Namespace(
+            display_events=True,
+            display_tools=False,
+            record=False,
+            skip_display_reasoning_time=False,
+        )
+
+        with (
+            patch.object(model_cmds, "Live", DummyLive),
+            patch.object(
+                model_cmds,
+                "_event_stream",
+                AsyncMock(side_effect=ValueError("event stream failed")),
+            ),
+            patch.object(model_cmds, "_token_stream", AsyncMock()),
+        ):
+            with self.assertRaisesRegex(ValueError, "event stream failed"):
+                await model_cmds.token_generation(
+                    args=args,
+                    console=MagicMock(),
+                    theme=MagicMock(),
+                    logger=MagicMock(),
+                    orchestrator=MagicMock(),
+                    event_stats=None,
+                    lm=MagicMock(),
+                    input_string="i",
+                    response=MagicMock(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    with_stats=True,
+                    tool_events_limit=2,
+                    refresh_per_second=2,
+                )
+
     async def test_token_generation_timing_pause(self):
         token = model_cmds.Token(id=0, token="a")
 
@@ -1151,6 +1196,53 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(observed_event, [live])
         self.assertEqual(observed_token, [live])
+        self.assertEqual(live_container.get("live"), None)
+
+    async def test_token_generation_live_container_cleared_on_interrupt(
+        self,
+    ):
+        live = MagicMock(name="live")
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=False,
+            record=False,
+        )
+        live_container: dict[str, MagicMock | None] = {}
+
+        async def fake_token_stream(*_args, **_kwargs):
+            raise KeyboardInterrupt()
+
+        with (
+            patch.object(model_cmds, "Live", return_value=live_cm),
+            patch.object(
+                model_cmds,
+                "_token_stream",
+                AsyncMock(side_effect=fake_token_stream),
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                await model_cmds.token_generation(
+                    args=args,
+                    console=MagicMock(),
+                    theme=MagicMock(),
+                    logger=MagicMock(),
+                    orchestrator=None,
+                    event_stats=None,
+                    lm=MagicMock(),
+                    input_string="prompt",
+                    response=MagicMock(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    refresh_per_second=1,
+                    tool_events_limit=0,
+                    live_container=live_container,
+                )
+
         self.assertEqual(live_container.get("live"), None)
 
     async def test_token_generation_with_stats(self):
@@ -5545,6 +5637,126 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         self.assertIn("frame3", group.renderables.calls)
         live.refresh.assert_called()
         theme.tokens.assert_called_once()
+
+    async def test_token_stream_sets_stop_signal_when_cancelled(self):
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise asyncio.CancelledError()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        stop_signal = asyncio.Event()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await model_cmds._token_stream(
+                live=MagicMock(),
+                group=SimpleNamespace(renderables=[None]),
+                tokens_group_index=0,
+                args=args,
+                console=MagicMock(width=80),
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(
+                    model_id="m",
+                    tokenizer_config=None,
+                    input_token_count=lambda s: 1,
+                ),
+                input_string="hi",
+                response=Resp(),
+                display_tokens=1,
+                dtokens_pick=1,
+                refresh_per_second=2,
+                stop_signal=stop_signal,
+                tool_events_limit=None,
+                with_stats=True,
+            )
+
+        self.assertTrue(stop_signal.is_set())
+
+    async def test_token_generation_events_stop_when_token_stream_cancelled(
+        self,
+    ):
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise asyncio.CancelledError()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            display_events=True,
+            display_tools=True,
+            display_tools_events=None,
+            record=False,
+        )
+
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        orchestrator = SimpleNamespace(
+            event_manager=EventManager(), input_token_count=1
+        )
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(
+                    model_cmds.token_generation(
+                        args=args,
+                        console=MagicMock(width=80),
+                        theme=MagicMock(),
+                        logger=MagicMock(),
+                        orchestrator=orchestrator,
+                        event_stats=None,
+                        lm=SimpleNamespace(
+                            model_id="m",
+                            tokenizer_config=None,
+                            input_token_count=lambda s: 1,
+                        ),
+                        input_string="hi",
+                        response=Resp(),
+                        display_tokens=1,
+                        dtokens_pick=1,
+                        refresh_per_second=2,
+                        tool_events_limit=None,
+                        with_stats=True,
+                    ),
+                    timeout=1,
+                )
 
     async def test_token_stream_pause_no_probabilities(self):
         async def token_gen():

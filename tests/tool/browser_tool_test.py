@@ -1,4 +1,5 @@
 import types
+from asyncio import CancelledError
 from contextlib import AsyncExitStack
 from io import StringIO
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -200,17 +201,56 @@ class BrowserToolReadTestCase(IsolatedAsyncioTestCase):
 
     async def test_aexit_closes_resources(self):
         tool = BrowserTool(BrowserToolSettings(), MagicMock())
-        tool._page = AsyncMock()
-        tool._browser = AsyncMock()
+        page = AsyncMock()
+        browser = AsyncMock()
+        tool._page = page
+        tool._browser = browser
         with patch(
             "avalan.tool.browser.Tool.__aexit__",
             AsyncMock(return_value=True),
         ) as base_exit:
             result = await tool.__aexit__(None, None, None)
-        tool._page.close.assert_awaited_once()
-        tool._browser.close.assert_awaited_once()
+        page.close.assert_awaited_once()
+        browser.close.assert_awaited_once()
         base_exit.assert_awaited_once_with(None, None, None)
         self.assertTrue(result)
+
+    async def test_aexit_suppresses_close_errors_on_interrupt(self):
+        tool = BrowserTool(BrowserToolSettings(), MagicMock())
+        page = AsyncMock()
+        page.close.side_effect = Exception("connection closed")
+        browser = AsyncMock()
+        tool._page = page
+        tool._browser = browser
+
+        with patch(
+            "avalan.tool.browser.Tool.__aexit__",
+            AsyncMock(return_value=False),
+        ) as base_exit:
+            result = await tool.__aexit__(
+                CancelledError, CancelledError(), None
+            )
+
+        page.close.assert_awaited_once()
+        browser.close.assert_awaited_once()
+        base_exit.assert_awaited_once()
+        self.assertFalse(result)
+
+    async def test_aexit_raises_close_errors_without_interrupt(self):
+        tool = BrowserTool(BrowserToolSettings(), MagicMock())
+        tool._page = AsyncMock()
+        tool._page.close.side_effect = Exception("connection closed")
+
+        with self.assertRaisesRegex(Exception, "connection closed"):
+            await tool.__aexit__(None, None, None)
+
+    async def test_close_resource_reraises_timeout_without_interrupt(self):
+        tool = BrowserTool(BrowserToolSettings(), MagicMock())
+        resource = MagicMock()
+        resource.close = AsyncMock(side_effect=TimeoutError)
+
+        with self.assertRaises(TimeoutError):
+            await tool._close_resource(resource, interrupted_exit=False)
 
 
 class BrowserToolCallSearchSkipTestCase(IsolatedAsyncioTestCase):

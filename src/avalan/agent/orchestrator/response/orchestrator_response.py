@@ -363,6 +363,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         self._parser_queue.put(item)
                 if self._parser_queue and not self._parser_queue.empty():
                     return self._parser_queue.get()
+                if not self._tool_process_events.empty():
+                    event = self._tool_process_events.get()
+                    assert event.type == EventType.TOOL_PROCESS
+                    self._tool_call_events.put(event)
+                    return event
             if self._event_manager and not self._finished:
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))

@@ -3,6 +3,7 @@ from ..entities import Message, MessageRole, ToolCallContext
 from ..filters import Partitioner
 from . import Tool, ToolSet
 
+from asyncio import CancelledError, wait_for
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -103,6 +104,7 @@ class BrowserTool(Tool):
     _page: "Page | None" = None
     _md: "MarkItDown | None" = None
     _partitioner: Partitioner | None = None
+    _INTERRUPT_CLOSE_TIMEOUT = 0.5
 
     def __init__(
         self,
@@ -282,6 +284,22 @@ class BrowserTool(Tool):
         self._client = client
         return self
 
+    async def _close_resource(
+        self, resource: Any, interrupted_exit: bool
+    ) -> None:
+        close = resource.close()
+        try:
+            if interrupted_exit:
+                await wait_for(close, timeout=self._INTERRUPT_CLOSE_TIMEOUT)
+            else:
+                await close
+        except (CancelledError, TimeoutError):
+            if not interrupted_exit:
+                raise
+        except Exception:
+            if not interrupted_exit:
+                raise
+
     @override
     async def __aexit__(
         self,
@@ -289,10 +307,16 @@ class BrowserTool(Tool):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
+        interrupted_exit = exc_type is not None and issubclass(
+            exc_type, (CancelledError, KeyboardInterrupt)
+        )
+
         if self._page:
-            await self._page.close()
+            await self._close_resource(self._page, interrupted_exit)
+            self._page = None
         if self._browser:
-            await self._browser.close()
+            await self._close_resource(self._browser, interrupted_exit)
+            self._browser = None
 
         return await super().__aexit__(exc_type, exc_value, traceback)
 

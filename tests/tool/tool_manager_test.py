@@ -1,3 +1,4 @@
+from asyncio import CancelledError, sleep
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4 as _uuid4
@@ -242,6 +243,38 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(result.error, ValueError)
         self.assertEqual(result.message, "boom")
 
+    async def test_tool_keyboard_interrupt_propagates(self):
+        async def interrupted_tool(a: int) -> None:
+            raise KeyboardInterrupt()
+
+        manager = ToolManager.create_instance(
+            enable_tools=["interrupted_tool"],
+            available_toolsets=[ToolSet(tools=[interrupted_tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name="interrupted_tool", arguments={"a": 1}
+        )
+
+        with self.assertRaises(KeyboardInterrupt):
+            await manager(call, context=ToolCallContext())
+
+    async def test_tool_cancelled_error_propagates(self):
+        async def interrupted_tool(a: int) -> None:
+            raise CancelledError()
+
+        manager = ToolManager.create_instance(
+            enable_tools=["interrupted_tool"],
+            available_toolsets=[ToolSet(tools=[interrupted_tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name="interrupted_tool", arguments={"a": 1}
+        )
+
+        with self.assertRaises(CancelledError):
+            await manager(call, context=ToolCallContext())
+
 
 class ToolManagerPotentialCallTestCase(TestCase):
     def setUp(self):
@@ -415,6 +448,52 @@ class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
         async with manager:
             manager._stack.enter_async_context.assert_awaited_once()
 
+        manager._stack.__aexit__.assert_awaited_once()
+
+    async def test_async_context_interrupt_close_timeout_suppressed(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
+
+        async def slow_close(*args):
+            await sleep(10)
+
+        manager._stack.__aexit__ = AsyncMock(side_effect=slow_close)
+
+        with patch.object(ToolManager, "_INTERRUPT_CLOSE_TIMEOUT", 0.01):
+            result = await manager.__aexit__(
+                KeyboardInterrupt, KeyboardInterrupt(), None
+            )
+
+        self.assertFalse(result)
+        manager._stack.__aexit__.assert_awaited_once()
+
+    async def test_async_context_interrupt_close_error_suppressed(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
+        manager._stack.__aexit__ = AsyncMock(
+            side_effect=RuntimeError("close failed")
+        )
+
+        result = await manager.__aexit__(
+            KeyboardInterrupt, KeyboardInterrupt(), None
+        )
+
+        self.assertFalse(result)
+        manager._stack.__aexit__.assert_awaited_once()
+
+    async def test_async_context_interrupt_close_success_returns_false(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
+        manager._stack.__aexit__ = AsyncMock(return_value=True)
+
+        result = await manager.__aexit__(
+            KeyboardInterrupt, KeyboardInterrupt(), None
+        )
+
+        self.assertFalse(result)
         manager._stack.__aexit__.assert_awaited_once()
 
     async def test_set_eos_token(self):
