@@ -360,6 +360,50 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             chunks.append(c)
         self.assertEqual(chunks, ["a", "b"])
 
+    async def test_stream_generator_uses_calling_thread(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._model = "m"
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "p"
+        calling_thread = get_ident()
+        factory_threads: list[int] = []
+        next_threads: list[int] = []
+
+        class ThreadRecorder:
+            def __init__(self) -> None:
+                self._items = iter([
+                    types.SimpleNamespace(text="a"),
+                    types.SimpleNamespace(text="b"),
+                ])
+
+            def __iter__(self) -> "ThreadRecorder":
+                return self
+
+            def __next__(self) -> object:
+                next_threads.append(get_ident())
+                return next(self._items)
+
+        def stream_generate(*_args: object, **_kwargs: object) -> object:
+            factory_threads.append(get_ident())
+            return ThreadRecorder()
+
+        self.stub.stream_generate.side_effect = stream_generate
+        chunks = []
+        async for c in model._stream_generator(
+            {"input_ids": [[1]]}, GenerationSettings(), False
+        ):
+            chunks.append(c)
+
+        self.assertEqual(chunks, ["a", "b"])
+        self.assertEqual(factory_threads, [calling_thread])
+        self.assertEqual(set(next_threads), {calling_thread})
+
     def test_input_ids_from_inputs_validation(self) -> None:
         with self.assertRaisesRegex(ValueError, "include input_ids"):
             self.mod.MlxLmModel._input_ids_from_inputs({})

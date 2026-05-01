@@ -76,16 +76,20 @@ def make_sampler(*args: Any, **kwargs: Any) -> Any:
 
 
 class MlxLmStream(TextGenerationVendorStream):
-    """Bridge synchronous MLX generation from a dedicated worker thread."""
+    """Bridge synchronous MLX generation into an async stream."""
 
     _SENTINEL = object()
 
     def __init__(
         self,
         generator: Iterator[object] | Callable[[], Iterator[object]],
+        *,
+        use_executor: bool = True,
     ) -> None:
         self._closed = False
-        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._executor = (
+            ThreadPoolExecutor(max_workers=1) if use_executor else None
+        )
         if isinstance(generator, Iterator):
             self._iterator: Iterator[object] | None = generator
             self._iterator_factory: Callable[[], Iterator[object]] | None = (
@@ -119,7 +123,8 @@ class MlxLmStream(TextGenerationVendorStream):
         if self._closed:
             return
         self._closed = True
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        if self._executor:
+            self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _next_chunk(self) -> object:
         if self._iterator is None:
@@ -132,11 +137,14 @@ class MlxLmStream(TextGenerationVendorStream):
         if self._closed:
             return self._SENTINEL
 
-        loop = get_running_loop()
         try:
-            chunk = await loop.run_in_executor(
-                self._executor, self._next_chunk
-            )
+            if self._executor:
+                loop = get_running_loop()
+                chunk = await loop.run_in_executor(
+                    self._executor, self._next_chunk
+                )
+            else:
+                chunk = self._next_chunk()
         except Exception:
             self.close()
             raise
@@ -204,6 +212,8 @@ class MlxLmModel(TextGenerationModel):
         stream_generate_fn = cast(
             Callable[..., Iterator[object]], getattr(mlx_lm, "stream_generate")
         )
+        # mlx_lm's generation stream is thread-local, so keep generation on
+        # the same thread that loaded the model and initialized MLX.
         stream = MlxLmStream(
             lambda: stream_generate_fn(
                 self._model,
@@ -211,7 +221,8 @@ class MlxLmModel(TextGenerationModel):
                 prompt,
                 sampler=sampler,
                 max_tokens=settings.max_new_tokens,
-            )
+            ),
+            use_executor=False,
         )
         try:
             async for chunk in stream:
