@@ -1579,22 +1579,15 @@ echo "What does the memory stored in namespace games.cards.truco say about retru
 And you should get your answer:
 
 ```text
-<|channel|>analysis<|message|>The user asks: "What does the memory stored in namespace games.cards.truco say about retrucar?" They want to retrieve memory from namespace games.cards.truco about retrucar. We need to use memory.read function.  Search for "retrucar".<|end|><|start|>assistant<|channel|>commentary to=functions.memory.read <|constrain|>json<|message|>{"namespace":"games.cards.truco","search":"retrucar"}<|call|><|channel|>analysis<|message|>The memory returned a list of strings. We need to extract the relevant part about retrucar. The relevant parts are:
+<|channel|>analysis<|message|>We need to read memory stored in namespace games.cards.truco. Use memory.read.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.read <|constrain|>json<|message|>{"namespace":"games.cards.truco","search":"retrucar"}<|channel|>analysis<|message|>We need to answer: "What does the memory stored in namespace games.cards.truco say about retrucar?" We have memory read results. We need to summarize what the memory says about retrucar. The memory contains multiple entries. We should extract relevant info: retrucar is the action of raising the bet after a "Truco" call. Only the team that has said "Quiero" can retrucar. The team that has retrucado cannot raise again; only the opposing team can. Also retrucar is only allowed after "Quiero". The order: Truco, Retruco, Vale Cuatro. The team that wants the last bet can retrucar. Also retrucar is only possible by the team that has wanted the last bet. So answer summarizing.<|end|><|start|>assistant<|channel|>final<|message|>In the **games.cards.truco** memory, the rules about **“retrucar”** (the act of raising the stake after a “Truco” call) are summarized as follows:
 
-- "Siempre tiene la potestad de retrucar únicamente **el que ha querido la última apuesta**."
-- "El equipo que ha retrucado ya no puede subir la apuesta, solo podrá hacerlo el equipo contrario, a esto se lo denomina 'tener el quiero'."
-- "El equipo que ha querido el Truco tendrá ahora la posibilidad de retrucar en cualquier momento."
+| What it is | Who can do it | When it can be done | What happens after |
+|------------|---------------|---------------------|--------------------|
+| **Retruco** – the next level of the bet after “Truco” | **Only the team that has just said “Quiero”** (i.e., the team that accepted the last bet) | Immediately after the opponent’s “Truco” and the team’s “Quiero” | The opposing team must respond with one of the three options: “Quiero”, “No quiero”, or “Retruco” (if they want to raise again). |
+| **Restriction** | The team that has already retrucado **cannot raise again**. | The next raise can only come from the **opposing team**. | This is sometimes called “tener el quiero” – the team that has the right to raise next. |
+| **Order of calls** | The sequence must be followed: “Truco” → “Retruco” → “Vale Cuatro”. | | |
 
-We need to summarize. The user asked: "What does the memory stored in namespace games.cards.truco say about retrucar?" So we should provide the content. Let's produce a concise answer summarizing the memory.<|end|><|start|>assistant<|channel|>final<|message|>In the **games.cards.truco** memory, the rules for **retrucar** are summarized as follows:
-
-| What it is | How it works | Who can do it | What happens after |
-|------------|--------------|---------------|--------------------|
-| **Retrucar** | The act of raising the stakes after a *Truco* has been called. | Only the team that has **accepted** the last bet (i.e., said “Quiero”) can retrucar. | The team that retrucado **cannot raise the bet again**; only the opposing team can do so. This state is sometimes called “tener el quiero.” |
-| | | | The team that has just retrucado can no longer raise the stakes until the other side does. |
-| | | | The opposing team, if they want to raise again, must say “Quiero Retruco.” |
-| | | | The team that has already retrucado is then “locked” into the current stake level until the other side raises. |
-
-In short, **retrucar** is a counter‑raise that can only be made by the team that accepted the previous bet, and once it’s done, that team cannot raise the stakes again until the opponent does.%
+In short, **retrucar** is the act of raising the bet after a “Truco” call, and it can only be performed by the team that has just accepted the last bet (“Quiero”). Once a team has retrucado, they lose the right to raise again until the other team does.
 ```
 
 PDF files are natively supported by memories. Let's index an arxiv paper (in its PDF format) from September 2025, considerably after the training date of the model we'll later use to query it:
@@ -1635,11 +1628,11 @@ echo "What papers do you have in memory?" | \
 And the stored paper is found:
 
 ```text
-<|channel|>analysis<|message|>The user asks: "What papers do you have in memory?" They want to know what papers are stored in memory. We need to list the papers. We have memory stores. We can call memory.stores to see available memory stores . Then memory.list for each store. Then memory.read for each paper. But we need to list the papers. The user likely wants a list of paper titles. We can use memory.list to get the list of keys. Then memory.read to get the content. But we just need to list the papers. So we can call memory.stores to get store names. Then for each store, call memory.list. Then compile a list of paper titles. Let's do that.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.stores <|constrain|>json<|message|>{}<|call|><|channel|>analysis<|message|>We have one memory store: "papers.arxiv". Let's list it.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.list<|channel|>commentary <|constrain|>json<|message|>{"namespace":"papers.arxiv"}<|call|><|channel|>analysis<|message|>The list shows two Memory objects, both with the same identifier 'https://arxiv.org/pdf/2509.17325', but with different partitions and created_at times. They both have the title 'Generalizable End-to-End Tool-Use RL with Synthetic CodeGym'. So the only paper in memory is that one. The user asked: "What papers do you have in memory?" So we should answer: "I have one paper: Generalizable End-to-End Tool-Use RL with Synthetic CodeGym (arXiv:2509.17325)". We can mention that it's stored twice with different partitions. Let's respond.<|end|><|start|>assistant<|channel|>final<|message|>I have one paper stored in memory:
+<|channel|>analysis<|message|>The user asks: "What papers do you have in memory?" We need to search memory for stored papers. We have memory functions: memory.list, memory.read, memory.stores. We need to list memory stores, then list memory in a namespace. The user likely wants to know what papers are stored. We need to call memory.stores to see available stores. Then memory.list for each store. But we don't know the namespace. Maybe there's a default namespace like "papers". We can try memory.list with namespace "papers". But we need to check memory.stores first. Let's call memory.stores.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.stores <|constrain|>json<|message|>{}<|channel|>analysis<|message|>We have a memory store "papers.arxiv". We need to list memory stores. The user asked: "What papers do you have in memory?" We should list the papers stored in that memory store. Use memory.list.<|end|><|start|>assistant<|channel|>commentary to=functions.memory.list<|constrain|>json<|message|>{"namespace":"papers.arxiv"}<|channel|>analysis<|message|>We have memory list showing three entries, all same paper. So answer: list the paper(s). Provide details.<|end|><|start|>assistant<|channel|>final<|message|>I have one paper stored in my permanent memory:
 
-- **Generalizable End‑to‑End Tool‑Use RL with Synthetic CodeGym**
-  - **Source:** arXiv (https://arxiv.org/pdf/2509.17325)
-  - **Details:** The paper discusses a scalable framework called CodeGym for training large language model agents to use tools in diverse, verifiable, multi‑turn environments. It highlights the generalizability of these agents across out‑of‑distribution benchmarks.%
+| # | Title | Authors (if available) | URL | Summary |
+|---|-------|------------------------|-----|---------|
+| 1 | **Generalizable End‑to‑End Tool‑Use RL with Synthetic CodeGym** | (not stored in the memory snippet) | https://arxiv.org/pdf/2509.17325 | The paper introduces *CodeGym*, a framework that turns static coding problems into interactive, multi‑turn tool‑use environments. By extracting atomic functions or logic from code, the authors create verifiable, controllable tasks that can be used to train large‑language‑model agents with reinforcement learning. The study shows that models of various sizes and chain‑of‑thought configurations trained in CodeGym generalize well to out‑of‑distribution benchmarks (e.g., an 8.7‑point accuracy gain on the τ‑Bench). The authors provide the CodeGym code on GitHub. |
 ```
 
 ## Agents
