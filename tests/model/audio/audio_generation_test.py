@@ -33,6 +33,19 @@ class AudioGenerationModelInstantiationTestCase(TestCase):
             processor_mock.assert_not_called()
             model_mock.assert_not_called()
 
+    def test_ignores_non_persistent_position_embedding_load_report_key(self):
+        patterns = (
+            MusicgenForConditionalGeneration._keys_to_ignore_on_load_unexpected
+        )
+        self.assertIn(
+            r"decoder\.model\.decoder\.embed_positions\.weights",
+            patterns,
+        )
+        self.assertRegex(
+            "decoder.model.decoder.embed_positions.weights",
+            patterns[0],
+        )
+
     def test_instantiation_with_load_model(self):
         logger_mock = MagicMock(spec=Logger)
         with (
