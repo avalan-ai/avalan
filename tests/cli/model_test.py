@@ -494,6 +494,51 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         console.print.assert_called_once_with("t", end="")
 
+    async def test_token_generation_raises_event_stream_error(self):
+        class DummyLive:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        args = Namespace(
+            display_events=True,
+            display_tools=False,
+            record=False,
+            skip_display_reasoning_time=False,
+        )
+
+        with (
+            patch.object(model_cmds, "Live", DummyLive),
+            patch.object(
+                model_cmds,
+                "_event_stream",
+                AsyncMock(side_effect=ValueError("event stream failed")),
+            ),
+            patch.object(model_cmds, "_token_stream", AsyncMock()),
+        ):
+            with self.assertRaisesRegex(ValueError, "event stream failed"):
+                await model_cmds.token_generation(
+                    args=args,
+                    console=MagicMock(),
+                    theme=MagicMock(),
+                    logger=MagicMock(),
+                    orchestrator=MagicMock(),
+                    event_stats=None,
+                    lm=MagicMock(),
+                    input_string="i",
+                    response=MagicMock(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    with_stats=True,
+                    tool_events_limit=2,
+                    refresh_per_second=2,
+                )
+
     async def test_token_generation_timing_pause(self):
         token = model_cmds.Token(id=0, token="a")
 

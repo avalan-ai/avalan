@@ -244,6 +244,14 @@ class BrowserToolReadTestCase(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Exception, "connection closed"):
             await tool.__aexit__(None, None, None)
 
+    async def test_close_resource_reraises_timeout_without_interrupt(self):
+        tool = BrowserTool(BrowserToolSettings(), MagicMock())
+        resource = MagicMock()
+        resource.close = AsyncMock(side_effect=TimeoutError)
+
+        with self.assertRaises(TimeoutError):
+            await tool._close_resource(resource, interrupted_exit=False)
+
 
 class BrowserToolCallSearchSkipTestCase(IsolatedAsyncioTestCase):
     async def test_call_search_skips_empty_match(self):

@@ -468,6 +468,34 @@ class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(result)
         manager._stack.__aexit__.assert_awaited_once()
 
+    async def test_async_context_interrupt_close_error_suppressed(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
+        manager._stack.__aexit__ = AsyncMock(
+            side_effect=RuntimeError("close failed")
+        )
+
+        result = await manager.__aexit__(
+            KeyboardInterrupt, KeyboardInterrupt(), None
+        )
+
+        self.assertFalse(result)
+        manager._stack.__aexit__.assert_awaited_once()
+
+    async def test_async_context_interrupt_close_success_returns_false(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[], settings=ToolManagerSettings()
+        )
+        manager._stack.__aexit__ = AsyncMock(return_value=True)
+
+        result = await manager.__aexit__(
+            KeyboardInterrupt, KeyboardInterrupt(), None
+        )
+
+        self.assertFalse(result)
+        manager._stack.__aexit__.assert_awaited_once()
+
     async def test_set_eos_token(self):
         self.manager.set_eos_token("<END>")
         text = (

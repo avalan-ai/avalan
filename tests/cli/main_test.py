@@ -835,6 +835,22 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
 
         set_signal_handler.assert_not_called()
 
+    def test_print_bye_skips_when_already_printed(self):
+        console = MagicMock()
+        self.cli._abort_printed = True
+
+        self.cli._print_bye(console)
+
+        console.print.assert_not_called()
+
+    def test_print_bye_skips_when_quiet(self):
+        console = MagicMock()
+
+        self.cli._print_bye(console, quiet=True)
+
+        console.print.assert_not_called()
+        self.assertFalse(self.cli._abort_printed)
+
 
 class CliMainFunctionTestCase(TestCase):
     def test_main_invokes_run(self):
@@ -957,6 +973,88 @@ class CliMainFunctionTestCase(TestCase):
             call(cli_module.SIGINT, "previous"),
         )
 
+    def test_run_in_loop_signal_callback_interrupts_waiter(self):
+        cli_module = sys.modules[CLI.__module__]
+        thread = object()
+        captured: dict[str, object] = {}
+
+        def set_handler(_signal: int, handler: object) -> str:
+            if callable(handler):
+                captured["handler"] = handler
+            return "previous"
+
+        async def interrupted() -> None:
+            handler = captured["handler"]
+            assert callable(handler)
+            try:
+                handler(cli_module.SIGINT, None)
+            except KeyboardInterrupt:
+                pass
+            await asyncio.Future()
+
+        with (
+            patch.object(cli_module, "current_thread", return_value=thread),
+            patch.object(cli_module, "main_thread", return_value=thread),
+            patch.object(
+                cli_module, "set_signal_handler", side_effect=set_handler
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(interrupted())
+
+    def test_run_in_loop_cancels_main_task_after_interrupt_signal(self):
+        cli_module = sys.modules[CLI.__module__]
+
+        async def fake_wait(tasks, return_when):
+            interrupt_signal = next(
+                task for task in tasks if not isinstance(task, asyncio.Task)
+            )
+            return {interrupt_signal}, set()
+
+        async def never_finishes() -> None:
+            await asyncio.Future()
+
+        with (
+            patch.object(cli_module, "wait", side_effect=fake_wait),
+            patch.object(cli_module, "current_thread", return_value=object()),
+            patch.object(cli_module, "main_thread", return_value=object()),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(never_finishes())
+
+    def test_run_in_loop_signal_handler_falls_back_after_runtime_error(self):
+        cli_module = sys.modules[CLI.__module__]
+        thread = object()
+        loop = asyncio.new_event_loop()
+        captured: dict[str, object] = {}
+
+        def set_handler(_signal: int, handler: object) -> str:
+            if callable(handler):
+                captured["handler"] = handler
+            return "previous"
+
+        async def interrupted() -> None:
+            handler = captured["handler"]
+            assert callable(handler)
+            handler(cli_module.SIGINT, None)
+            self.fail("signal handler should raise")
+
+        with (
+            patch.object(cli_module, "new_event_loop", return_value=loop),
+            patch.object(cli_module, "current_thread", return_value=thread),
+            patch.object(cli_module, "main_thread", return_value=thread),
+            patch.object(
+                cli_module, "set_signal_handler", side_effect=set_handler
+            ),
+            patch.object(
+                loop,
+                "call_soon_threadsafe",
+                side_effect=RuntimeError("closed"),
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(interrupted())
+
     def test_run_in_loop_skips_executor_shutdown_on_interrupt(self):
         cli_module = sys.modules[CLI.__module__]
         ready = ThreadEvent()
@@ -980,3 +1078,64 @@ class CliMainFunctionTestCase(TestCase):
             release.set()
 
         self.assertLess(perf_counter() - start, 1)
+
+    def test_run_in_loop_drains_pending_tasks_on_success(self):
+        cli_module = sys.modules[CLI.__module__]
+        cleaned_up: list[str] = []
+
+        async def pending_task() -> None:
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cleaned_up.append("cancelled")
+
+        async def complete_with_pending_task() -> None:
+            asyncio.create_task(pending_task())
+            await asyncio.sleep(0)
+
+        cli_module.run_in_loop(complete_with_pending_task())
+
+        self.assertEqual(cleaned_up, ["cancelled"])
+
+    def test_run_in_loop_bounds_pending_cleanup_after_interrupt(self):
+        cli_module = sys.modules[CLI.__module__]
+
+        async def interrupted() -> None:
+            started = asyncio.Event()
+
+            async def stubborn_task() -> None:
+                try:
+                    started.set()
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    await asyncio.Event().wait()
+
+            asyncio.create_task(stubborn_task())
+            await started.wait()
+            raise KeyboardInterrupt()
+
+        with (
+            patch.object(cli_module, "_INTERRUPT_DRAIN_TIMEOUT", 0.01),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(interrupted())
+
+    def test_run_in_loop_bounds_async_generator_shutdown_after_interrupt(self):
+        cli_module = sys.modules[CLI.__module__]
+
+        async def hanging_generator():
+            try:
+                yield "started"
+            finally:
+                await asyncio.Event().wait()
+
+        async def interrupted() -> None:
+            generator = hanging_generator()
+            await generator.__anext__()
+            raise KeyboardInterrupt()
+
+        with (
+            patch.object(cli_module, "_INTERRUPT_DRAIN_TIMEOUT", 0.01),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            cli_module.run_in_loop(interrupted())

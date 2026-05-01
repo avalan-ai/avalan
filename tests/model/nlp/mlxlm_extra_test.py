@@ -498,6 +498,14 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(only_text[0], self.mod.Token)
         self.assertEqual(only_text[1], "b")
 
+    async def test_stream_raises_base_exception_chunk(self) -> None:
+        stream = self.mod.MlxLmStream(iter([RuntimeError("bad chunk")]))
+
+        with self.assertRaisesRegex(RuntimeError, "bad chunk"):
+            await stream.__anext__()
+
+        self.assertTrue(stream._closed)
+
     async def test_stream_generator_normalizes_token_and_text(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
@@ -556,6 +564,13 @@ class MlxImportGuardTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(mod, "find_spec", return_value=True),
             patch.object(mod, "run", return_value=MagicMock(returncode=1)),
+        ):
+            self.assertFalse(mod._mlx_lm_import_is_safe())
+        mod._mlx_lm_import_is_safe.cache_clear()
+
+        with (
+            patch.object(mod, "find_spec", return_value=True),
+            patch.object(mod, "run", side_effect=OSError("missing python")),
         ):
             self.assertFalse(mod._mlx_lm_import_is_safe())
         mod._mlx_lm_import_is_safe.cache_clear()
