@@ -10,7 +10,9 @@ from ....tool.manager import ToolManager
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
 
+from asyncio import get_running_loop
 from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from functools import lru_cache
 from importlib import import_module
@@ -74,7 +76,7 @@ def make_sampler(*args: Any, **kwargs: Any) -> Any:
 
 
 class MlxLmStream(TextGenerationVendorStream):
-    """Wrap a synchronous MLX token generator on the consumer thread."""
+    """Bridge synchronous MLX generation from a dedicated worker thread."""
 
     _SENTINEL = object()
 
@@ -83,6 +85,7 @@ class MlxLmStream(TextGenerationVendorStream):
         generator: Iterator[object] | Callable[[], Iterator[object]],
     ) -> None:
         self._closed = False
+        self._executor = ThreadPoolExecutor(max_workers=1)
         if isinstance(generator, Iterator):
             self._iterator: Iterator[object] | None = generator
             self._iterator_factory: Callable[[], Iterator[object]] | None = (
@@ -92,9 +95,9 @@ class MlxLmStream(TextGenerationVendorStream):
             self._iterator = None
             self._iterator_factory = generator
 
-        async def _generator() -> (
-            AsyncGenerator[Token | TokenDetail | str, None]
-        ):
+        async def _generator() -> AsyncGenerator[
+            Token | TokenDetail | str, None
+        ]:
             while True:
                 item = await self._next_raw()
                 if item is self._SENTINEL:
@@ -113,7 +116,10 @@ class MlxLmStream(TextGenerationVendorStream):
 
     def close(self) -> None:
         """Mark the stream as closed."""
+        if self._closed:
+            return
         self._closed = True
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _next_chunk(self) -> object:
         if self._iterator is None:
@@ -125,11 +131,19 @@ class MlxLmStream(TextGenerationVendorStream):
     async def _next_raw(self) -> object:
         if self._closed:
             return self._SENTINEL
+
+        loop = get_running_loop()
         try:
-            chunk = self._next_chunk()
+            chunk = await loop.run_in_executor(
+                self._executor, self._next_chunk
+            )
         except Exception:
             self.close()
             raise
+
+        if isinstance(chunk, BaseException):
+            self.close()
+            raise chunk
         if chunk is self._SENTINEL:
             self.close()
         return chunk
