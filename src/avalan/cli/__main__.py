@@ -44,7 +44,7 @@ from ..entities import (
     WeightType,
 )
 from ..memory.permanent import VectorFunction
-from ..model.hubs.huggingface import HuggingfaceHub
+from ..model.hubs import HubClient
 from ..model.manager import ModelManager
 from ..model.transformer import TransformerModel
 from ..tool.browser import BrowserToolSettings
@@ -75,6 +75,7 @@ from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import fields
 from gettext import translation
+from importlib import import_module
 from importlib.util import find_spec
 from locale import getlocale
 from logging import (
@@ -130,6 +131,12 @@ is_torch_flex_attn_available = cast(
 
 _INTERRUPT_DRAIN_TIMEOUT = 0.5
 _LOOP_HANDLES_SIGINT = False
+_DEFAULT_HF_CACHE_DIR = "~/.cache/huggingface/hub"
+
+
+def _huggingface_hub_class() -> type[object]:
+    module = import_module("avalan.model.hubs.huggingface")
+    return cast(type[object], getattr(module, "HuggingfaceHub"))
 
 
 @contextmanager
@@ -269,7 +276,7 @@ class CLI:
         self._abort_quiet = False
         self._abort_theme: Theme | None = None
 
-        cache_dir = HuggingfaceHub.DEFAULT_CACHE_DIR
+        cache_dir = _DEFAULT_HF_CACHE_DIR
         default_locale, _ = getlocale()
         default_locale = default_locale or "en_US"
         default_locales_path = join(
@@ -2219,7 +2226,8 @@ class CLI:
         else:
             access_token = access_token or "anonymous"
 
-        hub = HuggingfaceHub(access_token, args.cache_dir, self._logger)
+        hub_class = _huggingface_hub_class()
+        hub = hub_class(access_token, args.cache_dir, self._logger)
 
         try:
             with _direct_keyboard_interrupts():
@@ -2291,7 +2299,7 @@ class CLI:
         args: Namespace,
         theme: Theme,
         console: Console,
-        hub: HuggingfaceHub,
+        hub: HubClient,
         suggest_login: bool = False,
     ) -> None:
         user: User | None = None

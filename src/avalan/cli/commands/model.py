@@ -16,7 +16,7 @@ from ...entities import (
 from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
-from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.hubs import HubClient
 from ...model.input import input_files
 from ...model.manager import ModelManager
 from ...model.nlp.sentence import SentenceTransformerModel
@@ -69,7 +69,7 @@ def model_display(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HuggingfaceHub,
+    hub: HubClient,
     logger: Logger,
     *vargs: object,
     modality: Modality | None = None,
@@ -137,7 +137,7 @@ def model_display(
 
 
 def model_install(
-    args: Namespace, console: Console, theme: Theme, hub: HuggingfaceHub
+    args: Namespace, console: Console, theme: Theme, hub: HubClient
 ) -> None:
     assert args.model
     engine_uri = ModelManager.parse_uri(args.model)
@@ -166,7 +166,7 @@ async def model_run(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HuggingfaceHub,
+    hub: HubClient,
     refresh_per_second: int,
     logger: Logger,
 ) -> None:
@@ -345,7 +345,7 @@ async def model_search(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HuggingfaceHub,
+    hub: HubClient,
     refresh_per_second: int,
 ) -> None:
     assert args.limit
@@ -416,7 +416,7 @@ async def model_search(
 
 
 def model_uninstall(
-    args: Namespace, console: Console, theme: Theme, hub: HuggingfaceHub
+    args: Namespace, console: Console, theme: Theme, hub: HubClient
 ) -> None:
     assert args.model
     engine_uri = ModelManager.parse_uri(args.model)
