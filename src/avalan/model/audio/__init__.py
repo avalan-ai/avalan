@@ -7,8 +7,6 @@ from typing import Any, Literal, cast
 from numpy import ndarray
 from PIL import Image
 from torch import Tensor
-from torchaudio import load
-from torchaudio.functional import resample
 from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -35,6 +33,9 @@ class BaseAudioModel(Engine, ABC):
         raise TokenizerNotSupportedException()
 
     def _resample_mono(self, audio_source: str, sampling_rate: int) -> Tensor:
+        from torchaudio import load
+        from torchaudio.functional import resample
+
         wave, wave_sampling_rate = load(audio_source)
 
         if wave.shape[0] > 1:
@@ -54,6 +55,9 @@ class BaseAudioModel(Engine, ABC):
     def _resample(
         self, audio_source: str, sampling_rate: int
     ) -> ndarray[Any, Any]:
+        from torchaudio import load
+        from torchaudio.functional import resample
+
         wave, wave_sampling_rate = load(audio_source)
         if wave_sampling_rate != sampling_rate:
             wave = resample(wave, wave_sampling_rate, sampling_rate)
