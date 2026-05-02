@@ -11,10 +11,7 @@
   <a href="https://deepwiki.com/avalan-ai/avalan"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
-Avalan is a Python framework and CLI for building AI agents with local and
-hosted models. It unifies model execution, tools, memory, workflows, and
-serving so you can move from experiments to deployed systems without rewriting
-around a single provider or runtime.
+Avalan is a Python SDK and CLI for building and running AI workflows and agents across local and hosted models.
 
 # ✨ Highlights
 
@@ -33,26 +30,20 @@ around a single provider or runtime.
 
 # 🚀 Start Here
 
-- 📦 Use [Install](#install) to pick the extras you actually need.
-- ⚡ Use [Quickstart](#quickstart) to run a hosted model from the CLI or Python.
-- 🧪 Use [Models](#models) to search, install, and run open models locally.
-- 🤖 Use [Agents](#agents) to expose an agent over HTTP, MCP, or A2A.
-- 📚 Use [docs/examples](docs/examples/README.md) for runnable scripts and sample
-  agent configurations.
-- 🛠️ Use [docs/CLI.md](docs/CLI.md) for the complete command reference.
-- 🔗 Use [docs/ai_uri.md](docs/ai_uri.md) for engine URI syntax and backend
-  routing.
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Models](#models)
+- [Agents](#agents)
+- [docs/examples](docs/examples/README.md)
+- [docs/CLI.md](docs/CLI.md)
+- [docs/ai_uri.md](docs/ai_uri.md)
 
 # 🗂️ Table of Contents
 
-- ❓ [Why Avalan](#why-avalan)
 - 📦 [Install](#install)
 - ⚡ [Quickstart](#quickstart)
 - 🧪 [Models](#models)
 - 🎛️ [Modalities](#modalities)
-- 🎧 [Audio](#audio)
-- 📝 [Text](#text)
-- 👁️ [Vision](#vision)
 - 🧰 [Tools](#tools)
 - 🧠 [Reasoning strategies](#reasoning-strategies)
 - 🗃️ [Memories](#memories)
@@ -60,19 +51,6 @@ around a single provider or runtime.
 - 📚 [Documentation & Resources](#documentation--resources)
 - 🤝 [Community & Support](#community--support)
 - 🧑‍💻 [Contributing](#contributing)
-
-# ❓ Why Avalan
-
-- 🔄 **Model portability**: use the same CLI and SDK for open models, vendor APIs,
-  and local services.
-- 🏠 **Deployment flexibility**: run on a laptop, Apple Silicon workstation, Linux
-  GPU box, your own cloud, or on-prem.
-- 🧩 **Agent building blocks**: combine tools, memories, workflows, and reasoning
-  strategies instead of wiring them yourself.
-- 🔗 **Open interfaces**: expose agents through OpenAI-compatible HTTP, MCP, A2A,
-  or embed them into FastAPI.
-- 📈 **Incremental adoption**: start with a single `model run` command, then grow
-  into orchestrated agents and deployments.
 
 ## 📦 Install
 
@@ -341,7 +319,7 @@ avalan model run "superb/hubert-base-superb-er" \
     --audio-sampling-rate 16000
 ```
 
-And you'll get the likeliness of each sentiment:
+Output:
 
 ```text
 ┏━━━━━━━┳━━━━━━━┓
@@ -357,7 +335,7 @@ And you'll get the likeliness of each sentiment:
 └───────┴───────┘
 ```
 
-You can achieve the same result directly from Python:
+Python:
 
 ```python
 from avalan.model.audio.classification import AudioClassificationModel
@@ -387,7 +365,7 @@ THAT A SURPRISE HERE WAS THIS PETITE ALMOST DELICATE LADY WHO WAS THE
 PERSONIFICATION OF GRACE AND GOODNESS
 ```
 
-The SDK lets you do the same programmatically:
+Python:
 
 ```python
 from avalan.model.audio.speech_recognition import SpeechRecognitionModel
@@ -411,7 +389,7 @@ echo "[S1] Leo Messi is the greatest football player of all times." | \
             --audio-reference-text "[S1] And then I grew up and had the esteemed honor of meeting her. And wasn't that a surprise. Here was this petite, almost delicate lady who was the personification of grace and goodness."
 ```
 
-In code you can generate speech in the same way:
+Python:
 
 ```python
 from avalan.model.audio.speech import TextToSpeechModel
@@ -442,7 +420,7 @@ echo "A funky riff about Leo Messi." |
         --path melody.wav
 ```
 
-Using the library instead of the CLI:
+Python:
 
 ```python
 from avalan.model.audio.generation import AudioGenerationModel
@@ -465,13 +443,13 @@ echo "What sport does Leo play?" \
         --text-context "Lionel Messi, known as Leo Messi, is an Argentine professional footballer widely regarded as one of the greatest football players of all time."
 ```
 
-The answer comes as no surprise:
+Output:
 
 ```text
 football
 ```
 
-Or run it from your own script:
+Python:
 
 ```python
 from avalan.model.nlp.question import QuestionAnsweringModel
@@ -501,7 +479,7 @@ The result is positive as expected:
 POSITIVE
 ```
 
-The SDK version looks like this:
+Python:
 
 ```python
 from avalan.model.nlp.sequence import SequenceClassificationModel
@@ -538,7 +516,7 @@ footballer. He plays as a forward for the Argentina national team. Cucci began
 playing football at the age of 19 in his native Ushuaia.
 ```
 
-Calling from Python is just as easy:
+Python:
 
 ```python
 from avalan.model.nlp.sequence import SequenceToSequenceModel
@@ -573,7 +551,7 @@ echo "Who are you, and who is Leo Messi?" \
         --backend mlx
 ```
 
-Here's the equivalent Python snippet:
+Python:
 
 ```python
 from avalan.entities import GenerationSettings
@@ -605,7 +583,7 @@ echo "Who are you, and who is Leo Messi?" \
         --top-k 20
 ```
 
-Swap in the vendor URI in code too:
+Python:
 
 ```python
 from avalan.entities import GenerationSettings
@@ -672,7 +650,7 @@ echo "
     --text-labeled-only
 ```
 
-And you get the following labeled entities:
+Output:
 
 ```text
 ┏━━━━━━━━━━━┳━━━━━━━━┓
@@ -690,7 +668,7 @@ And you get the following labeled entities:
 └───────────┴────────┘
 ```
 
-Use the Python API if you prefer:
+Python:
 
 ```python
 from avalan.model.nlp.token import TokenClassificationModel
@@ -722,7 +700,7 @@ echo "
         --text-max-length 512
 ```
 
-Here is the Spanish version:
+Output:
 
 ```text
 Lionel Messi, conocido comúnmente como Leo Messi, es un futbolista argentino
@@ -731,7 +709,7 @@ Considerado por muchos como el mejor futbolista de todos los tiempos, Messi ha
 conseguido un éxito sin precedentes en toda su carrera.
 ```
 
-The SDK call mirrors the CLI parameters:
+Python:
 
 ```python
 from avalan.entities import GenerationSettings
@@ -766,7 +744,7 @@ echo "<s_docvqa><s_question>
         --path docs/examples/playground/invoice-factura.png
 ```
 
-And you get the answer:
+Output:
 
 ```
 <s_docvqa>
@@ -775,7 +753,7 @@ And you get the answer:
 </s>
 ```
 
-Here's how you'd call it in a script:
+Python:
 
 ```python
 from avalan.model.vision.decoder import VisionEncoderDecoderModel
@@ -809,7 +787,7 @@ The model identifies the image:
 └──────────────────┘
 ```
 
-Programmatic usage:
+Python:
 
 ```python
 from avalan.model.vision.image import ImageClassificationModel
@@ -836,7 +814,7 @@ Example output:
 a sign for a gas station on the side of a building [SEP]
 ```
 
-Python snippet:
+Python:
 
 ```python
 from avalan.model.vision.image import ImageToTextModel
@@ -874,7 +852,7 @@ por la falta de buenas ediciones de sus obras, una consecuencia del ‘anatema�
 que, durante siglos, ha pesado sobre el incipor del nominalismo" (1).
 ```
 
-Invoke the model with the SDK like so:
+Python:
 
 ```python
 from avalan.entities import GenerationSettings
@@ -932,7 +910,7 @@ Results are sorted by accuracy and include bounding boxes:
 └──────────────┴───────┴──────────────────────────────────┘
 ```
 
-Example SDK call:
+Python:
 
 ```python
 from avalan.model.vision.detection import ObjectDetectionModel
@@ -1007,7 +985,7 @@ The output lists each annotation:
 └──────────────────┘
 ```
 
-This is how you'd do it in code:
+Python:
 
 ```python
 from avalan.model.vision.segmentation import SemanticSegmentationModel
@@ -1040,7 +1018,7 @@ And here's the generated anime inspired animation of a walking cat:
 
 ![An anime cat slowly walking](https://avalan.ai/images/github/vision_text_to_animation_generated.webp)
 
-SDK usage:
+Python:
 
 ```python
 from avalan.entities import EngineSettings
@@ -1079,7 +1057,7 @@ Here is the generated image of Leo Messi petting a cute cat:
 
 ![Leo Messi petting a cute cat](https://avalan.ai/images/github/vision_text_to_image_generated.webp)
 
-You can also create images from Python:
+Python:
 
 ```python
 from avalan.entities import TransformerEngineSettings
@@ -1124,7 +1102,7 @@ And here's the generated video:
 
 ![A penguin opening a book](https://avalan.ai/images/github/vision_text_to_video_generated.webp)
 
-Python example:
+Python:
 
 ```python
 from avalan.entities import EngineSettings
@@ -1186,7 +1164,7 @@ Notice the GPU utilization at the bottom:
 
 ![Example use of an ephemeral tool agent with memory](https://github.com/user-attachments/assets/e15cdd4c-f037-4151-88b9-d0acbb22b0ba)
 
-You can give your GPU some breathing type by running the same on a vendor model, like Anthropic:
+You can give your GPU some breathing room by running the same on a vendor model, like Anthropic:
 
 ```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
@@ -1358,7 +1336,7 @@ Add the memory toolset when agents should consult past conversations or long-liv
 - `memory.list(namespace: str) -> list[Memory]`: Enumerate stored memories in a namespace so the agent can decide which entries to reuse.
 - `memory.stores() -> list[PermanentMemoryStore]`: List permanent memory stores available to the agent for broader exploration.
 
-See [Memories](memories) for sample usage.
+See [Memories](#memories) for sample usage.
 
 ### YouTube toolset (`youtube.*`)
 
@@ -1638,7 +1616,7 @@ And the stored paper is found:
 ## Agents
 
 You can easily create AI agents from configuration files. Let's create one to handle gettext translations.
-Create a file named [agent_gettext_translator.toml](https://github.com/avalan-ai/avalan/blob/main/docs/examples.agent_gettext_translator.toml)
+Create a file named [agent_gettext_translator.toml](https://github.com/avalan-ai/avalan/blob/main/docs/examples/agent_gettext_translator.toml)
 with the following contents:
 
 ```toml
