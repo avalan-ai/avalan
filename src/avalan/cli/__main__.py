@@ -106,12 +106,6 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme as RichTheme
-from torch.cuda import device_count, is_available, set_device
-from torch.distributed import destroy_process_group
-from transformers import utils as transformer_utils
-from transformers.utils import logging as hf_logging
-
-
 class Translator(Protocol):
     """Represent the translation helpers needed by the CLI."""
 
@@ -120,18 +114,112 @@ class Translator(Protocol):
     def ngettext(self, singular: str, plural: str, n: int) -> str: ...
 
 
-is_flash_attn_2_available = cast(
-    Callable[[], bool],
-    getattr(transformer_utils, "is_flash_attn_2_available", lambda: False),
-)
-is_torch_flex_attn_available = cast(
-    Callable[[], bool],
-    getattr(transformer_utils, "is_torch_flex_attn_available", lambda: False),
-)
-
 _INTERRUPT_DRAIN_TIMEOUT = 0.5
 _LOOP_HANDLES_SIGINT = False
-_DEFAULT_HF_CACHE_DIR = "~/.cache/huggingface/hub"
+
+
+def _default_hf_cache_dir() -> str:
+    return getenv("HF_HUB_CACHE") or "~/.cache/huggingface/hub"
+
+
+def _module_exists(module_name: str) -> bool:
+    try:
+        return find_spec(module_name) is not None
+    except ValueError:
+        return module_name in sys.modules
+
+
+def _is_cuda_available() -> bool:
+    if not _module_exists("torch"):
+        return False
+    cuda_module = import_module("torch.cuda")
+    return bool(getattr(cuda_module, "is_available")())
+
+
+def _cuda_device_count() -> int:
+    if not _is_cuda_available():
+        return 1
+    cuda_module = import_module("torch.cuda")
+    return int(getattr(cuda_module, "device_count")())
+
+
+def is_available() -> bool:
+    return _is_cuda_available()
+
+
+def device_count() -> int:
+    return _cuda_device_count()
+
+
+def _set_cuda_device(index: int) -> None:
+    if not _is_cuda_available():
+        return
+    cuda_module = import_module("torch.cuda")
+    getattr(cuda_module, "set_device")(index)
+
+
+def _destroy_torch_process_group() -> None:
+    if not _module_exists("torch.distributed"):
+        return
+    dist_module = import_module("torch.distributed")
+    getattr(dist_module, "destroy_process_group")()
+
+
+def set_device(index: int) -> None:
+    _set_cuda_device(index)
+
+
+def destroy_process_group() -> None:
+    _destroy_torch_process_group()
+
+
+class _HFLoggingProxy:
+    def get_logger(self, name: str) -> Logger:
+        if not find_spec("transformers"):
+            return getLogger(name)
+        transformers_logging = import_module("transformers.utils.logging")
+        return cast(Logger, getattr(transformers_logging, "get_logger")(name))
+
+
+hf_logging = _HFLoggingProxy()
+
+
+def _transformers_utils_module() -> object | None:
+    if not _module_exists("transformers"):
+        return None
+    return import_module("transformers.utils")
+
+
+def is_flash_attn_2_available() -> bool:
+    transformers_utils = _transformers_utils_module()
+    if transformers_utils is None:
+        return False
+    return bool(
+        cast(
+            Callable[[], bool],
+            getattr(
+                transformers_utils,
+                "is_flash_attn_2_available",
+                lambda: False,
+            ),
+        )()
+    )
+
+
+def is_torch_flex_attn_available() -> bool:
+    transformers_utils = _transformers_utils_module()
+    if transformers_utils is None:
+        return False
+    return bool(
+        cast(
+            Callable[[], bool],
+            getattr(
+                transformers_utils,
+                "is_torch_flex_attn_available",
+                lambda: False,
+            ),
+        )()
+    )
 
 
 def _huggingface_hub_class() -> type[object]:
@@ -276,7 +364,7 @@ class CLI:
         self._abort_quiet = False
         self._abort_theme: Theme | None = None
 
-        cache_dir = _DEFAULT_HF_CACHE_DIR
+        cache_dir = _default_hf_cache_dir()
         default_locale, _ = getlocale()
         default_locale = default_locale or "en_US"
         default_locales_path = join(
@@ -289,7 +377,7 @@ class CLI:
 
     @staticmethod
     def _default_parallel_count() -> int:
-        return device_count() if is_available() else 1
+        return _cuda_device_count()
 
     @staticmethod
     def _default_attention(device: str) -> AttentionImplementation | None:
