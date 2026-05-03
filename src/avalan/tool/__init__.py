@@ -9,12 +9,7 @@ from inspect import Signature, isfunction, signature
 from types import TracebackType
 from typing import Any, cast, get_type_hints
 
-from transformers import utils as transformers_utils
-
-get_json_schema = cast(
-    Callable[[Callable[..., Any]], dict[str, Any]],
-    getattr(transformers_utils, "get_json_schema"),
-)
+from .json_schema import get_json_schema
 
 
 class Tool(ABC):

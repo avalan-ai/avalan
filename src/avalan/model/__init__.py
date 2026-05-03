@@ -9,9 +9,14 @@ from .input import input_files as input_files
 from .response.text import TextGenerationResponse
 from .vendor import TextGenerationVendorStream
 
-from typing import Any, AsyncGenerator, Callable, Generator, TypeAlias
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Generator, TypeAlias
 
-from numpy.typing import NDArray
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+else:
+    class NDArray:  # noqa: D101
+        def __class_getitem__(cls, _: Any) -> Any:
+            return Any
 
 OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
 OutputFunction = Callable[..., OutputGenerator | str]
