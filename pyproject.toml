@@ -17,15 +17,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
   "packaging>=25.0,<26.0",
   "humanize>=4.12.3,<5.0.0",
-  "huggingface-hub>=1.0.0,<2.0.0",
-  "hf-xet>=1.4.3,<2.0.0 ; platform_machine == 'x86_64' or platform_machine == 'amd64' or platform_machine == 'AMD64' or platform_machine == 'arm64' or platform_machine == 'aarch64'",
   "rich>=14.1.0,<15.0.0",
-  # version limited because of vllm
-  "torch>=2.7.1,<2.8.0",
-  "transformers>=5.5.4,<6.0.0",
-  "pandas>=2.3.1,<3.0.0",
-  "accelerate>=1.9.0,<2.0.0",
-  "sentence-transformers>=5.4.1,<6.0.0"
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -50,6 +42,16 @@ avl = "avalan.cli.__main__:main"
 avalan = "avalan.cli.__main__:main"
 
 [project.optional-dependencies]
+local = [
+  # version limited because of vllm
+  "huggingface-hub>=1.0.0,<2.0.0",
+  "hf-xet>=1.4.3,<2.0.0 ; platform_machine == 'x86_64' or platform_machine == 'amd64' or platform_machine == 'AMD64' or platform_machine == 'arm64' or platform_machine == 'aarch64'",
+  "torch>=2.7.1,<2.8.0",
+  "transformers>=5.5.4,<6.0.0",
+  "accelerate>=1.9.0,<2.0.0",
+  "sentence-transformers>=5.4.1,<6.0.0",
+]
+
 agent = [
   "jinja2>=3.1.6,<4.0.0",
 ]
@@ -85,6 +87,7 @@ tool = [
   "aiomysql>=0.2.0,<0.3.0",
   "asyncpg>=0.30.0,<0.31.0",
   "matplotlib>=3.8.0,<4.0.0",
+  "pandas>=2.3.1,<3.0.0",
   "playwright>=1.54.0,<2.0.0",
   "RestrictedPython>=8.0,<9.0.0",
   "SQLAlchemy>=2.0.43,<3.0.0",

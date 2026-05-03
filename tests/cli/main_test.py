@@ -11,7 +11,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from avalan.cli import CommandAbortException
-from avalan.cli.__main__ import CLI, HuggingfaceHub
+from avalan.cli.__main__ import CLI
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
@@ -52,7 +52,7 @@ class CliInitTestCase(TestCase):
         )
         cp.assert_called_once_with(
             "cpu",
-            HuggingfaceHub.DEFAULT_CACHE_DIR,
+            "~/.cache/huggingface/hub",
             locales_path,
             "en_US",
         )
@@ -197,13 +197,33 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=console),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch.object(CLI, "_help") as help_mock,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
         ):
             await self.cli()
         main_mock.assert_awaited_once()
         help_mock.assert_not_called()
+
+    async def test_call_raises_when_huggingface_hub_is_missing(self):
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation", return_value=self.translator
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch(
+                "avalan.cli.__main__._huggingface_hub_class",
+                side_effect=ModuleNotFoundError("huggingface_hub"),
+            ),
+        ):
+            with self.assertRaises(ModuleNotFoundError):
+                await self.cli()
 
     async def test_call_help_full_outputs_all_commands(self):
         records_console = None
@@ -226,7 +246,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", side_effect=create_console),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
             patch.object(CLI, "_help", wraps=self.cli._help) as help_mock,
         ):
@@ -267,7 +287,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch("avalan.cli.__main__.run") as run_patch,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
         ):
@@ -288,7 +308,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch("avalan.cli.__main__.destroy_process_group") as destroy,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
         ):
@@ -309,7 +329,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch(
                 "avalan.cli.__main__.destroy_process_group",
                 side_effect=AssertionError,
@@ -337,7 +357,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch("avalan.cli.__main__.destroy_process_group"),
             patch("avalan.cli.__main__.set_device") as set_device_mock,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
@@ -365,7 +385,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch("avalan.cli.__main__.destroy_process_group"),
             patch("avalan.cli.__main__.set_device") as set_device_mock,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
@@ -392,7 +412,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch("avalan.cli.__main__.destroy_process_group"),
             patch("avalan.cli.__main__.set_device") as set_device_mock,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
@@ -422,7 +442,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch(
                 "avalan.cli.__main__.hf_logging.get_logger",
                 return_value=hf_logger,
@@ -718,7 +738,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
             patch(
                 "avalan.cli.__main__.Prompt.ask", return_value="tok"
             ) as ask_patch,
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch.object(CLI, "_help"),
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
         ):
@@ -744,7 +764,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.Console", return_value=MagicMock()
             ) as console_patch,
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch.object(
                 CLI, "_main", AsyncMock(side_effect=CommandAbortException)
             ),
@@ -770,7 +790,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.Console", return_value=MagicMock()
             ) as console_patch,
             patch.object(CLI, "_needs_hf_token", return_value=False),
-            patch("avalan.cli.__main__.HuggingfaceHub"),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
             patch.object(
                 CLI, "_main", AsyncMock(side_effect=KeyboardInterrupt)
             ),
