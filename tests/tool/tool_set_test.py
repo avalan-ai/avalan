@@ -3,6 +3,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, MagicMock
 
 from avalan.tool import Tool, ToolSet
+from avalan.tool.json_schema import get_json_schema
 from avalan.tool.math import CalculatorTool
 
 
@@ -167,6 +168,50 @@ class ToolSetJsonSchemasTestCase(TestCase):
             [s["function"]["name"] for s in schemas_mix],
             ["mix.greet"],
         )
+
+
+class ToolJsonSchemaUtilityTestCase(TestCase):
+    def test_get_json_schema_handles_optional_and_missing_doc_items(self):
+        def maybe_count(value: str | None, enabled: bool = False) -> int:
+            """Summarize value.
+
+            Args:
+                value: Optional value.
+            """
+            return len(value) if value else 0
+
+        schema = get_json_schema(maybe_count)
+        self.assertEqual(schema["function"]["name"], "maybe_count")
+        self.assertEqual(
+            schema["function"]["parameters"]["properties"]["value"]["type"],
+            "string",
+        )
+        self.assertEqual(
+            schema["function"]["parameters"]["properties"]["enabled"][
+                "description"
+            ],
+            "",
+        )
+        self.assertEqual(schema["function"]["return"]["description"], "")
+
+    def test_get_json_schema_ignores_varargs(self):
+        def echo(name: str, *args: object, **kwargs: object) -> str:
+            """Echo.
+
+            Args:
+                name: Name.
+
+            Returns:
+                Value.
+            """
+            return name
+
+        schema = get_json_schema(echo)
+        self.assertEqual(
+            set(schema["function"]["parameters"]["properties"].keys()),
+            {"name"},
+        )
+        self.assertEqual(schema["function"]["return"]["description"], "Value.")
 
 
 if __name__ == "__main__":

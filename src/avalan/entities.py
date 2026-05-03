@@ -2,11 +2,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, TypedDict, final
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, final
 from uuid import UUID
 
-from numpy.typing import NDArray
-from torch import Tensor, dtype
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+    from torch import Tensor, dtype
+else:
+    class NDArray:  # noqa: D101
+        def __class_getitem__(cls, _: Any) -> Any:
+            return Any
+
+    Tensor: TypeAlias = Any
+    dtype: TypeAlias = Any
 
 AttentionImplementation = Literal[
     "eager", "flash_attention_2", "flex_attention", "sdpa"
