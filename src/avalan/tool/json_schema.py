@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from inspect import Parameter, signature
-from typing import Any, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin
 
 
 def _parse_docstring_sections(docstring: str | None) -> dict[str, str]:
@@ -22,6 +22,22 @@ def _parse_docstring_sections(docstring: str | None) -> dict[str, str]:
         elif current_key == "returns":
             sections["return"] = stripped
     return sections
+
+
+def _literal_schema(annotation: object) -> dict[str, Any] | None:
+    if get_origin(annotation) is not Literal:
+        return None
+
+    values = list(get_args(annotation))
+    if not values:
+        return {"type": "object"}
+
+    value_types = {type(value) for value in values}
+    if len(value_types) != 1:
+        return {"type": "object"}
+
+    base_type = _json_type(next(iter(value_types)))
+    return {"type": base_type, "enum": values}
 
 
 def _json_type(annotation: object) -> str:
@@ -77,10 +93,11 @@ def get_json_schema(function: Callable[..., Any]) -> dict[str, Any]:
             if parameter.annotation is not Parameter.empty
             else Any
         )
-        properties[name] = {
-            "type": _json_type(annotation),
-            "description": docs.get(f"arg:{name}", ""),
-        }
+        literal_schema = _literal_schema(annotation)
+        properties[name] = (
+            literal_schema if literal_schema else {"type": _json_type(annotation)}
+        )
+        properties[name]["description"] = docs.get(f"arg:{name}", "")
         if parameter.default is Parameter.empty:
             required.append(name)
 

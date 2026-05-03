@@ -1,4 +1,5 @@
 from contextlib import AsyncExitStack
+from typing import Literal
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, MagicMock
 
@@ -212,6 +213,24 @@ class ToolJsonSchemaUtilityTestCase(TestCase):
             {"name"},
         )
         self.assertEqual(schema["function"]["return"]["description"], "Value.")
+
+    def test_get_json_schema_maps_literal_to_scalar_enum(self):
+        def draw(orientation: Literal["vertical", "horizontal"]) -> str:
+            """Draw.
+
+            Args:
+                orientation: Axis orientation.
+            """
+            return orientation
+
+        schema = get_json_schema(draw)
+        orientation_schema = schema["function"]["parameters"]["properties"][
+            "orientation"
+        ]
+        self.assertEqual(orientation_schema["type"], "string")
+        self.assertEqual(
+            orientation_schema["enum"], ["vertical", "horizontal"]
+        )
 
 
 if __name__ == "__main__":
