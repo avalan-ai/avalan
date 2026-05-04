@@ -106,6 +106,12 @@ jobs:
           echo "If auto-merge is unavailable, merge that PR manually, then start a NEW workflow_dispatch run from the updated branch."
           echo "Do not use GitHub's Re-run jobs on this run, because it keeps the original commit SHA."
 
+      - name: Configure git identity for tagging
+        if: steps.version_state.outputs.version_changed == 'false'
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Create and push tag
         if: steps.version_state.outputs.version_changed == 'false'
         env:
