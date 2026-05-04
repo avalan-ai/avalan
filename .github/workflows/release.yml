@@ -80,14 +80,15 @@ jobs:
 
             Merge this pull request, then rerun the release workflow for v${{ github.event.inputs.version }}.
 
-      - name: Stop after creating version bump pull request
+      - name: Stop release after creating version bump pull request
         if: steps.bump.outputs.version_changed == 'true'
         run: |
-          echo "Created signed PR #${{ steps.cpr.outputs.pull-request-number }} for version bump."
-          echo "Merge the PR and rerun this workflow to continue the release."
-          exit 1
+          echo "Created or updated signed PR #${{ steps.cpr.outputs.pull-request-number }} for version bump."
+          echo "Merge that PR, then start a NEW workflow_dispatch run from the updated branch."
+          echo "Do not use GitHub's Re-run jobs on this run, because it keeps the original commit SHA."
 
       - name: Create and push tag
+        if: steps.bump.outputs.version_changed == 'false'
         env:
           VERSION: ${{ github.event.inputs.version }}
         run: |
@@ -99,12 +100,15 @@ jobs:
           git push origin "v$VERSION"
 
       - name: Build package
+        if: steps.bump.outputs.version_changed == 'false'
         run: poetry build --clean
 
       - name: Publish package to PyPI
+        if: steps.bump.outputs.version_changed == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Create GitHub release
+        if: steps.bump.outputs.version_changed == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ github.event.inputs.version }}
