@@ -15,6 +15,7 @@ from avalan.entities import (
     QuantizationSettings,
     TransformerEngineSettings,
 )
+from avalan.model.nlp.text import generation as generation_module
 from avalan.model.nlp.text.generation import (
     TextGenerationModel,
     _is_event_loop_closed_error,
@@ -25,6 +26,70 @@ class EventLoopClosedErrorTestCase(TestCase):
     def test_identifies_event_loop_closed_runtime_error(self):
         self.assertTrue(
             _is_event_loop_closed_error(RuntimeError("Event loop is closed"))
+        )
+
+
+class LazyExternalProxyTestCase(TestCase):
+    def test_async_text_iterator_streamer_loads_transformers_class(
+        self,
+    ) -> None:
+        class LoadedStreamer:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+        transformers_module = SimpleNamespace(
+            AsyncTextIteratorStreamer=LoadedStreamer
+        )
+
+        with patch.object(
+            generation_module,
+            "import_module",
+            return_value=transformers_module,
+        ):
+            streamer = generation_module.AsyncTextIteratorStreamer(
+                "tokenizer", skip_prompt=True
+            )
+
+        self.assertIsInstance(streamer, LoadedStreamer)
+        self.assertEqual(streamer.args, ("tokenizer",))
+        self.assertEqual(streamer.kwargs, {"skip_prompt": True})
+
+    def test_torch_function_proxies_delegate_to_lazy_modules(self) -> None:
+        torch_module = SimpleNamespace(
+            log_softmax=MagicMock(return_value="log"),
+            softmax=MagicMock(return_value="soft"),
+            topk=MagicMock(return_value="top"),
+        )
+        functional_module = SimpleNamespace(
+            gumbel_softmax=MagicMock(return_value="gumbel")
+        )
+
+        def load_module(module_name: str):
+            if module_name == "torch.nn.functional":
+                return functional_module
+            return torch_module
+
+        with patch.object(
+            generation_module, "import_module", side_effect=load_module
+        ):
+            self.assertEqual(
+                generation_module.log_softmax("scores", dim=-1), "log"
+            )
+            self.assertEqual(
+                generation_module.softmax("scores", dim=-1), "soft"
+            )
+            self.assertEqual(generation_module.topk("scores", 2), "top")
+            self.assertEqual(
+                generation_module.gumbel_softmax("scores", tau=1.0),
+                "gumbel",
+            )
+
+        torch_module.log_softmax.assert_called_once_with("scores", dim=-1)
+        torch_module.softmax.assert_called_once_with("scores", dim=-1)
+        torch_module.topk.assert_called_once_with("scores", 2)
+        functional_module.gumbel_softmax.assert_called_once_with(
+            "scores", tau=1.0
         )
 
 

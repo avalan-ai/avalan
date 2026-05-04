@@ -20,6 +20,7 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.criteria import KeywordStoppingCriteria
+from avalan.model.modalities import text as text_module
 from avalan.model.modalities.text import (
     TextGenerationModality,
     TextQuestionAnsweringModality,
@@ -28,6 +29,7 @@ from avalan.model.modalities.text import (
     TextTokenClassificationModality,
     TextTranslationModality,
     _get_mlx_model,
+    _resolve_model_class,
     _stopping_criteria,
 )
 
@@ -168,6 +170,27 @@ def test_get_mlx_model_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     stub.MlxLmModel = UnavailableLoader
     monkeypatch.setitem(modules, module_name, stub)
     assert _get_mlx_model() is None
+
+
+def test_resolve_model_class_imports_and_caches_any_global(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "tests.model.stub_generation_model"
+
+    class ImportedModel:
+        pass
+
+    stub = ModuleType(module_name)
+    stub.ImportedModel = ImportedModel
+    monkeypatch.setitem(modules, module_name, stub)
+    monkeypatch.setattr(text_module, "TextGenerationModel", Any)
+
+    result = _resolve_model_class(
+        "TextGenerationModel", module_name, "ImportedModel"
+    )
+
+    assert result is ImportedModel
+    assert text_module.TextGenerationModel is ImportedModel
 
 
 def test_text_generation_load_engine_mlx(

@@ -64,6 +64,25 @@ class CudaAndTransformerUtilityTestCase(TestCase):
 
         cuda_module.set_device.assert_called_once_with(2)
 
+    def test_cuda_helpers_handle_missing_lazy_modules(self) -> None:
+        with (
+            patch("avalan.cli.__main__._module_exists", return_value=True),
+            patch(
+                "avalan.cli.__main__.import_module",
+                side_effect=ModuleNotFoundError("torch.cuda"),
+            ),
+        ):
+            self.assertFalse(cli_main._is_cuda_available())
+
+        with (
+            patch("avalan.cli.__main__._module_exists", return_value=True),
+            patch(
+                "avalan.cli.__main__.import_module",
+                side_effect=ModuleNotFoundError("torch.backends.mps"),
+            ),
+        ):
+            self.assertFalse(cli_main._is_mps_available())
+
     def test_destroy_process_group_paths(self) -> None:
         with patch("avalan.cli.__main__._module_exists", return_value=False):
             cli_main.destroy_process_group()
