@@ -1905,3 +1905,27 @@ We welcome pull requests, issue reports, docs improvements, and new examples.
 4. Run `poetry run pytest --verbose -s`.
 
 Open a [GitHub issue](https://github.com/avalan-ai/avalan/issues) if you discover bugs or want to propose larger changes.
+
+
+## Release automation
+
+You can publish a new release to both GitHub Releases and PyPI from the
+**Release** GitHub Actions workflow:
+
+1. Open **Actions → Release → Run workflow**.
+2. Enter a semantic version (`X.Y.Z`).
+3. Run the workflow on `main`.
+
+The workflow runs tests, bumps `pyproject.toml`, pushes a `vX.Y.Z` tag,
+publishes to PyPI, and creates a GitHub release with generated notes.
+
+### Required authorization
+
+- `permissions.contents: write` allows the workflow to push the version commit,
+  push the release tag, and create the GitHub Release via `GITHUB_TOKEN`.
+- `permissions.id-token: write` allows the workflow to mint an OIDC token for
+  trusted publishing to PyPI (no long-lived PyPI API token required).
+- In PyPI project settings, add this repository workflow as a trusted
+  publisher (`owner: avalan-ai`, `repo: avalan`, workflow
+  `.github/workflows/release.yml`, environment left empty).
+
