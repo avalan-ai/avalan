@@ -10,7 +10,7 @@ from avalan.entities import (
     GenerationSettings,
     TransformerEngineSettings,
 )
-from avalan.model.nlp import BaseNLPModel
+from avalan.model.nlp import BaseNLPModel, inference_mode
 
 
 class DummyNLPModel(BaseNLPModel):
@@ -25,6 +25,17 @@ class DummyNLPModel(BaseNLPModel):
 
 
 class BaseNLPModelGenerateTestCase(TestCase):
+    def test_inference_mode_delegates_to_torch(self) -> None:
+        torch_module = MagicMock()
+        torch_module.inference_mode.return_value = "context"
+
+        with patch(
+            "avalan.model.nlp.import_module", return_value=torch_module
+        ):
+            self.assertEqual(inference_mode(), "context")
+
+        torch_module.inference_mode.assert_called_once_with()
+
     def test_generate_output_forced_bos(self):
         model = DummyNLPModel(
             "model",

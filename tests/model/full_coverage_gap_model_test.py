@@ -87,6 +87,31 @@ class ModalityRegistryCoverageTestCase(TestCase):
         finally:
             ModalityRegistry._handlers = original
 
+    def test_load_handlers_ignores_unknown_modality_string(self) -> None:
+        original = dict(ModalityRegistry._handlers)
+        try:
+            ModalityRegistry._load_handlers("unknown")
+            self.assertEqual(ModalityRegistry._handlers, original)
+        finally:
+            ModalityRegistry._handlers = original
+
+    def test_register_cached_handlers_accepts_function_handler(self) -> None:
+        modality = Modality.TEXT_GENERATION
+        original = dict(ModalityRegistry._handlers)
+
+        async def handler(*args, **kwargs):
+            del args, kwargs
+            return "ok"
+
+        setattr(handler, "__avalan_modality__", modality)
+        module = SimpleNamespace(handler=handler)
+        try:
+            ModalityRegistry._handlers = {}
+            ModalityRegistry._register_cached_handlers(module)
+            self.assertIs(ModalityRegistry._handlers[modality], handler)
+        finally:
+            ModalityRegistry._handlers = original
+
 
 class TextGenerationModelCoverageTestCase(TestCase):
     def test_messages_accepts_list_of_strings(self) -> None:

@@ -45,12 +45,119 @@ class WeightAndDeviceTestCase(TestCase):
         ):
             self.assertEqual(Engine.get_default_device(), "cpu")
 
+    def test_get_default_device_handles_missing_cuda_module(self) -> None:
+        with (
+            patch("avalan.model.engine.find_spec", return_value=object()),
+            patch(
+                "avalan.model.engine.cuda.is_available",
+                side_effect=ModuleNotFoundError("torch.cuda"),
+            ),
+        ):
+            self.assertEqual(Engine.get_default_device(), "cpu")
+
     def test_has_module_handles_module_not_found(self) -> None:
         with patch(
             "avalan.model.engine.find_spec",
             side_effect=ModuleNotFoundError("missing parent package"),
         ):
             self.assertFalse(Engine._has_module("mlx.nn"))
+
+    def test_transformers_logging_proxy_setter_and_attributes(self) -> None:
+        engine_module = sys.modules[Engine.__module__]
+        logging_module = types.SimpleNamespace(
+            custom="value", set_verbosity_error=MagicMock()
+        )
+
+        with patch.object(
+            engine_module, "import_module", return_value=logging_module
+        ):
+            engine_module.transformers_logging.set_verbosity_error()
+            self.assertEqual(
+                engine_module.transformers_logging.custom, "value"
+            )
+
+        logging_module.set_verbosity_error.assert_called_once_with()
+
+    def test_optional_type_paths(self) -> None:
+        engine_module = sys.modules[Engine.__module__]
+
+        class Loaded:
+            pass
+
+        loaded_module = types.ModuleType("loaded_module")
+        loaded_module.Loaded = Loaded
+        with patch.dict(sys.modules, {"loaded_module": loaded_module}):
+            self.assertIs(
+                engine_module._optional_type("loaded_module", "Loaded"),
+                Loaded,
+            )
+
+        with (
+            patch.object(engine_module, "modules", {}),
+            patch.object(engine_module, "find_spec", return_value=None),
+        ):
+            self.assertIsNone(
+                engine_module._optional_type("missing_module", "Missing")
+            )
+
+        class Imported:
+            pass
+
+        imported_module = types.SimpleNamespace(Imported=Imported)
+        with (
+            patch.object(engine_module, "modules", {}),
+            patch.object(engine_module, "find_spec", return_value=object()),
+            patch.object(
+                engine_module, "import_module", return_value=imported_module
+            ),
+        ):
+            self.assertIs(
+                engine_module._optional_type("imported_module", "Imported"),
+                Imported,
+            )
+
+    def test_pretrained_model_type_uses_loaded_global(self) -> None:
+        engine_module = sys.modules[Engine.__module__]
+
+        class LoadedPreTrainedModel:
+            pass
+
+        with patch.object(
+            engine_module, "PreTrainedModel", LoadedPreTrainedModel
+        ):
+            self.assertIs(
+                engine_module._pretrained_model_type(),
+                LoadedPreTrainedModel,
+            )
+
+    def test_pretrained_tokenizer_types_return_none_when_missing(
+        self,
+    ) -> None:
+        engine_module = sys.modules[Engine.__module__]
+
+        class LoadedTokenizer:
+            pass
+
+        with patch.object(
+            engine_module,
+            "_optional_type",
+            side_effect=[LoadedTokenizer, None],
+        ):
+            self.assertIsNone(engine_module._pretrained_tokenizer_types())
+
+    def test_set_transformers_progress_bar_skips_missing_module(self) -> None:
+        engine_module = sys.modules[Engine.__module__]
+
+        with (
+            patch.object(engine_module, "modules", {}),
+            patch.object(engine_module, "find_spec", return_value=None),
+            patch.object(engine_module, "disable_progress_bar") as disable,
+            patch.object(engine_module, "enable_progress_bar") as enable,
+        ):
+            engine_module._set_transformers_progress_bar(enabled=False)
+
+        disable.assert_not_called()
+        enable.assert_not_called()
 
 
 class UsesTokenizerPropertyTestCase(TestCase):
@@ -204,6 +311,10 @@ class MlxLoadTestCase(TestCase):
 
                 engine = DummyEngine()
                 self.assertTrue(engine._loaded_model)
+
+    def test_get_device_memory_returns_zero_when_torch_missing(self) -> None:
+        with patch("avalan.model.engine.find_spec", return_value=None):
+            self.assertEqual(Engine._get_device_memory("cuda"), 0)
 
     def test_missing_mlx_nn_namespace_is_ignored(self) -> None:
         module_mlx = types.ModuleType("mlx")

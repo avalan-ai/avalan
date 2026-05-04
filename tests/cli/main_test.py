@@ -500,6 +500,140 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(filt.filter(bad_record))
 
 
+class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
+    def test_anonymous_hub_records_cache_dir_and_rejects_user_calls(
+        self,
+    ) -> None:
+        cli_module = sys.modules[CLI.__module__]
+        hub = cli_module._AnonymousHub("cache")
+
+        self.assertEqual(hub.cache_dir, "cache")
+        with self.assertRaises(NotImplementedError):
+            hub.login()
+        with self.assertRaises(NotImplementedError):
+            hub.user()
+
+    def test_fancy_theme_loads_real_theme_lazily(self) -> None:
+        cli_module = sys.modules[CLI.__module__]
+
+        class LoadedTheme:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+        module = SimpleNamespace(FancyTheme=LoadedTheme)
+        with patch.object(cli_module, "import_module", return_value=module):
+            result = cli_module.FancyTheme("gettext", key="value")
+
+        self.assertIsInstance(result, LoadedTheme)
+        self.assertEqual(result.args, ("gettext",))
+        self.assertEqual(result.kwargs, {"key": "value"})
+
+    def test_load_command_imports_target_function(self) -> None:
+        cli_module = sys.modules[CLI.__module__]
+        command = MagicMock(return_value="ok")
+        module = SimpleNamespace(run=command)
+
+        with patch.object(cli_module, "import_module", return_value=module):
+            result = cli_module._load_command("module.path", "run")(
+                "arg", key="value"
+            )
+
+        command.assert_called_once_with("arg", key="value")
+        self.assertEqual(result, "ok")
+
+    async def test_async_lazy_command_proxies_forward_calls(self) -> None:
+        cli_module = sys.modules[CLI.__module__]
+
+        async def command(*args, **kwargs):
+            return args, kwargs
+
+        commands = [
+            (
+                "agent_message_search",
+                "avalan.cli.commands.agent",
+                "agent_message_search",
+            ),
+            ("agent_run", "avalan.cli.commands.agent", "agent_run"),
+            ("agent_serve", "avalan.cli.commands.agent", "agent_serve"),
+            ("agent_proxy", "avalan.cli.commands.agent", "agent_proxy"),
+            ("agent_init", "avalan.cli.commands.agent", "agent_init"),
+            (
+                "memory_document_index",
+                "avalan.cli.commands.memory",
+                "memory_document_index",
+            ),
+            (
+                "memory_search",
+                "avalan.cli.commands.memory",
+                "memory_search",
+            ),
+            (
+                "memory_embeddings",
+                "avalan.cli.commands.memory",
+                "memory_embeddings",
+            ),
+            ("model_run", "avalan.cli.commands.model", "model_run"),
+            ("model_search", "avalan.cli.commands.model", "model_search"),
+            ("deploy_run", "avalan.cli.commands.deploy", "deploy_run"),
+            ("tokenize", "avalan.cli.commands.tokenizer", "tokenize"),
+        ]
+        for wrapper_name, module_name, function_name in commands:
+            with (
+                self.subTest(wrapper=wrapper_name),
+                patch.object(
+                    cli_module, "_load_command", return_value=command
+                ) as load_command,
+            ):
+                result = await getattr(cli_module, wrapper_name)(
+                    "arg", key="value"
+                )
+
+            self.assertEqual(result, (("arg",), {"key": "value"}))
+            load_command.assert_called_once_with(module_name, function_name)
+
+    def test_sync_lazy_command_proxies_forward_calls(self) -> None:
+        cli_module = sys.modules[CLI.__module__]
+        command = MagicMock(return_value="ok")
+        commands = [
+            ("cache_delete", "avalan.cli.commands.cache", "cache_delete"),
+            (
+                "cache_download",
+                "avalan.cli.commands.cache",
+                "cache_download",
+            ),
+            ("cache_list", "avalan.cli.commands.cache", "cache_list"),
+            (
+                "model_display",
+                "avalan.cli.commands.model",
+                "model_display",
+            ),
+            (
+                "model_install",
+                "avalan.cli.commands.model",
+                "model_install",
+            ),
+            (
+                "model_uninstall",
+                "avalan.cli.commands.model",
+                "model_uninstall",
+            ),
+        ]
+        for wrapper_name, module_name, function_name in commands:
+            command.reset_mock()
+            with (
+                self.subTest(wrapper=wrapper_name),
+                patch.object(
+                    cli_module, "_load_command", return_value=command
+                ) as load_command,
+            ):
+                result = getattr(cli_module, wrapper_name)("arg", key="value")
+
+            self.assertEqual(result, "ok")
+            load_command.assert_called_once_with(module_name, function_name)
+            command.assert_called_once_with("arg", key="value")
+
+
 class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from logging import getLogger
@@ -891,6 +1025,50 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
 
         console.print.assert_not_called()
         self.assertFalse(self.cli._abort_printed)
+
+    def test_can_use_anonymous_hub_for_remote_model_run(self):
+        args = Namespace(
+            command="model",
+            model_command="run",
+            model="ai://openai/gpt-4o-mini",
+        )
+
+        self.assertTrue(CLI._can_use_anonymous_hub(args))
+
+    async def test_call_uses_anonymous_hub_for_remote_model_run(self):
+        captured_hub = None
+
+        async def capture_main(args, theme, console, hub):
+            nonlocal captured_hub
+            del args, theme, console
+            captured_hub = hub
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["prog", "model", "run", "ai://openai/gpt-4o-mini"],
+            ),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=SimpleNamespace(
+                    gettext=lambda s: s, ngettext=lambda s, p, n: s
+                ),
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__._huggingface_hub_class") as hub_class,
+            patch.object(CLI, "_main", AsyncMock(side_effect=capture_main)),
+        ):
+            await self.cli()
+
+        self.assertIsNotNone(captured_hub)
+        self.assertEqual(captured_hub.cache_dir, "~/.cache/huggingface/hub")
+        hub_class.assert_not_called()
 
 
 class CliMainFunctionTestCase(TestCase):
