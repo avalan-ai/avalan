@@ -1,8 +1,7 @@
 from ...cli import confirm
 from ...cli.download import create_live_tqdm_class
 from ...cli.theme import Theme
-from ...model.hubs import HubAccessDeniedException
-from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.hubs import HubAccessDeniedException, HubClient
 
 from argparse import Namespace
 
@@ -14,7 +13,7 @@ def cache_delete(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HuggingfaceHub,
+    hub: HubClient,
     is_full_deletion: bool = False,
 ) -> None:
     assert args.model
@@ -37,7 +36,7 @@ def cache_delete(
 
 
 def cache_download(
-    args: Namespace, console: Console, theme: Theme, hub: HuggingfaceHub
+    args: Namespace, console: Console, theme: Theme, hub: HubClient
 ) -> None:
     assert args.model
     model_id = args.model
@@ -62,7 +61,7 @@ def cache_download(
 
 
 def cache_list(
-    args: Namespace, console: Console, theme: Theme, hub: HuggingfaceHub
+    args: Namespace, console: Console, theme: Theme, hub: HubClient
 ) -> None:
     cached_models = hub.cache_scan()
     console.print(
