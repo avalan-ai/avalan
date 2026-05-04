@@ -2,7 +2,12 @@ from typing import Literal
 from unittest import TestCase
 from unittest.mock import patch
 
-from avalan.tool.json_schema import _literal_schema, _parse_docstring_sections, get_json_schema
+from avalan.tool.json_schema import (
+    _json_type,
+    _literal_schema,
+    _parse_docstring_sections,
+    get_json_schema,
+)
 
 
 class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
@@ -12,7 +17,9 @@ class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
 
     def test_literal_schema_without_values_or_mixed_types(self) -> None:
         with patch("avalan.tool.json_schema.get_args", return_value=()):
-            self.assertEqual(_literal_schema(Literal["value"]), {"type": "object"})
+            self.assertEqual(
+                _literal_schema(Literal["value"]), {"type": "object"}
+            )
 
         mixed_literal = _literal_schema(Literal["x", 1])
         self.assertEqual(mixed_literal, {"type": "object"})
@@ -38,3 +45,12 @@ class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
         self.assertEqual(properties["items"]["type"], "array")
         self.assertEqual(properties["note"]["type"], "object")
         self.assertEqual(schema["function"]["return"]["type"], "array")
+
+    def test_json_type_covers_builtin_and_unknown_annotations(self) -> None:
+        class CustomType:
+            pass
+
+        self.assertEqual(_json_type(dict), "object")
+        self.assertEqual(_json_type(list), "array")
+        self.assertEqual(_json_type(CustomType), "object")
+        self.assertEqual(_json_type(str | int), "object")
