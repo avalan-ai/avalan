@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
   id-token: write
 
 jobs:
@@ -50,22 +51,41 @@ jobs:
       - name: Run tests
         run: poetry run pytest --verbose -s
 
-      - name: Bump version and create release commit
+      - name: Bump version
+        id: bump
         env:
           VERSION: ${{ github.event.inputs.version }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           CURRENT_VERSION="$(poetry version --short)"
           if [ "$CURRENT_VERSION" != "$VERSION" ]; then
             poetry version "$VERSION"
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add pyproject.toml
-            git commit -m "Bump version to v$VERSION"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "pyproject.toml already at version $VERSION; no version commit created."
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+            echo "pyproject.toml already at version $VERSION; no version bump needed."
           fi
+
+      - name: Create signed version bump pull request
+        if: steps.bump.outputs.version_changed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          sign-commits: true
+          branch: workflow/release-version-bump-v${{ github.event.inputs.version }}
+          title: Bump version to v${{ github.event.inputs.version }}
+          commit-message: Bump version to v${{ github.event.inputs.version }}
+          body: |
+            Automated signed version bump created by the release workflow.
+
+            Merge this pull request, then rerun the release workflow for v${{ github.event.inputs.version }}.
+
+      - name: Stop after creating version bump pull request
+        if: steps.bump.outputs.version_changed == 'true'
+        run: |
+          echo "Created signed PR #${{ steps.cpr.outputs.pull-request-number }} for version bump."
+          echo "Merge the PR and rerun this workflow to continue the release."
+          exit 1
 
       - name: Create and push tag
         env:
