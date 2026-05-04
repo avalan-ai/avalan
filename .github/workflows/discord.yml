@@ -20,12 +20,19 @@ jobs:
           curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
       - name: Notify Discord on pull request
         if: github.event_name == 'pull_request'
+        env:
+          PR_ACTION: ${{ github.event.action }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_ACTOR: ${{ github.actor }}
         run: |
-          action="${{ github.event.action }}"
-          title="${{ github.event.pull_request.title }}"
-          number="${{ github.event.pull_request.number }}"
-          url="${{ github.event.pull_request.html_url }}"
-          message="Pull request #$number $action: *$title* by **${{ github.actor }}**. <$url>"
+          action="$PR_ACTION"
+          title="$PR_TITLE"
+          number="$PR_NUMBER"
+          url="$PR_URL"
+          actor="$PR_ACTOR"
+          message="Pull request #$number $action: *$title* by **$actor**. <$url>"
           payload=$(jq -n --arg msg "$message" '{"content": $msg}')
           curl -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
       - name: Notify Discord on release
