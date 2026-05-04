@@ -37,7 +37,7 @@ jobs:
         env:
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          CURRENT_VERSION="$(awk -F" '/^version = / {print $2; exit}' pyproject.toml)"
+          CURRENT_VERSION="$(awk -F'"' '/^version = / {print $2; exit}' pyproject.toml)"
           if [ -z "$CURRENT_VERSION" ]; then
             echo "Could not determine current project version from pyproject.toml."
             exit 1
