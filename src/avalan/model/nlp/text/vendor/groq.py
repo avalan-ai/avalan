@@ -1,8 +1,6 @@
 from ....vendor import TextGenerationVendor
+from . import DiffusionPipeline, PreTrainedModel
 from .openai import OpenAIClient, OpenAIModel
-
-from diffusers import DiffusionPipeline
-from transformers import PreTrainedModel
 
 
 class GroqClient(OpenAIClient):

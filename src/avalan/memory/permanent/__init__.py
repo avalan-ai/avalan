@@ -7,17 +7,26 @@ from ...entities import (
 )
 from ...memory import MemoryStore as MemoryStoreBase
 from ...memory import MessageMemory
-from ...model.nlp.sentence import SentenceTransformerModel
 
 from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from uuid import UUID, uuid4
 
-from numpy.typing import NDArray
+if TYPE_CHECKING:
+    from ...model.nlp.sentence import SentenceTransformerModel
+
+    from numpy.typing import NDArray
+else:
+
+    class NDArray:  # noqa: D101
+        def __class_getitem__(cls, _: Any) -> Any:
+            return Any
+
+    SentenceTransformerModel: TypeAlias = Any
 
 Order = Literal["asc", "desc"]
 

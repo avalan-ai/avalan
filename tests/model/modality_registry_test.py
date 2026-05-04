@@ -16,6 +16,17 @@ def test_registry_contains_all_handlers():
             assert callable(handler)
 
 
+def test_registry_lazy_loads_string_modality():
+    original = dict(ModalityRegistry._handlers)
+    ModalityRegistry._handlers = {}
+    try:
+        handler = ModalityRegistry.get("text_generation")
+        assert callable(handler)
+        assert Modality.TEXT_GENERATION in ModalityRegistry._handlers
+    finally:
+        ModalityRegistry._handlers = original
+
+
 def test_get_operation_from_arguments_maps_reasoning_effort():
     args = Namespace(
         cache_strategy=None,

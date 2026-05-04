@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from torch import Tensor, dtype
 else:
+
     class NDArray:  # noqa: D101
         def __class_getitem__(cls, _: Any) -> Any:
             return Any

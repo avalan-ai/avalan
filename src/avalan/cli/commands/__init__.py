@@ -7,11 +7,10 @@ from ...entities import (
     TextGenerationLoaderClass,
     WeightType,
 )
-from ...model.hubs.huggingface import HuggingfaceHub
 
 from argparse import Namespace
 from logging import Logger
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class ModelSettings(TypedDict):
@@ -43,9 +42,13 @@ class ModelSettings(TypedDict):
     weight_type: WeightType
 
 
+def _normalize_modality(modality: Modality | str) -> Modality:
+    return modality if isinstance(modality, Modality) else Modality(modality)
+
+
 def get_model_settings(
     args: Namespace,
-    hub: HuggingfaceHub,
+    hub: Any,
     logger: Logger,
     engine_uri: EngineUri,
     modality: Modality | None = None,
@@ -62,6 +65,7 @@ def get_model_settings(
         )
         or Modality.TEXT_GENERATION
     )
+    modality = _normalize_modality(modality)
     return dict(
         base_url=getattr(args, "base_url", None),
         engine_uri=engine_uri,

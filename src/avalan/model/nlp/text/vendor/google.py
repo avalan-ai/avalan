@@ -9,14 +9,16 @@ from .....entities import (
 from .....tool.manager import ToolManager
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
+from . import (
+    DiffusionPipeline,
+    PreTrainedModel,
+    TextGenerationVendorModel,
+)
 
 from typing import Any, AsyncGenerator, AsyncIterator, cast
 
-from diffusers import DiffusionPipeline
 from google.genai import Client
 from google.genai.types import GenerateContentResponse
-from transformers import PreTrainedModel
 
 
 class GoogleStream(TextGenerationVendorStream):

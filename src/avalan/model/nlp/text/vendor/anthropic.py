@@ -19,15 +19,18 @@ from .....tool.manager import ToolManager
 from .....utils import to_json
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel, _decode_text_file_data
+from . import (
+    DiffusionPipeline,
+    PreTrainedModel,
+    TextGenerationVendorModel,
+    _decode_text_file_data,
+)
 
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, cast
 
 from anthropic import APIStatusError, AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
-from diffusers import DiffusionPipeline
-from transformers import PreTrainedModel
 
 
 class AnthropicStream(TextGenerationVendorStream):

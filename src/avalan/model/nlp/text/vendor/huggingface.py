@@ -6,13 +6,15 @@ from .....entities import (
 )
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
+from . import (
+    DiffusionPipeline,
+    PreTrainedModel,
+    TextGenerationVendorModel,
+)
 
 from typing import Any, AsyncIterator, cast
 
-from diffusers import DiffusionPipeline
 from huggingface_hub import AsyncInferenceClient
-from transformers import PreTrainedModel
 
 
 class HuggingfaceStream(TextGenerationVendorStream):

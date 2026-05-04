@@ -1,3 +1,5 @@
+from .json_schema import get_json_schema
+
 from abc import ABC
 from collections.abc import Callable, Sequence
 from contextlib import (
@@ -8,8 +10,6 @@ from contextlib import (
 from inspect import Signature, isfunction, signature
 from types import TracebackType
 from typing import Any, cast, get_type_hints
-
-from .json_schema import get_json_schema
 
 
 class Tool(ABC):

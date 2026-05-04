@@ -16,12 +16,26 @@ from contextlib import AsyncExitStack
 from dataclasses import replace
 from importlib import import_module
 from logging import Logger, getLogger
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast
 
-from diffusers import DiffusionPipeline
-from torch import Tensor
-from transformers import PreTrainedModel
-from transformers.tokenization_utils_base import BatchEncoding
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline as DiffusionPipeline
+    from torch import Tensor as Tensor
+    from transformers import PreTrainedModel as PreTrainedModel
+    from transformers.tokenization_utils_base import (
+        BatchEncoding as BatchEncoding,
+    )
+else:
+    Tensor: TypeAlias = Any
+
+    class BatchEncoding:  # noqa: D101
+        pass
+
+    class DiffusionPipeline:  # noqa: D101
+        pass
+
+    class PreTrainedModel:  # noqa: D101
+        pass
 
 
 class _TiktokenEncoding(Protocol):
@@ -55,7 +69,12 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         assert (
             settings.base_url or settings.access_token
         ), "API key needed for vendor"
-        settings = replace(settings, enable_eval=False)
+        settings = replace(
+            settings,
+            device=settings.device or "cpu",
+            disable_loading_progress_bar=False,
+            enable_eval=False,
+        )
         super().__init__(model_id, settings, logger)
         self._exit_stack = exit_stack or AsyncExitStack()
 

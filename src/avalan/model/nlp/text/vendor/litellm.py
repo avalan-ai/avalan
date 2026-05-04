@@ -1,13 +1,15 @@
 from .....entities import GenerationSettings, Message, Token, TokenDetail
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
+from . import (
+    DiffusionPipeline,
+    PreTrainedModel,
+    TextGenerationVendorModel,
+)
 
 from typing import Any, AsyncIterator, cast
 
 import litellm
-from diffusers import DiffusionPipeline
-from transformers import PreTrainedModel
 
 
 class LiteLLMStream(TextGenerationVendorStream):

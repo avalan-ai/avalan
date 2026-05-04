@@ -23,12 +23,28 @@ from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from logging import Logger
-from typing import Any, AsyncGenerator, Callable, Literal, TypeAlias, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Callable,
+    Literal,
+    TypeAlias,
+    cast,
+)
 from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
-from numpy import ndarray
 from rich.console import RenderableType
+
+if TYPE_CHECKING:
+    from numpy import ndarray
+else:
+
+    class ndarray:  # noqa: D101
+        def __class_getitem__(cls, _: Any) -> Any:
+            return Any
+
 
 Formatter: TypeAlias = Callable[[datetime | float | int], str]
 Formatters = dict[Literal["datetime", "number", "quantity", "size"], Formatter]

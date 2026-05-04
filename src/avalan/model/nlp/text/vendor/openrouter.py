@@ -1,8 +1,6 @@
-from .....model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
 from ....vendor import TextGenerationVendor
-
-from diffusers import DiffusionPipeline
-from transformers import PreTrainedModel
+from . import DiffusionPipeline, PreTrainedModel
+from .openai import OpenAIClient, OpenAIModel
 
 
 class OpenRouterClient(OpenAIClient):

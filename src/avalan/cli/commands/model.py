@@ -16,10 +16,8 @@ from ...entities import (
 from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
-from ...model.hubs import HubClient
 from ...model.input import input_files
 from ...model.manager import ModelManager
-from ...model.nlp.sentence import SentenceTransformerModel
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
 from ...secrets import KeyringSecrets
@@ -42,7 +40,19 @@ from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
 from time import perf_counter
-from typing import Any, AsyncGenerator, Awaitable, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    TypeAlias,
+    cast,
+)
+
+if TYPE_CHECKING:
+    from ...model.nlp.sentence import SentenceTransformerModel
+else:
+    SentenceTransformerModel: TypeAlias = Any
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -69,7 +79,7 @@ def model_display(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HubClient,
+    hub: Any,
     logger: Logger,
     *vargs: object,
     modality: Modality | None = None,
@@ -137,7 +147,7 @@ def model_display(
 
 
 def model_install(
-    args: Namespace, console: Console, theme: Theme, hub: HubClient
+    args: Namespace, console: Console, theme: Theme, hub: Any
 ) -> None:
     assert args.model
     engine_uri = ModelManager.parse_uri(args.model)
@@ -166,7 +176,7 @@ async def model_run(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HubClient,
+    hub: Any,
     refresh_per_second: int,
     logger: Logger,
 ) -> None:
@@ -345,7 +355,7 @@ async def model_search(
     args: Namespace,
     console: Console,
     theme: Theme,
-    hub: HubClient,
+    hub: Any,
     refresh_per_second: int,
 ) -> None:
     assert args.limit
@@ -416,7 +426,7 @@ async def model_search(
 
 
 def model_uninstall(
-    args: Namespace, console: Console, theme: Theme, hub: HubClient
+    args: Namespace, console: Console, theme: Theme, hub: Any
 ) -> None:
     assert args.model
     engine_uri = ModelManager.parse_uri(args.model)

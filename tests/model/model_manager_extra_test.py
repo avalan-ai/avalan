@@ -273,13 +273,26 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
         hub = MagicMock(spec=HuggingfaceHub)
         logger = MagicMock(spec=Logger)
         manager = ModelManager(hub, logger)
-        pending = asyncio.create_task(asyncio.sleep(10))
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+
+        async def close_task() -> None:
+            close_started.set()
+            await release_close.wait()
+
+        pending = asyncio.create_task(close_task())
         manager._pending_exit_task = pending
 
-        result = await manager.__aexit__(
-            KeyboardInterrupt, KeyboardInterrupt(), None
+        exit_task = asyncio.create_task(
+            manager.__aexit__(KeyboardInterrupt, KeyboardInterrupt(), None)
         )
+
+        await close_started.wait()
         await asyncio.sleep(0)
+        self.assertFalse(exit_task.done())
+
+        release_close.set()
+        result = await exit_task
 
         self.assertFalse(result)
         self.assertFalse(pending.cancelled())

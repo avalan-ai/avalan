@@ -1,30 +1,5 @@
 from .. import license, name, site, version
-from ..agent.loader import OrchestratorLoader
 from ..cli import CommandAbortException, has_input
-from ..cli.commands.agent import (
-    agent_init,
-    agent_message_search,
-    agent_proxy,
-    agent_run,
-    agent_serve,
-)
-from ..cli.commands.cache import cache_delete, cache_download, cache_list
-from ..cli.commands.deploy import deploy_run
-from ..cli.commands.memory import (
-    memory_document_index,
-    memory_embeddings,
-    memory_search,
-)
-from ..cli.commands.model import (
-    model_display,
-    model_install,
-    model_run,
-    model_search,
-    model_uninstall,
-)
-from ..cli.commands.tokenizer import tokenize
-from ..cli.theme import Theme
-from ..cli.theme.fancy import FancyTheme
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -43,10 +18,7 @@ from ..entities import (
     VisionImageFormat,
     WeightType,
 )
-from ..memory.permanent import VectorFunction
-from ..model.hubs import HubClient
 from ..model.manager import ModelManager
-from ..model.transformer import TransformerModel
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
@@ -74,6 +46,7 @@ from asyncio.exceptions import CancelledError
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import fields
+from enum import StrEnum
 from gettext import translation
 from importlib import import_module
 from importlib.util import find_spec
@@ -97,7 +70,17 @@ from subprocess import run
 from threading import current_thread, main_thread
 from tomllib import load as toml_load
 from types import FrameType
-from typing import Callable, Protocol, TextIO, cast, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Protocol,
+    TextIO,
+    TypeAlias,
+    cast,
+    get_args,
+    get_origin,
+)
 from typing import get_args as get_type_args
 from uuid import uuid4
 from warnings import filterwarnings
@@ -106,6 +89,55 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme as RichTheme
+
+if TYPE_CHECKING:
+    from ..cli.theme import Theme
+else:
+    Theme = Any
+
+HubClient: TypeAlias = Any
+
+
+class VectorFunction(StrEnum):
+    COSINE_DISTANCE = "cosine_distance"
+    INNER_PRODUCT = "inner_product"
+    L1_DISTANCE = "l1_distance"
+    L2_DISTANCE = "l2_distance"
+    VECTOR_DIMS = "vector_dims"
+    VECTOR_NORMS = "vector_norms"
+
+
+_DEFAULT_SENTENCE_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+_DEFAULT_SENTENCE_MODEL_MAX_TOKENS = 500
+_DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE = 125
+_DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
+
+
+class TransformerModel:
+    """Provide the CLI's lightweight default-device hook."""
+
+    @staticmethod
+    def get_default_device() -> str:
+        if _is_cuda_available():
+            return "cuda"
+        if _is_mps_available():
+            return "mps"
+        return "cpu"
+
+
+class _AnonymousHub:
+    domain = "huggingface.co"
+
+    def __init__(self, cache_dir: str) -> None:
+        self.cache_dir = cache_dir
+
+    def login(self) -> None:
+        raise NotImplementedError()
+
+    def user(self) -> User:
+        raise NotImplementedError()
+
+
 class Translator(Protocol):
     """Represent the translation helpers needed by the CLI."""
 
@@ -132,8 +164,21 @@ def _module_exists(module_name: str) -> bool:
 def _is_cuda_available() -> bool:
     if not _module_exists("torch"):
         return False
-    cuda_module = import_module("torch.cuda")
+    try:
+        cuda_module = import_module("torch.cuda")
+    except ModuleNotFoundError:
+        return False
     return bool(getattr(cuda_module, "is_available")())
+
+
+def _is_mps_available() -> bool:
+    if not _module_exists("torch"):
+        return False
+    try:
+        mps_module = import_module("torch.backends.mps")
+    except ModuleNotFoundError:
+        return False
+    return bool(getattr(mps_module, "is_available")())
 
 
 def _cuda_device_count() -> int:
@@ -222,9 +267,155 @@ def is_torch_flex_attn_available() -> bool:
     )
 
 
-def _huggingface_hub_class() -> type[object]:
+def _huggingface_hub_class() -> type[Any]:
     module = import_module("avalan.model.hubs.huggingface")
-    return cast(type[object], getattr(module, "HuggingfaceHub"))
+    return cast(type[Any], getattr(module, "HuggingfaceHub"))
+
+
+class FancyTheme:
+    """Create the default CLI theme lazily."""
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        module = import_module("avalan.cli.theme.fancy")
+        theme_class = cast(type[Any], getattr(module, "FancyTheme"))
+        return theme_class(*args, **kwargs)
+
+
+def _load_command(module_name: str, function_name: str) -> Callable[..., Any]:
+    module = import_module(module_name)
+    return cast(Callable[..., Any], getattr(module, function_name))
+
+
+async def agent_message_search(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.agent", "agent_message_search"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def agent_run(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.agent", "agent_run"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def agent_serve(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.agent", "agent_serve"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def agent_proxy(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.agent", "agent_proxy"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def agent_init(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.agent", "agent_init"),
+    )
+    return await command(*args, **kwargs)
+
+
+def cache_delete(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.cache", "cache_delete")(
+        *args, **kwargs
+    )
+
+
+def cache_download(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.cache", "cache_download")(
+        *args, **kwargs
+    )
+
+
+def cache_list(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.cache", "cache_list")(
+        *args, **kwargs
+    )
+
+
+async def memory_document_index(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.memory", "memory_document_index"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def memory_search(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.memory", "memory_search"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def memory_embeddings(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.memory", "memory_embeddings"),
+    )
+    return await command(*args, **kwargs)
+
+
+def model_display(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.model", "model_display")(
+        *args, **kwargs
+    )
+
+
+def model_install(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.model", "model_install")(
+        *args, **kwargs
+    )
+
+
+async def model_run(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.model", "model_run"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def model_search(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.model", "model_search"),
+    )
+    return await command(*args, **kwargs)
+
+
+def model_uninstall(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.model", "model_uninstall")(
+        *args, **kwargs
+    )
+
+
+async def deploy_run(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.deploy", "deploy_run"),
+    )
+    return await command(*args, **kwargs)
+
+
+async def tokenize(*args: Any, **kwargs: Any) -> Any:
+    command = cast(
+        Callable[..., Awaitable[Any]],
+        _load_command("avalan.cli.commands.tokenizer", "tokenize"),
+    )
+    return await command(*args, **kwargs)
 
 
 @contextmanager
@@ -516,11 +707,13 @@ class CLI:
                 "If specified, no welcome screen and only model output is "
                 "displayed in model run (sets "
             )
-            + ", ".join([
-                "--disable-loading-progress-bar",
-                "--skip-hub-access-check",
-                "--skip-special-tokens",
-            ])
+            + ", ".join(
+                [
+                    "--disable-loading-progress-bar",
+                    "--skip-hub-access-check",
+                    "--skip-special-tokens",
+                ]
+            )
             + " automatically)",
         )
         global_parser.add_argument(
@@ -2093,25 +2286,25 @@ class CLI:
         group.add_argument(
             "--memory-engine-model-id",
             type=str,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+            default=_DEFAULT_SENTENCE_MODEL_ID,
             help="Sentence transformer model for memory",
         )
         group.add_argument(
             "--memory-engine-max-tokens",
             type=int,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS,
+            default=_DEFAULT_SENTENCE_MODEL_MAX_TOKENS,
             help="Maximum tokens for memory sentence transformer",
         )
         group.add_argument(
             "--memory-engine-overlap",
             type=int,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE,
+            default=_DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE,
             help="Overlap size for memory sentence transformer",
         )
         group.add_argument(
             "--memory-engine-window",
             type=int,
-            default=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE,
+            default=_DEFAULT_SENTENCE_MODEL_WINDOW_SIZE,
             help="Window size for memory sentence transformer",
         )
         group.add_argument(
@@ -2244,6 +2437,15 @@ class CLI:
                     return bool(engine_uri.is_local)
         return True
 
+    @staticmethod
+    def _can_use_anonymous_hub(args: Namespace) -> bool:
+        command = args.command
+        if command != "model" or (args.model_command or "display") != "run":
+            return False
+        assert isinstance(args.model, str)
+        engine_uri = ModelManager.parse_uri(args.model)
+        return not bool(engine_uri.is_local)
+
     async def __call__(self) -> None:
         argv, chat_opts = self._extract_chat_settings(sys.argv[1:])
         args = self._parser.parse_args(argv)
@@ -2280,7 +2482,10 @@ class CLI:
         translator = CLI._get_translator(self._name, args.locales, args.locale)
 
         assert self._logger is not None and isinstance(self._logger, Logger)
-        theme = FancyTheme(translator.gettext, translator.ngettext)
+
+        theme = cast(
+            Theme, FancyTheme(translator.gettext, translator.ngettext)
+        )
         _ = theme._
         rich_theme_styles = {
             str(data_key): style
@@ -2314,8 +2519,16 @@ class CLI:
         else:
             access_token = access_token or "anonymous"
 
-        hub_class = _huggingface_hub_class()
-        hub = hub_class(access_token, args.cache_dir, self._logger)
+        hub: HubClient
+        if (
+            requires_token
+            or args.login
+            or not self._can_use_anonymous_hub(args)
+        ):
+            hub_class = _huggingface_hub_class()
+            hub = hub_class(access_token, args.cache_dir, self._logger)
+        else:
+            hub = _AnonymousHub(args.cache_dir)
 
         try:
             with _direct_keyboard_interrupts():
@@ -2559,6 +2772,10 @@ class CLI:
 
 def main() -> None:
     """Entry point for the ``avalan`` CLI."""
+    if "--version" in sys.argv[1:]:
+        print(f"{name()} {version()}")
+        return
+
     environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     basicConfig(
         level=INFO,

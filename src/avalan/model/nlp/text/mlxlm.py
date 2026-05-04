@@ -99,9 +99,9 @@ class MlxLmStream(TextGenerationVendorStream):
             self._iterator = None
             self._iterator_factory = generator
 
-        async def _generator() -> AsyncGenerator[
-            Token | TokenDetail | str, None
-        ]:
+        async def _generator() -> (
+            AsyncGenerator[Token | TokenDetail | str, None]
+        ):
             while True:
                 item = await self._next_raw()
                 if item is self._SENTINEL:

@@ -18,7 +18,7 @@ from transformers import (
 
 # MusicGen checkpoints include this non-persistent sinusoidal buffer. Ignore
 # only that key so unrelated load report diagnostics still surface.
-class MusicgenForConditionalGeneration(TransformersMusicgen):
+class MusicgenForConditionalGeneration(TransformersMusicgen):  # type: ignore[no-untyped-call]
     _keys_to_ignore_on_load_unexpected = [
         r"decoder\.model\.decoder\.embed_positions\.weights",
     ]

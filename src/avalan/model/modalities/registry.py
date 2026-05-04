@@ -16,11 +16,13 @@ from ...tool.manager import ToolManager
 from argparse import Namespace
 from collections.abc import Callable
 from contextlib import AsyncExitStack
+from importlib import import_module
 from inspect import isclass
 from logging import Logger
 from typing import Any, Protocol, TypeVar, cast
 
 HandlerType = TypeVar("HandlerType")
+_HANDLER_MODALITY_ATTRIBUTE = "__avalan_modality__"
 
 
 class ModalityHandler(Protocol):
@@ -52,10 +54,46 @@ class ModalityRegistry:
     _handlers: dict[Modality, ModalityHandler] = {}
 
     @classmethod
+    def _normalize_modality(cls, modality: Modality | str) -> Modality | str:
+        if isinstance(modality, Modality):
+            return modality
+        try:
+            return Modality(modality)
+        except ValueError:
+            return modality
+
+    @classmethod
+    def _load_handlers(cls, modality: Modality | str) -> None:
+        if not isinstance(modality, Modality):
+            return
+        module_name = (
+            "audio"
+            if modality.value.startswith("audio_")
+            else ("vision" if modality.value.startswith("vision_") else "text")
+        )
+        module = import_module(f"{__package__}.{module_name}")
+        if modality not in cls._handlers:
+            cls._register_cached_handlers(module)
+
+    @classmethod
+    def _register_cached_handlers(cls, module: object) -> None:
+        for handler in vars(module).values():
+            modality = getattr(handler, _HANDLER_MODALITY_ATTRIBUTE, None)
+            modality = cls._normalize_modality(modality) if modality else None
+            if not isinstance(modality, Modality):
+                continue
+            if isclass(handler):
+                class_handler = cast(type[ModalityHandler], handler)
+                cls._handlers[modality] = class_handler()
+            else:
+                cls._handlers[modality] = cast(ModalityHandler, handler)
+
+    @classmethod
     def register(
         cls, modality: Modality
     ) -> Callable[[HandlerType], HandlerType]:
         def decorator(handler: HandlerType) -> HandlerType:
+            setattr(handler, _HANDLER_MODALITY_ATTRIBUTE, modality)
             if isclass(handler):
                 class_handler = cast(type[ModalityHandler], handler)
                 resolved_handler = class_handler()
@@ -67,7 +105,12 @@ class ModalityRegistry:
         return decorator
 
     @classmethod
-    def get(cls, modality: Modality) -> ModalityHandler:
+    def get(cls, modality: Modality | str) -> ModalityHandler:
+        modality = cls._normalize_modality(modality)
+        if not isinstance(modality, Modality):
+            raise NotImplementedError(f"Modality {modality} not registered")
+        if modality not in cls._handlers:
+            cls._load_handlers(modality)
         if modality not in cls._handlers:
             raise NotImplementedError(f"Modality {modality} not registered")
         return cls._handlers[modality]
@@ -77,7 +120,7 @@ class ModalityRegistry:
         cls,
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
-        modality: Modality,
+        modality: Modality | str,
         logger: Logger,
         exit_stack: AsyncExitStack,
     ) -> Any:
@@ -89,10 +132,11 @@ class ModalityRegistry:
     @classmethod
     def get_operation_from_arguments(
         cls,
-        modality: Modality,
+        modality: Modality | str,
         args: Namespace,
         input_string: Input | None,
     ) -> Operation:
+        modality = cls._normalize_modality(modality)
         reasoning_settings = ReasoningSettings(
             effort=(
                 ReasoningEffort(getattr(args, "reasoning_effort"))
@@ -144,7 +188,7 @@ class ModalityRegistry:
             return Operation(
                 generation_settings=settings,
                 input=input_string,
-                modality=modality,
+                modality=cast(Modality, modality),
                 parameters=cast(Any, None),
                 requires_input=False,
             )

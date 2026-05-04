@@ -16,38 +16,113 @@ from ..model.vendor import TextGenerationVendor
 import asyncio
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
+from importlib import import_module
 from importlib.util import find_spec
 from logging import ERROR, Logger, getLogger
-from typing import Any, Final, Literal, cast
+from sys import modules
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias, cast
 
-from diffusers import DiffusionPipeline
-from torch import (
-    bfloat16,
-    cuda,
-    dtype,
-    float16,
-    float32,
-    float64,
-    int8,
-    int16,
-    int32,
-    int64,
-    uint8,
-)
-from torch import (
-    bool as tbool,
-)
-from torch.backends import mps
-from transformers import (
-    PreTrainedModel,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-from transformers import logging as transformers_logging
-from transformers.utils.logging import (
-    disable_progress_bar,
-    enable_progress_bar,
-)
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline as DiffusionPipeline
+    from torch import dtype
+    from transformers import PreTrainedModel as PreTrainedModel
+    from transformers import (
+        PreTrainedTokenizer,
+        PreTrainedTokenizerFast,
+    )
+else:
+    dtype: TypeAlias = Any
+
+    class PreTrainedTokenizer:  # noqa: D101
+        pass
+
+    class PreTrainedTokenizerFast:  # noqa: D101
+        pass
+
+    class DiffusionPipeline:  # noqa: D101
+        pass
+
+    class PreTrainedModel:  # noqa: D101
+        pass
+
+
+class _LazyModule:
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(import_module(self._module_name), name)
+
+
+class _TransformersLoggingProxy:
+    def get_logger(self) -> Logger:
+        logging_module = import_module("transformers.utils.logging")
+        return cast(Logger, getattr(logging_module, "get_logger")())
+
+    def set_verbosity_error(self) -> None:
+        logging_module = import_module("transformers.utils.logging")
+        cast(Any, getattr(logging_module, "set_verbosity_error"))()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(import_module("transformers.utils.logging"), name)
+
+
+cuda = _LazyModule("torch.cuda")
+mps = _LazyModule("torch.backends.mps")
+transformers_logging = _TransformersLoggingProxy()
+_DIFFUSION_PIPELINE_PLACEHOLDER = DiffusionPipeline
+_PRETRAINED_MODEL_PLACEHOLDER = PreTrainedModel
+
+
+def disable_progress_bar() -> None:
+    logging_module = import_module("transformers.utils.logging")
+    cast(Any, getattr(logging_module, "disable_progress_bar"))()
+
+
+def enable_progress_bar() -> None:
+    logging_module = import_module("transformers.utils.logging")
+    cast(Any, getattr(logging_module, "enable_progress_bar"))()
+
+
+def _optional_type(module_name: str, type_name: str) -> type[Any] | None:
+    if module_name in modules:
+        module = modules[module_name]
+        return cast(type[Any], getattr(module, type_name))
+    if find_spec(module_name) is None:
+        return None
+    module = import_module(module_name)
+    return cast(type[Any], getattr(module, type_name))
+
+
+def _pretrained_model_type() -> type[Any] | None:
+    if PreTrainedModel is not _PRETRAINED_MODEL_PLACEHOLDER:
+        return cast(type[Any], PreTrainedModel)
+    return _optional_type("transformers", "PreTrainedModel")
+
+
+def _pretrained_tokenizer_types() -> tuple[type[Any], type[Any]] | None:
+    tokenizer_type = _optional_type("transformers", "PreTrainedTokenizer")
+    tokenizer_fast_type = _optional_type(
+        "transformers", "PreTrainedTokenizerFast"
+    )
+    if tokenizer_type is None or tokenizer_fast_type is None:
+        return None
+    return tokenizer_type, tokenizer_fast_type
+
+
+def _diffusion_pipeline_type() -> type[Any] | None:
+    if DiffusionPipeline is not _DIFFUSION_PIPELINE_PLACEHOLDER:
+        return cast(type[Any], DiffusionPipeline)
+    return _optional_type("diffusers", "DiffusionPipeline")
+
+
+def _set_transformers_progress_bar(enabled: bool) -> None:
+    if "transformers" not in modules and find_spec("transformers") is None:
+        return
+    if enabled:
+        enable_progress_bar()
+    else:
+        disable_progress_bar()
 
 
 class Engine(ABC):
@@ -81,20 +156,20 @@ class Engine(ABC):
         "ui8": 1,
     }
 
-    _WEIGHTS: Final[dict[str, Literal["auto"] | dtype]] = {
-        "bool": tbool,
-        "bf16": bfloat16,
-        "f16": float16,
-        "fp16": float16,
-        "f32": float32,
-        "fp32": float32,
-        "f64": float64,
-        "fp64": float64,
-        "i8": int8,
-        "i16": int16,
-        "i32": int32,
-        "i64": int64,
-        "ui8": uint8,
+    _WEIGHTS: Final[dict[str, Literal["auto"] | str | dtype]] = {
+        "bool": "bool",
+        "bf16": "bfloat16",
+        "f16": "float16",
+        "fp16": "float16",
+        "f32": "float32",
+        "fp32": "float32",
+        "f64": "float64",
+        "fp64": "float64",
+        "i8": "int8",
+        "i16": "int16",
+        "i32": "int32",
+        "i64": "int64",
+        "ui8": "uint8",
         "auto": "auto",
     }
 
@@ -120,19 +195,28 @@ class Engine(ABC):
 
     @staticmethod
     def weight(weight_type: WeightType) -> Literal["auto"] | dtype:
-        return Engine._WEIGHTS.get(weight_type, "auto")
+        weight_name = Engine._WEIGHTS.get(weight_type, "auto")
+        if weight_name == "auto":
+            return "auto"
+        if not isinstance(weight_name, str):
+            return weight_name
+        resolved = cast(dtype, getattr(import_module("torch"), weight_name))
+        Engine._WEIGHTS[weight_type] = resolved
+        return resolved
 
     @staticmethod
     def _get_config_dtype(config: object) -> dtype:
         missing = object()
         config_dtype = getattr(config, "dtype", missing)
         if config_dtype is not missing:
-            return cast(dtype, config_dtype or float32)
+            return cast(dtype, config_dtype or Engine.weight("f32"))
 
         if hasattr(config, "torch_dtype"):
-            return cast(dtype, getattr(config, "torch_dtype") or float32)
+            return cast(
+                dtype, getattr(config, "torch_dtype") or Engine.weight("f32")
+            )
 
-        return float32
+        return cast(dtype, Engine.weight("f32"))
 
     def _decode_token(self, token_id: int | None) -> str | None:
         return (
@@ -155,20 +239,27 @@ class Engine(ABC):
             if self._settings.device
             else Engine.get_default_device()
         )
-        self._transformers_logging_logger = (
-            cast(Logger, transformers_logging.get_logger())
-            if self._settings.change_transformers_logging_level
-            else None
+        uses_tokenizer = (
+            self.uses_tokenizer()
+            if callable(self.uses_tokenizer)
+            else self.uses_tokenizer
         )
-        self._transformers_logging_level = (
-            self._transformers_logging_logger.level
-            if self._settings.change_transformers_logging_level
-            and self._transformers_logging_logger is not None
-            else None
-        )
+        self._transformers_logging_logger = None
+        self._transformers_logging_level = None
+        if (
+            self._settings.change_transformers_logging_level
+            and uses_tokenizer
+            and find_spec("transformers") is not None
+        ):
+            self._transformers_logging_logger = cast(
+                Logger, getattr(transformers_logging, "get_logger")()
+            )
+            self._transformers_logging_level = (
+                self._transformers_logging_logger.level
+            )
 
         auto_load_tokenizer = (
-            self.uses_tokenizer and self._settings.auto_load_tokenizer
+            uses_tokenizer and self._settings.auto_load_tokenizer
         )
         if self._settings.auto_load_model or auto_load_tokenizer:
             self._load(
@@ -275,7 +366,7 @@ class Engine(ABC):
             self._transformers_logging_logger
             and self._transformers_logging_level != ERROR
         ):
-            cast(Any, transformers_logging.set_verbosity_error)()
+            cast(Any, getattr(transformers_logging, "set_verbosity_error"))()
             _l(
                 "Changed transformers logging level from %s to %s",
                 self._transformers_logging_level,
@@ -340,8 +431,16 @@ class Engine(ABC):
 
         _l = self._log
 
-        if self._settings.disable_loading_progress_bar:
-            cast(Any, disable_progress_bar)()
+        uses_tokenizer = (
+            self.uses_tokenizer()
+            if callable(self.uses_tokenizer)
+            else self.uses_tokenizer
+        )
+        should_change_transformers_progress = (
+            self._settings.disable_loading_progress_bar and uses_tokenizer
+        )
+        if should_change_transformers_progress:
+            _set_transformers_progress_bar(enabled=False)
 
         if load_tokenizer and self._model_id:
             _l(
@@ -351,9 +450,11 @@ class Engine(ABC):
             self._tokenizer = self._load_tokenizer_with_tokens(
                 tokenizer_name_or_path or self._model_id, use_fast=True
             )
+            tokenizer_types = _pretrained_tokenizer_types()
+            assert tokenizer_types is not None
             assert isinstance(
-                self._tokenizer, PreTrainedTokenizer
-            ) or isinstance(self._tokenizer, PreTrainedTokenizerFast), (
+                self._tokenizer, tokenizer_types[0]
+            ) or isinstance(self._tokenizer, tokenizer_types[1]), (
                 "Unexpected pretrained tokenizer type: "
                 + f"{type(self._tokenizer)}"
             )
@@ -372,10 +473,26 @@ class Engine(ABC):
             )
             self._model = self._load_model()
 
+            is_vendor = isinstance(self._model, TextGenerationVendor)
+            pretrained_model_type = (
+                None if is_vendor else _pretrained_model_type()
+            )
+            diffusion_pipeline_type = (
+                None if is_vendor else _diffusion_pipeline_type()
+            )
+            is_pretrained_model = (
+                pretrained_model_type is not None
+                and isinstance(self._model, pretrained_model_type)
+            )
+            is_diffusion_pipeline = (
+                diffusion_pipeline_type is not None
+                and isinstance(self._model, diffusion_pipeline_type)
+            )
+
             if (
-                not isinstance(self._model, PreTrainedModel)
-                and not isinstance(self._model, TextGenerationVendor)
-                and not isinstance(self._model, DiffusionPipeline)
+                not is_pretrained_model
+                and not is_vendor
+                and not is_diffusion_pipeline
             ):
                 is_mlx = Engine._is_mlx_model(self._model)
 
@@ -387,9 +504,9 @@ class Engine(ABC):
                     )
 
             assert (
-                isinstance(self._model, PreTrainedModel)
-                or isinstance(self._model, TextGenerationVendor)
-                or isinstance(self._model, DiffusionPipeline)
+                is_pretrained_model
+                or is_vendor
+                or is_diffusion_pipeline
                 or is_mlx
                 or is_sentence_transformer
             ), f"Unexpected pretrained model type: {type(self._model)}"
@@ -542,6 +659,10 @@ class Engine(ABC):
             self._config = config
 
         if self._tokenizer and not self._tokenizer_config:
+            tokenizer_types = _pretrained_tokenizer_types()
+            tokenizer_fast_type = (
+                tokenizer_types[1] if tokenizer_types is not None else None
+            )
             self._tokenizer_config = TokenizerConfig(
                 name_or_path=self._tokenizer.name_or_path,
                 tokens=self._settings.tokens,
@@ -549,21 +670,26 @@ class Engine(ABC):
                 tokenizer_model_max_length=getattr(
                     self._tokenizer, "model_max_length", 0
                 ),
-                fast=isinstance(self._tokenizer, PreTrainedTokenizerFast),
+                fast=(
+                    tokenizer_fast_type is not None
+                    and isinstance(self._tokenizer, tokenizer_fast_type)
+                ),
             )
 
-        if self._settings.disable_loading_progress_bar:
-            cast(Any, enable_progress_bar)()
+        if should_change_transformers_progress:
+            _set_transformers_progress_bar(enabled=True)
 
     @staticmethod
     def get_default_device() -> str:
-        return (
-            "cuda"
-            if cuda.is_available()
-            else "mps"
-            if mps.is_available()
-            else "cpu"
-        )
+        if find_spec("torch") is None:
+            return "cpu"
+        try:
+            cuda_available = bool(cuda.is_available())
+        except ModuleNotFoundError:
+            return "cpu"
+        if cuda_available:
+            return "cuda"
+        return "mps" if bool(mps.is_available()) else "cpu"
 
     @staticmethod
     def _has_module(name: str) -> bool:
@@ -587,18 +713,24 @@ class Engine(ABC):
     def _get_device_memory(device: str) -> int:
         """Return available memory for device in bytes."""
         if device.startswith("cuda") or device == "cuda":
-            if not cuda.is_available():
+            if find_spec("torch") is None:
+                return 0
+            if not bool(cuda.is_available()):
                 return 0
             index = (
                 int(device.split(":", 1)[1])
                 if ":" in device
-                else cuda.current_device()
+                else int(cuda.current_device())
             )
             return int(cuda.get_device_properties(index).total_memory)
 
         from psutil import virtual_memory
 
-        if device == "mps" and mps.is_available():
+        if (
+            device == "mps"
+            and find_spec("torch") is not None
+            and bool(mps.is_available())
+        ):
             return int(virtual_memory().total)
         return int(virtual_memory().total)
 
