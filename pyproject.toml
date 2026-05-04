@@ -191,7 +191,7 @@ keep-runtime-typing = false
 convention = "pep257"
 
 [tool.poetry]
-version = "1.4.2"
+version = "1.4.3"
 
 [tool.poetry.group.test]
 optional = true
