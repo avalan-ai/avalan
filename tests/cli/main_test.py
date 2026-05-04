@@ -260,6 +260,27 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         for prog in _collect_progs(self.cli._parser):
             self.assertIn(prog, output)
 
+
+class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
+    def setUp(self):
+        from logging import getLogger
+
+        self.logger = getLogger("cli-test")
+        with patch.object(sys, "argv", ["prog"]):
+            self.cli = CLI(self.logger)
+        self.translator = SimpleNamespace(
+            gettext=lambda s: s, ngettext=lambda s, p, n: s if n == 1 else p
+        )
+
+    def test_huggingface_hub_class_loads_from_module(self) -> None:
+        hub_class = type("HubClass", (), {})
+        module = SimpleNamespace(HuggingfaceHub=hub_class)
+
+        with patch("avalan.cli.__main__.import_module", return_value=module):
+            from avalan.cli.__main__ import _huggingface_hub_class
+
+            self.assertIs(_huggingface_hub_class(), hub_class)
+
     async def test_call_version_outputs_version_and_exits(self):
         with (
             patch.object(sys, "argv", ["prog", "--version"]),
