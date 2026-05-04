@@ -22,26 +22,95 @@ from ....tool.parser import ToolCallParser
 
 from asyncio import CancelledError, sleep
 from dataclasses import asdict, replace
+from importlib import import_module
 from importlib.util import find_spec
 from logging import Logger, getLogger
 from threading import Event as ThreadEvent
 from threading import Thread
 from time import perf_counter
-from typing import Any, AsyncGenerator, AsyncIterator, Literal, cast
-
-from diffusers import DiffusionPipeline
-from torch import Tensor, log_softmax, softmax, topk
-from torch.nn.functional import gumbel_softmax
-from transformers import (
-    AsyncTextIteratorStreamer,
-    AutoModelForCausalLM,
-    Gemma3ForConditionalGeneration,
-    GptOssForCausalLM,
-    Mistral3ForConditionalGeneration,
-    PreTrainedModel,
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Literal,
+    TypeAlias,
+    cast,
 )
-from transformers.generation.stopping_criteria import StoppingCriteria
-from transformers.tokenization_utils_base import BatchEncoding
+
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline
+    from torch import Tensor
+    from transformers import (
+        AsyncTextIteratorStreamer,
+        AutoModelForCausalLM,
+        Gemma3ForConditionalGeneration,
+        GptOssForCausalLM,
+        Mistral3ForConditionalGeneration,
+        PreTrainedModel,
+    )
+    from transformers.generation.stopping_criteria import StoppingCriteria
+    from transformers.tokenization_utils_base import BatchEncoding
+else:
+    Tensor: TypeAlias = Any
+
+    class _LazyExternal:
+        def __init__(self, module_name: str, name: str) -> None:
+            self._module_name = module_name
+            self._name = name
+
+        def __getattr__(self, name: str) -> Any:
+            module = import_module(self._module_name)
+            target = getattr(module, self._name)
+            return getattr(target, name)
+
+    class AsyncTextIteratorStreamer:  # noqa: D101
+        def __new__(cls, *args: object, **kwargs: object) -> object:
+            streamer_type = getattr(
+                import_module("transformers"), "AsyncTextIteratorStreamer"
+            )
+            return streamer_type(*args, **kwargs)
+
+    class BatchEncoding:  # noqa: D101
+        pass
+
+    class DiffusionPipeline:  # noqa: D101
+        pass
+
+    class PreTrainedModel:  # noqa: D101
+        pass
+
+    class StoppingCriteria:  # noqa: D101
+        pass
+
+    AutoModelForCausalLM = _LazyExternal(
+        "transformers", "AutoModelForCausalLM"
+    )
+    Gemma3ForConditionalGeneration = _LazyExternal(
+        "transformers", "Gemma3ForConditionalGeneration"
+    )
+    GptOssForCausalLM = _LazyExternal("transformers", "GptOssForCausalLM")
+    Mistral3ForConditionalGeneration = _LazyExternal(
+        "transformers", "Mistral3ForConditionalGeneration"
+    )
+
+
+def log_softmax(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("torch"), "log_softmax")(*args, **kwargs)
+
+
+def softmax(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("torch"), "softmax")(*args, **kwargs)
+
+
+def topk(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("torch"), "topk")(*args, **kwargs)
+
+
+def gumbel_softmax(*args: object, **kwargs: object) -> Any:
+    module = import_module("torch.nn.functional")
+    return getattr(module, "gumbel_softmax")(*args, **kwargs)
+
 
 _TOOL_MESSAGE_PARSER = ToolCallParser()
 _STREAMER_TIMEOUT_SECONDS = 0.1
@@ -61,14 +130,16 @@ def _is_event_loop_closed_error(exc: RuntimeError) -> bool:
 
 
 class TextGenerationModel(BaseNLPModel):
-    _loaders: dict[TextGenerationLoaderClass, type[PreTrainedModel]] = {
-        "auto": cast(type[PreTrainedModel], AutoModelForCausalLM),
-        "gemma3": cast(type[PreTrainedModel], Gemma3ForConditionalGeneration),
-        "gpt-oss": cast(type[PreTrainedModel], GptOssForCausalLM),
-        "mistral3": cast(
-            type[PreTrainedModel], Mistral3ForConditionalGeneration
-        ),
+    _loaders: dict[TextGenerationLoaderClass, Any] = {
+        "auto": AutoModelForCausalLM,
+        "gemma3": Gemma3ForConditionalGeneration,
+        "gpt-oss": GptOssForCausalLM,
+        "mistral3": Mistral3ForConditionalGeneration,
     }
+
+    @classmethod
+    def _loader(cls, loader_class: TextGenerationLoaderClass) -> Any:
+        return cls._loaders[loader_class]
 
     def __init__(
         self,
@@ -116,7 +187,7 @@ class TextGenerationModel(BaseNLPModel):
         else:
             bnb_config = None
 
-        loader = self._loaders[settings.loader_class or "auto"]
+        loader = self._loader(settings.loader_class or "auto")
         model_args = dict(
             cache_dir=settings.cache_dir,
             subfolder=settings.subfolder or "",

@@ -29,7 +29,13 @@ from logging import Logger
 from math import ceil, inf
 from re import sub
 from textwrap import wrap
-from typing import Any, AsyncGenerator, Callable, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Callable,
+    cast,
+)
 from uuid import UUID
 
 from humanize import (
@@ -40,8 +46,6 @@ from humanize import (
     naturalsize,
     precisedelta,
 )
-from numpy import ndarray
-from numpy.linalg import norm
 from rich import box
 from rich.align import Align
 from rich.columns import Columns
@@ -56,6 +60,19 @@ from rich.progress import (
 from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
+
+if TYPE_CHECKING:
+    from numpy import ndarray
+else:
+
+    class ndarray:  # noqa: D101
+        def __class_getitem__(cls, _: Any) -> Any:
+            return Any
+
+
+def norm(value: object) -> Any:
+    numpy_linalg = __import__("numpy.linalg", fromlist=["norm"])
+    return cast(Any, numpy_linalg.norm(value))
 
 
 class FancyTheme(Theme):

@@ -18,8 +18,11 @@ class CudaAndTransformerUtilityTestCase(TestCase):
             device_count=lambda: 3,
             set_device=MagicMock(),
         )
-        with patch("avalan.cli.__main__._module_exists", return_value=True), patch(
-            "avalan.cli.__main__.import_module", return_value=cuda_module
+        with (
+            patch("avalan.cli.__main__._module_exists", return_value=True),
+            patch(
+                "avalan.cli.__main__.import_module", return_value=cuda_module
+            ),
         ):
             self.assertTrue(cli_main.is_available())
             self.assertEqual(cli_main.device_count(), 3)
@@ -32,8 +35,11 @@ class CudaAndTransformerUtilityTestCase(TestCase):
             cli_main.destroy_process_group()
 
         dist_module = SimpleNamespace(destroy_process_group=MagicMock())
-        with patch("avalan.cli.__main__._module_exists", return_value=True), patch(
-            "avalan.cli.__main__.import_module", return_value=dist_module
+        with (
+            patch("avalan.cli.__main__._module_exists", return_value=True),
+            patch(
+                "avalan.cli.__main__.import_module", return_value=dist_module
+            ),
         ):
             cli_main.destroy_process_group()
 
@@ -45,10 +51,18 @@ class CudaAndTransformerUtilityTestCase(TestCase):
             self.assertFalse(cli_main.is_flash_attn_2_available())
             self.assertFalse(cli_main.is_torch_flex_attn_available())
 
-        transformers_utils = SimpleNamespace(is_flash_attn_2_available=lambda: True)
-        with patch("avalan.cli.__main__._module_exists", return_value=True), patch(
-            "avalan.cli.__main__.import_module", return_value=transformers_utils
+        transformers_utils = SimpleNamespace(
+            is_flash_attn_2_available=lambda: True
+        )
+        with (
+            patch("avalan.cli.__main__._module_exists", return_value=True),
+            patch(
+                "avalan.cli.__main__.import_module",
+                return_value=transformers_utils,
+            ),
         ):
-            self.assertIs(cli_main._transformers_utils_module(), transformers_utils)
+            self.assertIs(
+                cli_main._transformers_utils_module(), transformers_utils
+            )
             self.assertTrue(cli_main.is_flash_attn_2_available())
             self.assertFalse(cli_main.is_torch_flex_attn_available())

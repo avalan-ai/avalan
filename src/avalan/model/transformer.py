@@ -6,17 +6,50 @@ from ..entities import (
 from ..model.engine import Engine
 
 from abc import ABC, abstractmethod
+from importlib import import_module
 from logging import Logger, getLogger
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from tokenizers import AddedToken
-from torch import Tensor
-from transformers import (
-    AutoTokenizer,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-from transformers.tokenization_utils_base import BatchEncoding
+if TYPE_CHECKING:
+    from torch import Tensor
+    from transformers import (
+        AutoTokenizer,
+        PreTrainedTokenizer,
+        PreTrainedTokenizerFast,
+    )
+    from transformers.tokenization_utils_base import BatchEncoding
+else:
+    Tensor: TypeAlias = Any
+
+    class BatchEncoding:  # noqa: D101
+        pass
+
+    class PreTrainedTokenizer:  # noqa: D101
+        pass
+
+    class PreTrainedTokenizerFast:  # noqa: D101
+        pass
+
+    class _LazyExternal:
+        def __init__(self, module_name: str, name: str) -> None:
+            self._module_name = module_name
+            self._name = name
+
+        def __getattr__(self, name: str) -> Any:
+            module = import_module(self._module_name)
+            target = getattr(module, self._name)
+            return getattr(target, name)
+
+    AutoTokenizer = _LazyExternal("transformers", "AutoTokenizer")
+
+
+def _batch_encoding_type() -> type[Any]:
+    module = import_module("transformers.tokenization_utils_base")
+    return cast(type[Any], getattr(module, "BatchEncoding"))
+
+
+def _tensor_type() -> type[Any]:
+    return cast(type[Any], getattr(import_module("torch"), "Tensor"))
 
 
 class TransformerModel(Engine, ABC):
@@ -112,16 +145,19 @@ class TransformerModel(Engine, ABC):
             developer_prompt=developer_prompt,
             context=None,
         )
-        if not isinstance(inputs, (dict, BatchEncoding)):
+        if not isinstance(inputs, (dict, _batch_encoding_type())):
             return 0
 
         input_ids = inputs.get("input_ids")
-        if isinstance(input_ids, Tensor):
+        tensor_type = _tensor_type()
+        if isinstance(input_ids, tensor_type):
             if input_ids.numel() == 0:
                 return 0
             first_row = input_ids[0]
             return (
-                int(first_row.shape[0]) if isinstance(first_row, Tensor) else 0
+                int(first_row.shape[0])
+                if isinstance(first_row, tensor_type)
+                else 0
             )
 
         if (
@@ -139,10 +175,9 @@ class TransformerModel(Engine, ABC):
     def _load_tokenizer(
         self, tokenizer_name_or_path: str | None, use_fast: bool
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
-        auto_tokenizer = cast(Any, AutoTokenizer)
         return cast(
             PreTrainedTokenizer | PreTrainedTokenizerFast,
-            auto_tokenizer.from_pretrained(
+            cast(Any, AutoTokenizer).from_pretrained(
                 tokenizer_name_or_path or self._model_id,
                 use_fast=use_fast,
                 subfolder=self._settings.tokenizer_subfolder or "",
@@ -166,6 +201,9 @@ class TransformerModel(Engine, ABC):
             )
 
         if self._settings.special_tokens:
+            added_token_type = getattr(
+                import_module("tokenizers"), "AddedToken"
+            )
             _l(
                 f"Adding {len(self._settings.special_tokens)} special tokens "
                 f"to tokenizer {tokenizer.name_or_path}: "
@@ -174,7 +212,7 @@ class TransformerModel(Engine, ABC):
             added_tokens = tokenizer.add_special_tokens(
                 {
                     "additional_special_tokens": [
-                        AddedToken(
+                        added_token_type(
                             token,
                             # Defines whether this token should strip all
                             # potential

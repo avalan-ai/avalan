@@ -4,18 +4,41 @@ from ...model.transformer import TransformerModel
 
 from abc import ABC
 from contextlib import nullcontext
-from typing import Any, cast
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-from torch import (
-    Tensor,
-    inference_mode,
-)
-from transformers import (
-    AsyncTextIteratorStreamer,
-    PreTrainedModel,
-    StoppingCriteria,
-)
-from transformers.tokenization_utils_base import BatchEncoding
+if TYPE_CHECKING:
+    from torch import Tensor
+    from transformers import AsyncTextIteratorStreamer, PreTrainedModel
+    from transformers.generation.stopping_criteria import StoppingCriteria
+    from transformers.tokenization_utils_base import BatchEncoding
+else:
+    Tensor: TypeAlias = Any
+
+    class AsyncTextIteratorStreamer:  # noqa: D101
+        pass
+
+    class BatchEncoding:  # noqa: D101
+        pass
+
+    class PreTrainedModel:  # noqa: D101
+        pass
+
+    class StoppingCriteria:  # noqa: D101
+        pass
+
+
+def _batch_encoding_type() -> type[Any]:
+    module = import_module("transformers.tokenization_utils_base")
+    return cast(type[Any], getattr(module, "BatchEncoding"))
+
+
+def _tensor_type() -> type[Any]:
+    return cast(type[Any], getattr(import_module("torch"), "Tensor"))
+
+
+def inference_mode() -> Any:
+    return getattr(import_module("torch"), "inference_mode")()
 
 
 class BaseNLPModel(TransformerModel, ABC):
@@ -77,23 +100,25 @@ class BaseNLPModel(TransformerModel, ABC):
             "cache_implementation": settings.cache_strategy,
         }
 
+        tensor_type = _tensor_type()
+        batch_encoding_type = _batch_encoding_type()
         attention_mask: Tensor | None = None
         if settings.use_inputs_attention_mask:
             input_ids: Tensor | None = None
-            if isinstance(inputs, (dict, BatchEncoding)):
+            if isinstance(inputs, (dict, batch_encoding_type)):
                 maybe_input_ids = inputs.get("input_ids")
                 input_ids = (
                     maybe_input_ids
-                    if isinstance(maybe_input_ids, Tensor)
+                    if isinstance(maybe_input_ids, tensor_type)
                     else None
                 )
             attention_mask = (
                 inputs.get("attention_mask", None)
-                if isinstance(inputs, (dict, BatchEncoding))
+                if isinstance(inputs, (dict, batch_encoding_type))
                 else getattr(inputs, "attention_mask", None)
             )
             if attention_mask is not None:
-                assert isinstance(attention_mask, Tensor)
+                assert isinstance(attention_mask, tensor_type)
                 if input_ids is not None:
                     assert attention_mask.shape == input_ids.shape
                 generation_kwargs["attention_mask"] = attention_mask
@@ -102,7 +127,7 @@ class BaseNLPModel(TransformerModel, ABC):
             not settings.use_inputs_attention_mask
             or attention_mask is not None
         ):
-            if isinstance(inputs, (dict, BatchEncoding)):
+            if isinstance(inputs, (dict, batch_encoding_type)):
                 inputs.pop("attention_mask", None)
 
         if settings.forced_bos_token_id or settings.forced_eos_token_id:
@@ -118,9 +143,11 @@ class BaseNLPModel(TransformerModel, ABC):
                 typed_model.generate(
                     inputs, tokenizer=self._tokenizer, **generation_kwargs
                 )
-                if isinstance(inputs, Tensor)
+                if isinstance(inputs, tensor_type)
                 else typed_model.generate(
-                    **inputs, tokenizer=self._tokenizer, **generation_kwargs
+                    **cast(dict[str, Any], inputs),
+                    tokenizer=self._tokenizer,
+                    **generation_kwargs,
                 )
             )
         return outputs

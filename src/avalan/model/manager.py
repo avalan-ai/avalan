@@ -13,30 +13,6 @@ from ..entities import (
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager
-from ..model.audio.classification import AudioClassificationModel
-from ..model.audio.generation import AudioGenerationModel
-from ..model.audio.speech import TextToSpeechModel
-from ..model.audio.speech_recognition import SpeechRecognitionModel
-from ..model.hubs.huggingface import HuggingfaceHub
-from ..model.nlp.question import QuestionAnsweringModel
-from ..model.nlp.sentence import SentenceTransformerModel
-from ..model.nlp.sequence import (
-    SequenceClassificationModel,
-    SequenceToSequenceModel,
-    TranslationModel,
-)
-from ..model.nlp.text.generation import TextGenerationModel
-from ..model.nlp.token import TokenClassificationModel
-from ..model.vision.classification import ImageClassificationModel
-from ..model.vision.decoder import VisionEncoderDecoderModel
-from ..model.vision.detection import ObjectDetectionModel
-from ..model.vision.diffusion import (
-    TextToAnimationModel,
-    TextToImageModel,
-    TextToVideoModel,
-)
-from ..model.vision.segmentation import SemanticSegmentationModel
-from ..model.vision.text import ImageTextToTextModel, ImageToTextModel
 from ..secrets import KeyringSecrets
 from .call import ModelCall
 from .modalities import ModalityRegistry
@@ -64,32 +40,11 @@ if TYPE_CHECKING:
 else:  # pragma: no cover - runtime type placeholder
     Engine = Any
 
-ModelType: TypeAlias = (
-    AudioClassificationModel
-    | AudioGenerationModel
-    | ImageClassificationModel
-    | ImageTextToTextModel
-    | ImageToTextModel
-    | ObjectDetectionModel
-    | QuestionAnsweringModel
-    | SemanticSegmentationModel
-    | SentenceTransformerModel
-    | SequenceClassificationModel
-    | SequenceToSequenceModel
-    | SpeechRecognitionModel
-    | TextGenerationModel
-    | TextToAnimationModel
-    | TextToImageModel
-    | TextToSpeechModel
-    | TextToVideoModel
-    | TokenClassificationModel
-    | TranslationModel
-    | VisionEncoderDecoderModel
-)
+ModelType: TypeAlias = Engine
 
 
 class ModelManager:
-    _hub: HuggingfaceHub
+    _hub: Any
     _stack: AsyncExitStack
     _logger: Logger
     _secrets: KeyringSecrets
@@ -98,7 +53,7 @@ class ModelManager:
 
     def __init__(
         self,
-        hub: HuggingfaceHub,
+        hub: Any,
         logger: Logger,
         secrets: KeyringSecrets | None = None,
         event_manager: EventManager | None = None,

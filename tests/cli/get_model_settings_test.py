@@ -84,3 +84,26 @@ class GetModelSettingsTestCase(unittest.TestCase):
             modality=Modality.EMBEDDING,
         )
         self.assertEqual(result["modality"], Modality.EMBEDDING)
+
+    def test_string_modality_is_normalized(self):
+        engine_uri = MagicMock()
+        args = Namespace(
+            modality="text_generation",
+            device="cpu",
+            disable_loading_progress_bar=False,
+            loader_class="auto",
+            backend="mlx",
+            low_cpu_mem_usage=False,
+            quiet=True,
+            revision=None,
+            special_token=None,
+            tokenizer=None,
+            token=None,
+            weight_type="bf16",
+        )
+
+        result = get_model_settings(
+            args, MagicMock(), MagicMock(), engine_uri
+        )
+
+        self.assertEqual(result["modality"], Modality.TEXT_GENERATION)

@@ -1,8 +1,13 @@
 from io import StringIO
 from re import Pattern, compile, escape
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from transformers.generation.stopping_criteria import StoppingCriteria
+if TYPE_CHECKING:
+    from transformers.generation.stopping_criteria import StoppingCriteria
+else:
+
+    class StoppingCriteria:  # noqa: D101
+        pass
 
 
 class TokenDecoder(Protocol):

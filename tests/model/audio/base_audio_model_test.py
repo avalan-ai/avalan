@@ -43,7 +43,9 @@ class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
         mean.numpy.return_value = "audio"
         audio_wave.mean.return_value = mean
         with (
-            patch("torchaudio.load", return_value=(audio_wave, 8000)) as load_patch,
+            patch(
+                "torchaudio.load", return_value=(audio_wave, 8000)
+            ) as load_patch,
             patch(
                 "torchaudio.functional.resample", return_value=audio_wave
             ) as resample_patch,
@@ -66,7 +68,9 @@ class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
         mean.numpy.return_value = "audio"
         audio_wave.mean.return_value = mean
         with (
-            patch("torchaudio.load", return_value=(audio_wave, 16000)) as load_patch,
+            patch(
+                "torchaudio.load", return_value=(audio_wave, 16000)
+            ) as load_patch,
             patch("torchaudio.functional.resample") as resample_patch,
         ):
             result = model._resample("a.wav", 16000)
@@ -96,7 +100,9 @@ class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
         resampled.squeeze.return_value = "wave"
 
         with (
-            patch("torchaudio.load", return_value=(audio_wave, 8000)) as load_patch,
+            patch(
+                "torchaudio.load", return_value=(audio_wave, 8000)
+            ) as load_patch,
             patch(
                 "torchaudio.functional.resample", return_value=resampled
             ) as resample_patch,
@@ -124,7 +130,9 @@ class BaseAudioModelTestCase(IsolatedAsyncioTestCase):
         audio_wave.squeeze.return_value = "wave"
 
         with (
-            patch("torchaudio.load", return_value=(audio_wave, 16000)) as load_patch,
+            patch(
+                "torchaudio.load", return_value=(audio_wave, 16000)
+            ) as load_patch,
             patch("torchaudio.functional.resample") as resample_patch,
         ):
             result = model._resample_mono("a.wav", 16000)

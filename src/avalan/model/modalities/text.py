@@ -11,22 +11,44 @@ from ...entities import (
 )
 from ...tool.manager import ToolManager
 from ..criteria import KeywordStoppingCriteria
-from ..nlp.question import QuestionAnsweringModel
-from ..nlp.sequence import (
-    SequenceClassificationModel,
-    SequenceToSequenceModel,
-    TranslationModel,
-)
-from ..nlp.text.generation import TextGenerationModel
-from ..nlp.token import TokenClassificationModel
 from .registry import ModalityRegistry
 
 from argparse import Namespace
 from contextlib import AsyncExitStack
 from functools import lru_cache
+from importlib import import_module
 from importlib.util import find_spec
 from logging import Logger
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from ..nlp.question import QuestionAnsweringModel
+    from ..nlp.sequence import (
+        SequenceClassificationModel,
+        SequenceToSequenceModel,
+        TranslationModel,
+    )
+    from ..nlp.text.generation import TextGenerationModel
+    from ..nlp.token import TokenClassificationModel
+else:
+    QuestionAnsweringModel: TypeAlias = Any
+    SequenceClassificationModel: TypeAlias = Any
+    SequenceToSequenceModel: TypeAlias = Any
+    TextGenerationModel: TypeAlias = Any
+    TokenClassificationModel: TypeAlias = Any
+    TranslationModel: TypeAlias = Any
+
+
+def _resolve_model_class(
+    global_name: str, module_name: str, class_name: str
+) -> type[Any]:
+    model_class = globals()[global_name]
+    if model_class is not Any:
+        return cast(type[Any], model_class)
+    module = import_module(module_name)
+    model_class = getattr(module, class_name)
+    globals()[global_name] = model_class
+    return cast(type[Any], model_class)
 
 
 def _stopping_criteria(
@@ -88,10 +110,19 @@ class TextGenerationModality:
                         logger=logger,
                     )
                 case _:
-                    return TextGenerationModel(
-                        model_id=engine_uri.model_id,
-                        settings=engine_settings,
-                        logger=logger,
+                    model_class = _resolve_model_class(
+                        "TextGenerationModel",
+                        "avalan.model.nlp.text.generation",
+                        "TextGenerationModel",
+                    )
+
+                    return cast(
+                        TextGenerationModel,
+                        model_class(
+                            model_id=engine_uri.model_id,
+                            settings=engine_settings,
+                            logger=logger,
+                        ),
                     )
         match engine_uri.vendor:
             case "anthropic":
@@ -302,10 +333,19 @@ class TextQuestionAnsweringModality:
         if not engine_uri.is_local:
             raise NotImplementedError()
         assert engine_uri.model_id is not None
-        return QuestionAnsweringModel(
-            model_id=engine_uri.model_id,
-            settings=engine_settings,
-            logger=logger,
+        model_class = _resolve_model_class(
+            "QuestionAnsweringModel",
+            "avalan.model.nlp.question",
+            "QuestionAnsweringModel",
+        )
+
+        return cast(
+            QuestionAnsweringModel,
+            model_class(
+                model_id=engine_uri.model_id,
+                settings=engine_settings,
+                logger=logger,
+            ),
         )
 
     def get_operation_from_arguments(
@@ -363,10 +403,19 @@ class TextSequenceClassificationModality:
         if not engine_uri.is_local:
             raise NotImplementedError()
         assert engine_uri.model_id is not None
-        return SequenceClassificationModel(
-            model_id=engine_uri.model_id,
-            settings=engine_settings,
-            logger=logger,
+        model_class = _resolve_model_class(
+            "SequenceClassificationModel",
+            "avalan.model.nlp.sequence",
+            "SequenceClassificationModel",
+        )
+
+        return cast(
+            SequenceClassificationModel,
+            model_class(
+                model_id=engine_uri.model_id,
+                settings=engine_settings,
+                logger=logger,
+            ),
         )
 
     def get_operation_from_arguments(
@@ -407,10 +456,19 @@ class TextSequenceToSequenceModality:
         if not engine_uri.is_local:
             raise NotImplementedError()
         assert engine_uri.model_id is not None
-        return SequenceToSequenceModel(
-            model_id=engine_uri.model_id,
-            settings=engine_settings,
-            logger=logger,
+        model_class = _resolve_model_class(
+            "SequenceToSequenceModel",
+            "avalan.model.nlp.sequence",
+            "SequenceToSequenceModel",
+        )
+
+        return cast(
+            SequenceToSequenceModel,
+            model_class(
+                model_id=engine_uri.model_id,
+                settings=engine_settings,
+                logger=logger,
+            ),
         )
 
     def get_operation_from_arguments(
@@ -461,10 +519,19 @@ class TextTokenClassificationModality:
         if not engine_uri.is_local:
             raise NotImplementedError()
         assert engine_uri.model_id is not None
-        return TokenClassificationModel(
-            model_id=engine_uri.model_id,
-            settings=engine_settings,
-            logger=logger,
+        model_class = _resolve_model_class(
+            "TokenClassificationModel",
+            "avalan.model.nlp.token",
+            "TokenClassificationModel",
+        )
+
+        return cast(
+            TokenClassificationModel,
+            model_class(
+                model_id=engine_uri.model_id,
+                settings=engine_settings,
+                logger=logger,
+            ),
         )
 
     def get_operation_from_arguments(
@@ -517,10 +584,19 @@ class TextTranslationModality:
         if not engine_uri.is_local:
             raise NotImplementedError()
         assert engine_uri.model_id is not None
-        return TranslationModel(
-            model_id=engine_uri.model_id,
-            settings=engine_settings,
-            logger=logger,
+        model_class = _resolve_model_class(
+            "TranslationModel",
+            "avalan.model.nlp.sequence",
+            "TranslationModel",
+        )
+
+        return cast(
+            TranslationModel,
+            model_class(
+                model_id=engine_uri.model_id,
+                settings=engine_settings,
+                logger=logger,
+            ),
         )
 
     def get_operation_from_arguments(

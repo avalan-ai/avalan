@@ -16,14 +16,22 @@ from .....tool.manager import ToolManager
 from .....utils import to_json
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel
+from . import (
+    DiffusionPipeline,
+    PreTrainedModel,
+    TextGenerationVendorModel,
+)
 
+from importlib import import_module
 from mimetypes import guess_type
 from typing import Any, AsyncIterator, cast
 
-from diffusers import DiffusionPipeline
-from openai import AsyncOpenAI, Omit
-from transformers import PreTrainedModel
+
+class _OmitPlaceholder:  # noqa: D101
+    pass
+
+
+Omit: type[Any] = _OmitPlaceholder
 
 
 class OpenAIStream(TextGenerationVendorStream):
@@ -127,19 +135,24 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
-    _client: AsyncOpenAI
+    _client: Any
 
     def __init__(self, api_key: str | None, base_url: str | None):
+        global Omit
+
+        openai_module = import_module("openai")
+        async_openai_type = getattr(openai_module, "AsyncOpenAI")
         client_kwargs: dict[str, Any] = {"base_url": base_url}
         if api_key is None:
             assert base_url
+            Omit = cast(type[Any], getattr(openai_module, "Omit"))
             client_kwargs.update(
                 api_key="",
                 default_headers=cast(Any, {"Authorization": Omit()}),
             )
         else:
             client_kwargs["api_key"] = api_key
-        self._client = AsyncOpenAI(**client_kwargs)
+        self._client = async_openai_type(**client_kwargs)
 
     async def __call__(
         self,

@@ -95,7 +95,9 @@ def get_json_schema(function: Callable[..., Any]) -> dict[str, Any]:
         )
         literal_schema = _literal_schema(annotation)
         properties[name] = (
-            literal_schema if literal_schema else {"type": _json_type(annotation)}
+            literal_schema
+            if literal_schema
+            else {"type": _json_type(annotation)}
         )
         properties[name]["description"] = docs.get(f"arg:{name}", "")
         if parameter.default is Parameter.empty:

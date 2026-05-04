@@ -18,7 +18,12 @@ from .....tool.manager import ToolManager
 from .....utils import to_json
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
-from . import TextGenerationVendorModel, _decode_text_file_data
+from . import (
+    DiffusionPipeline,
+    PreTrainedModel,
+    TextGenerationVendorModel,
+    _decode_text_file_data,
+)
 
 from base64 import b64decode
 from contextlib import AsyncExitStack
@@ -27,8 +32,6 @@ from re import sub
 from typing import Any, AsyncIterator, Mapping, NoReturn
 
 from aioboto3 import Session as Boto3Session
-from diffusers import DiffusionPipeline
-from transformers import PreTrainedModel
 
 
 def _get(event: Any, key: str) -> Any:
