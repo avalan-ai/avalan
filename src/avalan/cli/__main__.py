@@ -118,6 +118,10 @@ class TransformerModel:
 
     @staticmethod
     def get_default_device() -> str:
+        if _is_cuda_available():
+            return "cuda"
+        if _is_mps_available():
+            return "mps"
         return "cpu"
 
 
@@ -160,8 +164,21 @@ def _module_exists(module_name: str) -> bool:
 def _is_cuda_available() -> bool:
     if not _module_exists("torch"):
         return False
-    cuda_module = import_module("torch.cuda")
+    try:
+        cuda_module = import_module("torch.cuda")
+    except ModuleNotFoundError:
+        return False
     return bool(getattr(cuda_module, "is_available")())
+
+
+def _is_mps_available() -> bool:
+    if not _module_exists("torch"):
+        return False
+    try:
+        mps_module = import_module("torch.backends.mps")
+    except ModuleNotFoundError:
+        return False
+    return bool(getattr(mps_module, "is_available")())
 
 
 def _cuda_device_count() -> int:

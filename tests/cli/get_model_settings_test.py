@@ -102,8 +102,6 @@ class GetModelSettingsTestCase(unittest.TestCase):
             weight_type="bf16",
         )
 
-        result = get_model_settings(
-            args, MagicMock(), MagicMock(), engine_uri
-        )
+        result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
 
         self.assertEqual(result["modality"], Modality.TEXT_GENERATION)

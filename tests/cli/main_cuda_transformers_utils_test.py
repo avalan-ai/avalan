@@ -6,9 +6,43 @@ from avalan.cli import __main__ as cli_main
 
 
 class CudaAndTransformerUtilityTestCase(TestCase):
+    def test_lightweight_default_device_prefers_cuda(self) -> None:
+        with (
+            patch("avalan.cli.__main__._is_cuda_available", return_value=True),
+            patch("avalan.cli.__main__._is_mps_available", return_value=True),
+        ):
+            self.assertEqual(
+                cli_main.TransformerModel.get_default_device(), "cuda"
+            )
+
+    def test_lightweight_default_device_uses_mps_when_cuda_missing(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "avalan.cli.__main__._is_cuda_available", return_value=False
+            ),
+            patch("avalan.cli.__main__._is_mps_available", return_value=True),
+        ):
+            self.assertEqual(
+                cli_main.TransformerModel.get_default_device(), "mps"
+            )
+
+    def test_lightweight_default_device_falls_back_to_cpu(self) -> None:
+        with (
+            patch(
+                "avalan.cli.__main__._is_cuda_available", return_value=False
+            ),
+            patch("avalan.cli.__main__._is_mps_available", return_value=False),
+        ):
+            self.assertEqual(
+                cli_main.TransformerModel.get_default_device(), "cpu"
+            )
+
     def test_cuda_helpers_when_torch_missing(self) -> None:
         with patch("avalan.cli.__main__._module_exists", return_value=False):
             self.assertFalse(cli_main._is_cuda_available())
+            self.assertFalse(cli_main._is_mps_available())
             self.assertEqual(cli_main._cuda_device_count(), 1)
             cli_main._set_cuda_device(0)
 
