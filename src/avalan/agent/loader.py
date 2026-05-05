@@ -556,8 +556,11 @@ class OrchestratorLoader:
 
         _l("Loading agent from settings", is_debug=False)
 
+        def load_text_partitioner() -> Partitioner:
+            return self._load_text_partitioner(settings)
+
         text_partitioner = (
-            self._load_text_partitioner(settings)
+            load_text_partitioner()
             if self._needs_text_partitioner(settings, tool_settings)
             else None
         )
@@ -587,6 +590,7 @@ class OrchestratorLoader:
             agent_id=settings.agent_id,
             participant_id=self._participant_id,
             text_partitioner=text_partitioner,
+            text_partitioner_factory=load_text_partitioner,
             logger=self._logger,
             with_permanent_message_memory=settings.memory_permanent_message,
             with_recent_message_memory=settings.memory_recent,

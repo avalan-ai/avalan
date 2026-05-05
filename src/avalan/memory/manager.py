@@ -12,6 +12,7 @@ from ..memory.permanent import (
     VectorFunction,
 )
 
+from collections.abc import Callable
 from logging import Logger
 from time import perf_counter
 from types import TracebackType
@@ -25,6 +26,7 @@ class MemoryManager:
     _permanent_memory_stores: dict[str, tuple[PermanentMemory, str | None]]
     _recent_message_memory: RecentMessageMemory | None = None
     _text_partitioner: Partitioner | None
+    _text_partitioner_factory: Callable[[], Partitioner] | None
     _logger: Logger
     _event_manager: EventManager | None = None
 
@@ -36,6 +38,7 @@ class MemoryManager:
         participant_id: UUID,
         text_partitioner: Partitioner | None,
         logger: Logger,
+        text_partitioner_factory: Callable[[], Partitioner] | None = None,
         with_permanent_message_memory: str | None = None,
         with_recent_message_memory: bool = True,
         event_manager: EventManager | None = None,
@@ -58,6 +61,7 @@ class MemoryManager:
             permanent_message_memory=permanent_memory,
             recent_message_memory=recent_memory,
             text_partitioner=text_partitioner,
+            text_partitioner_factory=text_partitioner_factory,
             logger=logger,
             event_manager=event_manager,
         )
@@ -72,6 +76,7 @@ class MemoryManager:
         recent_message_memory: RecentMessageMemory | None,
         text_partitioner: Partitioner | None,
         logger: Logger,
+        text_partitioner_factory: Callable[[], Partitioner] | None = None,
         event_manager: EventManager | None = None,
         permanent_memory_stores: (
             dict[str, tuple[PermanentMemory, str | None]] | None
@@ -82,6 +87,7 @@ class MemoryManager:
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._text_partitioner = text_partitioner
+        self._text_partitioner_factory = text_partitioner_factory
         self._permanent_memory_stores = {}
         self._event_manager = event_manager
         if permanent_message_memory:
@@ -196,13 +202,11 @@ class MemoryManager:
                     else None
                 )
             )
-            assert (
-                self._text_partitioner
-            ), "Text partitioner is required for permanent message memory"
+            text_partitioner = self._ensure_text_partitioner(
+                "Text partitioner is required for permanent message memory"
+            )
             partitions = (
-                await self._text_partitioner(content_text)
-                if content_text
-                else []
+                await text_partitioner(content_text) if content_text else []
             )
             await self._permanent_message_memory.append_with_partitions(
                 engine_message, partitions=partitions
@@ -345,10 +349,10 @@ class MemoryManager:
         exclude_session_id: UUID | None = None,
     ) -> list[EngineMessage]:
         assert self._permanent_message_memory
-        assert (
-            self._text_partitioner
-        ), "Text partitioner is required to search message memory"
-        search_partitions = await self._text_partitioner(search)
+        text_partitioner = self._ensure_text_partitioner(
+            "Text partitioner is required to search message memory"
+        )
+        search_partitions = await text_partitioner(search)
         messages = await self._permanent_message_memory.search_messages(
             search_partitions=search_partitions,
             search_user_messages=search_user_messages,
@@ -373,10 +377,10 @@ class MemoryManager:
         if namespace not in self._permanent_memory_stores:
             raise KeyError(f"Memory namespace {namespace} not defined")
 
-        assert (
-            self._text_partitioner
-        ), "Text partitioner is required to search permanent memory"
-        search_partitions = await self._text_partitioner(search)
+        text_partitioner = self._ensure_text_partitioner(
+            "Text partitioner is required to search permanent memory"
+        )
+        search_partitions = await text_partitioner(search)
         store, _ = self._permanent_memory_stores[namespace]
         memories = await store.search_memories(
             search_partitions=search_partitions,
@@ -386,6 +390,12 @@ class MemoryManager:
             limit=limit,
         )
         return memories
+
+    def _ensure_text_partitioner(self, message: str) -> Partitioner:
+        if self._text_partitioner is None and self._text_partitioner_factory:
+            self._text_partitioner = self._text_partitioner_factory()
+        assert self._text_partitioner, message
+        return self._text_partitioner
 
     async def list_memories(
         self,
