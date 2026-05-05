@@ -1,8 +1,8 @@
 from ..entities import EngineMessage, MessageContentImage, MessageContentText
 from ..event import Event, EventType
 from ..event.manager import EventManager
+from ..filters import Partitioner
 from ..memory import RecentMessageMemory
-from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent import (
     Memory,
     PermanentMemory,
@@ -24,7 +24,7 @@ class MemoryManager:
     _permanent_message_memory: PermanentMessageMemory | None = None
     _permanent_memory_stores: dict[str, tuple[PermanentMemory, str | None]]
     _recent_message_memory: RecentMessageMemory | None = None
-    _text_partitioner: TextPartitioner
+    _text_partitioner: Partitioner | None
     _logger: Logger
     _event_manager: EventManager | None = None
 
@@ -34,7 +34,7 @@ class MemoryManager:
         *args: object,
         agent_id: UUID,
         participant_id: UUID,
-        text_partitioner: TextPartitioner,
+        text_partitioner: Partitioner | None,
         logger: Logger,
         with_permanent_message_memory: str | None = None,
         with_recent_message_memory: bool = True,
@@ -70,7 +70,7 @@ class MemoryManager:
         participant_id: UUID,
         permanent_message_memory: PermanentMessageMemory | None,
         recent_message_memory: RecentMessageMemory | None,
-        text_partitioner: TextPartitioner,
+        text_partitioner: Partitioner | None,
         logger: Logger,
         event_manager: EventManager | None = None,
         permanent_memory_stores: (
@@ -196,6 +196,9 @@ class MemoryManager:
                     else None
                 )
             )
+            assert (
+                self._text_partitioner
+            ), "Text partitioner is required for permanent message memory"
             partitions = (
                 await self._text_partitioner(content_text)
                 if content_text
@@ -342,6 +345,9 @@ class MemoryManager:
         exclude_session_id: UUID | None = None,
     ) -> list[EngineMessage]:
         assert self._permanent_message_memory
+        assert (
+            self._text_partitioner
+        ), "Text partitioner is required to search message memory"
         search_partitions = await self._text_partitioner(search)
         messages = await self._permanent_message_memory.search_messages(
             search_partitions=search_partitions,
@@ -367,6 +373,9 @@ class MemoryManager:
         if namespace not in self._permanent_memory_stores:
             raise KeyError(f"Memory namespace {namespace} not defined")
 
+        assert (
+            self._text_partitioner
+        ), "Text partitioner is required to search permanent memory"
         search_partitions = await self._text_partitioner(search)
         store, _ = self._permanent_memory_stores[namespace]
         memories = await store.search_memories(
