@@ -462,6 +462,64 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "late generation failure"):
                 await stream.__anext__()
 
+    async def test_stream_generator_raises_worker_error_after_chunk(self):
+        model = self._model()
+        threads = []
+
+        class DummyStreamer:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def on_finalized_text(self, text, stream_end=False):
+                pass
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                thread = threads[0]
+                thread.target()
+                thread._alive = False
+                return "partial"
+
+        class DummyThread:
+            def __init__(self, target, name=None, daemon=None):
+                self.target = target
+                self.name = name
+                self.daemon = daemon
+                self.ident = 1
+                self._alive = False
+                threads.append(self)
+
+            def start(self):
+                self._alive = True
+
+            def is_alive(self):
+                return self._alive
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                DummyStreamer,
+            ),
+            patch("avalan.model.nlp.text.generation.Thread", DummyThread),
+            patch.object(
+                TextGenerationModel,
+                "_generate_output",
+                side_effect=ValueError("chunk generation failure"),
+            ),
+        ):
+            stream = model._stream_generator(
+                {"input_ids": torch.tensor([[1, 2]])},
+                GenerationSettings(max_new_tokens=2),
+                None,
+                False,
+            )
+            with self.assertRaisesRegex(
+                ValueError, "chunk generation failure"
+            ):
+                await stream.__anext__()
+
     async def test_stream_generator_raises_worker_error_after_stop(self):
         model = self._model()
         threads = []

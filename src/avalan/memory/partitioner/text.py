@@ -1,19 +1,27 @@
 from ...entities import TextPartition
 from ...filters import Partitioner
-from ...model.nlp.sentence import SentenceTransformerModel
 
 from collections.abc import Callable
 from logging import Logger
 from re import split
-from typing import cast
+from typing import Any, Protocol, cast
 
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+
+class SentenceModel(Protocol):
+    @property
+    def tokenizer(self) -> Any:
+        """Return the tokenizer used by the sentence model."""
+        ...
+
+    async def __call__(self, input: str) -> Any:
+        """Return embeddings for input text."""
+        ...
 
 
 class TextPartitioner(Partitioner):
     _PARAGRAPH_PATTERN = r"(?:\r\n|\r|\n){2,}"
-    _model: SentenceTransformerModel
-    _tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast
+    _model: SentenceModel
+    _tokenizer: Any
     _logger: Logger
     _max_tokens: int
     _window_size: int
@@ -21,7 +29,7 @@ class TextPartitioner(Partitioner):
 
     def __init__(
         self,
-        model: SentenceTransformerModel,
+        model: SentenceModel,
         logger: Logger,
         max_tokens: int,
         overlap_size: int,

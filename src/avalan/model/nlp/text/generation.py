@@ -370,7 +370,10 @@ class TextGenerationModel(BaseNLPModel):
                 if thread_errors:
                     raise thread_errors[0]
                 try:
-                    yield await stream.__anext__()
+                    chunk = await stream.__anext__()
+                    if thread_errors:
+                        raise thread_errors[0]
+                    yield chunk
                 except TimeoutError:
                     if thread_errors:
                         raise thread_errors[0]

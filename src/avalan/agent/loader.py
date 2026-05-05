@@ -12,11 +12,9 @@ from ..entities import (
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
-from ..memory.partitioner.text import TextPartitioner
 from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
-from ..model.nlp.sentence import SentenceTransformerModel
 from ..tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
     BrowserToolSet,
@@ -36,12 +34,21 @@ from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
 
 from contextlib import AsyncExitStack
+from importlib import import_module
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access
 from os.path import exists
 from tomllib import load
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 from uuid import UUID, uuid4
+
+if TYPE_CHECKING:
+    from ..filters import Partitioner
+else:
+    Partitioner = Any
+
+SentenceTransformerModel: type[Any] | None = None
+TextPartitioner: type[Any] | None = None
 
 
 class OrchestratorLoader:
@@ -85,6 +92,84 @@ class OrchestratorLoader:
         self._logger = logger
         self._participant_id = participant_id
         self._stack = stack
+
+    @staticmethod
+    def _sentence_transformer_model_type() -> type[Any]:
+        global SentenceTransformerModel
+        if SentenceTransformerModel is None:
+            module = import_module("avalan.model.nlp.sentence")
+            SentenceTransformerModel = cast(
+                type[Any], getattr(module, "SentenceTransformerModel")
+            )
+        return SentenceTransformerModel
+
+    @staticmethod
+    def _text_partitioner_type() -> type[Any]:
+        global TextPartitioner
+        if TextPartitioner is None:
+            module = import_module("avalan.memory.partitioner.text")
+            TextPartitioner = cast(
+                type[Any], getattr(module, "TextPartitioner")
+            )
+        return TextPartitioner
+
+    @staticmethod
+    def _needs_text_partitioner(
+        settings: OrchestratorSettings,
+        tool_settings: ToolSettingsContext | None,
+    ) -> bool:
+        if settings.memory_permanent_message or settings.permanent_memory:
+            return True
+
+        browser_settings = tool_settings.browser if tool_settings else None
+        return bool(browser_settings and browser_settings.search)
+
+    def _load_text_partitioner(
+        self,
+        settings: OrchestratorSettings,
+    ) -> Partitioner:
+        _l = self._log_wrapper(self._logger)
+        sentence_model_engine_settings = (
+            TransformerEngineSettings(**settings.sentence_model_engine_config)
+            if settings.sentence_model_engine_config
+            else TransformerEngineSettings()
+        )
+
+        _l(
+            "Loading sentence transformer model %s for agent %s",
+            settings.sentence_model_id,
+            settings.agent_id,
+        )
+
+        sentence_model_type = self._sentence_transformer_model_type()
+        sentence_model_resource = sentence_model_type(
+            model_id=settings.sentence_model_id,
+            settings=sentence_model_engine_settings,
+            logger=self._logger,
+        )
+        sentence_model = self._stack.enter_context(sentence_model_resource)
+
+        _l(
+            "Loading text partitioner for model %s for agent %s with settings"
+            " (%s, %s, %s)",
+            settings.sentence_model_id,
+            settings.agent_id,
+            settings.sentence_model_max_tokens,
+            settings.sentence_model_overlap_size,
+            settings.sentence_model_window_size,
+        )
+
+        text_partitioner_type = self._text_partitioner_type()
+        return cast(
+            Partitioner,
+            text_partitioner_type(
+                model=sentence_model,
+                logger=self._logger,
+                max_tokens=settings.sentence_model_max_tokens,
+                overlap_size=settings.sentence_model_overlap_size,
+                window_size=settings.sentence_model_window_size,
+            ),
+        )
 
     @staticmethod
     def parse_permanent_store_value(
@@ -471,44 +556,13 @@ class OrchestratorLoader:
 
         _l("Loading agent from settings", is_debug=False)
 
-        sentence_model_engine_settings = (
-            TransformerEngineSettings(**settings.sentence_model_engine_config)
-            if settings.sentence_model_engine_config
-            else TransformerEngineSettings()
-        )
+        def load_text_partitioner() -> Partitioner:
+            return self._load_text_partitioner(settings)
 
-        _l(
-            "Loading sentence transformer model %s for agent %s",
-            settings.sentence_model_id,
-            settings.agent_id,
-        )
-
-        sentence_model_resource = SentenceTransformerModel(
-            model_id=settings.sentence_model_id,
-            settings=sentence_model_engine_settings,
-            logger=self._logger,
-        )
-        sentence_model = cast(
-            SentenceTransformerModel,
-            self._stack.enter_context(sentence_model_resource),
-        )
-
-        _l(
-            "Loading text partitioner for model %s for agent %s with settings"
-            " (%s, %s, %s)",
-            settings.sentence_model_id,
-            settings.agent_id,
-            settings.sentence_model_max_tokens,
-            settings.sentence_model_overlap_size,
-            settings.sentence_model_window_size,
-        )
-
-        text_partitioner = TextPartitioner(
-            model=sentence_model,
-            logger=self._logger,
-            max_tokens=settings.sentence_model_max_tokens,
-            overlap_size=settings.sentence_model_overlap_size,
-            window_size=settings.sentence_model_window_size,
+        text_partitioner = (
+            load_text_partitioner()
+            if self._needs_text_partitioner(settings, tool_settings)
+            else None
         )
 
         _l("Loading event manager")
@@ -536,6 +590,7 @@ class OrchestratorLoader:
             agent_id=settings.agent_id,
             participant_id=self._participant_id,
             text_partitioner=text_partitioner,
+            text_partitioner_factory=load_text_partitioner,
             logger=self._logger,
             with_permanent_message_memory=settings.memory_permanent_message,
             with_recent_message_memory=settings.memory_recent,
@@ -559,15 +614,18 @@ class OrchestratorLoader:
                 description=store_settings.description,
             )
 
-        _l(
-            "Loading tool manager for agent %s with partitioner and a sentence"
-            " model %s with settings (%s, %s, %s)",
-            settings.agent_id,
-            settings.sentence_model_id,
-            settings.sentence_model_max_tokens,
-            settings.sentence_model_overlap_size,
-            settings.sentence_model_window_size,
-        )
+        if text_partitioner:
+            _l(
+                "Loading tool manager for agent %s with partitioner and a"
+                " sentence model %s with settings (%s, %s, %s)",
+                settings.agent_id,
+                settings.sentence_model_id,
+                settings.sentence_model_max_tokens,
+                settings.sentence_model_overlap_size,
+                settings.sentence_model_window_size,
+            )
+        else:
+            _l("Loading tool manager for agent %s", settings.agent_id)
 
         browser_settings = tool_settings.browser if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None

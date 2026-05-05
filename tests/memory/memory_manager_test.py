@@ -194,6 +194,90 @@ class MemoryManagerOperationTestCase(IsolatedAsyncioTestCase):
         )
         self.tp.assert_not_called()
 
+    async def test_late_message_memory_uses_lazy_partitioner(self):
+        text_partitioner = AsyncMock(return_value=["p"])
+        factory = MagicMock(return_value=text_partitioner)
+        permanent_message_memory = AsyncMock(spec=PermanentMessageMemory)
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=None,
+            text_partitioner_factory=factory,
+            logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
+        )
+
+        manager.add_permanent_message_memory(permanent_message_memory)
+        factory.assert_not_called()
+        msg = EngineMessage(
+            agent_id=manager._agent_id,
+            model_id="m",
+            message=Message(role=MessageRole.USER, content="hi"),
+        )
+        await manager.append_message(msg)
+
+        factory.assert_called_once_with()
+        text_partitioner.assert_awaited_once_with("hi")
+        permanent_message_memory.append_with_partitions.assert_awaited_once_with(
+            msg, partitions=["p"]
+        )
+
+    async def test_late_permanent_memory_uses_lazy_partitioner_on_search(self):
+        namespace = "docs"
+        text_partitioner = AsyncMock(return_value=["p"])
+        factory = MagicMock(return_value=text_partitioner)
+        permanent_memory = AsyncMock(spec=PermanentMemory)
+        permanent_memory.search_memories.return_value = ["memory"]
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=None,
+            text_partitioner_factory=factory,
+            logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
+        )
+
+        manager.add_permanent_memory(namespace, permanent_memory)
+        factory.assert_not_called()
+        memories = await manager.search_partitions(
+            "query",
+            participant_id=uuid4(),
+            namespace=namespace,
+            function=VectorFunction.L2_DISTANCE,
+        )
+
+        factory.assert_called_once_with()
+        text_partitioner.assert_awaited_once_with("query")
+        self.assertEqual(memories, ["memory"])
+
+    async def test_search_permanent_memory_requires_partitioner(self):
+        namespace = "docs"
+        manager = MemoryManager(
+            agent_id=uuid4(),
+            participant_id=uuid4(),
+            permanent_message_memory=None,
+            recent_message_memory=None,
+            text_partitioner=None,
+            logger=MagicMock(),
+            event_manager=MagicMock(spec=EventManager),
+        )
+        manager.add_permanent_memory(namespace, self.permanent)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "Text partitioner is required to search permanent memory",
+        ):
+            await manager.search_partitions(
+                "query",
+                participant_id=uuid4(),
+                namespace=namespace,
+                function=VectorFunction.L2_DISTANCE,
+            )
+
     async def test_list_memories_missing_namespace(self):
         with self.assertRaises(KeyError) as caught:
             await self.manager.list_memories(

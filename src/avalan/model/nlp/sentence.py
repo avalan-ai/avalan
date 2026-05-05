@@ -1,20 +1,28 @@
 from ...entities import Input
 from ...model.engine import Engine
-from ...model.nlp import BaseNLPModel
+from ...model.nlp import BaseNLPModel, inference_mode
 from ...model.vendor import TextGenerationVendor
 
 from contextlib import nullcontext
-from typing import Any, Literal, cast
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from diffusers import DiffusionPipeline
 from numpy.typing import NDArray
-from torch import inference_mode
-from transformers import (
-    PreTrainedModel,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-from transformers.tokenization_utils_base import BatchEncoding
+
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline
+    from transformers import (
+        PreTrainedModel,
+        PreTrainedTokenizer,
+        PreTrainedTokenizerFast,
+    )
+    from transformers.tokenization_utils_base import BatchEncoding
+else:
+    DiffusionPipeline: TypeAlias = Any
+    PreTrainedModel: TypeAlias = Any
+    PreTrainedTokenizer: TypeAlias = Any
+    PreTrainedTokenizerFast: TypeAlias = Any
+    BatchEncoding: TypeAlias = Any
 
 
 class SentenceTransformerModel(BaseNLPModel):
@@ -40,11 +48,13 @@ class SentenceTransformerModel(BaseNLPModel):
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
-        from sentence_transformers import SentenceTransformer
-
+        sentence_transformers = import_module("sentence_transformers")
+        sentence_transformer = getattr(
+            sentence_transformers, "SentenceTransformer"
+        )
         settings = cast(Any, self._settings)
         assert self._model_id, "A model id is required."
-        model = SentenceTransformer(
+        model = sentence_transformer(
             self._model_id,
             cache_folder=settings.cache_dir,
             device=self._device,
