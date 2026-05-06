@@ -12,7 +12,6 @@ from ..entities import (
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
-from ..memory.permanent.pgsql.raw import PgsqlRawMemory
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..tool.browser import (
@@ -49,6 +48,7 @@ else:
 
 SentenceTransformerModel: type[Any] | None = None
 TextPartitioner: type[Any] | None = None
+PgsqlRawMemory: type[Any] | None = None
 
 
 class OrchestratorLoader:
@@ -112,6 +112,14 @@ class OrchestratorLoader:
                 type[Any], getattr(module, "TextPartitioner")
             )
         return TextPartitioner
+
+    @staticmethod
+    def _pgsql_raw_memory_type() -> type[Any]:
+        global PgsqlRawMemory
+        if PgsqlRawMemory is None:
+            module = import_module("avalan.memory.permanent.pgsql.raw")
+            PgsqlRawMemory = cast(type[Any], getattr(module, "PgsqlRawMemory"))
+        return PgsqlRawMemory
 
     @staticmethod
     def _needs_text_partitioner(
@@ -605,7 +613,8 @@ class OrchestratorLoader:
                 namespace,
                 settings.agent_id,
             )
-            store = await PgsqlRawMemory.create_instance(
+            pgsql_raw_memory_type = self._pgsql_raw_memory_type()
+            store = await pgsql_raw_memory_type.create_instance(
                 dsn=store_settings.dsn, logger=self._logger
             )
             memory.add_permanent_memory(

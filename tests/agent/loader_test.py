@@ -1642,6 +1642,10 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 )
 
                 store_instances = [MagicMock() for _ in case]
+                pgsql_raw_memory = MagicMock()
+                pgsql_raw_memory.create_instance = AsyncMock(
+                    side_effect=store_instances
+                )
                 with (
                     patch(
                         "avalan.agent.loader.SentenceTransformerModel",
@@ -1657,9 +1661,9 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                         return_value=model_manager,
                     ),
                     patch(
-                        "avalan.agent.loader.PgsqlRawMemory.create_instance",
-                        new=AsyncMock(side_effect=store_instances),
-                    ) as pg_patch,
+                        "avalan.agent.loader.PgsqlRawMemory",
+                        pgsql_raw_memory,
+                    ),
                     patch(
                         "avalan.agent.loader.DefaultOrchestrator",
                         return_value="orch",
@@ -1681,12 +1685,13 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     )
                     await loader.from_settings(settings)
 
-                    self.assertEqual(pg_patch.await_count, len(case))
+                    create_instance = pgsql_raw_memory.create_instance
+                    self.assertEqual(create_instance.await_count, len(case))
                     expected_store_calls = [
                         call(dsn=store_settings.dsn, logger=logger)
                         for store_settings in case.values()
                     ]
-                    pg_patch.assert_has_awaits(expected_store_calls)
+                    create_instance.assert_has_awaits(expected_store_calls)
                     expected_add_calls = [
                         call(
                             namespace,
