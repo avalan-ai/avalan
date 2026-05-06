@@ -28,16 +28,6 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
   observability.
 - 🌐 **Open serving surfaces** for OpenAI-compatible APIs, MCP, and A2A.
 
-# 🚀 Start Here
-
-- [Install](#install)
-- [Quickstart](#quickstart)
-- [Models](#models)
-- [Agents](#agents)
-- [docs/examples](docs/examples/README.md)
-- [docs/CLI.md](docs/CLI.md)
-- [docs/ai_uri.md](docs/ai_uri.md)
-
 # 🗂️ Table of Contents
 
 - 📦 [Install](#install)
@@ -55,21 +45,22 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 ## 📦 Install
 
 Avalan supports Python 3.11 and 3.12. Install the smallest profile that fits
-your workflow; the examples later in this README may require additional extras.
+your workflow.
 
-### 🐍 Pip (recommended)
+### 🍺 Homebrew (macOS)
 
-Hosted APIs plus tool-enabled or served agents:
+```sh
+brew install avalan-ai/avalan/avalan
+```
+
+> [!TIP]
+> This package installs the same extras profile as
+> `avalan[agent,server,tool,vendors]`.
+
+### 🐍 Pip
 
 ```sh
 python3 -m pip install -U "avalan[agent,server,tool,vendors]"
-```
-
-Broader local development setup with the capabilities used throughout this
-README:
-
-```sh
-python3 -m pip install -U "avalan[agent,audio,memory,server,tool,translation,vendors,vision]"
 ```
 
 Add hardware-specific extras when needed:
@@ -81,17 +72,10 @@ Add hardware-specific extras when needed:
 
 For the leanest install, omit the extras list entirely.
 
-### 🍺 Homebrew (macOS)
-
-```sh
-brew tap avalan-ai/avalan
-brew install avalan
-```
-
 ### 🛠️ From Source with Poetry
 
 ```sh
-poetry install --all-extras --with test
+poetry install --extras "agent server tool vendors" --with test
 ```
 
 > [!TIP]
