@@ -675,8 +675,7 @@ class TextGenerationModel(BaseNLPModel):
         elif isinstance(input, list):
             if input and isinstance(input[0], str):
                 input = [
-                    Message(role=MessageRole.USER, content=cast(str, m))
-                    for m in input
+                    Message(role=MessageRole.USER, content=m) for m in input
                 ]
             else:
                 for m in input:

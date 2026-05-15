@@ -10,6 +10,12 @@ integrations for OpenRouter, Ollama, OpenAI, LiteLLM, DeepSeek, Gemini, and
 beyond, avalan enables you to select the optimal  engine
 tailored specifically to each use case.
 
+## User guides
+
+- [DS4 native backend](DS4.md) - Run DS4-supported DeepSeek V4 Flash GGUF
+  files with `--backend ds4`, including CLI examples, URI configuration,
+  limitations, and integration-test environment variables.
+
 Its versatile multi-modal architecture bridges NLP, vision, and
 audio domains, allowing seamless integration and interaction among
 diverse models within sophisticated workflows. Enhanced by built-in

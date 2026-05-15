@@ -211,15 +211,13 @@ class PgsqlMemory(BasePgsqlMemory[T]):
         self, connection: AsyncConnection[Any]
     ) -> None:
         async with connection.cursor() as cursor:
-            await cursor.execute(
-                """
+            await cursor.execute("""
                 SELECT EXISTS (
                     SELECT 1
                     FROM "pg_extension"
                     WHERE "extname" = 'vector'
                 ) AS "has_vector_extension"
-                """
-            )
+                """)
             result = await cursor.fetchone()
             row = dict(result) if result is not None else {}
             if not row.get("has_vector_extension"):

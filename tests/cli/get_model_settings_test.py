@@ -87,6 +87,7 @@ class GetModelSettingsTestCase(unittest.TestCase):
 
     def test_string_modality_is_normalized(self):
         engine_uri = MagicMock()
+        engine_uri.params = {}
         args = Namespace(
             modality="text_generation",
             device="cpu",
@@ -105,3 +106,64 @@ class GetModelSettingsTestCase(unittest.TestCase):
         result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
 
         self.assertEqual(result["modality"], Modality.TEXT_GENERATION)
+
+    def test_ds4_cli_options_create_backend_config(self):
+        engine_uri = MagicMock()
+        engine_uri.params = {}
+        args = Namespace(
+            device="cpu",
+            disable_loading_progress_bar=False,
+            loader_class="auto",
+            backend="ds4",
+            low_cpu_mem_usage=False,
+            quiet=True,
+            revision=None,
+            special_token=None,
+            tokenizer=None,
+            token=None,
+            weight_type="bf16",
+            ds4_ctx=4096,
+            ds4_native_backend="metal",
+            ds4_mtp="mtp.gguf",
+            ds4_mtp_draft=2,
+            ds4_mtp_margin=0.1,
+            ds4_warm_weights=True,
+            ds4_quality=True,
+        )
+
+        result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
+
+        self.assertEqual(
+            result["backend_config"],
+            {
+                "ctx_size": 4096,
+                "native_backend": "metal",
+                "mtp_path": "mtp.gguf",
+                "mtp_draft_tokens": 2,
+                "mtp_margin": 0.1,
+                "warm_weights": True,
+                "quality": True,
+            },
+        )
+
+    def test_ds4_cli_options_do_not_affect_non_ds4_backend(self):
+        engine_uri = MagicMock()
+        engine_uri.params = {}
+        args = Namespace(
+            device="cpu",
+            disable_loading_progress_bar=False,
+            loader_class="auto",
+            backend="transformers",
+            low_cpu_mem_usage=False,
+            quiet=True,
+            revision=None,
+            special_token=None,
+            tokenizer=None,
+            token=None,
+            weight_type="bf16",
+            ds4_ctx=4096,
+        )
+
+        result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
+
+        self.assertNotIn("backend_config", result)

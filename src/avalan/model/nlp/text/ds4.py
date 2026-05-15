@@ -1,0 +1,1537 @@
+from ....backends.ds4_native import Backend as Ds4NativeBackend
+from ....backends.ds4_native import (
+    Ds4ApiVersionError,
+    Ds4BackendUnavailable,
+    Ds4ContextError,
+    Ds4GenerationError,
+    Ds4InvalidModel,
+    Ds4LoadError,
+    EngineOptions,
+    SamplingOptions,
+    ThinkMode,
+    import_compatible_binding,
+)
+from ....backends.ds4_native import Engine as Ds4Engine
+from ....backends.ds4_native.metadata import DS4_BINDING_IMPORT_NAME
+from ....entities import (
+    GenerationSettings,
+    Input,
+    Message,
+    MessageContent,
+    MessageContentFile,
+    MessageContentImage,
+    MessageContentText,
+    MessageRole,
+    ReasoningEffort,
+    TransformerEngineSettings,
+)
+from ....model.response.text import TextGenerationResponse
+from ....tool.manager import ToolManager
+from .generation import TextGenerationModel
+
+import asyncio
+import hashlib
+import json
+from asyncio import CancelledError
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterator,
+)
+from dataclasses import dataclass, replace
+from logging import Logger, getLogger
+from pathlib import Path
+from queue import Queue
+from threading import Thread
+from time import time
+from typing import TypeVar, cast
+
+_CPU_WARNING = (
+    "DS4 CPU backend is debug/reference only and is not recommended for "
+    "production inference."
+)
+_DEFAULT_NATIVE_BACKEND = Ds4NativeBackend.METAL
+_DEFAULT_CONTEXT_SIZE = 4096
+_DEFAULT_MAX_NEW_TOKENS = 20
+_DEVELOPER_PROMPT_PREFIX = "Developer instructions:"
+_SYSTEM_DEVELOPER_SEPARATOR = f"\n\n{_DEVELOPER_PROMPT_PREFIX}\n"
+_UNSUPPORTED_TOOLS_MESSAGE = (
+    "DS4 native backend does not yet support Avalan tool schemas or tool "
+    "messages. Tool-call rendering is planned for a later DS4 phase."
+)
+_UNSUPPORTED_GENERATION_MESSAGE = (
+    "DS4 native backend does not support {feature}. Use greedy or sampling "
+    "single-sequence generation."
+)
+_CONTEXT_ERROR_MARKERS = (
+    "context size",
+    "ctx_size",
+    "prompt exceeds context",
+)
+_WORKER_JOIN_TIMEOUT_SECONDS = 2.0
+_DS4_KV_CACHE_VERSION = 1
+_BYTES_PER_MIB = 1024 * 1024
+
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4GenerationPlan:
+    max_new_tokens: int
+    sampling_options: SamplingOptions
+    stop_strings: tuple[str, ...]
+    use_sampling: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4DiskCacheConfig:
+    directory: Path | None
+    budget_bytes: int
+
+    @property
+    def enabled(self) -> bool:
+        return self.directory is not None and self.budget_bytes > 0
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4CacheEntryPath:
+    key: str
+    metadata_path: Path
+    payload_path: Path
+    token_digest: str
+
+
+class _Ds4DiskKvCache:
+    """Store DS4 payload helper bytes by token-prefix cache key."""
+
+    def __init__(
+        self,
+        directory: Path,
+        budget_bytes: int,
+        logger: Logger,
+        namespace: str,
+    ) -> None:
+        self._budget_bytes = budget_bytes
+        self._directory = directory
+        self._logger = logger
+        self._namespace = namespace
+
+    async def restore(
+        self,
+        session: object,
+        prompt_tokens: list[int],
+        ctx_size: int,
+    ) -> bool:
+        """Restore a cached DS4 session payload when it matches."""
+        if not callable(getattr(session, "load_payload", None)):
+            return False
+
+        entry = self._entry_path(prompt_tokens, ctx_size)
+        metadata = self._read_metadata(entry.metadata_path)
+        if metadata is None:
+            return False
+        if not self._metadata_matches(metadata, entry, ctx_size):
+            self._delete_entry(entry)
+            return False
+
+        try:
+            payload = entry.payload_path.read_bytes()
+        except OSError as error:
+            self._logger.warning(
+                "DS4 disk KV cache payload read failed; using live"
+                " session: %s",
+                error,
+            )
+            return False
+
+        try:
+            await Ds4Worker._call_async(session, "load_payload", payload)
+        except Exception as error:
+            self._logger.warning(
+                "DS4 disk KV cache payload restore failed; "
+                "using live session: %s",
+                error,
+            )
+            return False
+
+        self._record_hit(metadata, entry)
+        return True
+
+    async def store(
+        self,
+        session: object,
+        prompt_tokens: list[int],
+        ctx_size: int,
+    ) -> None:
+        """Persist a DS4 session payload for a token-prefix key."""
+        if not callable(getattr(session, "save_payload", None)):
+            return
+
+        try:
+            payload = await Ds4Worker._call_async(session, "save_payload")
+            payload_bytes = Ds4Worker._bytes_value(payload, "save_payload")
+        except Exception as error:
+            self._logger.warning(
+                "DS4 disk KV cache payload save failed; "
+                "continuing without cache: %s",
+                error,
+            )
+            return
+
+        entry = self._entry_path(prompt_tokens, ctx_size)
+        now = time()
+        metadata: dict[str, object] = {
+            "version": _DS4_KV_CACHE_VERSION,
+            "key": entry.key,
+            "namespace": self._namespace,
+            "ctx_size": ctx_size,
+            "token_count": len(prompt_tokens),
+            "token_sha256": entry.token_digest,
+            "payload_file": entry.payload_path.name,
+            "payload_size": len(payload_bytes),
+            "hit_count": 0,
+            "created_at": now,
+            "accessed_at": now,
+        }
+
+        try:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            payload_tmp = entry.payload_path.with_suffix(".payload.tmp")
+            metadata_tmp = entry.metadata_path.with_suffix(".json.tmp")
+            payload_tmp.write_bytes(payload_bytes)
+            metadata_tmp.write_text(
+                json.dumps(metadata, sort_keys=True),
+                encoding="utf-8",
+            )
+            payload_tmp.replace(entry.payload_path)
+            metadata_tmp.replace(entry.metadata_path)
+            self._enforce_budget()
+        except OSError as error:
+            self._logger.warning(
+                "DS4 disk KV cache write failed; continuing without cache: %s",
+                error,
+            )
+
+    def _entry_path(
+        self, prompt_tokens: list[int], ctx_size: int
+    ) -> _Ds4CacheEntryPath:
+        token_digest = self._token_digest(prompt_tokens)
+        key_source = (
+            f"{self._namespace}:{ctx_size}:{len(prompt_tokens)}:{token_digest}"
+        )
+        key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()
+        return _Ds4CacheEntryPath(
+            key=key,
+            metadata_path=self._directory / f"{key}.json",
+            payload_path=self._directory / f"{key}.payload",
+            token_digest=token_digest,
+        )
+
+    @staticmethod
+    def _token_digest(prompt_tokens: list[int]) -> str:
+        payload = json.dumps(
+            prompt_tokens,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _read_metadata(path: Path) -> dict[str, object] | None:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def _metadata_matches(
+        self,
+        metadata: dict[str, object],
+        entry: _Ds4CacheEntryPath,
+        ctx_size: int,
+    ) -> bool:
+        return (
+            metadata.get("version") == _DS4_KV_CACHE_VERSION
+            and metadata.get("key") == entry.key
+            and metadata.get("namespace") == self._namespace
+            and metadata.get("ctx_size") == ctx_size
+            and metadata.get("token_sha256") == entry.token_digest
+            and metadata.get("payload_file") == entry.payload_path.name
+        )
+
+    def _record_hit(
+        self, metadata: dict[str, object], entry: _Ds4CacheEntryPath
+    ) -> None:
+        hit_count = metadata.get("hit_count", 0)
+        metadata["hit_count"] = (
+            hit_count + 1 if isinstance(hit_count, int) else 1
+        )
+        metadata["accessed_at"] = time()
+        try:
+            entry.metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError as error:
+            self._logger.warning(
+                "DS4 disk KV cache metadata update failed: %s", error
+            )
+
+    def _enforce_budget(self) -> None:
+        entries = self._cache_entries()
+        total_size = sum(size for _, _, size in entries)
+        if total_size <= self._budget_bytes:
+            return
+
+        for metadata, entry, size in sorted(
+            entries,
+            key=lambda item: (
+                self._metadata_int(item[0], "hit_count"),
+                self._metadata_float(item[0], "accessed_at"),
+                self._metadata_float(item[0], "created_at"),
+                item[1].key,
+            ),
+        ):
+            _ = metadata
+            self._delete_entry(entry)
+            total_size -= size
+            if total_size <= self._budget_bytes:
+                return
+
+    def _cache_entries(
+        self,
+    ) -> list[tuple[dict[str, object], _Ds4CacheEntryPath, int]]:
+        entries: list[tuple[dict[str, object], _Ds4CacheEntryPath, int]] = []
+        try:
+            metadata_paths = tuple(self._directory.glob("*.json"))
+        except OSError:
+            return entries
+
+        for metadata_path in metadata_paths:
+            metadata = self._read_metadata(metadata_path)
+            if metadata is None:
+                continue
+            key = metadata.get("key")
+            token_digest = metadata.get("token_sha256")
+            payload_file = metadata.get("payload_file")
+            if (
+                not isinstance(key, str)
+                or not isinstance(token_digest, str)
+                or not isinstance(payload_file, str)
+            ):
+                continue
+            payload_path = self._directory / payload_file
+            entry = _Ds4CacheEntryPath(
+                key=key,
+                metadata_path=metadata_path,
+                payload_path=payload_path,
+                token_digest=token_digest,
+            )
+            size = self._path_size(metadata_path) + self._path_size(
+                payload_path
+            )
+            entries.append((metadata, entry, size))
+        return entries
+
+    @staticmethod
+    def _metadata_int(metadata: dict[str, object], key: str) -> int:
+        value = metadata.get(key, 0)
+        return value if isinstance(value, int) else 0
+
+    @staticmethod
+    def _metadata_float(metadata: dict[str, object], key: str) -> float:
+        value = metadata.get(key, 0.0)
+        return float(value) if isinstance(value, (float, int)) else 0.0
+
+    @staticmethod
+    def _path_size(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+
+    def _delete_entry(self, entry: _Ds4CacheEntryPath) -> None:
+        for path in (entry.payload_path, entry.metadata_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as error:
+                self._logger.warning(
+                    "DS4 disk KV cache eviction failed for %s: %s",
+                    path,
+                    error,
+                )
+
+
+class _StopStringBuffer:
+    """Buffer recent text so stop strings spanning tokens are suppressed."""
+
+    def __init__(self, stop_strings: tuple[str, ...]) -> None:
+        self._pending = ""
+        self._stopped = False
+        self._stop_strings = stop_strings
+        self._keep = (
+            max(len(stop_string) for stop_string in stop_strings) - 1
+            if stop_strings
+            else 0
+        )
+
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
+
+    def push(self, text: str) -> Iterator[str]:
+        if not self._stop_strings:
+            if text:
+                yield text
+            return
+
+        self._pending += text
+        stop_index = self._stop_index()
+        if stop_index is not None:
+            text_before_stop = self._pending[:stop_index]
+            self._pending = ""
+            self._stopped = True
+            if text_before_stop:
+                yield text_before_stop
+            return
+
+        emit_length = len(self._pending) - self._keep
+        if emit_length > 0:
+            chunk = self._pending[:emit_length]
+            self._pending = self._pending[emit_length:]
+            if chunk:
+                yield chunk
+
+    def flush(self) -> Iterator[str]:
+        if self._pending and not self._stopped:
+            yield self._pending
+        self._pending = ""
+
+    def _stop_index(self) -> int | None:
+        first_index: int | None = None
+        for stop_string in self._stop_strings:
+            index = self._pending.find(stop_string)
+            if index >= 0 and (first_index is None or index < first_index):
+                first_index = index
+        return first_index
+
+
+class Ds4Worker:
+    """Own Avalan's async DS4 runtime state."""
+
+    def __init__(
+        self,
+        options: EngineOptions,
+        ctx_size: int,
+        logger: Logger,
+        disk_cache_config: _Ds4DiskCacheConfig | None = None,
+    ) -> None:
+        self._binding: object | None = None
+        self._closed = True
+        self._ctx_size = ctx_size
+        self._engine: object | None = None
+        self._logger = logger
+        self._options = options
+        self._disk_cache = self._build_disk_cache(
+            disk_cache_config, options, logger
+        )
+        self._reset_tasks: set[asyncio.Task[BaseException | None]] = set()
+        self._session: object | None = None
+
+    @property
+    def closed(self) -> bool:
+        """Return whether the DS4 worker has been closed."""
+        return self._closed
+
+    @property
+    def is_alive(self) -> bool:
+        """Return whether the async DS4 engine is open."""
+        return not self._closed and self._engine is not None
+
+    def start(self) -> None:
+        """Open the pyds4 async engine and create the reusable session."""
+        if not self._closed:
+            return
+
+        self._closed = False
+        try:
+            self._run_sync(self._open)
+        except BaseException:
+            self._closed = True
+            self._run_sync(self._close_resources)
+            raise
+
+    def close(self) -> None:
+        """Close the async session and native engine."""
+        if self._closed:
+            return
+
+        self._run_sync(self.aclose)
+
+    async def aclose(self) -> None:
+        """Close the async session and native engine."""
+        if self._closed and self._engine is None and self._session is None:
+            return
+
+        self._closed = True
+        await self._close_resources()
+
+    def render_prompt_tokens(
+        self,
+        system_content: str | None,
+        messages: list[tuple[MessageRole, str]],
+        think_mode: ThinkMode,
+    ) -> list[int]:
+        """Render DS4 chat prompt tokens for legacy synchronous callers."""
+        return self._run_sync(
+            lambda: self.render_prompt_tokens_async(
+                system_content, messages, think_mode
+            )
+        )
+
+    async def render_prompt_tokens_async(
+        self,
+        system_content: str | None,
+        messages: list[tuple[MessageRole, str]],
+        think_mode: ThinkMode,
+    ) -> list[int]:
+        """Render DS4 chat prompt tokens through pyds4's async engine."""
+        engine = self._require_engine()
+        effective_think_mode = self._effective_think_mode(think_mode)
+
+        if len(messages) == 1 and messages[0][0] is MessageRole.USER:
+            result = await self._call_async(
+                engine,
+                "encode_chat_prompt",
+                system_content,
+                messages[0][1],
+                effective_think_mode,
+            )
+        else:
+            result = await self._call_async(engine, "chat_begin")
+            tokens = self._token_list(result)
+            if system_content is not None:
+                await self._call_async(
+                    engine,
+                    "chat_append_message",
+                    tokens,
+                    "system",
+                    system_content,
+                )
+            for role, content in messages:
+                await self._call_async(
+                    engine,
+                    "chat_append_message",
+                    tokens,
+                    role.value,
+                    content,
+                )
+            await self._call_async(
+                engine,
+                "chat_append_assistant_prefix",
+                tokens,
+                effective_think_mode,
+            )
+            result = tokens
+
+        return self._token_list(result)
+
+    async def stream(
+        self,
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> AsyncGenerator[str, None]:
+        """Yield DS4 output chunks from the pyds4 async facade."""
+        if self._closed:
+            raise Ds4LoadError("DS4 worker is closed.")
+
+        recovery_snapshot: bytes | None = None
+        try:
+            session = self._require_session()
+            restored = await self._restore_disk_cache(session, prompt_tokens)
+            if not restored:
+                await self._call_async(session, "sync", list(prompt_tokens))
+                await self._store_disk_cache(session, prompt_tokens)
+            recovery_snapshot = await self._save_snapshot(session)
+            async for chunk in self._generate_chunks(session, generation_plan):
+                yield chunk
+        except (CancelledError, GeneratorExit):
+            self._schedule_reset(invalidate=True, snapshot=recovery_snapshot)
+            raise
+        except BaseException as error:
+            reset_error = await self._reset_session(
+                invalidate=True, snapshot=recovery_snapshot
+            )
+            if reset_error is not None:
+                error.add_note(
+                    "DS4 session reset after generation failure failed: "
+                    f"{reset_error}"
+                )
+            raise
+
+    def generate_string(
+        self,
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> str:
+        """Return complete DS4 output text from the shared generation core."""
+        return self._run_sync(
+            lambda: self.generate_string_async(prompt_tokens, generation_plan)
+        )
+
+    async def generate_string_async(
+        self,
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> str:
+        """Return complete DS4 output text from the async generation core."""
+        return "".join(
+            [
+                chunk
+                async for chunk in self.stream(prompt_tokens, generation_plan)
+            ]
+        )
+
+    async def _open(self) -> None:
+        self._binding = import_compatible_binding(
+            backend=self._options.backend.value
+        )
+        async_engine_type = getattr(self._binding, "AsyncEngine", None)
+        if not callable(async_engine_type):
+            raise Ds4LoadError(
+                "DS4 binding does not expose AsyncEngine. Install a pyds4 "
+                "build with async facade support."
+            )
+
+        native_options = Ds4Engine._native_engine_options(
+            self._binding, self._options
+        )
+        open_method = getattr(async_engine_type, "open", None)
+        if callable(open_method):
+            try:
+                self._engine = await open_method(native_options)
+            except (
+                Ds4BackendUnavailable,
+                Ds4InvalidModel,
+                Ds4LoadError,
+            ):
+                raise
+            except Exception as error:
+                Ds4Engine._raise_mapped_open_error(error)
+        else:
+            try:
+                self._engine = async_engine_type(native_options)
+            except (
+                Ds4BackendUnavailable,
+                Ds4InvalidModel,
+                Ds4LoadError,
+            ):
+                raise
+            except Exception as error:
+                Ds4Engine._raise_mapped_open_error(error)
+            enter = getattr(self._engine, "__aenter__", None)
+            if callable(enter):
+                await enter()
+
+        self._session = await self._call_async(
+            self._require_engine(), "create_session", self._ctx_size
+        )
+
+    async def _generate_chunks(
+        self, session: object, generation_plan: _Ds4GenerationPlan
+    ) -> AsyncGenerator[str, None]:
+        engine = self._require_engine()
+        stop_buffer = _StopStringBuffer(generation_plan.stop_strings)
+
+        for _ in range(generation_plan.max_new_tokens):
+            step = await self._call_async(
+                session,
+                "next_token",
+                (
+                    self._native_sampling_options(
+                        generation_plan.sampling_options
+                    )
+                    if generation_plan.use_sampling
+                    else None
+                ),
+                decode=True,
+            )
+            if bool(getattr(step, "is_eos", False)):
+                break
+
+            text = await self._token_text(engine, step)
+            for chunk in stop_buffer.push(text):
+                yield chunk
+            if stop_buffer.stopped:
+                break
+
+        for chunk in stop_buffer.flush():
+            yield chunk
+
+    async def _token_text(self, engine: object, step: object) -> str:
+        token_bytes = getattr(step, "token_bytes", None)
+        if token_bytes is None:
+            token_id = getattr(step, "token_id", None)
+            if isinstance(token_id, bool) or not isinstance(token_id, int):
+                raise Ds4GenerationError(
+                    "DS4 generation step must include a token id."
+                )
+            token_bytes = await self._call_async(
+                engine, "token_text", token_id
+            )
+
+        if isinstance(token_bytes, (bytearray, memoryview)):
+            token_bytes = bytes(token_bytes)
+        elif not isinstance(token_bytes, bytes):
+            raise Ds4GenerationError("DS4 token text must be bytes.")
+        return token_bytes.decode("utf-8", errors="replace")
+
+    async def _reset_session(
+        self, *, invalidate: bool, snapshot: bytes | None = None
+    ) -> BaseException | None:
+        old_session = self._session
+        if old_session is not None and snapshot is not None:
+            try:
+                if await self._load_snapshot(old_session, snapshot):
+                    return None
+            except BaseException as error:
+                self._logger.warning(
+                    "DS4 snapshot recovery failed; rebuilding session: %s",
+                    error,
+                )
+
+        try:
+            self._session = None
+            if old_session is not None:
+                try:
+                    if invalidate:
+                        await self._call_async(old_session, "invalidate")
+                finally:
+                    await self._close_async_resource(old_session)
+
+            if not self._closed:
+                self._session = await self._call_async(
+                    self._require_engine(), "create_session", self._ctx_size
+                )
+        except BaseException as error:
+            return error
+        return None
+
+    def _schedule_reset(
+        self, *, invalidate: bool, snapshot: bytes | None = None
+    ) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        task = loop.create_task(
+            self._reset_session(invalidate=invalidate, snapshot=snapshot)
+        )
+        self._reset_tasks.add(task)
+        task.add_done_callback(self._reset_tasks.discard)
+
+    async def _save_snapshot(self, session: object) -> bytes | None:
+        if not callable(getattr(session, "save_snapshot", None)):
+            return None
+        value = await self._call_async(session, "save_snapshot")
+        return self._snapshot_bytes(value, "save_snapshot")
+
+    async def _load_snapshot(self, session: object, snapshot: bytes) -> bool:
+        if not callable(getattr(session, "load_snapshot", None)):
+            return False
+        await self._call_async(session, "load_snapshot", snapshot)
+        return True
+
+    async def _restore_disk_cache(
+        self, session: object, prompt_tokens: list[int]
+    ) -> bool:
+        if self._disk_cache is None:
+            return False
+        return await self._disk_cache.restore(
+            session, prompt_tokens, self._ctx_size
+        )
+
+    async def _store_disk_cache(
+        self, session: object, prompt_tokens: list[int]
+    ) -> None:
+        if self._disk_cache is None:
+            return
+        await self._disk_cache.store(session, prompt_tokens, self._ctx_size)
+
+    async def _close_resources(self) -> None:
+        current_loop = asyncio.get_running_loop()
+        reset_tasks = tuple(
+            task
+            for task in self._reset_tasks
+            if not task.done() and task.get_loop() is current_loop
+        )
+        if reset_tasks:
+            await asyncio.gather(*reset_tasks, return_exceptions=True)
+
+        errors: list[BaseException] = []
+        session = self._session
+        self._session = None
+        if session is not None:
+            try:
+                await self._close_async_resource(session)
+            except BaseException as error:
+                errors.append(error)
+
+        engine = self._engine
+        self._engine = None
+        if engine is not None:
+            try:
+                await self._close_async_resource(engine)
+            except BaseException as error:
+                errors.append(error)
+
+        if errors:
+            self._logger.warning("DS4 async cleanup failed: %s", errors[0])
+
+    async def _close_async_resource(self, resource: object) -> None:
+        close = getattr(resource, "aclose", None)
+        if callable(close):
+            await close()
+            return
+        close = getattr(resource, "close", None)
+        if callable(close):
+            result = close()
+            if isinstance(result, Awaitable):
+                await result
+
+    def _effective_think_mode(self, think_mode: ThinkMode) -> object:
+        binding = self._require_binding()
+        native_mode = Ds4Engine._native_enum_value(
+            binding, "ThinkMode", ThinkMode(think_mode)
+        )
+        helper = getattr(binding, "think_mode_for_context", None)
+        if not callable(helper):
+            return native_mode
+        return helper(native_mode, self._ctx_size)
+
+    def _native_sampling_options(self, options: SamplingOptions) -> object:
+        binding = self._require_binding()
+        native_options_type = getattr(binding, "SamplingOptions", None)
+        if not callable(native_options_type):
+            return options
+        return native_options_type(
+            temperature=options.temperature,
+            top_k=options.top_k,
+            top_p=options.top_p,
+            min_p=options.min_p,
+            seed=options.seed,
+        )
+
+    @staticmethod
+    async def _call_async(
+        target: object, name: str, *args: object, **kwargs: object
+    ) -> object:
+        method = getattr(target, name, None)
+        if not callable(method):
+            raise Ds4LoadError(f"DS4 async object does not expose {name}.")
+        try:
+            result = method(*args, **kwargs)
+            if isinstance(result, Awaitable):
+                return await result
+            return result
+        except (Ds4ContextError, Ds4GenerationError, Ds4LoadError):
+            raise
+        except Exception as error:
+            message = str(error) or type(error).__name__
+            if Ds4Worker._is_native_context_error(error, message):
+                raise Ds4ContextError(
+                    f"DS4 {name} failed: {message}"
+                ) from error
+            raise Ds4GenerationError(
+                f"DS4 {name} failed: {message}"
+            ) from error
+
+    @staticmethod
+    def _is_native_context_error(error: Exception, message: str) -> bool:
+        if type(error).__name__ == "Ds4ContextError":
+            return True
+        lowered = message.lower()
+        return any(marker in lowered for marker in _CONTEXT_ERROR_MARKERS)
+
+    @staticmethod
+    def _run_sync(factory: Callable[[], Coroutine[object, object, _T]]) -> _T:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(factory())
+
+        response_queue: Queue[tuple[bool, object]] = Queue(maxsize=1)
+
+        def run_in_thread() -> None:
+            try:
+                response_queue.put((True, asyncio.run(factory())))
+            except BaseException as error:
+                response_queue.put((False, error))
+
+        thread = Thread(
+            target=run_in_thread,
+            name="ds4-async-compat",
+            daemon=True,
+        )
+        thread.start()
+        ok, result = response_queue.get()
+        thread.join(_WORKER_JOIN_TIMEOUT_SECONDS)
+        if ok:
+            return cast(_T, result)
+        raise cast(BaseException, result)
+
+    @staticmethod
+    def _token_list(value: object) -> list[int]:
+        if isinstance(value, tuple):
+            value = list(value)
+        if isinstance(value, list):
+            tokens: list[int] = []
+            for token_id in value:
+                if isinstance(token_id, bool) or not isinstance(token_id, int):
+                    break
+                tokens.append(token_id)
+            else:
+                return tokens
+        raise Ds4GenerationError("DS4 prompt rendering must return token IDs.")
+
+    @staticmethod
+    def _snapshot_bytes(value: object, operation: str) -> bytes:
+        return Ds4Worker._bytes_value(value, operation)
+
+    @staticmethod
+    def _bytes_value(value: object, operation: str) -> bytes:
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, (bytearray, memoryview)):
+            return bytes(value)
+        raise Ds4GenerationError(f"DS4 {operation} must return bytes.")
+
+    @staticmethod
+    def _build_disk_cache(
+        config: _Ds4DiskCacheConfig | None,
+        options: EngineOptions,
+        logger: Logger,
+    ) -> _Ds4DiskKvCache | None:
+        if config is None or not config.enabled or config.directory is None:
+            return None
+
+        namespace = hashlib.sha256(
+            json.dumps(
+                {
+                    "backend": options.backend.value,
+                    "model_path": str(Path(options.model_path).expanduser()),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return _Ds4DiskKvCache(
+            config.directory,
+            config.budget_bytes,
+            logger,
+            namespace,
+        )
+
+    def _require_binding(self) -> object:
+        if self._binding is None:
+            raise Ds4LoadError("DS4 binding is not loaded.")
+        return self._binding
+
+    def _require_engine(self) -> object:
+        if self._engine is None:
+            raise Ds4LoadError("DS4 async engine is not loaded.")
+        return self._engine
+
+    def _require_session(self) -> object:
+        if self._session is None:
+            raise Ds4GenerationError("DS4 async session is not loaded.")
+        return self._session
+
+
+class Ds4Model(TextGenerationModel):
+    """Load DS4-supported GGUF files through the native DS4 backend."""
+
+    @classmethod
+    def is_available(cls) -> bool:
+        """Return whether the DS4 binding can be imported safely."""
+        try:
+            import_compatible_binding()
+        except (Ds4ApiVersionError, Ds4BackendUnavailable):
+            return False
+        return True
+
+    @property
+    def uses_tokenizer(self) -> bool:
+        return False
+
+    @property
+    def supports_sample_generation(self) -> bool:
+        return True
+
+    @property
+    def supports_token_streaming(self) -> bool:
+        return True
+
+    def __init__(
+        self,
+        model_id: str,
+        settings: TransformerEngineSettings | None = None,
+        logger: Logger = getLogger(__name__),
+    ) -> None:
+        settings = settings or TransformerEngineSettings()
+        settings = replace(
+            settings,
+            auto_load_tokenizer=False,
+            enable_eval=False,
+        )
+        super().__init__(model_id, settings, logger)
+
+    def _load_model(self) -> Ds4Worker:
+        assert self._model_id, "A DS4 model path is required."
+        settings = self._ds4_settings()
+        config = settings.backend_config or {}
+        model_path = self._validated_file_path(
+            self._model_id, "DS4 model path"
+        )
+        mtp_path = self._optional_file_path(
+            config.get("mtp_path"), "DS4 MTP path"
+        )
+        native_backend = self._native_backend(config)
+        if native_backend is Ds4NativeBackend.CPU:
+            self._logger.warning(_CPU_WARNING)
+
+        options = EngineOptions(
+            model_path=model_path,
+            backend=native_backend,
+            mtp_path=mtp_path,
+            n_threads=self._int_config(config, "n_threads", 0),
+            mtp_draft_tokens=self._int_config(config, "mtp_draft_tokens", 0),
+            mtp_margin=self._float_config(config, "mtp_margin", 0.0),
+            directional_steering_file=self._optional_string_config(
+                config, "directional_steering_file"
+            ),
+            directional_steering_attn=self._float_config(
+                config, "directional_steering_attn", 0.0
+            ),
+            directional_steering_ffn=self._float_config(
+                config, "directional_steering_ffn", 0.0
+            ),
+            warm_weights=self._bool_config(config, "warm_weights", False),
+            quality=self._bool_config(config, "quality", False),
+        )
+        worker = Ds4Worker(
+            options,
+            self._context_size(),
+            self._logger,
+            self._disk_cache_config(config),
+        )
+        worker.start()
+        return worker
+
+    def _accepts_loaded_model(self, model: object) -> bool:
+        if isinstance(model, (Ds4Engine, Ds4Worker)):
+            return True
+
+        try:
+            binding = import_compatible_binding()
+        except (Ds4ApiVersionError, Ds4BackendUnavailable):
+            binding = None
+        if binding is not None:
+            native_engine_type = getattr(binding, "Engine", None)
+            if isinstance(native_engine_type, type) and isinstance(
+                model, native_engine_type
+            ):
+                return True
+            native_async_engine_type = getattr(binding, "AsyncEngine", None)
+            if isinstance(native_async_engine_type, type) and isinstance(
+                model, native_async_engine_type
+            ):
+                return True
+
+        module_name = type(model).__module__
+        return (
+            module_name == DS4_BINDING_IMPORT_NAME
+            or module_name.startswith(f"{DS4_BINDING_IMPORT_NAME}.")
+        )
+
+    def close(self) -> None:
+        """Close DS4 worker resources."""
+        model = self._model
+        if isinstance(model, Ds4Worker):
+            model.close()
+        elif isinstance(model, Ds4Engine):
+            model.close()
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        self.close()
+        return bool(super().__exit__(exc_type, exc_value, traceback))
+
+    async def __call__(
+        self,
+        input: Input,
+        system_prompt: str | None = None,
+        developer_prompt: str | None = None,
+        settings: GenerationSettings | None = None,
+        *,
+        skip_special_tokens: bool = False,
+        tool: ToolManager | None = None,
+    ) -> TextGenerationResponse:
+        _ = skip_special_tokens
+        generation_settings = settings or GenerationSettings()
+        prompt_tokens = await self._render_prompt_tokens_async(
+            input,
+            system_prompt,
+            developer_prompt,
+            generation_settings,
+            tool=tool,
+        )
+        generation_plan = self._generation_plan(
+            generation_settings, len(prompt_tokens)
+        )
+        generation_settings = replace(
+            generation_settings, do_sample=generation_plan.use_sampling
+        )
+
+        return TextGenerationResponse(
+            self._generation_stream,
+            inputs=prompt_tokens,
+            logger=self._logger,
+            generation_settings=generation_settings,
+            generation_plan=generation_plan,
+            settings=generation_settings,
+            use_async_generator=True,
+            bos_token=None,
+        )
+
+    def input_token_count(
+        self,
+        input: Input,
+        system_prompt: str | None = None,
+        developer_prompt: str | None = None,
+    ) -> int:
+        """Return the DS4-rendered prompt token count."""
+        return len(
+            self._render_prompt_tokens(
+                input,
+                system_prompt,
+                developer_prompt,
+                GenerationSettings(),
+                tool=None,
+            )
+        )
+
+    def _ds4_settings(self) -> TransformerEngineSettings:
+        settings = self._settings
+        assert isinstance(settings, TransformerEngineSettings)
+        return settings
+
+    def _ds4_worker(self) -> Ds4Worker:
+        worker = self._model
+        if isinstance(worker, Ds4Worker):
+            return worker
+        raise Ds4LoadError("DS4 worker is not loaded.")
+
+    def _context_size(self) -> int:
+        config = self._ds4_settings().backend_config or {}
+        value = config.get("ctx_size", _DEFAULT_CONTEXT_SIZE)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(
+                "DS4 backend config 'ctx_size' must be a positive integer."
+            )
+        return value
+
+    def _disk_cache_config(
+        self, config: dict[str, object]
+    ) -> _Ds4DiskCacheConfig:
+        directory_value = config.get("kv_disk_dir")
+        budget_mb = self._int_config(config, "kv_disk_space_mb", 0)
+        if directory_value is None:
+            return _Ds4DiskCacheConfig(None, 0)
+        if not isinstance(directory_value, str) or not directory_value:
+            raise ValueError(
+                "DS4 backend config 'kv_disk_dir' must be a non-empty string."
+            )
+        return _Ds4DiskCacheConfig(
+            Path(directory_value).expanduser(),
+            budget_mb * _BYTES_PER_MIB,
+        )
+
+    def _render_prompt_tokens(
+        self,
+        input: Input,
+        system_prompt: str | None,
+        developer_prompt: str | None,
+        settings: GenerationSettings,
+        *,
+        tool: ToolManager | None,
+    ) -> list[int]:
+        if tool is not None:
+            raise NotImplementedError(_UNSUPPORTED_TOOLS_MESSAGE)
+
+        worker = self._ds4_worker()
+        system_content, messages = self._ds4_prompt_messages(
+            input, system_prompt, developer_prompt
+        )
+        return worker.render_prompt_tokens(
+            system_content, messages, self._think_mode(settings)
+        )
+
+    async def _render_prompt_tokens_async(
+        self,
+        input: Input,
+        system_prompt: str | None,
+        developer_prompt: str | None,
+        settings: GenerationSettings,
+        *,
+        tool: ToolManager | None,
+    ) -> list[int]:
+        if tool is not None:
+            raise NotImplementedError(_UNSUPPORTED_TOOLS_MESSAGE)
+
+        worker = self._ds4_worker()
+        system_content, messages = self._ds4_prompt_messages(
+            input, system_prompt, developer_prompt
+        )
+        return await worker.render_prompt_tokens_async(
+            system_content, messages, self._think_mode(settings)
+        )
+
+    def _ds4_prompt_messages(
+        self,
+        input: Input,
+        system_prompt: str | None,
+        developer_prompt: str | None,
+    ) -> tuple[str | None, list[tuple[MessageRole, str]]]:
+        try:
+            raw_messages = self._messages(input, None, None, None)
+        except AssertionError as error:
+            raise ValueError(input) from error
+
+        system_parts: list[str] = []
+        developer_parts: list[str] = []
+        if system_prompt:
+            system_parts.append(system_prompt)
+        if developer_prompt:
+            developer_parts.append(developer_prompt)
+        messages: list[tuple[MessageRole, str]] = []
+        for message in raw_messages:
+            role = self._message_role(message)
+            content = self._message_text(message.content)
+            if self._has_tool_payload(message) or role is MessageRole.TOOL:
+                raise NotImplementedError(_UNSUPPORTED_TOOLS_MESSAGE)
+            if role is MessageRole.DEVELOPER:
+                if content:
+                    developer_parts.append(content)
+                continue
+            if role is MessageRole.SYSTEM:
+                if content:
+                    system_parts.append(content)
+                continue
+            if role in {MessageRole.USER, MessageRole.ASSISTANT}:
+                messages.append((role, content))
+                continue
+            raise ValueError(f"Unsupported DS4 message role {role!r}.")
+
+        if not messages or not any(content.strip() for _, content in messages):
+            raise ValueError("DS4 prompt must include non-empty text input.")
+
+        return (
+            self._merge_system_parts(system_parts, developer_parts),
+            messages,
+        )
+
+    @staticmethod
+    def _merge_system_parts(
+        system_parts: list[str], developer_parts: list[str]
+    ) -> str | None:
+        system_content = "\n\n".join(system_parts) if system_parts else None
+        developer_content = (
+            "\n\n".join(developer_parts) if developer_parts else None
+        )
+        if system_content and developer_content:
+            return (
+                f"{system_content}{_SYSTEM_DEVELOPER_SEPARATOR}"
+                f"{developer_content}"
+            )
+        if developer_content:
+            return f"{_DEVELOPER_PROMPT_PREFIX}\n{developer_content}"
+        return system_content
+
+    @staticmethod
+    def _message_role(message: Message) -> MessageRole:
+        try:
+            return MessageRole(message.role)
+        except ValueError as error:
+            raise ValueError(
+                f"Unsupported DS4 message role {message.role!r}."
+            ) from error
+
+    @staticmethod
+    def _has_tool_payload(message: Message) -> bool:
+        return bool(
+            message.tool_calls
+            or message.tool_call_result
+            or message.tool_call_error
+        )
+
+    @classmethod
+    def _message_text(
+        cls, content: str | MessageContent | list[MessageContent] | None
+    ) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, MessageContentText):
+            return content.text
+        if isinstance(content, (MessageContentFile, MessageContentImage)):
+            return ""
+        if isinstance(content, list):
+            return "\n".join(
+                cls._message_text(item)
+                for item in content
+                if isinstance(item, MessageContentText)
+            )
+        return str(content)
+
+    @staticmethod
+    def _think_mode(settings: GenerationSettings) -> ThinkMode:
+        if not settings.reasoning.enabled:
+            return ThinkMode.NONE
+
+        effort = settings.reasoning.effort
+        if effort is None:
+            return ThinkMode.NONE
+
+        effort_value = (
+            effort.value if isinstance(effort, ReasoningEffort) else effort
+        )
+        if effort_value == ReasoningEffort.NONE.value:
+            return ThinkMode.NONE
+        if effort_value == ReasoningEffort.MAX.value:
+            return ThinkMode.MAX
+        return ThinkMode.HIGH
+
+    async def _generation_stream(
+        self,
+        inputs: list[int],
+        generation_plan: _Ds4GenerationPlan,
+        settings: GenerationSettings | None = None,
+    ) -> AsyncGenerator[str, None]:
+        async for chunk in self._ds4_worker().stream(inputs, generation_plan):
+            yield chunk
+
+    def _generation_string(
+        self,
+        inputs: list[int],
+        generation_plan: _Ds4GenerationPlan,
+        settings: GenerationSettings | None = None,
+    ) -> str:
+        return self._ds4_worker().generate_string(inputs, generation_plan)
+
+    def _generation_plan(
+        self, settings: GenerationSettings, prompt_length: int
+    ) -> _Ds4GenerationPlan:
+        self._validate_generation_features(settings)
+        sampling_options = self._sampling_options(settings)
+        use_sampling = bool(
+            settings.do_sample and sampling_options.temperature > 0.0
+        )
+        return _Ds4GenerationPlan(
+            max_new_tokens=self._max_new_tokens(settings, prompt_length),
+            sampling_options=sampling_options,
+            stop_strings=self._stop_strings(settings.stop_strings),
+            use_sampling=use_sampling,
+        )
+
+    @classmethod
+    def _max_new_tokens(
+        cls, settings: GenerationSettings, prompt_length: int
+    ) -> int:
+        if settings.max_new_tokens is not None:
+            return cls._non_negative_int(
+                "max_new_tokens", settings.max_new_tokens
+            )
+        if settings.max_length is not None:
+            max_length = cls._non_negative_int(
+                "max_length", settings.max_length
+            )
+            return max(max_length - prompt_length, 0)
+        return _DEFAULT_MAX_NEW_TOKENS
+
+    def _sampling_options(
+        self, settings: GenerationSettings
+    ) -> SamplingOptions:
+        defaults = SamplingOptions()
+        return SamplingOptions(
+            temperature=self._non_negative_float(
+                "temperature", settings.temperature, defaults.temperature
+            ),
+            top_k=self._non_negative_int(
+                "top_k", settings.top_k, defaults.top_k
+            ),
+            top_p=self._probability("top_p", settings.top_p, defaults.top_p),
+            min_p=self._probability("min_p", settings.min_p, defaults.min_p),
+            seed=self._seed(),
+        )
+
+    def _seed(self) -> int | None:
+        config = self._ds4_settings().backend_config or {}
+        value = config.get("seed")
+        if value is None:
+            return None
+        return self._non_negative_int("seed", value)
+
+    @staticmethod
+    def _stop_strings(value: str | list[str] | None) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        stop_strings = (value,) if isinstance(value, str) else tuple(value)
+        if not stop_strings:
+            return ()
+        if not all(isinstance(item, str) and item for item in stop_strings):
+            raise ValueError(
+                "DS4 stop_strings must be a string or a list of non-empty "
+                "strings."
+            )
+        return stop_strings
+
+    @staticmethod
+    def _validate_generation_features(settings: GenerationSettings) -> None:
+        if settings.num_beams not in (None, 1):
+            raise NotImplementedError(
+                _UNSUPPORTED_GENERATION_MESSAGE.format(feature="beam search")
+            )
+        if settings.num_beam_groups not in (None, 1):
+            raise NotImplementedError(
+                _UNSUPPORTED_GENERATION_MESSAGE.format(feature="beam groups")
+            )
+        if settings.num_return_sequences not in (None, 1):
+            raise NotImplementedError(
+                _UNSUPPORTED_GENERATION_MESSAGE.format(
+                    feature="multiple return sequences"
+                )
+            )
+
+    @staticmethod
+    def _non_negative_int(
+        key: str, value: object, default: int | None = None
+    ) -> int:
+        if value is None and default is not None:
+            return default
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"DS4 {key} must be a non-negative integer.")
+        return value
+
+    @staticmethod
+    def _non_negative_float(key: str, value: object, default: float) -> float:
+        if value is None:
+            return default
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (float, int))
+            or float(value) < 0.0
+        ):
+            raise ValueError(f"DS4 {key} must be non-negative.")
+        return float(value)
+
+    @staticmethod
+    def _probability(key: str, value: object, default: float) -> float:
+        if value is None:
+            return default
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (float, int))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise ValueError(f"DS4 {key} must be between 0.0 and 1.0.")
+        return float(value)
+
+    def _native_backend(self, config: dict[str, object]) -> Ds4NativeBackend:
+        requested = config.get("native_backend")
+        if requested is None or requested == "auto":
+            if self._device.startswith("cuda"):
+                return Ds4NativeBackend.CUDA
+            if self._device == "mps":
+                return Ds4NativeBackend.METAL
+            return _DEFAULT_NATIVE_BACKEND
+        if not isinstance(requested, str):
+            raise Ds4BackendUnavailable("DS4 native_backend must be a string.")
+        try:
+            return Ds4NativeBackend(requested)
+        except ValueError as error:
+            supported = ", ".join(
+                backend.value for backend in Ds4NativeBackend
+            )
+            raise Ds4BackendUnavailable(
+                f"Unsupported DS4 native backend {requested!r}. "
+                f"Supported native backends: {supported}."
+            ) from error
+
+    @staticmethod
+    def _validated_file_path(path: str, label: str) -> str:
+        file_path = Path(path).expanduser()
+        if not file_path.exists():
+            raise Ds4InvalidModel(f"{label} does not exist: {file_path}.")
+        if file_path.is_dir():
+            raise Ds4InvalidModel(
+                f"{label} must be a file, got directory: {file_path}."
+            )
+        if not file_path.is_file():
+            raise Ds4InvalidModel(
+                f"{label} must be a regular file: {file_path}."
+            )
+        return str(file_path)
+
+    @classmethod
+    def _optional_file_path(cls, value: object, label: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise Ds4InvalidModel(f"{label} must be a non-empty path.")
+        return cls._validated_file_path(value, label)
+
+    @staticmethod
+    def _int_config(config: dict[str, object], key: str, default: int) -> int:
+        value = config.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"DS4 backend config {key!r} must be an integer.")
+        return value
+
+    @staticmethod
+    def _float_config(
+        config: dict[str, object], key: str, default: float
+    ) -> float:
+        value = config.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (float, int)):
+            raise ValueError(f"DS4 backend config {key!r} must be a number.")
+        return float(value)
+
+    @staticmethod
+    def _bool_config(
+        config: dict[str, object], key: str, default: bool
+    ) -> bool:
+        value = config.get(key, default)
+        if not isinstance(value, bool):
+            raise ValueError(f"DS4 backend config {key!r} must be a boolean.")
+        return value
+
+    @staticmethod
+    def _optional_string_config(
+        config: dict[str, object], key: str
+    ) -> str | None:
+        value = config.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"DS4 backend config {key!r} must be a non-empty string."
+            )
+        return value

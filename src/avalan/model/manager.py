@@ -33,7 +33,7 @@ from typing import (
     cast,
     get_args,
 )
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 if TYPE_CHECKING:
     from .engine import Engine
@@ -41,6 +41,140 @@ else:  # pragma: no cover - runtime type placeholder
     Engine = Any
 
 ModelType: TypeAlias = Engine
+
+_DS4_CONFIG_PREFIX = "ds4_"
+_DS4_NATIVE_BACKENDS = frozenset(("auto", "metal", "cuda", "cpu"))
+_DS4_CONFIG_KEY_ALIASES = {
+    "ctx": "ctx_size",
+    "ctx_size": "ctx_size",
+    "native_backend": "native_backend",
+    "mtp": "mtp_path",
+    "mtp_path": "mtp_path",
+    "mtp_draft": "mtp_draft_tokens",
+    "mtp_draft_tokens": "mtp_draft_tokens",
+    "mtp_margin": "mtp_margin",
+    "warm_weights": "warm_weights",
+    "quality": "quality",
+    "directional_steering_file": "directional_steering_file",
+    "directional_steering_attn": "directional_steering_attn",
+    "directional_steering_ffn": "directional_steering_ffn",
+    "kv_disk_dir": "kv_disk_dir",
+    "kv_disk_space_mb": "kv_disk_space_mb",
+    "seed": "seed",
+}
+_DS4_NORMALIZED_CONFIG_KEYS = frozenset(_DS4_CONFIG_KEY_ALIASES.values())
+
+
+def _is_ds4_backend(backend: Backend | str) -> bool:
+    return backend == Backend.DS4 or backend == Backend.DS4.value
+
+
+def _supported_ds4_config_keys() -> str:
+    return ", ".join(
+        f"{_DS4_CONFIG_PREFIX}{key}" for key in sorted(_DS4_CONFIG_KEY_ALIASES)
+    )
+
+
+def _invalid_ds4_config(key: str, expected: str, value: object) -> ValueError:
+    return ValueError(
+        f"Invalid DS4 configuration value for {key!r}: expected "
+        f"{expected}, got {value!r}."
+    )
+
+
+def _ds4_positive_int(key: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise _invalid_ds4_config(key, "a positive integer", value)
+    return value
+
+
+def _ds4_non_negative_int(key: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise _invalid_ds4_config(key, "a non-negative integer", value)
+    return value
+
+
+def _ds4_float(key: str, value: object, *, non_negative: bool) -> float:
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        raise _invalid_ds4_config(key, "a number", value)
+    float_value = float(value)
+    if non_negative and float_value < 0:
+        raise _invalid_ds4_config(key, "a non-negative number", value)
+    return float_value
+
+
+def _ds4_string(key: str, value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise _invalid_ds4_config(key, "a non-empty string", value)
+    return value
+
+
+def _ds4_bool(key: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise _invalid_ds4_config(key, "a boolean", value)
+    return value
+
+
+def _validate_ds4_config_value(
+    key: str, normalized_key: str, value: object
+) -> object:
+    match normalized_key:
+        case "ctx_size":
+            return _ds4_positive_int(key, value)
+        case "native_backend":
+            backend = _ds4_string(key, value).lower()
+            if backend not in _DS4_NATIVE_BACKENDS:
+                supported = ", ".join(sorted(_DS4_NATIVE_BACKENDS))
+                raise _invalid_ds4_config(key, f"one of {supported}", value)
+            return backend
+        case "mtp_path" | "directional_steering_file" | "kv_disk_dir":
+            return _ds4_string(key, value)
+        case "mtp_draft_tokens" | "kv_disk_space_mb" | "seed":
+            return _ds4_non_negative_int(key, value)
+        case "mtp_margin":
+            return _ds4_float(key, value, non_negative=True)
+        case "directional_steering_attn" | "directional_steering_ffn":
+            return _ds4_float(key, value, non_negative=False)
+        case "warm_weights" | "quality":
+            return _ds4_bool(key, value)
+    raise ValueError(
+        f"Unknown DS4 backend configuration key {normalized_key!r}."
+    )
+
+
+def _normalize_ds4_backend_config(
+    mapping: Mapping[str, object],
+    *,
+    reject_unknown: bool,
+    allow_normalized_keys: bool,
+) -> dict[str, object]:
+    config: dict[str, object] = {}
+    for raw_key, value in mapping.items():
+        if value is None:
+            continue
+
+        key = raw_key
+        if raw_key.startswith(_DS4_CONFIG_PREFIX):
+            key = raw_key.removeprefix(_DS4_CONFIG_PREFIX)
+        elif allow_normalized_keys and raw_key in _DS4_NORMALIZED_CONFIG_KEYS:
+            key = raw_key
+        else:
+            continue
+
+        normalized_key = _DS4_CONFIG_KEY_ALIASES.get(key)
+        if normalized_key is None:
+            if reject_unknown:
+                supported = _supported_ds4_config_keys()
+                raise ValueError(
+                    f"Unknown DS4 configuration key {raw_key!r}. "
+                    f"Supported DS4 keys: {supported}."
+                )
+            continue
+
+        config[normalized_key] = _validate_ds4_config_value(
+            raw_key, normalized_key, value
+        )
+    return config
 
 
 class ModelManager:
@@ -153,6 +287,17 @@ class ModelManager:
         return result
 
     @staticmethod
+    def ds4_backend_config_from_mapping(
+        mapping: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Return normalized DS4 backend config from prefixed keys."""
+        return _normalize_ds4_backend_config(
+            mapping,
+            reject_unknown=True,
+            allow_normalized_keys=True,
+        )
+
+    @staticmethod
     def get_operation_from_arguments(
         modality: Modality,
         args: Namespace,
@@ -198,7 +343,8 @@ class ModelManager:
         device: str | None = None,
         disable_loading_progress_bar: bool = False,
         loader_class: TextGenerationLoaderClass | None = "auto",
-        backend: Backend = Backend.TRANSFORMERS,
+        backend: Backend | str = Backend.TRANSFORMERS,
+        backend_config: dict[str, object] | None = None,
         low_cpu_mem_usage: bool = False,
         parallel: ParallelStrategy | None = None,
         quiet: bool = False,
@@ -220,6 +366,22 @@ class ModelManager:
             backend_param = engine_uri.params["backend"]
             assert isinstance(backend_param, str)
             backend = Backend(backend_param)
+        ds4_backend_config: dict[str, object] | None = None
+        if _is_ds4_backend(backend):
+            uri_backend_config = _normalize_ds4_backend_config(
+                engine_uri.params,
+                reject_unknown=True,
+                allow_normalized_keys=False,
+            )
+            explicit_backend_config = _normalize_ds4_backend_config(
+                backend_config or {},
+                reject_unknown=True,
+                allow_normalized_keys=True,
+            )
+            ds4_backend_config = {
+                **uri_backend_config,
+                **explicit_backend_config,
+            }
         engine_settings_args = dict(
             base_url=base_url,
             cache_dir=self._hub.cache_dir,
@@ -228,6 +390,7 @@ class ModelManager:
             low_cpu_mem_usage=low_cpu_mem_usage,
             loader_class=loader_class,
             backend=backend,
+            backend_config=ds4_backend_config or None,
             parallel=parallel,
             base_model_id=base_model_id or None,
             checkpoint=checkpoint or None,
@@ -300,7 +463,8 @@ class ModelManager:
         if not vendor or vendor not in get_args(Vendor) or vendor == "local":
             vendor = None
         use_host = bool(vendor)
-        path_prefixed = parsed.path.startswith("/")
+        path = unquote(parsed.path)
+        path_prefixed = path.startswith("/")
         params: dict[str, str | int | float | bool] = {}
         for key, value in parse_qsl(parsed.query):
             if value.lower() in {"true", "false"}:
@@ -322,7 +486,7 @@ class ModelManager:
             hostname + ("/" if path_prefixed else "")
             if not vendor and hostname != "local"
             else ""
-        ) + (parsed.path[1:] if path_prefixed else parsed.path)
+        ) + (path[1:] if path_prefixed else path)
         engine_uri = EngineUri(
             vendor=cast(Vendor | None, vendor),
             host=hostname if use_host else None,

@@ -18,6 +18,40 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             self.assertTrue(CLI._needs_hf_token(args))
         parse_patch.assert_called_once_with("m")
 
+    def test_model_run_local_ds4_cli_backend_no_token(self):
+        args = Namespace(
+            command="model",
+            model_command="run",
+            model="ai://local/./model.gguf",
+            backend="ds4",
+        )
+        with patch.object(
+            ModelManager,
+            "parse_uri",
+            return_value=SimpleNamespace(is_local=True, params={}),
+        ) as parse_patch:
+            self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with("ai://local/./model.gguf")
+
+    def test_model_run_local_ds4_uri_backend_no_token(self):
+        args = Namespace(
+            command="model",
+            model_command="run",
+            model="ai://local/./model.gguf?backend=ds4",
+            backend="transformers",
+        )
+        with patch.object(
+            ModelManager,
+            "parse_uri",
+            return_value=SimpleNamespace(
+                is_local=True, params={"backend": "ds4"}
+            ),
+        ) as parse_patch:
+            self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with(
+            "ai://local/./model.gguf?backend=ds4"
+        )
+
     def test_model_run_remote_no_token(self):
         args = Namespace(command="model", model_command="run", model="m")
         with patch.object(
@@ -36,6 +70,25 @@ class NeedsHfTokenTestCase(unittest.TestCase):
         ) as parse_patch:
             self.assertTrue(CLI._needs_hf_token(args))
         parse_patch.assert_called_once_with("e")
+
+    def test_agent_run_local_ds4_uri_backend_no_token(self):
+        args = Namespace(
+            command="agent",
+            agent_command="run",
+            engine_uri="ai://local/./model.gguf?backend=ds4",
+            backend="transformers",
+        )
+        with patch.object(
+            ModelManager,
+            "parse_uri",
+            return_value=SimpleNamespace(
+                is_local=True, params={"backend": "ds4"}
+            ),
+        ) as parse_patch:
+            self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with(
+            "ai://local/./model.gguf?backend=ds4"
+        )
 
     def test_agent_serve_remote_no_token(self):
         args = Namespace(

@@ -800,10 +800,14 @@ class DatabaseKeysCollectTestCase(TestCase):
 
             inspector = SimpleNamespace(
                 default_schema_name=default_schema,
-                get_pk_constraint=lambda table_name, schema=None, payload=pk_payload: payload,  # noqa: E501
-                get_unique_constraints=lambda table_name, schema=None, payload=unique_payload: [  # noqa: E501
-                    payload
-                ],
+                get_pk_constraint=(
+                    lambda table_name, schema=None, payload=pk_payload: payload
+                ),
+                get_unique_constraints=(
+                    lambda table_name, schema=None, payload=unique_payload: [
+                        payload
+                    ]
+                ),
                 get_table_names=lambda schema=None: (
                     ["authors"]
                     if (schema or default_schema) == default_schema

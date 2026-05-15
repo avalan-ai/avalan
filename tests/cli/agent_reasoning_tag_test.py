@@ -148,8 +148,8 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             ),
             patch.object(ReasoningParser, "__init__", rec_init),
         ):
-            self.orch.side_effect = (
-                lambda *a, **kw: DummyOrchestratorResponse()
+            self.orch.side_effect = lambda *a, **kw: (
+                DummyOrchestratorResponse()
             )
             await agent_cmds.agent_run(
                 self.args, self.console, self.theme, self.hub, self.logger, 1

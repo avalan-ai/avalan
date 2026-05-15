@@ -72,8 +72,7 @@ class DatabaseTasksTool(DatabaseTool):
     def _collect_postgresql(
         self, connection: Connection, *, running_for: int | None = None
     ) -> list[DatabaseTask]:
-        statement = text(
-            """
+        statement = text("""
             select pid::text as id,
                    usename as user_name,
                    state,
@@ -86,8 +85,7 @@ class DatabaseTasksTool(DatabaseTool):
             where pid <> pg_backend_pid()
               and query is not null
               and state is not null
-            """
-        )
+            """)
         result = connection.execute(statement)
         tasks: list[DatabaseTask] = []
         for row in result.mappings().all():

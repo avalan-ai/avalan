@@ -62,8 +62,7 @@ class DatabaseLocksTool(DatabaseTool):
     def _collect_postgresql(
         self, connection: Connection
     ) -> list[DatabaseLock]:
-        statement = text(
-            """
+        statement = text("""
             SELECT
                 a.pid::text AS pid,
                 a.usename AS user_name,
@@ -87,8 +86,7 @@ class DatabaseLocksTool(DatabaseTool):
             LEFT JOIN pg_database AS d ON d.oid = l.database
             WHERE a.pid IS NOT NULL
             ORDER BY a.pid, l.locktype, l.mode
-            """
-        )
+            """)
 
         result = connection.execute(statement)
         locks: list[DatabaseLock] = []
@@ -112,8 +110,7 @@ class DatabaseLocksTool(DatabaseTool):
         return locks
 
     def _collect_mysql(self, connection: Connection) -> list[DatabaseLock]:
-        statement = text(
-            """
+        statement = text("""
             SELECT
                 t.PROCESSLIST_ID AS pid,
                 t.PROCESSLIST_USER AS user_name,
@@ -148,8 +145,7 @@ class DatabaseLocksTool(DatabaseTool):
                 dl.LOCK_DATA,
                 t.PROCESSLIST_STATE,
                 t.PROCESSLIST_INFO
-            """
-        )
+            """)
 
         try:
             result = connection.execute(statement)

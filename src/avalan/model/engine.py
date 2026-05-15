@@ -325,6 +325,10 @@ class Engine(ABC):
     ) -> Any:
         raise NotImplementedError()
 
+    def _accepts_loaded_model(self, model: object) -> bool:
+        """Return whether a subclass accepts a native model object."""
+        return False
+
     def is_runnable(self, device: str | None = None) -> bool | None:
         if (
             self._parameter_types is None
@@ -488,6 +492,7 @@ class Engine(ABC):
                 diffusion_pipeline_type is not None
                 and isinstance(self._model, diffusion_pipeline_type)
             )
+            accepts_loaded_model = False
 
             if (
                 not is_pretrained_model
@@ -503,12 +508,18 @@ class Engine(ABC):
                         self._model, SentenceTransformer
                     )
 
+                if not is_mlx and not is_sentence_transformer:
+                    accepts_loaded_model = self._accepts_loaded_model(
+                        self._model
+                    )
+
             assert (
                 is_pretrained_model
                 or is_vendor
                 or is_diffusion_pipeline
                 or is_mlx
                 or is_sentence_transformer
+                or accepts_loaded_model
             ), f"Unexpected pretrained model type: {type(self._model)}"
 
             _l(

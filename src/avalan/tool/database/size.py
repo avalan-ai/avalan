@@ -119,8 +119,7 @@ class DatabaseSizeTool(DatabaseTool):
         schema: str | None,
         table_name: str,
     ) -> list[TableSizeMetric]:
-        statement = text(
-            """
+        statement = text("""
             SELECT
                 pg_table_size(c.oid) AS data_bytes,
                 pg_indexes_size(c.oid) AS index_bytes,
@@ -130,8 +129,7 @@ class DatabaseSizeTool(DatabaseTool):
             WHERE c.relname = :table_name
               AND (:schema IS NULL OR n.nspname = :schema)
             LIMIT 1
-            """
-        )
+            """)
 
         row = (
             connection.execute(
@@ -162,8 +160,7 @@ class DatabaseSizeTool(DatabaseTool):
         schema: str | None,
         table_name: str,
     ) -> list[TableSizeMetric]:
-        statement = text(
-            """
+        statement = text("""
             SELECT
                 DATA_LENGTH AS data_bytes,
                 INDEX_LENGTH AS index_bytes,
@@ -172,8 +169,7 @@ class DatabaseSizeTool(DatabaseTool):
             WHERE TABLE_NAME = :table_name
               AND (:schema IS NULL OR TABLE_SCHEMA = :schema)
             LIMIT 1
-            """
-        )
+            """)
 
         row = (
             connection.execute(
@@ -290,15 +286,13 @@ class DatabaseSizeTool(DatabaseTool):
 
         data_row = (
             connection.execute(
-                text(
-                    """
+                text("""
                 SELECT SUM(bytes) AS bytes
                 FROM all_segments
                 WHERE segment_name = :table_name
                   AND segment_type LIKE 'TABLE%'
                   AND (:owner IS NULL OR owner = :owner)
-                """
-                ),
+                """),
                 {"table_name": table_key, "owner": owner},
             )
             .mappings()
@@ -311,14 +305,12 @@ class DatabaseSizeTool(DatabaseTool):
 
         index_rows = (
             connection.execute(
-                text(
-                    """
+                text("""
                 SELECT index_name
                 FROM all_indexes
                 WHERE table_name = :table_name
                   AND (:owner IS NULL OR owner = :owner)
-                """
-                ),
+                """),
                 {"table_name": table_key, "owner": owner},
             )
             .mappings()
@@ -333,14 +325,12 @@ class DatabaseSizeTool(DatabaseTool):
                 continue
             seg_row = (
                 connection.execute(
-                    text(
-                        """
+                    text("""
                     SELECT SUM(bytes) AS bytes
                     FROM all_segments
                     WHERE segment_name = :index_name
                       AND (:owner IS NULL OR owner = :owner)
-                    """
-                    ),
+                    """),
                     {"index_name": index_name, "owner": owner},
                 )
                 .mappings()
@@ -371,8 +361,7 @@ class DatabaseSizeTool(DatabaseTool):
         schema: str | None,
         table_name: str,
     ) -> list[TableSizeMetric]:
-        statement = text(
-            """
+        statement = text("""
             SELECT
                 SUM(
                     CASE
@@ -392,8 +381,7 @@ class DatabaseSizeTool(DatabaseTool):
             JOIN sys.tables AS t ON t.object_id = i.object_id
             WHERE t.name = :table_name
               AND (:schema IS NULL OR SCHEMA_NAME(t.schema_id) = :schema)
-            """
-        )
+            """)
 
         row = (
             connection.execute(

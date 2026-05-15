@@ -41,6 +41,31 @@ class ModelManagerExtraTestCase(TestCase):
         self.assertEqual(uri.params["max_new_tokens"], 8192)
         self.assertEqual(uri.params["backend"], "mlx")
 
+    def test_parse_uri_local_paths(self):
+        manager = ModelManager(self.hub, self.logger)
+
+        relative_uri = manager.parse_uri(
+            "ai://local/../pyds4/.local/ds4/ds4flash.gguf"
+        )
+        absolute_uri = manager.parse_uri(
+            "ai://local//Users/mariano/Code/ai/pyds4/.local/ds4/ds4flash.gguf"
+        )
+        encoded_absolute_uri = manager.parse_uri(
+            "ai://local/%2FUsers/mariano/Code/ai/some%20dir/model.gguf"
+        )
+
+        self.assertEqual(
+            relative_uri.model_id, "../pyds4/.local/ds4/ds4flash.gguf"
+        )
+        self.assertEqual(
+            absolute_uri.model_id,
+            "/Users/mariano/Code/ai/pyds4/.local/ds4/ds4flash.gguf",
+        )
+        self.assertEqual(
+            encoded_absolute_uri.model_id,
+            "/Users/mariano/Code/ai/some dir/model.gguf",
+        )
+
     def test_get_engine_settings_user_password_no_secret(self):
         manager = ModelManager(self.hub, self.logger)
         uri = EngineUri(
@@ -111,6 +136,96 @@ class ModelManagerExtraTestCase(TestCase):
             manager.load(uri)
         args = get_mock.call_args.args[1]
         self.assertEqual(args["backend"], Backend.MLXLM)
+
+    def test_backend_ds4_value(self):
+        self.assertEqual(Backend("ds4"), Backend.DS4)
+
+    def test_load_ds4_backend_config_from_uri(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri(
+            "ai://local/./model.gguf?backend=ds4&ds4_ctx=4096"
+        )
+        with (
+            patch.object(manager, "get_engine_settings") as get_mock,
+            patch.object(manager, "load_engine") as load_mock,
+        ):
+            get_mock.return_value = TransformerEngineSettings()
+            load_mock.return_value = "model"
+            manager.load(uri)
+
+        args = get_mock.call_args.args[1]
+        self.assertEqual(args["backend"], Backend.DS4)
+        self.assertEqual(args["backend_config"], {"ctx_size": 4096})
+        self.assertNotIn("ctx_size", args)
+        self.assertNotIn("ds4_ctx", args)
+
+    def test_load_ds4_explicit_config_overrides_uri(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri(
+            "ai://local/./model.gguf?backend=ds4"
+            "&ds4_ctx=2048&ds4_native_backend=metal"
+        )
+        with (
+            patch.object(manager, "get_engine_settings") as get_mock,
+            patch.object(manager, "load_engine") as load_mock,
+        ):
+            get_mock.return_value = TransformerEngineSettings()
+            load_mock.return_value = "model"
+            manager.load(
+                uri,
+                backend_config={
+                    "ctx_size": 4096,
+                    "native_backend": "cuda",
+                },
+            )
+
+        args = get_mock.call_args.args[1]
+        self.assertEqual(
+            args["backend_config"],
+            {"ctx_size": 4096, "native_backend": "cuda"},
+        )
+
+    def test_load_unknown_ds4_uri_key_raises(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri(
+            "ai://local/./model.gguf?backend=ds4&ds4_unknown=1"
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "Unknown DS4 configuration key 'ds4_unknown'"
+        ):
+            manager.load(uri)
+
+    def test_load_invalid_ds4_uri_values_raise(self):
+        manager = ModelManager(self.hub, self.logger)
+        cases = {
+            "ds4_ctx=0": "a positive integer",
+            "ds4_mtp_draft_tokens=-1": "a non-negative integer",
+            "ds4_kv_disk_space_mb=-1": "a non-negative integer",
+        }
+
+        for query, expected in cases.items():
+            with self.subTest(query=query):
+                uri = manager.parse_uri(
+                    f"ai://local/./model.gguf?backend=ds4&{query}"
+                )
+                with self.assertRaisesRegex(ValueError, expected):
+                    manager.load(uri)
+
+    def test_load_non_ds4_ignores_ds4_config(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri("ai://local/model?backend=mlx&ds4_ctx=4096")
+        with (
+            patch.object(manager, "get_engine_settings") as get_mock,
+            patch.object(manager, "load_engine") as load_mock,
+        ):
+            get_mock.return_value = TransformerEngineSettings()
+            load_mock.return_value = "model"
+            manager.load(uri)
+
+        args = get_mock.call_args.args[1]
+        self.assertEqual(args["backend"], Backend.MLXLM)
+        self.assertIsNone(args["backend_config"])
 
     def test_load_engine_invalid_modality(self):
         manager = ModelManager(self.hub, self.logger)

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from avalan.backends.ds4_native import Ds4BackendUnavailable
 from avalan.entities import (
     Backend,
     EngineUri,
@@ -28,6 +29,7 @@ from avalan.model.modalities.text import (
     TextSequenceToSequenceModality,
     TextTokenClassificationModality,
     TextTranslationModality,
+    _get_ds4_model,
     _get_mlx_model,
     _resolve_model_class,
     _stopping_criteria,
@@ -172,6 +174,73 @@ def test_get_mlx_model_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _get_mlx_model() is None
 
 
+@pytest.mark.parametrize(
+    "message",
+    ("missing", "The binding marked itself unsafe."),
+)
+def test_get_ds4_model_binding_unavailable(
+    monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    _get_ds4_model.cache_clear()
+
+    def fail_import() -> None:
+        raise Ds4BackendUnavailable(message)
+
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.import_compatible_binding",
+        fail_import,
+    )
+
+    assert _get_ds4_model() is None
+
+
+def test_get_ds4_model_module_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _get_ds4_model.cache_clear()
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.import_compatible_binding",
+        lambda: object(),
+    )
+    monkeypatch.setitem(modules, "avalan.model.nlp.text.ds4", None)
+
+    assert _get_ds4_model() is None
+
+
+def test_get_ds4_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    _get_ds4_model.cache_clear()
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.import_compatible_binding",
+        lambda: object(),
+    )
+    module_name = "avalan.model.nlp.text.ds4"
+    stub = ModuleType(module_name)
+    stub.Ds4Model = RecordingLoader
+    monkeypatch.setitem(modules, module_name, stub)
+
+    assert _get_ds4_model() is RecordingLoader
+
+
+def test_get_ds4_model_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    _get_ds4_model.cache_clear()
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.import_compatible_binding",
+        lambda: object(),
+    )
+
+    class UnavailableLoader:
+        @classmethod
+        def is_available(cls) -> bool:
+            return False
+
+    module_name = "avalan.model.nlp.text.ds4"
+    stub = ModuleType(module_name)
+    stub.Ds4Model = UnavailableLoader
+    monkeypatch.setitem(modules, module_name, stub)
+
+    assert _get_ds4_model() is None
+
+
 def test_resolve_model_class_imports_and_caches_any_global(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,6 +297,51 @@ def test_text_generation_load_engine_mlx_missing_dependency(
     exit_stack = AsyncExitStack()
 
     with pytest.raises(ModuleNotFoundError, match=r"avalan\[mlx\]"):
+        TextGenerationModality().load_engine(
+            local_engine_uri,
+            settings,
+            logger,
+            exit_stack,
+        )
+
+
+def test_text_generation_load_engine_ds4(
+    local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model",
+        lambda: RecordingLoader,
+    )
+    settings = TransformerEngineSettings(backend=Backend.DS4)
+    logger = MagicMock(spec=Logger)
+    exit_stack = AsyncExitStack()
+
+    loader = TextGenerationModality().load_engine(
+        local_engine_uri,
+        settings,
+        logger,
+        exit_stack,
+    )
+
+    assert isinstance(loader, RecordingLoader)
+    assert loader.kwargs == {
+        "model_id": "local",
+        "settings": settings,
+        "logger": logger,
+    }
+
+
+def test_text_generation_load_engine_ds4_missing_dependency(
+    local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model", lambda: None
+    )
+    settings = TransformerEngineSettings(backend=Backend.DS4)
+    logger = MagicMock(spec=Logger)
+    exit_stack = AsyncExitStack()
+
+    with pytest.raises(ModuleNotFoundError, match=r"avalan\[ds4\]"):
         TextGenerationModality().load_engine(
             local_engine_uri,
             settings,
@@ -378,15 +492,79 @@ def test_text_generation_call_mlx_branch(
     assert kwargs["tool"] is tool
 
 
+def test_text_generation_call_ds4_branch_avoids_tokenizer_kwargs(
+    local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class DummyDs4Model:
+        def __init__(self) -> None:
+            self.calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+        @property
+        def tokenizer(self) -> DummyTokenizer:
+            raise AssertionError("DS4 call path should not use a tokenizer")
+
+        async def __call__(self, *args: Any, **kwargs: Any) -> str:
+            self.calls.append((args, kwargs))
+            return "result"
+
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model",
+        lambda: DummyDs4Model,
+    )
+    modality = TextGenerationModality()
+    model = DummyDs4Model()
+    text_params = OperationTextParameters(
+        manual_sampling=True,
+        pick_tokens=3,
+        stop_on_keywords=["DONE"],
+        system_prompt="sys",
+        developer_prompt="dev",
+        skip_special_tokens=True,
+    )
+    operation = make_operation(
+        modality=Modality.TEXT_GENERATION,
+        text_params=text_params,
+    )
+    tool = object()
+
+    result = run(modality(local_engine_uri, model, operation, tool=tool))
+
+    assert result == "result"
+    assert len(model.calls) == 1
+    args, kwargs = model.calls[0]
+    assert args == ("prompt",)
+    assert set(kwargs) == {
+        "system_prompt",
+        "developer_prompt",
+        "settings",
+        "tool",
+    }
+    assert kwargs["system_prompt"] == "sys"
+    assert kwargs["developer_prompt"] == "dev"
+    assert kwargs["settings"] == operation.generation_settings
+    assert kwargs["tool"] is tool
+
+
 def test_text_generation_call_remote_does_not_probe_mlx(
     remote_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail_mlx_lookup() -> type[Any] | None:
         raise AssertionError("remote vendor call should not load mlx")
 
+    def fail_ds4_lookup() -> type[Any] | None:
+        raise AssertionError("remote vendor call should not load ds4")
+
     monkeypatch.setattr(
         "avalan.model.modalities.text._get_mlx_model",
         fail_mlx_lookup,
+    )
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model",
+        fail_ds4_lookup,
     )
     modality = TextGenerationModality()
     model = DummyModel()

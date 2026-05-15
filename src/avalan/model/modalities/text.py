@@ -1,3 +1,8 @@
+from ...backends.ds4_native import (
+    Ds4ApiVersionError,
+    Ds4BackendUnavailable,
+    import_compatible_binding,
+)
 from ...entities import (
     Backend,
     EngineUri,
@@ -75,6 +80,26 @@ def _get_mlx_model() -> type[TextGenerationModel] | None:
     return loader if loader.is_available() else None
 
 
+@lru_cache(maxsize=1)
+def _get_ds4_model() -> type[TextGenerationModel] | None:
+    try:
+        import_compatible_binding()
+    except (Ds4ApiVersionError, Ds4BackendUnavailable):
+        return None
+    try:
+        module = import_module("avalan.model.nlp.text.ds4")
+    except ModuleNotFoundError:
+        return None
+    loader = getattr(module, "Ds4Model", None)
+    if loader is None:
+        return None
+    return (
+        cast(type[TextGenerationModel], loader)
+        if loader.is_available()
+        else None
+    )
+
+
 @ModalityRegistry.register(Modality.TEXT_GENERATION)
 class TextGenerationModality:
     def load_engine(
@@ -97,6 +122,21 @@ class TextGenerationModality:
                         raise ModuleNotFoundError(msg)
 
                     return mlx_loader(
+                        model_id=engine_uri.model_id,
+                        settings=engine_settings,
+                        logger=logger,
+                    )
+                case Backend.DS4:
+                    ds4_loader = _get_ds4_model()
+                    if ds4_loader is None:
+                        msg = (
+                            "The pyds4 dependency is not installed or "
+                            "unavailable. Install avalan[ds4] to enable the "
+                            "DS4 backend."
+                        )
+                        raise ModuleNotFoundError(msg)
+
+                    return ds4_loader(
                         model_id=engine_uri.model_id,
                         settings=engine_settings,
                         logger=logger,
@@ -292,10 +332,12 @@ class TextGenerationModality:
     ) -> Any:
         assert operation.input and operation.parameters["text"]
 
-        criteria = _stopping_criteria(operation, model)
         mlx_model = _get_mlx_model() if engine_uri.is_local else None
+        ds4_model = _get_ds4_model() if engine_uri.is_local else None
         is_mlx = mlx_model is not None and isinstance(model, mlx_model)
-        if engine_uri.is_local and not is_mlx:
+        is_ds4 = ds4_model is not None and isinstance(model, ds4_model)
+        if engine_uri.is_local and not is_mlx and not is_ds4:
+            criteria = _stopping_criteria(operation, model)
             return await model(
                 operation.input,
                 system_prompt=operation.parameters["text"].system_prompt,

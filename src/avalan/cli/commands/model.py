@@ -21,7 +21,7 @@ from ...model.manager import ModelManager
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
 from ...secrets import KeyringSecrets
-from . import ModelSettings, get_model_settings
+from . import ModelSettings, get_model_settings, is_ds4_backend_selected
 
 from argparse import Namespace
 from asyncio import (
@@ -192,23 +192,30 @@ async def model_run(
 
         if not args.quiet:
             if engine_uri.is_local:
-                can_access = (
-                    args.quiet
-                    or args.skip_hub_access_check
-                    or hub.can_access(cast(str, engine_uri.model_id))
-                )
-
-                hub_model_summary = hub.model(cast(str, engine_uri.model_id))
-                console.print(
-                    Padding(
-                        theme.model(
-                            hub_model_summary,
-                            can_access=can_access,
-                            summary=True,
-                        ),
-                        pad=(0, 0, 1, 0),
+                if is_ds4_backend_selected(args, engine_uri):
+                    can_access = True
+                    hub_model_summary = None
+                else:
+                    can_access = (
+                        args.quiet
+                        or args.skip_hub_access_check
+                        or hub.can_access(cast(str, engine_uri.model_id))
                     )
-                )
+                    hub_model_summary = hub.model(
+                        cast(str, engine_uri.model_id)
+                    )
+
+                if hub_model_summary is not None:
+                    console.print(
+                        Padding(
+                            theme.model(
+                                hub_model_summary,
+                                can_access=can_access,
+                                summary=True,
+                            ),
+                            pad=(0, 0, 1, 0),
+                        )
+                    )
 
         operation = ModelManager.get_operation_from_arguments(
             modality, args, None

@@ -58,8 +58,8 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
         console.status.return_value = status_cm
 
         theme = MagicMock()
-        theme.model.side_effect = (
-            lambda m, **kw: f"model-{m.id}-{kw.get('can_access')}"
+        theme.model.side_effect = lambda m, **kw: (
+            f"model-{m.id}-{kw.get('can_access')}"
         )
         hub = MagicMock()
         hub.models.return_value = [
