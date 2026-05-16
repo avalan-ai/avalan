@@ -47,7 +47,11 @@ from avalan.entities import (
     ReasoningSettings,
     Token,
     TokenDetail,
+    ToolCallContext,
+    ToolCallResult,
     ToolCallToken,
+    ToolFormat,
+    ToolManagerSettings,
     TransformerEngineSettings,
 )
 from avalan.model.nlp.text.ds4 import (
@@ -1422,6 +1426,84 @@ def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
         )
         == "I will calculate."
     )
+
+
+def test_ds4_generated_tool_call_round_trips_through_tool_manager(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> ToolCallResult:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        dsml = (
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">'
+            "2 + 2"
+            "</｜DSML｜parameter>\n"
+            "</｜DSML｜invoke>\n"
+            "</｜DSML｜tool_calls>"
+        )
+        fake.token_text_map = {101: dsml.encode()}
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "calculate",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        calls = [
+            chunk.call
+            for chunk in chunks
+            if isinstance(chunk, ToolCallToken) and chunk.call is not None
+        ]
+        assert len(calls) == 1
+        result = await manager(calls[0], ToolCallContext(calls=calls))
+        model.close()
+        assert isinstance(result, ToolCallResult)
+        return result
+
+    result = run(run_case())
+
+    assert result.name == "math.calculator"
+    assert result.arguments == {"expression": "2 + 2"}
+    assert result.result == "4"
+
+
+def test_ds4_tool_prompt_keeps_dsml_when_manager_uses_other_tool_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+    model = Ds4Model(str(_model_file(tmp_path)))
+    manager = ToolManager.create_instance(
+        available_toolsets=[MathToolSet(namespace="math")],
+        settings=ToolManagerSettings(tool_format=ToolFormat.JSON),
+    )
+
+    response = run(
+        model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(max_new_tokens=0),
+        )
+    )
+
+    assert run(response.to_str()) == ""
+    assert manager.tool_format is ToolFormat.JSON
+    rendered = _latest_fake_engine().tokenize_rendered_chat_calls[-1]
+    assert "<｜DSML｜tool_calls>" in rendered
+    assert '"tool"' not in rendered
+    assert '"name":"math.calculator"' in rendered
+    model.close()
 
 
 def test_ds4_tool_history_replays_exact_sampled_dsml(
