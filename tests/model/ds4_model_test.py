@@ -1424,6 +1424,118 @@ def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
     )
 
 
+def test_ds4_tool_history_replays_exact_sampled_dsml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> str:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        raw_dsml = (
+            "\n\n<DSML｜tool_calls>\n"
+            '<DSML｜invoke name="math.calculator">\n'
+            '<DSML｜parameter name="precision" string="false">'
+            "2"
+            "</DSML｜parameter>\n"
+            '<DSML｜parameter name="expression" string="true">'
+            "2 + 2"
+            "</DSML｜parameter>\n"
+            "</DSML｜invoke>\n"
+            "</DSML｜tool_calls>"
+        )
+        fake.argmax_script = [101]
+        fake.token_text_map = {101: raw_dsml.encode()}
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+
+        first = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in first]
+        call_tokens = [
+            chunk
+            for chunk in chunks
+            if isinstance(chunk, ToolCallToken) and chunk.call is not None
+        ]
+        assert len(call_tokens) == 1
+        call = call_tokens[0].call
+        assert call is not None
+
+        await model(
+            [
+                Message(role=MessageRole.USER, content="hello"),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=[
+                        MessageToolCall(
+                            id=str(call.id),
+                            name=call.name,
+                            arguments=call.arguments or {},
+                        )
+                    ],
+                ),
+                Message(role=MessageRole.TOOL, content="4"),
+            ],
+            tool=manager,
+            settings=GenerationSettings(max_new_tokens=0),
+        )
+        rendered = fake.tokenize_rendered_chat_calls[-1]
+        model.close()
+        return rendered
+
+    rendered = run(run_case())
+
+    assert "<DSML｜tool_calls>" in rendered
+    assistant_history = rendered.split("<｜Assistant｜>", 1)[1]
+    assert "<｜DSML｜tool_calls>" not in assistant_history
+    assert '<DSML｜parameter name="precision" string="false">2' in rendered
+
+
+def test_ds4_tool_history_unknown_replay_id_uses_canonical_dsml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+    model = Ds4Model(str(_model_file(tmp_path)))
+    manager = ToolManager.create_instance(
+        available_toolsets=[MathToolSet(namespace="math")]
+    )
+
+    run(
+        model(
+            [
+                Message(role=MessageRole.USER, content="calculate"),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=[
+                        MessageToolCall(
+                            id="missing_ds4_tool_id",
+                            name="math.calculator",
+                            arguments={"expression": "2 + 2"},
+                        )
+                    ],
+                ),
+                Message(role=MessageRole.TOOL, content="4"),
+            ],
+            tool=manager,
+            settings=GenerationSettings(max_new_tokens=0),
+        )
+    )
+
+    rendered = _latest_fake_engine().tokenize_rendered_chat_calls[-1]
+    assert "<DSML｜tool_calls>" not in rendered
+    assert '<｜DSML｜invoke name="math.calculator">' in rendered
+    model.close()
+
+
 def test_ds4_generation_stream_rejects_malformed_dsml(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

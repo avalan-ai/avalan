@@ -57,6 +57,7 @@ from queue import Queue
 from threading import Thread
 from time import time
 from typing import TypeVar, cast
+from uuid import uuid4
 
 _CPU_WARNING = (
     "DS4 CPU backend is debug/reference only and is not recommended for "
@@ -83,6 +84,7 @@ _CONTEXT_ERROR_MARKERS = (
 _WORKER_JOIN_TIMEOUT_SECONDS = 2.0
 _DS4_KV_CACHE_VERSION = 1
 _BYTES_PER_MIB = 1024 * 1024
+_DS4_TOOL_REPLAY_MAX_ENTRIES = 10000
 
 _T = TypeVar("_T")
 
@@ -112,6 +114,7 @@ class _Ds4DsmlParseResult:
     content: str
     calls: tuple[ToolCall, ...]
     reasoning: str | None
+    raw_dsml: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +173,9 @@ class _Ds4DsmlTools:
         messages: list[_Ds4PromptMessage],
         tool_schemas: str | None,
         think_mode: ThinkMode,
+        replay_lookup: (
+            Callable[[tuple[MessageToolCall, ...]], str | None] | None
+        ) = None,
     ) -> str:
         """Return a rendered DS4 chat prompt including tool context."""
         system_parts = [system_content] if system_content else []
@@ -230,7 +236,9 @@ class _Ds4DsmlTools:
                     else:
                         rendered.append("</think>")
                 rendered.append(message.content)
-                rendered.append(cls.render_tool_calls(message.tool_calls))
+                rendered.append(
+                    cls.render_tool_calls(message.tool_calls, replay_lookup)
+                )
                 rendered.append("<｜end▁of▁sentence｜>")
                 pending_assistant = False
                 pending_tool_result = False
@@ -266,10 +274,20 @@ class _Ds4DsmlTools:
         return "\n".join(lines)
 
     @classmethod
-    def render_tool_calls(cls, calls: tuple[MessageToolCall, ...]) -> str:
+    def render_tool_calls(
+        cls,
+        calls: tuple[MessageToolCall, ...],
+        replay_lookup: (
+            Callable[[tuple[MessageToolCall, ...]], str | None] | None
+        ) = None,
+    ) -> str:
         """Return canonical DSML text for assistant tool calls."""
         if not calls:
             return ""
+        if replay_lookup is not None:
+            replay = replay_lookup(calls)
+            if replay is not None:
+                return replay
         parts = ["\n\n", cls._TOOL_CALLS_START, "\n"]
         for call in calls:
             parts.extend(
@@ -313,9 +331,15 @@ class _Ds4DsmlTools:
         )
         block_start = start_match.end()
         block_end = block_start + end_match.start()
+        raw_end = start_match.end() + end_match.end()
         block = text[block_start:block_end]
         calls = cls._parse_calls(block)
-        return _Ds4DsmlParseResult(content, tuple(calls), reasoning)
+        return _Ds4DsmlParseResult(
+            content,
+            tuple(calls),
+            reasoning,
+            text[start_match.start() : raw_end],
+        )
 
     @classmethod
     def _parse_calls(cls, block: str) -> list[ToolCall]:
@@ -343,7 +367,7 @@ class _Ds4DsmlTools:
                 arguments[name] = value
             calls.append(
                 ToolCall(
-                    id=f"ds4_tool_{len(calls)}",
+                    id=f"ds4_tool_{uuid4().hex}",
                     name=html.unescape(match.group(1)),
                     arguments=arguments,
                 )
@@ -789,6 +813,7 @@ class Ds4Worker:
         )
         self._reset_tasks: set[asyncio.Task[BaseException | None]] = set()
         self._session: object | None = None
+        self._tool_dsml_replay: dict[str, str] = {}
 
     @property
     def closed(self) -> bool:
@@ -819,6 +844,26 @@ class Ds4Worker:
             return
 
         self._run_sync(self.aclose)
+
+    def exact_dsml_for_tool_calls(
+        self, calls: tuple[MessageToolCall, ...]
+    ) -> str | None:
+        """Return remembered sampled DSML when all call IDs match."""
+        if not calls:
+            return None
+
+        replay: str | None = None
+        for call in calls:
+            if not call.id:
+                return None
+            candidate = self._tool_dsml_replay.get(call.id)
+            if candidate is None:
+                return None
+            if replay is None:
+                replay = candidate
+            elif replay != candidate:
+                return None
+        return replay
 
     async def aclose(self) -> None:
         """Close the async session and native engine."""
@@ -1015,6 +1060,7 @@ class Ds4Worker:
             parsed = _Ds4DsmlTools.parse_generated_message(text)
             if parsed is None:
                 raise Ds4GenerationError("DS4 generated malformed DSML.")
+            self._remember_dsml_tool_replay(parsed)
             if parsed.content:
                 yield parsed.content
             for call in parsed.calls:
@@ -1025,6 +1071,15 @@ class Ds4Worker:
             session, generation_plan
         ):
             yield chunk
+
+    def _remember_dsml_tool_replay(self, parsed: _Ds4DsmlParseResult) -> None:
+        if not parsed.raw_dsml or not parsed.calls:
+            return
+        for call in parsed.calls:
+            self._tool_dsml_replay[str(call.id)] = parsed.raw_dsml
+            while len(self._tool_dsml_replay) > _DS4_TOOL_REPLAY_MAX_ENTRIES:
+                oldest = next(iter(self._tool_dsml_replay))
+                del self._tool_dsml_replay[oldest]
 
     async def _generate_text_chunks(
         self, session: object, generation_plan: _Ds4GenerationPlan
@@ -1801,6 +1856,7 @@ class Ds4Model(TextGenerationModel):
                 messages,
                 tool_schemas,
                 self._think_mode(settings),
+                worker.exact_dsml_for_tool_calls,
             )
             return self._run_tokenize_rendered_chat(worker, rendered)
         return worker.render_prompt_tokens(
@@ -1827,6 +1883,7 @@ class Ds4Model(TextGenerationModel):
                 messages,
                 tool_schemas,
                 self._think_mode(settings),
+                worker.exact_dsml_for_tool_calls,
             )
             return await worker.tokenize_rendered_chat_async(rendered)
         return await worker.render_prompt_tokens_async(
