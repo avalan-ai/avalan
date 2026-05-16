@@ -703,28 +703,60 @@ class Ds4Worker:
         self, session: object, generation_plan: _Ds4GenerationPlan
     ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
         if generation_plan.parse_dsml_tools:
-            buffered: list[str] = []
-            async for chunk in self._generate_text_chunks(
+            async for chunk in self._generate_dsml_tool_chunks(
                 session, generation_plan
             ):
-                buffered.append(
-                    chunk.token if isinstance(chunk, TokenDetail) else chunk
-                )
-            text = "".join(buffered)
-            parsed = DsmlTools.parse_generated_message(text)
-            if parsed is None:
-                raise Ds4GenerationError("DS4 generated malformed DSML.")
-            self._remember_dsml_tool_replay(parsed)
-            if parsed.content:
-                yield parsed.content
-            for call in parsed.calls:
-                yield ToolCallToken(token="", call=call)
+                yield chunk
             return
+
+        async for text_chunk in self._generate_text_chunks(
+            session, generation_plan
+        ):
+            yield text_chunk
+
+    async def _generate_dsml_tool_chunks(
+        self, session: object, generation_plan: _Ds4GenerationPlan
+    ) -> AsyncGenerator[str | ToolCallToken, None]:
+        buffered: list[str] = []
+        dsml_start: int | None = None
+        argument_emitted_until = 0
 
         async for chunk in self._generate_text_chunks(
             session, generation_plan
         ):
-            yield chunk
+            text_chunk = (
+                chunk.token if isinstance(chunk, TokenDetail) else chunk
+            )
+            buffered.append(text_chunk)
+            text = "".join(buffered)
+
+            if dsml_start is None:
+                start_span = DsmlTools.tool_call_start_span(text)
+                if start_span is None:
+                    continue
+                dsml_start = start_span[0]
+                content, _ = DsmlTools.split_reasoning(
+                    text[:dsml_start].rstrip()
+                )
+                if content:
+                    yield content
+
+            raw_dsml = text[dsml_start:]
+            deltas, argument_emitted_until = DsmlTools.stream_argument_deltas(
+                raw_dsml, argument_emitted_until
+            )
+            for delta in deltas:
+                yield ToolCallToken(token=delta)
+
+        text = "".join(buffered)
+        parsed = DsmlTools.parse_generated_message(text)
+        if parsed is None:
+            raise Ds4GenerationError("DS4 generated malformed DSML.")
+        self._remember_dsml_tool_replay(parsed)
+        if dsml_start is None and parsed.content:
+            yield parsed.content
+        for call in parsed.calls:
+            yield ToolCallToken(token="", call=call)
 
     def _remember_dsml_tool_replay(self, parsed: DsmlParseResult) -> None:
         if not parsed.raw_dsml or not parsed.calls:

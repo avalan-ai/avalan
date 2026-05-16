@@ -166,6 +166,33 @@ class DsmlToolsTestCase(TestCase):
             DsmlTools.parse_generated_message("<｜DSML｜tool_calls>")
         )
 
+    def test_stream_argument_deltas_omits_dsml_tags(self):
+        raw = (
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">2 + '
+        )
+        deltas, offset = DsmlTools.stream_argument_deltas(raw, 0)
+
+        self.assertEqual(deltas, ())
+        self.assertEqual(offset, 0)
+
+        raw += "2</｜DSML｜parameter>\n"
+        raw += (
+            '<｜DSML｜parameter name="precision" string="false">2'
+            "</｜DSML｜parameter>\n"
+        )
+        deltas, offset = DsmlTools.stream_argument_deltas(raw, offset)
+
+        self.assertEqual(deltas, ("2 + 2", "2"))
+        self.assertGreater(offset, 0)
+
+        raw += "</｜DSML｜invoke>\n</｜DSML｜tool_calls>"
+        deltas, next_offset = DsmlTools.stream_argument_deltas(raw, offset)
+
+        self.assertEqual(deltas, ())
+        self.assertEqual(next_offset, offset)
+
 
 class ToolCallParserDsmlTestCase(TestCase):
     def test_tool_format_dsml_parses_calls(self):

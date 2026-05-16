@@ -44,9 +44,21 @@ class DsmlTools:
         "</DSML｜tool_calls>",
         "</tool_calls>",
     )
+    PARAMETER_END_MARKERS = (
+        "</｜DSML｜parameter>",
+        "</DSML｜parameter>",
+        "</parameter>",
+    )
     _INVOKE_START_RE = re.compile(
         r"<(?:｜DSML｜|DSML｜)?invoke\s+name=\"([^\"]+)\"\s*>",
         re.DOTALL,
+    )
+    _PARAM_START_RE = re.compile(
+        r"<(?:｜DSML｜|DSML｜)?parameter\b[^>]*>",
+        re.DOTALL,
+    )
+    _TOOL_CALLS_START_RE = re.compile(
+        r"\n?\n?<(?:(?:｜DSML｜|DSML｜)tool_calls|tool_calls)>",
     )
     _PARAM_RE = re.compile(
         r"<(?:｜DSML｜|DSML｜)?parameter\s+"
@@ -208,10 +220,7 @@ class DsmlTools:
     @classmethod
     def parse_generated_message(cls, text: str) -> DsmlParseResult | None:
         """Parse generated DSML text into content, calls, and metadata."""
-        start_match = re.search(
-            r"\n?\n?<(?:(?:｜DSML｜|DSML｜)tool_calls|tool_calls)>",
-            text,
-        )
+        start_match = cls._TOOL_CALLS_START_RE.search(text)
         if not start_match:
             content, reasoning = cls.split_reasoning(text)
             return DsmlParseResult(content, (), reasoning)
@@ -237,6 +246,55 @@ class DsmlTools:
             reasoning,
             text[start_match.start() : raw_end],
         )
+
+    @classmethod
+    def tool_call_start_span(cls, text: str) -> tuple[int, int] | None:
+        """Return the first generated DSML tool-call block start span."""
+        match = cls._TOOL_CALLS_START_RE.search(text)
+        return (match.start(), match.end()) if match else None
+
+    @classmethod
+    def stream_argument_deltas(
+        cls, raw_dsml: str, emitted_until: int
+    ) -> tuple[tuple[str, ...], int]:
+        """Return new DSML parameter-value deltas from ``raw_dsml``.
+
+        ``emitted_until`` is an absolute character offset into ``raw_dsml``.
+        The returned offset should be passed into the next call for the same
+        growing DSML block. Incomplete parameter close tags are retained so
+        tag text is not emitted as argument data.
+        """
+        assert emitted_until >= 0
+
+        deltas: list[str] = []
+        cursor = 0
+        new_emitted_until = emitted_until
+        keep = max(len(marker) for marker in cls.PARAMETER_END_MARKERS) - 1
+
+        while True:
+            start_match = cls._PARAM_START_RE.search(raw_dsml, cursor)
+            if not start_match:
+                break
+
+            value_start = start_match.end()
+            end_index = cls._first_parameter_end_index(raw_dsml, value_start)
+            if end_index is None:
+                value_end = max(value_start, len(raw_dsml) - keep)
+                next_cursor = len(raw_dsml)
+            else:
+                value_end = end_index
+                next_cursor = cls._parameter_end_after(raw_dsml, end_index)
+
+            segment_start = max(value_start, new_emitted_until)
+            if segment_start < value_end:
+                deltas.append(raw_dsml[segment_start:value_end])
+                new_emitted_until = value_end
+
+            if end_index is None:
+                break
+            cursor = next_cursor
+
+        return tuple(delta for delta in deltas if delta), new_emitted_until
 
     @classmethod
     def split_reasoning(cls, text: str) -> tuple[str, str | None]:
@@ -324,6 +382,23 @@ class DsmlTools:
                 )
             )
             position = body_end + invoke_end.end()
+
+    @classmethod
+    def _first_parameter_end_index(cls, text: str, start: int) -> int | None:
+        indexes = [
+            index
+            for marker in cls.PARAMETER_END_MARKERS
+            for index in (text.find(marker, start),)
+            if index >= 0
+        ]
+        return min(indexes) if indexes else None
+
+    @classmethod
+    def _parameter_end_after(cls, text: str, index: int) -> int:
+        for marker in cls.PARAMETER_END_MARKERS:
+            if text.startswith(marker, index):
+                return index + len(marker)
+        return index
 
     @staticmethod
     def _json_value(value: str) -> ToolValue:

@@ -1411,21 +1411,101 @@ def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
     chunks = run(run_case())
 
     assert chunks[0] == "I will calculate."
-    assert isinstance(chunks[1], ToolCallToken)
-    assert chunks[1].token == ""
-    assert chunks[1].call is not None
-    assert chunks[1].call.name == "math.calculator"
-    assert chunks[1].call.arguments == {
+    tool_deltas = [
+        chunk.token
+        for chunk in chunks
+        if isinstance(chunk, ToolCallToken) and chunk.call is None
+    ]
+    assert tool_deltas == ["2 + 2", "2"]
+    final_calls = [
+        chunk
+        for chunk in chunks
+        if isinstance(chunk, ToolCallToken) and chunk.call is not None
+    ]
+    assert len(final_calls) == 1
+    assert final_calls[0].token == ""
+    assert final_calls[0].call is not None
+    assert final_calls[0].call.name == "math.calculator"
+    assert final_calls[0].call.arguments == {
         "expression": "2 + 2",
         "precision": 2,
     }
     assert (
         "".join(
-            chunk.token if isinstance(chunk, ToolCallToken) else str(chunk)
+            str(chunk)
             for chunk in chunks
+            if not isinstance(chunk, ToolCallToken)
         )
         == "I will calculate."
     )
+
+
+def test_ds4_generation_stream_emits_split_dsml_argument_deltas(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[object]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101, 102, 103, 104, 105]
+        fake.token_text_map = {
+            101: (
+                b"I will calculate.\n\n"
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9ctool_calls>\n"
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9cinvoke "
+                b'name="math.calculator">\n'
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9cparameter "
+                b'name="expression" string="true">'
+            ),
+            102: b"2 + ",
+            103: b"2",
+            104: (
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9cparameter>\n"
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9cinvoke>\n"
+            ),
+            105: b"</\xef\xbd\x9cDSML\xef\xbd\x9ctool_calls>",
+        }
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=5,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks: list[object] = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    chunks = run(run_case())
+
+    assert [
+        chunk.token
+        for chunk in chunks
+        if isinstance(chunk, ToolCallToken) and chunk.call is None
+    ] == ["2 + 2"]
+    assert (
+        "".join(
+            str(chunk)
+            for chunk in chunks
+            if not isinstance(chunk, ToolCallToken)
+        )
+        == "I will calculate."
+    )
+    final_calls = [
+        chunk.call
+        for chunk in chunks
+        if isinstance(chunk, ToolCallToken) and chunk.call is not None
+    ]
+    assert len(final_calls) == 1
+    assert final_calls[0] is not None
+    assert final_calls[0].arguments == {"expression": "2 + 2"}
 
 
 def test_ds4_generated_tool_call_round_trips_through_tool_manager(
