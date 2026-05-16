@@ -69,6 +69,15 @@ def _stopping_criteria(
     return None
 
 
+def _normalize_backend(backend: Backend | str) -> Backend | str:
+    if isinstance(backend, Backend):
+        return backend
+    try:
+        return Backend(backend)
+    except ValueError:
+        return backend
+
+
 @lru_cache(maxsize=1)
 def _get_mlx_model() -> type[TextGenerationModel] | None:
     if not find_spec("mlx_lm"):
@@ -111,7 +120,7 @@ class TextGenerationModality:
     ) -> TextGenerationModel:
         assert engine_uri.model_id is not None
         if engine_uri.is_local:
-            match engine_settings.backend:
+            match _normalize_backend(engine_settings.backend):
                 case Backend.MLXLM:
                     mlx_loader = _get_mlx_model()
                     if mlx_loader is None:

@@ -4,7 +4,7 @@ from contextlib import AsyncExitStack
 from logging import Logger
 from sys import modules
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,6 +31,7 @@ from avalan.model.modalities.text import (
     TextTranslationModality,
     _get_ds4_model,
     _get_mlx_model,
+    _normalize_backend,
     _resolve_model_class,
     _stopping_criteria,
 )
@@ -115,6 +116,10 @@ def test_stopping_criteria_without_keywords() -> None:
         text_params=OperationTextParameters(),
     )
     assert _stopping_criteria(operation, DummyModel()) is None
+
+
+def test_normalize_backend_preserves_unknown_string() -> None:
+    assert _normalize_backend("custom") == "custom"
 
 
 def test_stopping_criteria_with_keywords() -> None:
@@ -313,6 +318,34 @@ def test_text_generation_load_engine_ds4(
         lambda: RecordingLoader,
     )
     settings = TransformerEngineSettings(backend=Backend.DS4)
+    logger = MagicMock(spec=Logger)
+    exit_stack = AsyncExitStack()
+
+    loader = TextGenerationModality().load_engine(
+        local_engine_uri,
+        settings,
+        logger,
+        exit_stack,
+    )
+
+    assert isinstance(loader, RecordingLoader)
+    assert loader.kwargs == {
+        "model_id": "local",
+        "settings": settings,
+        "logger": logger,
+    }
+
+
+def test_text_generation_load_engine_ds4_string_backend(
+    local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model",
+        lambda: RecordingLoader,
+    )
+    settings = TransformerEngineSettings(
+        backend=cast(Backend, Backend.DS4.value)
+    )
     logger = MagicMock(spec=Logger)
     exit_stack = AsyncExitStack()
 
