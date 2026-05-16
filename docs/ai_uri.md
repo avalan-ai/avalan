@@ -62,7 +62,9 @@ DS4-specific parameters must use the `ds4_` prefix. Common keys are
 URI-only keys include `ds4_directional_steering_file`,
 `ds4_directional_steering_attn`, and `ds4_directional_steering_ffn`.
 Unknown `ds4_` parameters are rejected. The DS4 backend is not a generic
-GGUF loader, does not yet support native tool calls, and treats CPU mode as a
+GGUF loader. Native DS4 tool calls are experimental: Avalan can render tool
+schemas and parse completed DSML tool blocks, but exact raw DSML replay and
+streaming argument deltas are still in progress. CPU mode is a
 debug/reference path only.
 
 ## Examples

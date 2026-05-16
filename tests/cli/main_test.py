@@ -196,7 +196,11 @@ class CliModelRunOptionTestCase(TestCase):
         normalized_docs = docs.lower()
 
         self.assertIn("not a generic gguf", normalized_docs)
-        self.assertIn("tool calls are not implemented", normalized_docs)
+        self.assertIn("native ds4 tool calls are experimental", normalized_docs)
+        self.assertIn("render tool schemas", normalized_docs)
+        self.assertIn("parse completed dsml tool blocks", normalized_docs)
+        self.assertIn("streaming", normalized_docs)
+        self.assertIn("argument deltas are still in progress", normalized_docs)
         self.assertIn("cpu backend exists for diagnostics", normalized_docs)
         self.assertNotIn("generic gguf models are supported", normalized_docs)
         self.assertNotIn(

@@ -296,7 +296,9 @@ printf '%s\n' 'Write a short greeting.' \
 ```
 
 Use `--ds4-native-backend cuda` on Linux CUDA builds. CPU mode is only a
-debug/reference path, and native tool calls are not implemented for DS4 yet.
+debug/reference path. Native DS4 tool calls are experimental: Avalan can
+render tool schemas and parse completed DSML tool blocks, but exact raw DSML
+replay and streaming argument deltas are still in progress.
 Use `ai://local//absolute/path.gguf` for absolute paths, or a normal
 `ai://local/relative/path.gguf` URI for paths relative to the current
 directory. See [docs/DS4.md](docs/DS4.md) for URI configuration examples,
