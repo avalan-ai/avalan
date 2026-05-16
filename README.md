@@ -22,7 +22,7 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
   [`transformers`](https://github.com/huggingface/transformers),
   [`vLLM`](https://github.com/vllm-project/vllm), and
   [`mlx-lm`](https://github.com/ml-explore/mlx-lm), plus native DS4 for
-  DS4-supported DeepSeek V4 Flash GGUFs.
+  [`DS4`](https://github.com/antirez/ds4)-supported DeepSeek V4 Flash GGUFs.
 - 🧰 **Built-in tools and memory** for browser automation, code execution,
   databases, MCP, search, YouTube, and vector-backed retrieval.
 - 🧠 **Composable orchestration** with flows, branching, reasoning strategies, and
@@ -305,6 +305,28 @@ Use `ai://local//absolute/path.gguf` for absolute paths, or a normal
 directory. See [docs/DS4.md](docs/DS4.md) for URI configuration examples,
 disabled reasoning, agent-tool examples, and integration-test environment
 variables.
+
+#### Tool use
+
+DS4-backed agents can use Avalan tools through the native DSML protocol:
+
+```sh
+printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
+  | avalan agent run \
+      --engine-uri "ai://local/${DS4_MODEL}" \
+      --backend ds4 \
+      --ds4-ctx 4096 \
+      --ds4-native-backend metal \
+      --tool "math.calculator" \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --run-temperature 0 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
+```
 
 ### Modalities
 

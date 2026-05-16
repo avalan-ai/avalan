@@ -1149,6 +1149,7 @@ class CLI:
             choices=[t.value for t in ReasoningTag],
             help="Reasoning tag style",
         )
+        CLI._add_ds4_backend_options(agent_run_parser)
 
         CLI._add_agent_settings_arguments(agent_run_parser)
         CLI._add_tool_settings_arguments(
@@ -1847,59 +1848,7 @@ class CLI:
                 "May be specified multiple times."
             ),
         )
-        ds4_options_parser = model_run_parser.add_argument_group(
-            "DS4 backend options"
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-ctx",
-            dest="ds4_ctx",
-            type=int,
-            default=None,
-            help="DS4 context size",
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-native-backend",
-            dest="ds4_native_backend",
-            type=str,
-            choices=["auto", "metal", "cuda", "cpu"],
-            default=None,
-            help="DS4 native backend",
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-mtp",
-            dest="ds4_mtp",
-            type=str,
-            default=None,
-            help="DS4 MTP model path",
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-mtp-draft",
-            dest="ds4_mtp_draft",
-            type=int,
-            default=None,
-            help="DS4 MTP draft-token count",
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-mtp-margin",
-            dest="ds4_mtp_margin",
-            type=float,
-            default=None,
-            help="DS4 MTP acceptance margin",
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-warm-weights",
-            dest="ds4_warm_weights",
-            action="store_true",
-            default=None,
-            help="Warm DS4 model weights when opening the engine",
-        )
-        ds4_options_parser.add_argument(
-            "--ds4-quality",
-            dest="ds4_quality",
-            action="store_true",
-            default=None,
-            help="Enable DS4 quality mode",
-        )
+        CLI._add_ds4_backend_options(model_run_parser)
         model_run_parser.add_argument(
             "--text-context",
             type=str,
@@ -2298,6 +2247,61 @@ class CLI:
             help="Allow CORS credentials",
         )
         return parser
+
+    @staticmethod
+    def _add_ds4_backend_options(parser: ArgumentParser) -> _ArgumentGroup:
+        group = parser.add_argument_group("DS4 backend options")
+        group.add_argument(
+            "--ds4-ctx",
+            dest="ds4_ctx",
+            type=int,
+            default=None,
+            help="DS4 context size",
+        )
+        group.add_argument(
+            "--ds4-native-backend",
+            dest="ds4_native_backend",
+            type=str,
+            choices=["auto", "metal", "cuda", "cpu"],
+            default=None,
+            help="DS4 native backend",
+        )
+        group.add_argument(
+            "--ds4-mtp",
+            dest="ds4_mtp",
+            type=str,
+            default=None,
+            help="DS4 MTP model path",
+        )
+        group.add_argument(
+            "--ds4-mtp-draft",
+            dest="ds4_mtp_draft",
+            type=int,
+            default=None,
+            help="DS4 MTP draft-token count",
+        )
+        group.add_argument(
+            "--ds4-mtp-margin",
+            dest="ds4_mtp_margin",
+            type=float,
+            default=None,
+            help="DS4 MTP acceptance margin",
+        )
+        group.add_argument(
+            "--ds4-warm-weights",
+            dest="ds4_warm_weights",
+            action="store_true",
+            default=None,
+            help="Warm DS4 model weights when opening the engine",
+        )
+        group.add_argument(
+            "--ds4-quality",
+            dest="ds4_quality",
+            action="store_true",
+            default=None,
+            help="Enable DS4 quality mode",
+        )
+        return group
 
     @staticmethod
     def _add_agent_settings_arguments(

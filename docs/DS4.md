@@ -57,7 +57,7 @@ path is also accepted:
 avalan model run "ai://local/%2FUsers/me/DS4%20models/ds4flash.gguf" --backend ds4
 ```
 
-The DS4-specific `model run` flags are:
+The DS4-specific flags are available on both `model run` and `agent run`:
 
 - `--ds4-ctx`
 - `--ds4-native-backend`
@@ -131,7 +131,10 @@ DS4 GGUF:
 ```bash
 printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
   | avalan agent run \
-      --engine-uri "ai://local/${DS4_MODEL}?backend=ds4&ds4_ctx=4096&ds4_native_backend=metal" \
+      --engine-uri "ai://local/${DS4_MODEL}" \
+      --backend ds4 \
+      --ds4-ctx 4096 \
+      --ds4-native-backend metal \
       --tool "math.calculator" \
       --run-max-new-tokens 256 \
       --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \

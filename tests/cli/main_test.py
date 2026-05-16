@@ -163,6 +163,44 @@ class CliModelRunOptionTestCase(TestCase):
         self.assertTrue(args.ds4_warm_weights)
         self.assertTrue(args.ds4_quality)
 
+    def test_agent_run_ds4_backend_options(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--backend",
+                "ds4",
+                "--engine-uri",
+                "ai://local/./ds4flash.gguf",
+                "--ds4-ctx",
+                "4096",
+                "--ds4-native-backend",
+                "metal",
+                "--ds4-mtp",
+                "draft.gguf",
+                "--ds4-mtp-draft",
+                "2",
+                "--ds4-mtp-margin",
+                "0.25",
+                "--ds4-warm-weights",
+                "--ds4-quality",
+            ]
+        )
+
+        self.assertEqual(args.backend, "ds4")
+        self.assertEqual(args.engine_uri, "ai://local/./ds4flash.gguf")
+        self.assertEqual(args.ds4_ctx, 4096)
+        self.assertEqual(args.ds4_native_backend, "metal")
+        self.assertEqual(args.ds4_mtp, "draft.gguf")
+        self.assertEqual(args.ds4_mtp_draft, 2)
+        self.assertEqual(args.ds4_mtp_margin, 0.25)
+        self.assertTrue(args.ds4_warm_weights)
+        self.assertTrue(args.ds4_quality)
+
     def test_documented_ds4_options_are_in_model_run_help(self) -> None:
         logger = MagicMock()
         docs = (
@@ -174,6 +212,9 @@ class CliModelRunOptionTestCase(TestCase):
         model_run_help = _find_parser(
             cli._parser, "prog model run"
         ).format_help()
+        agent_run_help = _find_parser(
+            cli._parser, "prog agent run"
+        ).format_help()
 
         for option in (
             "--ds4-ctx",
@@ -183,11 +224,14 @@ class CliModelRunOptionTestCase(TestCase):
             "--ds4-mtp-margin",
             "--ds4-warm-weights",
             "--ds4-quality",
-            "--no-reasoning",
             "--reasoning-effort",
         ):
             self.assertIn(option, docs)
             self.assertIn(option, model_run_help)
+            self.assertIn(option, agent_run_help)
+
+        self.assertIn("--no-reasoning", docs)
+        self.assertIn("--no-reasoning", model_run_help)
 
     def test_ds4_docs_call_out_limitations(self) -> None:
         docs = (
