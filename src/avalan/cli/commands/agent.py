@@ -294,15 +294,20 @@ def get_tool_settings(
 
 def _uses_ds4_backend(orchestrator: Orchestrator) -> bool:
     """Return whether the active orchestrator engine uses DS4."""
-    if not orchestrator.engine_agent:
+    engine_agent = orchestrator.engine_agent
+    if not engine_agent:
         return False
 
-    backend = orchestrator.engine_agent.engine_uri.params.get("backend")
-    if backend == Backend.DS4 or backend == Backend.DS4.value:
-        return True
+    engine_uri = getattr(engine_agent, "engine_uri", None)
+    params = getattr(engine_uri, "params", None)
+    if isinstance(params, dict):
+        backend = params.get("backend")
+        if backend == Backend.DS4 or backend == Backend.DS4.value:
+            return True
 
     engine = orchestrator.engine
-    return bool(engine and engine.model_type.lower().startswith("ds4"))
+    model_type = getattr(engine, "model_type", None)
+    return isinstance(model_type, str) and model_type.lower().startswith("ds4")
 
 
 def _agent_display_models(
