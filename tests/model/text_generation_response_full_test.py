@@ -6,6 +6,7 @@ from avalan.entities import (
     ReasoningSettings,
     ReasoningToken,
     TokenDetail,
+    ToolCall,
     ToolCallToken,
 )
 from avalan.model.response.text import TextGenerationResponse
@@ -140,3 +141,26 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[0].token, "tool")
         self.assertEqual(tokens[1].token, "det")
         self.assertEqual(tokens[-1].token, "<")
+
+    async def test_completed_tool_call_bypasses_reasoning_parser(self) -> None:
+        call = ToolCall(
+            id="call_1",
+            name="math.calculator",
+            arguments={"expression": "2 + 2"},
+        )
+
+        async def gen():
+            yield ToolCallToken(token="", call=call)
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        tokens = [token async for token in resp]
+
+        self.assertEqual(tokens, [ToolCallToken(token="", call=call)])

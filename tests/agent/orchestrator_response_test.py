@@ -555,6 +555,79 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         agent.assert_awaited_once()
         tool.assert_awaited_once()
 
+    async def test_to_str_with_structured_tool_call_token(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        call = ToolCall(
+            id="call1",
+            name="calc",
+            arguments={"expression": "2 + 2"},
+        )
+
+        async def outer_gen():
+            yield ToolCallToken(token="2 + 2", call=None)
+            yield ToolCallToken(token="", call=call)
+
+        settings = GenerationSettings()
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.return_value = None
+
+        async def tool_exec(call, context: ToolCallContext):
+            return ToolCallResult(
+                id="result1",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="4",
+            )
+
+        tool.side_effect = tool_exec
+
+        async def inner_gen():
+            yield "4"
+
+        inner_response = TextGenerationResponse(
+            lambda **_: inner_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
+        )
+        agent.return_value = inner_response
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        result = await resp.to_str()
+
+        self.assertEqual(result, "4")
+        tool.assert_awaited_once()
+        tool.get_calls.assert_called_once_with("4")
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        self.assertEqual(context.input[-2].tool_calls[0].id, "call1")
+        self.assertEqual(context.input[-1].content, "4")
+
     async def test_iteration_carries_tool_messages_to_nested_tool_call(self):
         engine = _DummyEngine()
         agent = AsyncMock(spec=EngineAgent)

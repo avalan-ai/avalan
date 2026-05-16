@@ -382,7 +382,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if self._event_manager:
             response.add_done_callback(self._on_consumed)
 
-        text = output or await response.to_str()
+        structured_calls: list[ToolCall] = []
+        if output is None:
+            text, structured_calls = await self._response_text_and_calls(
+                response
+            )
+        else:
+            text = output
 
         if self._tool_context is None:
             self._tool_context = ToolCallContext(
@@ -407,9 +413,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 )
 
             calls = (
-                self._tool_manager.get_calls(delta)
-                if self._tool_manager
-                else None
+                structured_calls
+                if structured_calls
+                else (
+                    self._tool_manager.get_calls(delta)
+                    if self._tool_manager
+                    else None
+                )
             )
             if not calls:
                 break
@@ -455,12 +465,32 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     await self._event_manager.trigger(result_event)
 
             current_response = await self._react_process(delta, results)
-            new_text = await current_response.to_str()
+            new_text, structured_calls = await self._response_text_and_calls(
+                current_response
+            )
             delta = new_text.replace(previous_text, "")
             previous_text = new_text
 
         self._response = current_response
         return delta
+
+    @staticmethod
+    async def _response_text_and_calls(
+        response: TextGenerationResponse,
+    ) -> tuple[str, list[ToolCall]]:
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        async for item in response:
+            if isinstance(item, ToolCallToken):
+                if item.call is not None:
+                    calls.append(item.call)
+                continue
+            if isinstance(item, Event):
+                continue
+            text_parts.append(
+                item.token if hasattr(item, "token") else str(item)
+            )
+        return "".join(text_parts), calls
 
     async def _react_process(
         self, output: str, results: list[ToolCallResult | ToolCallError]
