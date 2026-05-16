@@ -81,6 +81,17 @@ _WORKER_JOIN_TIMEOUT_SECONDS = 2.0
 _DS4_KV_CACHE_VERSION = 1
 _BYTES_PER_MIB = 1024 * 1024
 _DS4_TOOL_REPLAY_MAX_ENTRIES = 10000
+_DSML_TOOL_START_MARKERS = (
+    "\n\n<｜DSML｜tool_calls>",
+    "\n<｜DSML｜tool_calls>",
+    DsmlTools.TOOL_CALLS_START,
+    "\n\n<DSML｜tool_calls>",
+    "\n<DSML｜tool_calls>",
+    "<DSML｜tool_calls>",
+    "\n\n<tool_calls>",
+    "\n<tool_calls>",
+    "<tool_calls>",
+)
 
 _T = TypeVar("_T")
 
@@ -720,6 +731,7 @@ class Ds4Worker:
         buffered: list[str] = []
         dsml_start: int | None = None
         argument_emitted_until = 0
+        content_emitted_until = 0
 
         async for chunk in self._generate_text_chunks(
             session, generation_plan
@@ -733,13 +745,16 @@ class Ds4Worker:
             if dsml_start is None:
                 start_span = DsmlTools.tool_call_start_span(text)
                 if start_span is None:
+                    safe_end = len(text) - self._dsml_start_suffix_length(text)
+                    if content_emitted_until < safe_end:
+                        yield text[content_emitted_until:safe_end]
+                        content_emitted_until = safe_end
                     continue
                 dsml_start = start_span[0]
-                content, _ = DsmlTools.split_reasoning(
-                    text[:dsml_start].rstrip()
-                )
-                if content:
-                    yield content
+                content_end = len(text[:dsml_start].rstrip())
+                if content_emitted_until < content_end:
+                    yield text[content_emitted_until:content_end]
+                    content_emitted_until = content_end
 
             raw_dsml = text[dsml_start:]
             deltas, argument_emitted_until = DsmlTools.stream_argument_deltas(
@@ -753,10 +768,25 @@ class Ds4Worker:
         if parsed is None:
             raise Ds4GenerationError("DS4 generated malformed DSML.")
         self._remember_dsml_tool_replay(parsed)
-        if dsml_start is None and parsed.content:
-            yield parsed.content
+        if dsml_start is None and content_emitted_until < len(text):
+            yield text[content_emitted_until:]
         for call in parsed.calls:
             yield ToolCallToken(token="", call=call)
+
+    @staticmethod
+    def _dsml_start_suffix_length(text: str) -> int:
+        """Return unsafe suffix length that may become a DSML start marker."""
+        max_length = min(
+            len(text), max(len(marker) for marker in _DSML_TOOL_START_MARKERS)
+        )
+        for length in range(max_length, 0, -1):
+            suffix = text[-length:]
+            if any(
+                marker.startswith(suffix)
+                for marker in _DSML_TOOL_START_MARKERS
+            ):
+                return length
+        return 0
 
     def _remember_dsml_tool_replay(self, parsed: DsmlParseResult) -> None:
         if not parsed.raw_dsml or not parsed.calls:

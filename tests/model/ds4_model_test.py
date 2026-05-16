@@ -1512,6 +1512,80 @@ def test_ds4_generation_stream_emits_split_dsml_argument_deltas(
     assert final_calls[0].arguments == {"expression": "2 + 2"}
 
 
+def test_ds4_tool_mode_streams_plain_content_incrementally(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> tuple[object, list[int]]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101, 102, 103]
+        fake.token_text_map = {101: b"A", 102: b"B", 103: b"C"}
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=3,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+
+        iterator = aiter(response)
+        first = await anext(iterator)
+        eval_calls = list(fake.sessions[0].eval_calls)
+        _ = [chunk async for chunk in iterator]
+        model.close()
+        return first, eval_calls
+
+    first, eval_calls = run(run_case())
+
+    assert first == "A"
+    assert eval_calls == [101]
+
+
+def test_ds4_tool_mode_holds_only_potential_dsml_start_suffix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[object]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101, 102, 103, 104]
+        fake.token_text_map = {
+            101: b"Answer",
+            102: b"\n\n<",
+            103: b"not a tool call",
+            104: b".",
+        }
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=4,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    chunks = run(run_case())
+
+    assert chunks == ["Answer", "\n\n<not a tool call", "."]
+
+
 def test_ds4_generated_tool_call_round_trips_through_tool_manager(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
