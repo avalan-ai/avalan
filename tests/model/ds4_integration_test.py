@@ -20,7 +20,11 @@ from avalan.backends.ds4_native.errors import (
     Ds4ContextError,
     Ds4InvalidModel,
 )
+from avalan.entities import Message, MessageRole, MessageToolCall
 from avalan.model.nlp.text.ds4 import _CPU_WARNING, Ds4Model
+from avalan.tool.dsml import DsmlTools
+from avalan.tool.manager import ToolManager
+from avalan.tool.math import MathToolSet
 
 _LABEL = "DS4 real integration tests"
 _REUSE_PROMPT = "Name one primary color."
@@ -137,6 +141,77 @@ def test_ds4_real_model_second_call_syncs_prompt_prefix(
     assert prompt_tokens
     assert first_tokens[: len(prompt_tokens)] == prompt_tokens
     assert second_tokens[: len(prompt_tokens)] == prompt_tokens
+
+
+def test_ds4_real_model_tokenizes_exact_dsml_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forbid_hugging_face_tokenizer(monkeypatch, _LABEL)
+    model_path = _require_real_model_path()
+
+    async def scenario() -> tuple[str, list[int]]:
+        with Ds4Model(str(model_path), ds4_settings()) as model:
+            raw_dsml = (
+                "\n\n<DSML｜tool_calls>\n"
+                '<DSML｜invoke name="math.calculator">\n'
+                '<DSML｜parameter name="precision" string="false">'
+                "2"
+                "</DSML｜parameter>\n"
+                '<DSML｜parameter name="expression" string="true">'
+                "2 + 2"
+                "</DSML｜parameter>\n"
+                "</DSML｜invoke>\n"
+                "</DSML｜tool_calls>"
+            )
+            parsed = DsmlTools.parse_generated_message(raw_dsml)
+            assert parsed is not None
+            assert len(parsed.calls) == 1
+            call = parsed.calls[0]
+            worker = model._ds4_worker()
+            worker._remember_dsml_tool_replay(parsed)
+
+            captured: list[str] = []
+            original_tokenize = worker.tokenize_rendered_chat_async
+
+            async def capture_rendered(text: str) -> list[int]:
+                captured.append(text)
+                return await original_tokenize(text)
+
+            monkeypatch.setattr(
+                worker, "tokenize_rendered_chat_async", capture_rendered
+            )
+            manager = ToolManager.create_instance(
+                available_toolsets=[MathToolSet(namespace="math")]
+            )
+            tokens = await model._render_prompt_tokens_async(
+                [
+                    Message(role=MessageRole.USER, content="calculate"),
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        tool_calls=[
+                            MessageToolCall(
+                                id=str(call.id),
+                                name=call.name,
+                                arguments=call.arguments or {},
+                            )
+                        ],
+                    ),
+                    Message(role=MessageRole.TOOL, content="4"),
+                ],
+                None,
+                None,
+                greedy_settings(max_new_tokens=1),
+                tool=manager,
+            )
+            return captured[-1], tokens
+
+    rendered, tokens = run(scenario())
+
+    assert tokens
+    assert "<DSML｜tool_calls>" in rendered
+    assistant_history = rendered.split("<｜Assistant｜>", 1)[1]
+    assert "<｜DSML｜tool_calls>" not in assistant_history
+    assert '<DSML｜parameter name="precision" string="false">2' in rendered
 
 
 def test_ds4_real_model_invalid_path_fails_validation(
