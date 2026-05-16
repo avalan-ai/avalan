@@ -24,7 +24,7 @@ from ...engine import EngineAgent
 from base64 import b64encode
 from dataclasses import asdict, is_dataclass
 from inspect import iscoroutine
-from json import dumps
+from json import dumps, loads
 from queue import Queue
 from time import perf_counter
 from typing import Any, AsyncIterator, Callable, cast
@@ -121,12 +121,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return output
 
     async def to_json(self) -> str:
-        await self._react(self._response)
-        return await self._response.to_json()
+        output = await self._react(self._response)
+        return TextGenerationResponse.extract_json(output)
 
     async def to(self, entity_class: type) -> Any:
-        await self._react(self._response)
-        return await self._response.to(entity_class)
+        json = await self.to_json()
+        return entity_class(**loads(json))
 
     def __aiter__(self) -> "OrchestratorResponse":
         if self._event_manager:
@@ -478,6 +478,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     async def _response_text_and_calls(
         response: TextGenerationResponse,
     ) -> tuple[str, list[ToolCall]]:
+        if not response.is_async_generator:
+            return await response.to_str(), []
+
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         async for item in response:

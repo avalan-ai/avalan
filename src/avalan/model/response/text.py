@@ -163,6 +163,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         return self._output_token_count
 
     @property
+    def is_async_generator(self) -> bool:
+        return self._use_async_generator
+
+    @property
     def can_think(self) -> bool:
         return bool(self._reasoning_parser)
 
@@ -308,8 +312,12 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
     async def to_json(self) -> str:
         text = await self.to_str()
+        return self.extract_json(text)
+
+    @classmethod
+    def extract_json(cls, text: str) -> str:
         assert text
-        for pattern in self._json_patterns:
+        for pattern in cls._json_patterns:
             match = pattern.search(text)
             if match:
                 json_str = match.group(1)
