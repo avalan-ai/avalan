@@ -126,8 +126,9 @@ early.
 
 - DS4 only supports DS4-supported DeepSeek V4 Flash GGUF files in Avalan.
 - Generic GGUF models are not supported by this backend.
-- Native DS4 tool calls are not implemented yet. Do not use `--tool`,
-  `--tools`, or tool-role histories with `--backend ds4`.
+- Native DS4 tool calls are experimental. Avalan can render tool schemas and
+  parse completed DSML tool blocks, but exact raw DSML replay and streaming
+  argument deltas are still in progress.
 - CPU inference is a debug/reference path, not a production target.
 
 ## Integration Tests

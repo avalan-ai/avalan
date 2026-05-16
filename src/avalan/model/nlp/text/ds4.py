@@ -22,10 +22,14 @@ from ....entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    MessageToolCall,
     ProbabilityDistribution,
     ReasoningEffort,
     Token,
     TokenDetail,
+    ToolCall,
+    ToolCallToken,
+    ToolValue,
     TransformerEngineSettings,
 )
 from ....model.response.text import TextGenerationResponse
@@ -34,7 +38,9 @@ from .generation import TextGenerationModel
 
 import asyncio
 import hashlib
+import html
 import json
+import re
 from asyncio import CancelledError
 from collections.abc import (
     AsyncGenerator,
@@ -88,8 +94,24 @@ class _Ds4GenerationPlan:
     stop_strings: tuple[str, ...]
     use_sampling: bool
     emit_token_details: bool = False
+    parse_dsml_tools: bool = False
     probability_distribution: ProbabilityDistribution = "log_softmax"
     top_logprobs: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4PromptMessage:
+    role: MessageRole
+    content: str
+    reasoning: str | None = None
+    tool_calls: tuple[MessageToolCall, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4DsmlParseResult:
+    content: str
+    calls: tuple[ToolCall, ...]
+    reasoning: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +144,314 @@ class _Ds4CacheEntryPath:
     metadata_path: Path
     payload_path: Path
     token_digest: str
+
+
+class _Ds4DsmlTools:
+    """Render and parse DS4 server-compatible DSML tool blocks."""
+
+    _TOOL_CALLS_START = "<｜DSML｜tool_calls>"
+    _TOOL_CALLS_END = "</｜DSML｜tool_calls>"
+    _INVOKE_START_RE = re.compile(
+        r"<(?:｜DSML｜|DSML｜)?invoke\s+name=\"([^\"]+)\"\s*>",
+        re.DOTALL,
+    )
+    _PARAM_RE = re.compile(
+        r"<(?:｜DSML｜|DSML｜)?parameter\s+"
+        r"name=\"([^\"]+)\"(?:\s+string=\"(true|false)\")?\s*>"
+        r"(.*?)"
+        r"</(?:｜DSML｜|DSML｜)?parameter>",
+        re.DOTALL,
+    )
+
+    @classmethod
+    def render_prompt(
+        cls,
+        system_content: str | None,
+        messages: list[_Ds4PromptMessage],
+        tool_schemas: str | None,
+        think_mode: ThinkMode,
+    ) -> str:
+        """Return a rendered DS4 chat prompt including tool context."""
+        system_parts = [system_content] if system_content else []
+        if tool_schemas:
+            system_parts.append(cls._tools_prompt(tool_schemas))
+
+        rendered = [
+            "<｜begin▁of▁sentence｜>",
+            "\n\n".join(system_parts),
+        ]
+        pending_assistant = False
+        pending_tool_result = False
+        think = think_mode in {ThinkMode.HIGH, ThinkMode.MAX}
+        tool_context = bool(tool_schemas) or any(
+            message.tool_calls or message.role is MessageRole.TOOL
+            for message in messages
+        )
+        last_user_index = max(
+            (
+                index
+                for index, message in enumerate(messages)
+                if message.role in {MessageRole.USER, MessageRole.TOOL}
+            ),
+            default=-1,
+        )
+
+        for index, message in enumerate(messages):
+            if message.role is MessageRole.USER:
+                rendered.extend(("<｜User｜>", message.content))
+                pending_assistant = True
+                pending_tool_result = False
+            elif message.role is MessageRole.TOOL:
+                if not pending_tool_result:
+                    rendered.append("<｜User｜>")
+                rendered.extend(
+                    (
+                        "<tool_result>",
+                        cls._escape_text(message.content),
+                        "</tool_result>",
+                    )
+                )
+                pending_assistant = True
+                pending_tool_result = True
+            elif message.role is MessageRole.ASSISTANT:
+                if pending_assistant:
+                    rendered.append("<｜Assistant｜>")
+                    if think:
+                        if tool_context or index > last_user_index:
+                            rendered.extend(
+                                (
+                                    "<think>",
+                                    message.reasoning or "",
+                                    "</think>",
+                                )
+                            )
+                        else:
+                            rendered.append("</think>")
+                    else:
+                        rendered.append("</think>")
+                rendered.append(message.content)
+                rendered.append(cls.render_tool_calls(message.tool_calls))
+                rendered.append("<｜end▁of▁sentence｜>")
+                pending_assistant = False
+                pending_tool_result = False
+
+        if pending_assistant:
+            rendered.append("<｜Assistant｜>")
+            rendered.append("<think>" if think else "</think>")
+        return "".join(rendered)
+
+    @classmethod
+    def render_tool_schemas(
+        cls, schemas: list[dict[str, object]] | None
+    ) -> str | None:
+        """Return DS4 server-style newline-delimited tool schemas."""
+        if not schemas:
+            return None
+        lines = []
+        for schema in schemas:
+            function_schema = (
+                schema.get("function")
+                if schema.get("type") == "function"
+                and isinstance(schema.get("function"), dict)
+                else schema
+            )
+            lines.append(
+                json.dumps(
+                    function_schema,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=False,
+                )
+            )
+        return "\n".join(lines)
+
+    @classmethod
+    def render_tool_calls(cls, calls: tuple[MessageToolCall, ...]) -> str:
+        """Return canonical DSML text for assistant tool calls."""
+        if not calls:
+            return ""
+        parts = ["\n\n", cls._TOOL_CALLS_START, "\n"]
+        for call in calls:
+            parts.extend(
+                (
+                    '<｜DSML｜invoke name="',
+                    cls._escape_attr(call.name),
+                    '">\n',
+                )
+            )
+            arguments = (
+                call.arguments
+                if isinstance(call.arguments, dict)
+                else {"arguments": call.arguments}
+            )
+            for name, value in arguments.items():
+                parts.append(cls._render_parameter(str(name), value))
+            parts.append("</｜DSML｜invoke>\n")
+        parts.append(cls._TOOL_CALLS_END)
+        return "".join(parts)
+
+    @classmethod
+    def parse_generated_message(cls, text: str) -> _Ds4DsmlParseResult | None:
+        """Parse generated DSML text into Avalan tool calls."""
+        start_match = re.search(
+            r"\n?\n?<(?:(?:｜DSML｜|DSML｜)tool_calls|tool_calls)>",
+            text,
+        )
+        if not start_match:
+            content, reasoning = cls._split_reasoning(text)
+            return _Ds4DsmlParseResult(content, (), reasoning)
+
+        end_match = re.search(
+            r"</(?:(?:｜DSML｜|DSML｜)tool_calls|tool_calls)>",
+            text[start_match.end() :],
+        )
+        if not end_match:
+            return None
+
+        content, reasoning = cls._split_reasoning(
+            text[: start_match.start()].rstrip()
+        )
+        block_start = start_match.end()
+        block_end = block_start + end_match.start()
+        block = text[block_start:block_end]
+        calls = cls._parse_calls(block)
+        return _Ds4DsmlParseResult(content, tuple(calls), reasoning)
+
+    @classmethod
+    def _parse_calls(cls, block: str) -> list[ToolCall]:
+        calls: list[ToolCall] = []
+        position = 0
+        while True:
+            match = cls._INVOKE_START_RE.search(block, position)
+            if not match:
+                return calls
+            invoke_end = re.search(
+                r"</(?:｜DSML｜|DSML｜)?invoke>", block[match.end() :]
+            )
+            if not invoke_end:
+                return []
+            body_end = match.end() + invoke_end.start()
+            body = block[match.end() : body_end]
+            arguments: dict[str, ToolValue] = {}
+            for parameter in cls._PARAM_RE.finditer(body):
+                name = html.unescape(parameter.group(1))
+                raw_value = parameter.group(3)
+                if parameter.group(2) == "false":
+                    value = cls._json_value(raw_value)
+                else:
+                    value = html.unescape(raw_value)
+                arguments[name] = value
+            calls.append(
+                ToolCall(
+                    id=f"ds4_tool_{len(calls)}",
+                    name=html.unescape(match.group(1)),
+                    arguments=arguments,
+                )
+            )
+            position = body_end + invoke_end.end()
+
+    @staticmethod
+    def _json_value(value: str) -> ToolValue:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return cast(ToolValue, parsed)
+
+    @staticmethod
+    def _split_reasoning(text: str) -> tuple[str, str | None]:
+        if text.startswith("<think>") and "</think>" in text:
+            reasoning, content = text.removeprefix("<think>").split(
+                "</think>", 1
+            )
+            return content, reasoning
+        return text, None
+
+    @classmethod
+    def _render_parameter(cls, name: str, value: object) -> str:
+        is_string = isinstance(value, str)
+        rendered_value = (
+            cls._escape_parameter_text(cast(str, value))
+            if is_string
+            else cls._escape_json_literal(
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=False,
+                )
+            )
+        )
+        return (
+            f'<｜DSML｜parameter name="{cls._escape_attr(name)}" '
+            f'string="{"true" if is_string else "false"}">'
+            f"{rendered_value}</｜DSML｜parameter>\n"
+        )
+
+    @classmethod
+    def _tools_prompt(cls, tool_schemas: str) -> str:
+        return (
+            "## Tools\n\n"
+            "You have access to a set of tools to help answer the user "
+            "question. You can invoke tools by writing a "
+            '"<｜DSML｜tool_calls>" block like the following:\n\n'
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="$TOOL_NAME">\n'
+            '<｜DSML｜parameter name="$PARAMETER_NAME" '
+            'string="true|false">$PARAMETER_VALUE'
+            "</｜DSML｜parameter>\n"
+            "...\n"
+            "</｜DSML｜invoke>\n"
+            '<｜DSML｜invoke name="$TOOL_NAME2">\n'
+            "...\n"
+            "</｜DSML｜invoke>\n"
+            "</｜DSML｜tool_calls>\n\n"
+            "String parameters should be specified as raw text and set "
+            '`string="true"`. Preserve characters such as `>`, `&`, and '
+            "`&&` exactly; never replace normal string characters with XML "
+            "or HTML entity escapes. Only if a string value itself contains "
+            "the exact closing parameter tag `</｜DSML｜parameter>`, write "
+            "that tag as `&lt;/｜DSML｜parameter>` inside the value. For all "
+            "other types (numbers, booleans, arrays, objects), pass the "
+            'value in JSON format and set `string="false"`.\n\n'
+            "If thinking_mode is enabled (triggered by <think>), you MUST "
+            "output your complete reasoning inside <think>...</think> "
+            "BEFORE any tool calls or final response.\n\n"
+            "Otherwise, output directly after </think> with tool calls or "
+            "final response.\n\n"
+            "### Available Tool Schemas\n\n"
+            f"{tool_schemas}\n\n"
+            "You MUST strictly follow the above defined tool name and "
+            "parameter schemas to invoke tool calls. Use the exact parameter "
+            "names from the schemas."
+        )
+
+    @staticmethod
+    def _escape_attr(value: str) -> str:
+        return (
+            value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    @staticmethod
+    def _escape_text(value: str) -> str:
+        return (
+            value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    @staticmethod
+    def _escape_parameter_text(value: str) -> str:
+        return value.replace("</｜DSML｜parameter>", "&lt;/｜DSML｜parameter>")
+
+    @staticmethod
+    def _escape_json_literal(value: str) -> str:
+        return value.replace(
+            "</｜DSML｜parameter>", "\\u003c/｜DSML｜parameter>"
+        )
 
 
 class _Ds4DiskKvCache:
@@ -501,7 +831,7 @@ class Ds4Worker:
     def render_prompt_tokens(
         self,
         system_content: str | None,
-        messages: list[tuple[MessageRole, str]],
+        messages: list[_Ds4PromptMessage],
         think_mode: ThinkMode,
     ) -> list[int]:
         """Render DS4 chat prompt tokens for legacy synchronous callers."""
@@ -514,19 +844,19 @@ class Ds4Worker:
     async def render_prompt_tokens_async(
         self,
         system_content: str | None,
-        messages: list[tuple[MessageRole, str]],
+        messages: list[_Ds4PromptMessage],
         think_mode: ThinkMode,
     ) -> list[int]:
         """Render DS4 chat prompt tokens through pyds4's async engine."""
         engine = self._require_engine()
         effective_think_mode = self._effective_think_mode(think_mode)
 
-        if len(messages) == 1 and messages[0][0] is MessageRole.USER:
+        if len(messages) == 1 and messages[0].role is MessageRole.USER:
             result = await self._call_async(
                 engine,
                 "encode_chat_prompt",
                 system_content,
-                messages[0][1],
+                messages[0].content,
                 effective_think_mode,
             )
         else:
@@ -540,13 +870,13 @@ class Ds4Worker:
                     "system",
                     system_content,
                 )
-            for role, content in messages:
+            for message in messages:
                 await self._call_async(
                     engine,
                     "chat_append_message",
                     tokens,
-                    role.value,
-                    content,
+                    message.role.value,
+                    message.content,
                 )
             await self._call_async(
                 engine,
@@ -558,11 +888,18 @@ class Ds4Worker:
 
         return self._token_list(result)
 
+    async def tokenize_rendered_chat_async(self, text: str) -> list[int]:
+        """Tokenize a DS4 server-rendered chat prompt."""
+        result = await self._call_async(
+            self._require_engine(), "tokenize_rendered_chat", text
+        )
+        return self._token_list(result)
+
     async def stream(
         self,
         prompt_tokens: list[int],
         generation_plan: _Ds4GenerationPlan,
-    ) -> AsyncGenerator[str | TokenDetail, None]:
+    ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
         """Yield DS4 output chunks from the pyds4 async facade."""
         if self._closed:
             raise Ds4LoadError("DS4 worker is closed.")
@@ -609,7 +946,11 @@ class Ds4Worker:
         """Return complete DS4 output text from the async generation core."""
         return "".join(
             [
-                chunk.token if isinstance(chunk, TokenDetail) else chunk
+                (
+                    chunk.token
+                    if isinstance(chunk, (TokenDetail, ToolCallToken))
+                    else chunk
+                )
                 async for chunk in self.stream(prompt_tokens, generation_plan)
             ]
         )
@@ -660,6 +1001,32 @@ class Ds4Worker:
         )
 
     async def _generate_chunks(
+        self, session: object, generation_plan: _Ds4GenerationPlan
+    ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
+        if generation_plan.parse_dsml_tools:
+            buffered: list[str] = []
+            async for chunk in self._generate_text_chunks(
+                session, generation_plan
+            ):
+                buffered.append(
+                    chunk.token if isinstance(chunk, TokenDetail) else chunk
+                )
+            text = "".join(buffered)
+            parsed = _Ds4DsmlTools.parse_generated_message(text)
+            if parsed is None:
+                raise Ds4GenerationError("DS4 generated malformed DSML.")
+            if parsed.content:
+                yield parsed.content
+            for call in parsed.calls:
+                yield ToolCallToken(token="", call=call)
+            return
+
+        async for chunk in self._generate_text_chunks(
+            session, generation_plan
+        ):
+            yield chunk
+
+    async def _generate_text_chunks(
         self, session: object, generation_plan: _Ds4GenerationPlan
     ) -> AsyncGenerator[str | TokenDetail, None]:
         engine = self._require_engine()
@@ -1331,6 +1698,7 @@ class Ds4Model(TextGenerationModel):
     ) -> TextGenerationResponse:
         _ = skip_special_tokens
         generation_settings = settings or GenerationSettings()
+        parse_dsml_tools = self._uses_dsml_tools(input, tool)
         prompt_tokens = await self._render_prompt_tokens_async(
             input,
             system_prompt,
@@ -1342,6 +1710,7 @@ class Ds4Model(TextGenerationModel):
             generation_settings,
             len(prompt_tokens),
             manual_sampling=manual_sampling,
+            parse_dsml_tools=parse_dsml_tools,
             pick=pick,
         )
         generation_settings = replace(
@@ -1421,13 +1790,19 @@ class Ds4Model(TextGenerationModel):
         *,
         tool: ToolManager | None,
     ) -> list[int]:
-        if tool is not None:
-            raise NotImplementedError(_UNSUPPORTED_TOOLS_MESSAGE)
-
         worker = self._ds4_worker()
         system_content, messages = self._ds4_prompt_messages(
             input, system_prompt, developer_prompt
         )
+        tool_schemas = self._tool_schemas(tool)
+        if tool_schemas is not None or self._messages_include_tools(messages):
+            rendered = _Ds4DsmlTools.render_prompt(
+                system_content,
+                messages,
+                tool_schemas,
+                self._think_mode(settings),
+            )
+            return self._run_tokenize_rendered_chat(worker, rendered)
         return worker.render_prompt_tokens(
             system_content, messages, self._think_mode(settings)
         )
@@ -1441,13 +1816,19 @@ class Ds4Model(TextGenerationModel):
         *,
         tool: ToolManager | None,
     ) -> list[int]:
-        if tool is not None:
-            raise NotImplementedError(_UNSUPPORTED_TOOLS_MESSAGE)
-
         worker = self._ds4_worker()
         system_content, messages = self._ds4_prompt_messages(
             input, system_prompt, developer_prompt
         )
+        tool_schemas = self._tool_schemas(tool)
+        if tool_schemas is not None or self._messages_include_tools(messages):
+            rendered = _Ds4DsmlTools.render_prompt(
+                system_content,
+                messages,
+                tool_schemas,
+                self._think_mode(settings),
+            )
+            return await worker.tokenize_rendered_chat_async(rendered)
         return await worker.render_prompt_tokens_async(
             system_content, messages, self._think_mode(settings)
         )
@@ -1457,7 +1838,7 @@ class Ds4Model(TextGenerationModel):
         input: Input,
         system_prompt: str | None,
         developer_prompt: str | None,
-    ) -> tuple[str | None, list[tuple[MessageRole, str]]]:
+    ) -> tuple[str | None, list[_Ds4PromptMessage]]:
         try:
             raw_messages = self._messages(input, None, None, None)
         except AssertionError as error:
@@ -1469,12 +1850,10 @@ class Ds4Model(TextGenerationModel):
             system_parts.append(system_prompt)
         if developer_prompt:
             developer_parts.append(developer_prompt)
-        messages: list[tuple[MessageRole, str]] = []
+        messages: list[_Ds4PromptMessage] = []
         for message in raw_messages:
             role = self._message_role(message)
             content = self._message_text(message.content)
-            if self._has_tool_payload(message) or role is MessageRole.TOOL:
-                raise NotImplementedError(_UNSUPPORTED_TOOLS_MESSAGE)
             if role is MessageRole.DEVELOPER:
                 if content:
                     developer_parts.append(content)
@@ -1483,12 +1862,25 @@ class Ds4Model(TextGenerationModel):
                 if content:
                     system_parts.append(content)
                 continue
-            if role in {MessageRole.USER, MessageRole.ASSISTANT}:
-                messages.append((role, content))
+            if role in {
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL,
+            }:
+                messages.append(
+                    _Ds4PromptMessage(
+                        role=role,
+                        content=content,
+                        reasoning=message.thinking,
+                        tool_calls=tuple(message.tool_calls or ()),
+                    )
+                )
                 continue
             raise ValueError(f"Unsupported DS4 message role {role!r}.")
 
-        if not messages or not any(content.strip() for _, content in messages):
+        if not messages or not any(
+            message.content.strip() for message in messages
+        ):
             raise ValueError("DS4 prompt must include non-empty text input.")
 
         return (
@@ -1528,6 +1920,40 @@ class Ds4Model(TextGenerationModel):
             message.tool_calls
             or message.tool_call_result
             or message.tool_call_error
+        )
+
+    @staticmethod
+    def _messages_include_tools(messages: list[_Ds4PromptMessage]) -> bool:
+        return any(
+            message.role is MessageRole.TOOL or bool(message.tool_calls)
+            for message in messages
+        )
+
+    @classmethod
+    def _tool_schemas(cls, tool: ToolManager | None) -> str | None:
+        if tool is None or tool.is_empty:
+            return None
+        return _Ds4DsmlTools.render_tool_schemas(tool.json_schemas())
+
+    def _uses_dsml_tools(self, input: Input, tool: ToolManager | None) -> bool:
+        if tool is not None and not tool.is_empty:
+            return True
+        try:
+            raw_messages = self._messages(input, None, None, None)
+        except AssertionError:
+            return False
+        return any(
+            self._has_tool_payload(message)
+            or self._message_role(message) is MessageRole.TOOL
+            for message in raw_messages
+        )
+
+    @staticmethod
+    def _run_tokenize_rendered_chat(
+        worker: Ds4Worker, rendered: str
+    ) -> list[int]:
+        return Ds4Worker._run_sync(
+            lambda: worker.tokenize_rendered_chat_async(rendered)
         )
 
     @classmethod
@@ -1573,7 +1999,7 @@ class Ds4Model(TextGenerationModel):
         inputs: list[int],
         generation_plan: _Ds4GenerationPlan,
         settings: GenerationSettings | None = None,
-    ) -> AsyncGenerator[str | TokenDetail, None]:
+    ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
         async for chunk in self._ds4_worker().stream(inputs, generation_plan):
             yield chunk
 
@@ -1591,6 +2017,7 @@ class Ds4Model(TextGenerationModel):
         prompt_length: int,
         *,
         manual_sampling: bool | int = False,
+        parse_dsml_tools: bool = False,
         pick: int | None = None,
     ) -> _Ds4GenerationPlan:
         self._validate_generation_features(settings)
@@ -1602,6 +2029,7 @@ class Ds4Model(TextGenerationModel):
         return _Ds4GenerationPlan(
             emit_token_details=bool(manual_sampling),
             max_new_tokens=self._max_new_tokens(settings, prompt_length),
+            parse_dsml_tools=parse_dsml_tools,
             probability_distribution="log_softmax",
             sampling_options=sampling_options,
             stop_strings=self._stop_strings(settings.stop_strings),

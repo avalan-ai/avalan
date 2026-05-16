@@ -852,15 +852,24 @@ Verification:
 
 ### Slice 5.5: Native Tool Calls And DSML Replay
 
-- [ ] Promote or bind DS4 server DSML rendering/parsing/replay helpers.
-- [ ] Map Avalan tool schemas to DS4-native tool schema rendering.
-- [ ] Parse generated DSML blocks into Avalan `ToolCallToken`.
-- [ ] Replay tool results exactly enough to preserve KV-prefix alignment.
+- [~] Promote or bind DS4 server DSML rendering/parsing/replay helpers.
+- [x] Map Avalan tool schemas to DS4-native tool schema rendering.
+- [x] Parse generated DSML blocks into Avalan `ToolCallToken`.
+- [~] Replay tool results exactly enough to preserve KV-prefix alignment.
+
+Note: Avalan now has an in-backend DS4 DSML adapter modeled after the DS4
+server renderer/parser. Non-empty `ToolManager` schemas are rendered into the
+DS4 tools prompt and tokenized with `tokenize_rendered_chat`, tool-role
+history is rendered as DSML `<tool_result>` context, and completed generated
+DSML blocks are converted to Avalan `ToolCallToken` objects with empty visible
+text so tool calls do not pollute the assistant answer. Exact raw-DSML replay
+and streaming argument deltas remain open for the next slice; current tool
+mode buffers the generated assistant turn before parsing DSML.
 
 Positive tests:
 
-- [ ] Tool schema rendering matches DS4 server canonical output.
-- [ ] Generated tool call round-trips through Avalan `ToolManager`.
+- [~] Tool schema rendering matches DS4 server canonical output.
+- [~] Generated tool call round-trips through Avalan `ToolManager`.
 - [ ] Tool-call streaming emits argument deltas without polluting final text.
 - [ ] Two-turn tool-call conversation reuses the live session prefix.
 - [ ] At least one README-style tooling example, such as
@@ -869,7 +878,7 @@ Positive tests:
 
 Negative tests:
 
-- [ ] Malformed DSML raises or streams a structured parse error according to
+- [x] Malformed DSML raises or streams a structured parse error according to
   Avalan's tool contract.
 - [ ] Unknown tool ID falls back to documented canonical rendering or fails
   clearly.

@@ -42,10 +42,12 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    MessageToolCall,
     ReasoningEffort,
     ReasoningSettings,
     Token,
     TokenDetail,
+    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.model.nlp.text.ds4 import (
@@ -56,6 +58,7 @@ from avalan.model.nlp.text.ds4 import (
     _Ds4GenerationPlan,
 )
 from avalan.tool.manager import ToolManager
+from avalan.tool.math import MathToolSet
 
 
 class NativeBackend(StrEnum):
@@ -237,6 +240,7 @@ class FakeNativeEngine:
         self.token_logprobs: dict[int, float] = {}
         self.token_text_map: dict[int, bytes] = {}
         self.tokenization_calls: list[tuple[str, object, object]] = []
+        self.tokenize_rendered_chat_calls: list[str] = []
         self.top_logprobs: list[tuple[int, float]] = []
         self.instances.append(self)
 
@@ -308,6 +312,11 @@ class FakeNativeEngine:
             NativeThinkMode.MAX: 22,
         }[think_mode]
         return [30, len(system or ""), len(prompt), prefix_token]
+
+    def tokenize_rendered_chat(self, text: str) -> list[int]:
+        self.thread_ids.append(get_ident())
+        self.tokenize_rendered_chat_calls.append(text)
+        return [40, len(text)]
 
 
 FakeNativeEngine.__module__ = "pyds4"
@@ -525,6 +534,14 @@ def _fake_async_engine_type(
                     lambda: self._native.encode_chat_prompt(
                         system, prompt, think_mode
                     )
+                ),
+            )
+
+        async def tokenize_rendered_chat(self, text: str) -> list[int]:
+            return cast(
+                list[int],
+                await self._call(
+                    lambda: self._native.tokenize_rendered_chat(text)
                 ),
             )
 
@@ -961,30 +978,70 @@ def test_ds4_input_token_count_counts_rendered_token_ids(
     model.close()
 
 
-def test_ds4_tool_manager_raises_unsupported_tool_error(
+def test_ds4_tool_manager_renders_native_dsml_tool_prompt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
     model_path = _model_file(tmp_path)
     model = Ds4Model(str(model_path))
-    manager = ToolManager.create_instance()
+    manager = ToolManager.create_instance(
+        available_toolsets=[MathToolSet(namespace="math")]
+    )
 
-    with pytest.raises(NotImplementedError, match="tool schemas"):
-        run(model("hello", tool=manager))
+    response = run(
+        model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(max_new_tokens=0),
+        )
+    )
 
+    assert run(response.to_str()) == ""
+    fake = _latest_fake_engine()
+    rendered = fake.tokenize_rendered_chat_calls[-1]
+    assert "## Tools" in rendered
+    assert '"name":"math.calculator"' in rendered
+    assert "<｜User｜>hello<｜Assistant｜></think>" in rendered
+    assert response.input_token_count == 2
     model.close()
 
 
-def test_ds4_tool_role_history_raises_unsupported_tool_error(
+def test_ds4_tool_role_history_renders_dsml_tool_result(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
     model_path = _model_file(tmp_path)
     model = Ds4Model(str(model_path))
 
-    with pytest.raises(NotImplementedError, match="tool schemas"):
-        run(model(Message(role=MessageRole.TOOL, content="tool result")))
+    response = run(
+        model(
+            [
+                Message(role=MessageRole.USER, content="calculate"),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=[
+                        MessageToolCall(
+                            id="call_1",
+                            name="math.calculator",
+                            arguments={"expression": "2 + 2"},
+                        )
+                    ],
+                ),
+                Message(role=MessageRole.TOOL, content="4"),
+            ],
+            settings=GenerationSettings(max_new_tokens=0),
+        )
+    )
 
+    assert run(response.to_str()) == ""
+    rendered = _latest_fake_engine().tokenize_rendered_chat_calls[-1]
+    assert '<｜DSML｜invoke name="math.calculator">' in rendered
+    assert (
+        '<｜DSML｜parameter name="expression" string="true">2 + 2'
+        "</｜DSML｜parameter>"
+        in rendered
+    )
+    assert "<tool_result>4</tool_result>" in rendered
     model.close()
 
 
@@ -1302,6 +1359,101 @@ def test_ds4_generation_stream_returns_plain_strings_without_token_details(
     assert chunks == ["A"]
     assert all(isinstance(chunk, str) for chunk in chunks)
     assert not any(isinstance(chunk, TokenDetail) for chunk in chunks)
+
+
+def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[object]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        dsml = (
+            "I will calculate.\n\n"
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">'
+            "2 + 2"
+            "</｜DSML｜parameter>\n"
+            '<｜DSML｜parameter name="precision" string="false">'
+            "2"
+            "</｜DSML｜parameter>\n"
+            "</｜DSML｜invoke>\n"
+            "</｜DSML｜tool_calls>"
+        )
+        fake.argmax_script = [101, 102]
+        fake.token_text_map = {
+            101: dsml.encode(),
+            102: b" ignored",
+        }
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks: list[object] = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    chunks = run(run_case())
+
+    assert chunks[0] == "I will calculate."
+    assert isinstance(chunks[1], ToolCallToken)
+    assert chunks[1].token == ""
+    assert chunks[1].call is not None
+    assert chunks[1].call.name == "math.calculator"
+    assert chunks[1].call.arguments == {
+        "expression": "2 + 2",
+        "precision": 2,
+    }
+    assert (
+        "".join(
+            chunk.token if isinstance(chunk, ToolCallToken) else str(chunk)
+            for chunk in chunks
+        )
+        == "I will calculate."
+    )
+
+
+def test_ds4_generation_stream_rejects_malformed_dsml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> None:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        fake.token_text_map = {
+            101: b"<\xef\xbd\x9cDSML\xef\xbd\x9ctool_calls>",
+        }
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        with pytest.raises(Ds4GenerationError, match="malformed DSML"):
+            _ = [chunk async for chunk in response]
+        model.close()
+
+    run(run_case())
 
 
 def test_ds4_generation_stream_returns_token_details_when_requested(
@@ -2504,7 +2656,9 @@ def test_ds4_prompt_messages_merge_system_developer_and_text_content(
     )
 
     assert system_content == "System\n\nDeveloper instructions:\nDeveloper"
-    assert messages == [(MessageRole.USER, "Hello")]
+    assert len(messages) == 1
+    assert messages[0].role is MessageRole.USER
+    assert messages[0].content == "Hello"
 
 
 def test_ds4_prompt_messages_reject_invalid_input_and_role(
@@ -2729,7 +2883,7 @@ def test_ds4_model_unloaded_worker_and_sync_tool_errors(
 
     with pytest.raises(Ds4LoadError, match="worker"):
         model._ds4_worker()
-    with pytest.raises(NotImplementedError, match="tool"):
+    with pytest.raises(Ds4LoadError, match="worker"):
         model._render_prompt_tokens(
             "hello",
             None,
