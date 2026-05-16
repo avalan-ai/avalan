@@ -197,16 +197,19 @@ class CliModelRunOptionTestCase(TestCase):
 
         self.assertIn("not a generic gguf", normalized_docs)
         self.assertIn(
-            "native ds4 tool calls are experimental", normalized_docs
+            "native ds4 tool calls use dsml", normalized_docs
         )
-        self.assertIn("render tool schemas", normalized_docs)
-        self.assertIn("parse completed dsml tool blocks", normalized_docs)
-        self.assertIn("streaming", normalized_docs)
-        self.assertIn("argument deltas are still in progress", normalized_docs)
+        self.assertIn("renders tool schemas", normalized_docs)
+        self.assertIn("parses completed dsml tool blocks", normalized_docs)
+        self.assertIn("streams\n  argument deltas", normalized_docs)
+        self.assertIn("exact raw dsml replay metadata", normalized_docs)
         self.assertIn("cpu backend exists for diagnostics", normalized_docs)
         self.assertNotIn("generic gguf models are supported", normalized_docs)
         self.assertNotIn(
             "native ds4 tool calls are implemented", normalized_docs
+        )
+        self.assertNotIn(
+            "argument deltas are still in progress", normalized_docs
         )
 
 
