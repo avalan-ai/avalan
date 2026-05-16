@@ -52,7 +52,10 @@ def test_ds4_extra_declares_platform_scoped_pyds4_dependency() -> None:
         canonicalize_name(requirement.name) for requirement in requirements
     } == {"pyds4"}
     assert all(
-        requirement.specifier == SpecifierSet(">=0.1.0,<0.2.0")
+        requirement.specifier == SpecifierSet() for requirement in requirements
+    )
+    assert all(
+        requirement.url == "git+https://github.com/avalan-ai/pyds4.git@main"
         for requirement in requirements
     )
     assert all(requirement.marker is not None for requirement in requirements)

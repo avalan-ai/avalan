@@ -901,7 +901,7 @@ description = "Foreign Function Interface for Python calling C code."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or extra == \"secrets\") and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or sys_platform == \"linux\") and (platform_python_implementation != \"PyPy\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\") and platform_system == \"Linux\" or ((extra == \"secrets\" and sys_platform == \"linux\" or extra == \"memory\") and platform_python_implementation != \"PyPy\" or extra == \"audio\") and platform_system != \"Linux\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or extra == \"secrets\") and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or sys_platform == \"linux\") and (platform_python_implementation != \"PyPy\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\") and (platform_system == \"Linux\" or extra == \"secrets\" or extra == \"memory\" or extra == \"audio\") and (platform_system == \"Linux\" or platform_python_implementation != \"PyPy\" or extra == \"audio\") and (platform_system == \"Linux\" or sys_platform == \"linux\" or extra == \"memory\" or extra == \"audio\")"
 files = [
     {file = "cffi-2.0.0-cp310-cp310-macosx_10_13_x86_64.whl", hash = "sha256:0cf2d91ecc3fcc0625c2c530fe004f82c110405f101548512cce44322fa8ac44"},
     {file = "cffi-2.0.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:f73b96c41e3b2adedc34a7356e64c8eb96e03a3782b535e043a986276ce12a49"},
@@ -2430,7 +2430,7 @@ description = "Fast transfer of large files with the Hugging Face Hub."
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "(platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"arm64\" or platform_machine == \"aarch64\") and (extra == \"local\" or extra == \"vllm\" or extra == \"nvidia\") and (platform_system == \"Linux\" or extra == \"local\") and (platform_system == \"Linux\" or platform_machine == \"arm64\" or platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"aarch64\")"
+markers = "(platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"arm64\" or platform_machine == \"aarch64\") and platform_system == \"Linux\" and (extra == \"local\" or extra == \"vllm\" or extra == \"nvidia\") or (platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"arm64\" or platform_machine == \"aarch64\") and extra == \"local\""
 files = [
     {file = "hf_xet-1.4.3-cp313-cp313t-macosx_10_12_x86_64.whl", hash = "sha256:7551659ba4f1e1074e9623996f28c3873682530aee0a846b7f2f066239228144"},
     {file = "hf_xet-1.4.3-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:bee693ada985e7045997f05f081d0e12c4c08bd7626dc397f8a7c487e6c04f7f"},
@@ -5775,7 +5775,7 @@ description = "C parser in Python"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or extra == \"secrets\") and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or sys_platform == \"linux\") and (platform_python_implementation != \"PyPy\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\") and implementation_name != \"PyPy\" and (platform_system == \"Linux\" or extra == \"secrets\" or extra == \"memory\" or extra == \"audio\") and (platform_system == \"Linux\" or sys_platform == \"linux\" or extra == \"memory\" or extra == \"audio\") and (platform_system == \"Linux\" or platform_python_implementation != \"PyPy\" or extra == \"audio\")"
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or extra == \"secrets\") and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\" or extra == \"memory\" or sys_platform == \"linux\") and (platform_python_implementation != \"PyPy\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\") and implementation_name != \"PyPy\" and (platform_system == \"Linux\" or extra == \"secrets\" or extra == \"memory\" or extra == \"audio\") and (platform_system == \"Linux\" or platform_python_implementation != \"PyPy\" or extra == \"audio\") and (platform_system == \"Linux\" or sys_platform == \"linux\" or extra == \"memory\" or extra == \"audio\")"
 files = [
     {file = "pycparser-2.23-py3-none-any.whl", hash = "sha256:e5c6e8d3fbad53479cab09ac03729e0a9faf2bee3db8208a550daf5af81a5934"},
     {file = "pycparser-2.23.tar.gz", hash = "sha256:78816d4f24add8f10a06d6f05b4d424ad9e96cfebf68a4ddc99c65c0720d00c2"},
@@ -5991,6 +5991,28 @@ azure-key-vault = ["azure-identity (>=1.16.0)", "azure-keyvault-secrets (>=4.8.0
 gcp-secret-manager = ["google-cloud-secret-manager (>=2.23.1)"]
 toml = ["tomli (>=2.0.1)"]
 yaml = ["pyyaml (>=6.0.1)"]
+
+[[package]]
+name = "pyds4"
+version = "0.1.0"
+description = "Python bindings for the DS4 native inference engine"
+optional = true
+python-versions = ">=3.11"
+groups = ["main"]
+markers = "extra == \"ds4\" and (platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")"
+files = []
+develop = false
+
+[package.extras]
+dev = ["black (>=25.1.0)", "mypy (>=1.20.0)", "pybind11 (>=2.12)", "ruff (>=0.11.11)"]
+release = ["build (>=1.2)"]
+test = ["pytest (>=8)"]
+
+[package.source]
+type = "git"
+url = "https://github.com/avalan-ai/pyds4.git"
+reference = "main"
+resolved_reference = "a4146fd9b1e16aa666cbe6f8fa68d15998f45e6e"
 
 [[package]]
 name = "pyee"
@@ -9154,6 +9176,7 @@ type = ["pytest-mypy"]
 agent = ["jinja2"]
 apple = ["mlx", "mlx-lm"]
 audio = ["soundfile", "torchaudio"]
+ds4 = ["pyds4", "pyds4"]
 local = ["accelerate", "hf-xet", "huggingface-hub", "sentence-transformers", "torch", "transformers"]
 memory = ["beautifulsoup4", "boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "pypdf", "tree-sitter", "tree-sitter-python"]
 mlx = ["mlx", "mlx-lm"]
@@ -9170,4 +9193,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "8d6e99ed141463932a395f8c35d3b181595414477a7d7d046d71ada587769b27"
+content-hash = "599d2d9808bac5866f70ff077c6044deb0d112e829c831960786e625bee3e385"
