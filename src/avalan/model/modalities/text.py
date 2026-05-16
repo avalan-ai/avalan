@@ -353,6 +353,17 @@ class TextGenerationModality:
                 or False,
                 tool=tool,
             )
+        if is_ds4:
+            return await model(
+                operation.input,
+                system_prompt=operation.parameters["text"].system_prompt,
+                developer_prompt=operation.parameters["text"].developer_prompt,
+                settings=operation.generation_settings or GenerationSettings(),
+                manual_sampling=operation.parameters["text"].manual_sampling
+                or False,
+                pick=operation.parameters["text"].pick_tokens,
+                tool=tool,
+            )
         return await model(
             operation.input,
             system_prompt=operation.parameters["text"].system_prompt,

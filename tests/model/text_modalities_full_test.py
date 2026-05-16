@@ -541,11 +541,15 @@ def test_text_generation_call_ds4_branch_avoids_tokenizer_kwargs(
         "system_prompt",
         "developer_prompt",
         "settings",
+        "manual_sampling",
+        "pick",
         "tool",
     }
     assert kwargs["system_prompt"] == "sys"
     assert kwargs["developer_prompt"] == "dev"
     assert kwargs["settings"] == operation.generation_settings
+    assert kwargs["manual_sampling"] is True
+    assert kwargs["pick"] == 3
     assert kwargs["tool"] is tool
 
 

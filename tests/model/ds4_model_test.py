@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from logging import Logger
+from math import exp
 from pathlib import Path
 from threading import Event as ThreadEvent
 from threading import get_ident
@@ -43,6 +44,7 @@ from avalan.entities import (
     MessageRole,
     ReasoningEffort,
     ReasoningSettings,
+    Token,
     TokenDetail,
     TransformerEngineSettings,
 )
@@ -108,7 +110,9 @@ class FakeNativeSession:
         self.sample_options: list[FakeNativeSamplingOptions] = []
         self.save_payload_calls = 0
         self.save_snapshot_calls = 0
+        self.token_logprob_calls: list[int] = []
         self.tokens: list[int] = []
+        self.top_logprobs_calls: list[int] = []
 
     def close(self) -> None:
         self.engine.thread_ids.append(get_ident())
@@ -153,6 +157,18 @@ class FakeNativeSession:
         if self.engine.sample_script:
             return self.engine.sample_script.pop(0)
         return self.engine.eos_token_id
+
+    def top_logprobs(self, top_k: int) -> list[tuple[int, float]]:
+        self.engine.thread_ids.append(get_ident())
+        self.engine.operation_log.append(("top_logprobs", top_k))
+        self.top_logprobs_calls.append(top_k)
+        return self.engine.top_logprobs[:top_k]
+
+    def token_logprob(self, token_id: int) -> float:
+        self.engine.thread_ids.append(get_ident())
+        self.engine.operation_log.append(("token_logprob", token_id))
+        self.token_logprob_calls.append(token_id)
+        return self.engine.token_logprobs.get(token_id, -20.0)
 
     def invalidate(self) -> None:
         self.engine.thread_ids.append(get_ident())
@@ -218,8 +234,10 @@ class FakeNativeEngine:
         self.snapshot_loaded_event = ThreadEvent()
         self.sync_error: BaseException | None = None
         self.thread_ids: list[int] = []
+        self.token_logprobs: dict[int, float] = {}
         self.token_text_map: dict[int, bytes] = {}
         self.tokenization_calls: list[tuple[str, object, object]] = []
+        self.top_logprobs: list[tuple[int, float]] = []
         self.instances.append(self)
 
     def close(self) -> None:
@@ -298,6 +316,7 @@ FakeNativeEngine.__module__ = "pyds4"
 def _fake_async_engine_type(
     native_engine_type: type[Any],
     *,
+    logprobs: bool = False,
     payloads: bool = False,
     snapshots: bool = False,
 ) -> type[Any]:
@@ -315,6 +334,18 @@ def _fake_async_engine_type(
 
         async def sync(self, prompt_tokens: list[int]) -> None:
             await self._owner._call(lambda: self._native.sync(prompt_tokens))
+
+        async def eval(self, token_id: int) -> None:
+            await self._owner._call(lambda: self._native.eval(token_id))
+
+        async def argmax(self) -> int:
+            return cast(int, await self._owner._call(self._native.argmax))
+
+        async def sample(self, options: FakeNativeSamplingOptions) -> int:
+            return cast(
+                int,
+                await self._owner._call(lambda: self._native.sample(options)),
+            )
 
         async def next_token(
             self,
@@ -378,6 +409,29 @@ def _fake_async_engine_type(
             self.session_closed = True
             await self._owner._call(self._native.close)
 
+    if logprobs:
+
+        async def top_logprobs(
+            self: Any, top_k: int
+        ) -> list[tuple[int, float]]:
+            return cast(
+                list[tuple[int, float]],
+                await self._owner._call(
+                    lambda: self._native.top_logprobs(top_k)
+                ),
+            )
+
+        async def token_logprob(self: Any, token_id: int) -> float:
+            return cast(
+                float,
+                await self._owner._call(
+                    lambda: self._native.token_logprob(token_id)
+                ),
+            )
+
+        FakeAsyncSession.top_logprobs = top_logprobs
+        FakeAsyncSession.token_logprob = token_logprob
+
     if snapshots:
 
         async def save_snapshot(self: Any) -> bytes:
@@ -417,6 +471,10 @@ def _fake_async_engine_type(
         @classmethod
         async def open(cls, options: FakeNativeOptions) -> "FakeAsyncEngine":
             return cls(options)
+
+        @property
+        def eos_token_id(self) -> int:
+            return self._native.eos_token_id
 
         async def _call(self, func: Callable[[], object]) -> object:
             loop = asyncio.get_running_loop()
@@ -1185,6 +1243,101 @@ def test_ds4_generation_stream_returns_plain_strings_without_token_details(
     assert chunks == ["A"]
     assert all(isinstance(chunk, str) for chunk in chunks)
     assert not any(isinstance(chunk, TokenDetail) for chunk in chunks)
+
+
+def test_ds4_generation_stream_returns_token_details_when_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, logprobs=True
+            )
+        ),
+    )
+
+    async def run_case() -> tuple[list[object], FakeNativeEngine]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        fake.token_logprobs = {101: -0.1}
+        fake.token_text_map = {101: b"A", 102: b"B"}
+        fake.top_logprobs = [(101, -0.1), (102, -1.5)]
+        response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+            manual_sampling=True,
+            pick=2,
+        )
+        chunks: list[object] = [chunk async for chunk in response]
+        model.close()
+        return chunks, fake
+
+    chunks, fake = run(run_case())
+
+    assert len(chunks) == 1
+    detail = chunks[0]
+    assert isinstance(detail, TokenDetail)
+    assert detail.id == 101
+    assert detail.token == "A"
+    assert detail.step == 0
+    assert detail.probability == pytest.approx(exp(-0.1))
+    assert detail.probability_distribution == "log_softmax"
+    assert detail.tokens == [
+        Token(id=101, token="A", probability=exp(-0.1)),
+        Token(id=102, token="B", probability=exp(-1.5)),
+    ]
+    assert fake.sessions[0].top_logprobs_calls == [2]
+    assert fake.sessions[0].token_logprob_calls == [101]
+    assert fake.sessions[0].eval_calls == [101]
+
+
+def test_ds4_token_details_reject_invalid_top_k(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+    model = Ds4Model(str(_model_file(tmp_path)))
+
+    with pytest.raises(ValueError, match="top_logprobs"):
+        run(
+            model(
+                "hello",
+                settings=GenerationSettings(max_new_tokens=1),
+                manual_sampling=True,
+                pick=-1,
+            )
+        )
+    model.close()
+
+
+def test_ds4_token_details_require_native_logprob_support(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    response = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+            manual_sampling=True,
+            pick=2,
+        )
+    )
+
+    with pytest.raises(NotImplementedError, match="token logprobs"):
+        run(response.to_str())
+    model.close()
 
 
 def test_ds4_eval_call_order_matches_verified_session_semantics(

@@ -22,7 +22,10 @@ from ....entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    ProbabilityDistribution,
     ReasoningEffort,
+    Token,
+    TokenDetail,
     TransformerEngineSettings,
 )
 from ....model.response.text import TextGenerationResponse
@@ -42,6 +45,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass, replace
 from logging import Logger, getLogger
+from math import exp
 from pathlib import Path
 from queue import Queue
 from threading import Thread
@@ -83,6 +87,23 @@ class _Ds4GenerationPlan:
     sampling_options: SamplingOptions
     stop_strings: tuple[str, ...]
     use_sampling: bool
+    emit_token_details: bool = False
+    probability_distribution: ProbabilityDistribution = "log_softmax"
+    top_logprobs: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4TokenProbability:
+    token_id: int
+    probability: float
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4Step:
+    token_id: int
+    is_eos: bool
+    token_bytes: bytes | None
+    token_detail: TokenDetail | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,7 +562,7 @@ class Ds4Worker:
         self,
         prompt_tokens: list[int],
         generation_plan: _Ds4GenerationPlan,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str | TokenDetail, None]:
         """Yield DS4 output chunks from the pyds4 async facade."""
         if self._closed:
             raise Ds4LoadError("DS4 worker is closed.")
@@ -588,7 +609,7 @@ class Ds4Worker:
         """Return complete DS4 output text from the async generation core."""
         return "".join(
             [
-                chunk
+                chunk.token if isinstance(chunk, TokenDetail) else chunk
                 async for chunk in self.stream(prompt_tokens, generation_plan)
             ]
         )
@@ -640,34 +661,248 @@ class Ds4Worker:
 
     async def _generate_chunks(
         self, session: object, generation_plan: _Ds4GenerationPlan
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str | TokenDetail, None]:
         engine = self._require_engine()
         stop_buffer = _StopStringBuffer(generation_plan.stop_strings)
 
-        for _ in range(generation_plan.max_new_tokens):
-            step = await self._call_async(
-                session,
-                "next_token",
-                (
-                    self._native_sampling_options(
-                        generation_plan.sampling_options
-                    )
-                    if generation_plan.use_sampling
-                    else None
-                ),
-                decode=True,
+        for step_index in range(generation_plan.max_new_tokens):
+            step = (
+                await self._detailed_generation_step(
+                    engine, session, generation_plan, step_index
+                )
+                if generation_plan.emit_token_details
+                else await self._plain_generation_step(
+                    session, generation_plan
+                )
             )
             if bool(getattr(step, "is_eos", False)):
                 break
 
             text = await self._token_text(engine, step)
             for chunk in stop_buffer.push(text):
-                yield chunk
+                detail = getattr(step, "token_detail", None)
+                if isinstance(detail, TokenDetail) and chunk == detail.token:
+                    yield detail
+                else:
+                    yield chunk
             if stop_buffer.stopped:
                 break
 
         for chunk in stop_buffer.flush():
             yield chunk
+
+    async def _plain_generation_step(
+        self, session: object, generation_plan: _Ds4GenerationPlan
+    ) -> object:
+        return await self._call_async(
+            session,
+            "next_token",
+            (
+                self._native_sampling_options(generation_plan.sampling_options)
+                if generation_plan.use_sampling
+                else None
+            ),
+            decode=True,
+        )
+
+    async def _detailed_generation_step(
+        self,
+        engine: object,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        step_index: int,
+    ) -> object:
+        self._require_logprob_support(session, generation_plan.top_logprobs)
+        token_id = await self._select_token(session, generation_plan)
+        eos_token_id = await self._eos_token_id(engine)
+        is_eos = token_id == eos_token_id
+        if is_eos:
+            return _Ds4Step(token_id, True, None, None)
+
+        alternatives = await self._token_probabilities(
+            engine, session, generation_plan.top_logprobs
+        )
+        chosen_probability = await self._chosen_token_probability(
+            session, token_id, alternatives
+        )
+        await self._call_async(session, "eval", token_id)
+        token_text = await self._call_async(engine, "token_text", token_id)
+        token_bytes = self._bytes_value(token_text, "token_text")
+        text = token_bytes.decode("utf-8", errors="replace")
+        detail = TokenDetail(
+            id=token_id,
+            token=text,
+            probability=chosen_probability,
+            probability_distribution=generation_plan.probability_distribution,
+            step=step_index,
+            tokens=(
+                [
+                    Token(
+                        id=alternative.token_id,
+                        token=await self._token_string(
+                            engine, alternative.token_id
+                        ),
+                        probability=alternative.probability,
+                    )
+                    for alternative in alternatives
+                ]
+                if alternatives
+                else None
+            ),
+        )
+        return _Ds4Step(token_id, False, token_bytes, detail)
+
+    async def _select_token(
+        self, session: object, generation_plan: _Ds4GenerationPlan
+    ) -> int:
+        if generation_plan.use_sampling:
+            value = await self._call_async(
+                session,
+                "sample",
+                self._native_sampling_options(
+                    generation_plan.sampling_options
+                ),
+            )
+        else:
+            value = await self._call_async(session, "argmax")
+        operation = "sample" if generation_plan.use_sampling else "argmax"
+        return self._token_id(value, operation)
+
+    @staticmethod
+    def _require_logprob_support(session: object, top_k: int) -> None:
+        if not callable(getattr(session, "token_logprob", None)):
+            raise NotImplementedError(
+                "DS4 native backend does not support token logprobs. Install a"
+                " pyds4 build with token_logprob support."
+            )
+        if top_k > 0 and not callable(getattr(session, "top_logprobs", None)):
+            raise NotImplementedError(
+                "DS4 native backend does not support token logprobs. "
+                "Install a pyds4 build with top_logprobs support."
+            )
+
+    async def _eos_token_id(self, engine: object) -> int:
+        value = getattr(engine, "eos_token_id", None)
+        if callable(value):
+            value = value()
+        if isinstance(value, Awaitable):
+            value = await value
+        return self._token_id(value, "eos_token_id")
+
+    async def _token_probabilities(
+        self, engine: object, session: object, top_k: int
+    ) -> list[_Ds4TokenProbability]:
+        if top_k == 0:
+            return []
+        if not callable(getattr(session, "top_logprobs", None)):
+            raise NotImplementedError(
+                "DS4 native backend does not support token logprobs. "
+                "Install a pyds4 build with top_logprobs support."
+            )
+
+        value = await self._call_async(session, "top_logprobs", top_k)
+        if not isinstance(value, (list, tuple)):
+            raise Ds4GenerationError(
+                "DS4 top_logprobs must return a list of token scores."
+            )
+        probabilities = [
+            self._token_probability(score, "top_logprobs") for score in value
+        ]
+        return probabilities
+
+    async def _chosen_token_probability(
+        self,
+        session: object,
+        token_id: int,
+        alternatives: list[_Ds4TokenProbability],
+    ) -> float | None:
+        token_logprob = getattr(session, "token_logprob", None)
+        if callable(token_logprob):
+            value = await self._call_async(session, "token_logprob", token_id)
+            return self._probability_from_logprob(value, "token_logprob")
+
+        for alternative in alternatives:
+            if alternative.token_id == token_id:
+                return alternative.probability
+
+        if alternatives:
+            return None
+        raise NotImplementedError(
+            "DS4 native backend does not support token logprobs. Install a "
+            "pyds4 build with token_logprob support."
+        )
+
+    async def _token_string(self, engine: object, token_id: int) -> str:
+        value = await self._call_async(engine, "token_text", token_id)
+        return self._bytes_value(value, "token_text").decode(
+            "utf-8", errors="replace"
+        )
+
+    @classmethod
+    def _token_probability(
+        cls, value: object, operation: str
+    ) -> _Ds4TokenProbability:
+        token_id: object
+        logprob: object
+        probability: object
+        if isinstance(value, dict):
+            token_id = value.get("token_id", value.get("id"))
+            probability = value.get("probability")
+            logprob = value.get("logprob")
+        elif isinstance(value, (list, tuple)):
+            if len(value) >= 3:
+                token_id = value[0]
+                probability = None
+                logprob = value[2]
+            elif len(value) >= 2:
+                token_id = value[0]
+                probability = None
+                logprob = value[1]
+            else:
+                token_id = None
+                probability = None
+                logprob = None
+        else:
+            token_id = getattr(value, "token_id", getattr(value, "id", None))
+            probability = getattr(value, "probability", None)
+            logprob = getattr(value, "logprob", None)
+
+        return _Ds4TokenProbability(
+            cls._token_id(token_id, operation),
+            (
+                cls._probability(probability, operation)
+                if probability is not None
+                else cls._probability_from_logprob(logprob, operation)
+            ),
+        )
+
+    @staticmethod
+    def _token_id(value: object, operation: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise Ds4GenerationError(
+                f"DS4 {operation} must return a token id."
+            )
+        return value
+
+    @staticmethod
+    def _probability(value: object, operation: str) -> float:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (float, int))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise Ds4GenerationError(
+                f"DS4 {operation} must return probabilities."
+            )
+        return float(value)
+
+    @classmethod
+    def _probability_from_logprob(cls, value: object, operation: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (float, int)):
+            raise Ds4GenerationError(
+                f"DS4 {operation} must return log probabilities."
+            )
+        return cls._probability(exp(float(value)), operation)
 
     async def _token_text(self, engine: object, step: object) -> str:
         token_bytes = getattr(step, "token_bytes", None)
@@ -1080,6 +1315,8 @@ class Ds4Model(TextGenerationModel):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        manual_sampling: bool | int = False,
+        pick: int | None = None,
         skip_special_tokens: bool = False,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
@@ -1093,7 +1330,10 @@ class Ds4Model(TextGenerationModel):
             tool=tool,
         )
         generation_plan = self._generation_plan(
-            generation_settings, len(prompt_tokens)
+            generation_settings,
+            len(prompt_tokens),
+            manual_sampling=manual_sampling,
+            pick=pick,
         )
         generation_settings = replace(
             generation_settings, do_sample=generation_plan.use_sampling
@@ -1324,7 +1564,7 @@ class Ds4Model(TextGenerationModel):
         inputs: list[int],
         generation_plan: _Ds4GenerationPlan,
         settings: GenerationSettings | None = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str | TokenDetail, None]:
         async for chunk in self._ds4_worker().stream(inputs, generation_plan):
             yield chunk
 
@@ -1337,19 +1577,46 @@ class Ds4Model(TextGenerationModel):
         return self._ds4_worker().generate_string(inputs, generation_plan)
 
     def _generation_plan(
-        self, settings: GenerationSettings, prompt_length: int
+        self,
+        settings: GenerationSettings,
+        prompt_length: int,
+        *,
+        manual_sampling: bool | int = False,
+        pick: int | None = None,
     ) -> _Ds4GenerationPlan:
         self._validate_generation_features(settings)
         sampling_options = self._sampling_options(settings)
         use_sampling = bool(
             settings.do_sample and sampling_options.temperature > 0.0
         )
+        top_logprobs = self._top_logprobs(manual_sampling, pick)
         return _Ds4GenerationPlan(
+            emit_token_details=bool(manual_sampling),
             max_new_tokens=self._max_new_tokens(settings, prompt_length),
+            probability_distribution="log_softmax",
             sampling_options=sampling_options,
             stop_strings=self._stop_strings(settings.stop_strings),
+            top_logprobs=top_logprobs,
             use_sampling=use_sampling,
         )
+
+    @staticmethod
+    def _top_logprobs(manual_sampling: bool | int, pick: int | None) -> int:
+        if not manual_sampling:
+            return 0
+        if pick is not None:
+            if isinstance(pick, bool) or not isinstance(pick, int) or pick < 0:
+                raise ValueError("DS4 top_logprobs must be non-negative.")
+            return pick
+        if isinstance(manual_sampling, bool):
+            return 0
+        if (
+            isinstance(manual_sampling, int)
+            and not isinstance(manual_sampling, bool)
+            and manual_sampling >= 0
+        ):
+            return manual_sampling
+        raise ValueError("DS4 top_logprobs must be non-negative.")
 
     @classmethod
     def _max_new_tokens(

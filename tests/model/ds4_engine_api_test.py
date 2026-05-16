@@ -101,6 +101,12 @@ class FakeNativeSession:
             raise RuntimeError("sample failed")
         return 42
 
+    def top_logprobs(self, top_k: int) -> list[tuple[int, float]]:
+        return [(40, -0.25), (41, -1.25), (42, -2.25)][:top_k]
+
+    def token_logprob(self, token_id: int) -> float:
+        return -0.25 if token_id == 40 else -2.25
+
     def rewind(self, pos: int) -> None:
         self.tokens = self.tokens[:pos]
         self.pos = pos
@@ -519,6 +525,20 @@ def test_session_sampling_maps_options_to_native_binding(
         min_p=0.1,
         seed=99,
     )
+    engine.close()
+
+
+def test_session_top_logprobs_returns_token_logprob_pairs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    session = engine.create_session(8)
+
+    assert session.top_logprobs(2) == ((40, -0.25), (41, -1.25))
+    assert session.token_logprob(40) == -0.25
     engine.close()
 
 

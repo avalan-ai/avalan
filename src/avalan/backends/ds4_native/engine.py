@@ -598,6 +598,22 @@ class Session:
             "sample",
         )
 
+    def top_logprobs(self, top_k: int) -> tuple[tuple[int, float], ...]:
+        """Return the top next-token log probabilities."""
+        self._validate_top_k(top_k)
+        return self._top_logprobs_result(
+            self._call_generation("top_logprobs", top_k),
+            "top_logprobs",
+        )
+
+    def token_logprob(self, token_id: int) -> float:
+        """Return the next-token log probability for one token."""
+        self._validate_token_id(token_id)
+        return self._logprob_result(
+            self._call_generation("token_logprob", token_id),
+            "token_logprob",
+        )
+
     def rewind(self, pos: int) -> None:
         """Rewind the DS4 session to a previous non-negative position."""
         if isinstance(pos, bool) or not isinstance(pos, int) or pos < 0:
@@ -702,6 +718,57 @@ class Session:
         if Engine._is_token_id(value):
             return cast(int, value)
         raise Ds4GenerationError(f"DS4 {operation} must return one token id.")
+
+    @staticmethod
+    def _validate_top_k(top_k: int) -> None:
+        if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 0:
+            raise ValueError("DS4 top_k must be a non-negative integer.")
+
+    @classmethod
+    def _top_logprobs_result(
+        cls, value: object, operation: str
+    ) -> tuple[tuple[int, float], ...]:
+        if not isinstance(value, (list, tuple)):
+            raise Ds4GenerationError(
+                f"DS4 {operation} must return token log probabilities."
+            )
+
+        return tuple(cls._token_score(score, operation) for score in value)
+
+    @classmethod
+    def _token_score(cls, value: object, operation: str) -> tuple[int, float]:
+        token_id: object
+        logprob: object
+        if isinstance(value, dict):
+            token_id = value.get("token_id", value.get("id"))
+            logprob = value.get("logprob")
+        elif isinstance(value, (list, tuple)):
+            if len(value) >= 3:
+                token_id = value[0]
+                logprob = value[2]
+            elif len(value) >= 2:
+                token_id = value[0]
+                logprob = value[1]
+            else:
+                token_id = None
+                logprob = None
+        else:
+            token_id = getattr(value, "token_id", getattr(value, "id", None))
+            logprob = getattr(value, "logprob", None)
+
+        if Engine._is_token_id(token_id):
+            return cast(int, token_id), cls._logprob_result(logprob, operation)
+        raise Ds4GenerationError(
+            f"DS4 {operation} must return token ids and log probabilities."
+        )
+
+    @staticmethod
+    def _logprob_result(value: object, operation: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (float, int)):
+            raise Ds4GenerationError(
+                f"DS4 {operation} must return a numeric log probability."
+            )
+        return float(value)
 
     @staticmethod
     def _snapshot_bytes(value: object, operation: str) -> bytes:
