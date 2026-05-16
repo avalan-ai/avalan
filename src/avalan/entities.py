@@ -146,6 +146,7 @@ class ToolFormat(StrEnum):
     BRACKET = "bracket"
     OPENAI = "openai"
     HARMONY = "harmony"
+    DSML = "dsml"
 
 
 class VisionColorModel(StrEnum):

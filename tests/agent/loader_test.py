@@ -637,6 +637,7 @@ tools = [\"math.calculator\"]
             ("react", ToolFormat.REACT),
             ("json", ToolFormat.JSON),
             ("openai", ToolFormat.OPENAI),
+            ("dsml", ToolFormat.DSML),
         ):
             with self.subTest(value=value):
                 config = f"""
