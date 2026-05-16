@@ -155,3 +155,22 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             ) as parse_patch:
                 self.assertTrue(CLI._needs_hf_token(args))
         parse_patch.assert_called_once_with("e")
+
+    def test_agent_run_specs_local_ds4_backend_no_token(self):
+        with NamedTemporaryFile("w", suffix=".toml") as spec:
+            spec.write('[engine]\nuri="e"')
+            spec.flush()
+            args = Namespace(
+                command="agent",
+                agent_command="run",
+                engine_uri=None,
+                specifications_file=spec.name,
+                backend="ds4",
+            )
+            with patch.object(
+                ModelManager,
+                "parse_uri",
+                return_value=SimpleNamespace(is_local=True, params={}),
+            ) as parse_patch:
+                self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with("e")

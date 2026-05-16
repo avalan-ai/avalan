@@ -196,9 +196,7 @@ class CliModelRunOptionTestCase(TestCase):
         normalized_docs = docs.lower()
 
         self.assertIn("not a generic gguf", normalized_docs)
-        self.assertIn(
-            "native ds4 tool calls use dsml", normalized_docs
-        )
+        self.assertIn("native ds4 tool calls use dsml", normalized_docs)
         self.assertIn("renders tool schemas", normalized_docs)
         self.assertIn("parses completed dsml tool blocks", normalized_docs)
         self.assertIn("streams\n  argument deltas", normalized_docs)

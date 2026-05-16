@@ -212,6 +212,21 @@ def test_get_ds4_model_module_missing(
     assert _get_ds4_model() is None
 
 
+def test_get_ds4_model_missing_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _get_ds4_model.cache_clear()
+    monkeypatch.setattr(
+        "avalan.model.modalities.text.import_compatible_binding",
+        lambda: object(),
+    )
+    module_name = "avalan.model.nlp.text.ds4"
+    stub = ModuleType(module_name)
+    monkeypatch.setitem(modules, module_name, stub)
+
+    assert _get_ds4_model() is None
+
+
 def test_get_ds4_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
     _get_ds4_model.cache_clear()
     monkeypatch.setattr(

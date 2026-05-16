@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 import avalan.backends.ds4_native.availability as availability
-from avalan.backends.ds4_native.engine import Engine
+from avalan.backends.ds4_native.engine import Engine, Session
 from avalan.backends.ds4_native.errors import (
     Ds4BackendUnavailable,
     Ds4ContextError,
@@ -886,3 +886,390 @@ def test_missing_think_mode_helper_is_rejected(
     with pytest.raises(Ds4GenerationError, match="think_mode_for_context"):
         engine.think_mode_for_context(ThinkMode.MAX, 4096)
     engine.close()
+
+
+def test_engine_rejects_binding_without_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding(Engine=None))
+
+    with pytest.raises(Ds4LoadError, match="does not expose Engine"):
+        Engine(EngineOptions(model_path=str(model_path)))
+
+
+def test_engine_preserves_native_open_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FailingEngine:
+        def __init__(self, _: FakeNativeOptions) -> None:
+            raise Ds4LoadError("load failed")
+
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding(Engine=FailingEngine))
+
+    with pytest.raises(Ds4LoadError, match="load failed"):
+        Engine(EngineOptions(model_path=str(model_path)))
+
+
+def test_engine_maps_native_backend_unavailable_by_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    Ds4NativeBackendUnavailable = type(
+        "Ds4BackendUnavailable", (Exception,), {}
+    )
+
+    class FailingEngine:
+        def __init__(self, _: FakeNativeOptions) -> None:
+            raise Ds4NativeBackendUnavailable("backend missing")
+
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding(Engine=FailingEngine))
+
+    with pytest.raises(Ds4BackendUnavailable, match="backend missing"):
+        Engine(EngineOptions(model_path=str(model_path)))
+
+
+def test_token_text_accepts_bytes_like_values_and_rejects_other_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    native = cast(FakeNativeEngine, engine.native)
+
+    native.token_text = lambda _: bytearray(b"A")  # type: ignore[method-assign]
+    assert engine.token_text(1) == b"A"
+    native.token_text = lambda _: memoryview(b"B")  # type: ignore[method-assign]
+    assert engine.token_text(1) == b"B"
+    native.token_text = lambda _: "bad"  # type: ignore[method-assign]
+    with pytest.raises(Ds4GenerationError, match="must return bytes"):
+        engine.token_text(1)
+    engine.close()
+
+
+def test_think_mode_helper_errors_are_mapped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail_helper(_: object, __: int) -> object:
+        raise RuntimeError("helper failed")
+
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(
+        monkeypatch, _fake_binding(think_mode_for_context=fail_helper)
+    )
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+
+    with pytest.raises(Ds4GenerationError, match="helper failed"):
+        engine.think_mode_for_context(ThinkMode.MAX, 4096)
+    engine.close()
+
+
+@pytest.mark.parametrize(
+    ("creator", "error_type", "match"),
+    [
+        (lambda _: Ds4ContextError("bad context"), Ds4ContextError, "bad"),
+        (lambda _: RuntimeError("boom"), Ds4ContextError, "boom"),
+    ],
+)
+def test_create_session_maps_native_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    creator: object,
+    error_type: type[Exception],
+    match: str,
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    native = cast(FakeNativeEngine, engine.native)
+
+    def fail_create(_: int) -> object:
+        raise cast(Exception, cast(object, creator)(None))
+
+    native.create_session = fail_create  # type: ignore[method-assign]
+    with pytest.raises(error_type, match=match):
+        engine.create_session(8)
+    engine.close()
+
+
+def test_create_session_rejects_none_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    native = cast(FakeNativeEngine, engine.native)
+    native.create_session = lambda _: None  # type: ignore[method-assign]
+
+    with pytest.raises(Ds4ContextError, match="returned no session"):
+        engine.create_session(8)
+    engine.close()
+
+
+def test_engine_private_open_and_binding_guards(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+
+    with pytest.raises(Ds4LoadError, match="does not expose missing"):
+        engine._generation_method("missing")
+    native = cast(FakeNativeEngine, engine.native)
+    native.fail = lambda: (_ for _ in ()).throw(  # type: ignore[attr-defined]
+        Ds4GenerationError("native generation")
+    )
+    with pytest.raises(Ds4GenerationError, match="native generation"):
+        engine._call_generation("fail")
+
+    engine._binding = None
+    with pytest.raises(Ds4LoadError, match="binding is unavailable"):
+        engine._binding_module()
+
+    engine.close()
+    with pytest.raises(Ds4LoadError, match="engine is closed"):
+        engine.native
+
+
+def test_metadata_value_validation_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    native = cast(FakeNativeEngine, engine.native)
+
+    native.routed_quant_bits = lambda: 3  # type: ignore[method-assign]
+    assert engine.routed_quant_bits == 3
+    native.routed_quant_bits = None  # type: ignore[assignment]
+    with pytest.raises(Ds4LoadError, match="metadata"):
+        _ = engine.routed_quant_bits
+    native.routed_quant_bits = True  # type: ignore[assignment]
+    with pytest.raises(Ds4LoadError, match="must be an integer"):
+        _ = engine.routed_quant_bits
+    native.has_mtp = 1  # type: ignore[assignment]
+    with pytest.raises(Ds4LoadError, match="must be a boolean"):
+        _ = engine.has_mtp
+    engine.close()
+
+
+def test_engine_static_validation_helpers_cover_edges(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Unsupported"):
+        Engine._coerce_think_mode(cast(ThinkMode, "unsupported"))
+    assert Engine._token_list((1, 2), "tokens") == [1, 2]
+    with pytest.raises(Ds4GenerationError, match="token ids"):
+        Engine._token_list([1, True], "tokens")
+    with pytest.raises(ValueError, match="token buffers"):
+        Engine._validate_token_buffer([True])
+
+    tokens = [1]
+    Engine._replace_tokens_if_returned(tokens, (2, 3), "replace")
+    assert tokens == [2, 3]
+
+    assert Engine._think_mode_from_native(ThinkMode.HIGH) is ThinkMode.HIGH
+    with pytest.raises(Ds4GenerationError, match="unsupported thinking mode"):
+        Engine._think_mode_from_native(1)
+    with pytest.raises(Ds4GenerationError, match="unsupported thinking mode"):
+        Engine._think_mode_from_native("unsupported")
+
+    normalized = Engine._normalize_options(
+        EngineOptions(model_path=str(tmp_path / "model.gguf"), backend="metal")
+    )
+    assert normalized.backend is Backend.METAL
+
+    with pytest.raises(AvalanDs4InvalidModel, match="required"):
+        Engine._validate_model_path(EngineOptions(model_path=""))
+
+    special_path = tmp_path / "special"
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(Path, "exists", lambda _: True)
+        patcher.setattr(Path, "is_dir", lambda _: False)
+        patcher.setattr(Path, "is_file", lambda _: False)
+        with pytest.raises(AvalanDs4InvalidModel, match="regular file"):
+            Engine._validate_model_path(
+                EngineOptions(model_path=str(special_path))
+            )
+
+
+def test_native_engine_option_introspection_edges() -> None:
+    options = EngineOptions(model_path="model.gguf")
+    assert Engine._native_engine_options(SimpleNamespace(), options) is options
+
+    class MissingBackendOptions:
+        def __init__(self, model_path: str) -> None:
+            self.model_path = model_path
+
+    with pytest.raises(Ds4LoadError, match="backend"):
+        Engine._native_engine_options(
+            SimpleNamespace(EngineOptions=MissingBackendOptions), options
+        )
+
+    class KwargsOptions:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    assert Engine._native_engine_option_keys(vars) is None
+    assert Engine._native_engine_option_keys(KwargsOptions) is None
+    assert Engine._engine_option_is_requested("model_path", None) is True
+
+
+def test_native_enum_value_fallbacks() -> None:
+    assert (
+        Engine._native_enum_value(SimpleNamespace(), "Backend", Backend.METAL)
+        == "metal"
+    )
+
+    class BrokenNativeBackend:
+        METAL = "native-metal"
+
+        def __init__(self, value: str) -> None:
+            raise ValueError(value)
+
+    assert (
+        Engine._native_enum_value(
+            SimpleNamespace(Backend=BrokenNativeBackend),
+            "Backend",
+            Backend.METAL,
+        )
+        == "native-metal"
+    )
+
+
+def test_create_native_session_binding_fallbacks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    native = cast(FakeNativeEngine, engine.native)
+    native.create_session = None  # type: ignore[method-assign]
+    binding = engine._binding_module()
+    setattr(binding, "Session", lambda native_engine, ctx_size: "session")
+
+    assert engine._create_native_session(native, 8) == "session"
+
+    setattr(binding, "Session", None)
+    with pytest.raises(Ds4LoadError, match="create_session"):
+        engine._create_native_session(native, 8)
+    engine.close()
+
+
+def test_context_error_mapping_helpers() -> None:
+    NativeDs4ContextError = type("Ds4ContextError", (Exception,), {})
+
+    with pytest.raises(Ds4ContextError, match="native context"):
+        Engine._raise_mapped_context_error(
+            NativeDs4ContextError("native context"), "sync"
+        )
+    with pytest.raises(Ds4ContextError, match="DS4 sync failed: boom"):
+        Engine._raise_mapped_context_error(RuntimeError("boom"), "sync")
+
+
+def test_session_value_and_result_validation_edges(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    session = engine.create_session(8)
+    native_session = cast(FakeNativeSession, session.native)
+
+    native_session.tokens = (1, 2)  # type: ignore[assignment]
+    assert session.tokens == (1, 2)
+    native_session.tokens = "bad"  # type: ignore[assignment]
+    with pytest.raises(Ds4GenerationError, match="list or tuple"):
+        _ = session.tokens
+    native_session.tokens = [True]  # type: ignore[list-item]
+    with pytest.raises(Ds4GenerationError, match="integer token IDs"):
+        _ = session.tokens
+
+    with pytest.raises(Ds4ContextError, match="non-negative"):
+        session.rewind(-1)
+
+    session.close()
+    session.close()
+    with pytest.raises(Ds4LoadError, match="does not expose missing"):
+        new_session = engine.create_session(8)
+        new_session._session_method("missing")
+
+    engine.close()
+
+
+def test_session_callable_values_and_missing_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(monkeypatch, _fake_binding())
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+    session = engine.create_session(8)
+    native_session = cast(FakeNativeSession, session.native)
+
+    def fail_pos() -> object:
+        raise RuntimeError("pos failed")
+
+    native_session.pos = fail_pos  # type: ignore[assignment]
+    with pytest.raises(Ds4GenerationError, match="pos failed"):
+        _ = session.pos
+    native_session.pos = None  # type: ignore[assignment]
+    with pytest.raises(Ds4LoadError, match="unavailable"):
+        _ = session.pos
+    native_session.pos = True  # type: ignore[assignment]
+    with pytest.raises(Ds4GenerationError, match="must be an integer"):
+        _ = session.pos
+    engine.close()
+
+
+def test_session_static_result_helpers_cover_edges() -> None:
+    with pytest.raises(Ds4GenerationError, match="one token id"):
+        Session._token_result("bad", "sample")
+    with pytest.raises(ValueError, match="top_k"):
+        Session._validate_top_k(-1)
+    with pytest.raises(Ds4GenerationError, match="token log probabilities"):
+        Session._top_logprobs_result("bad", "top_logprobs")
+
+    assert Session._token_score({"id": 1, "logprob": -0.1}, "scores") == (
+        1,
+        -0.1,
+    )
+    assert Session._token_score((2, "ignored", -0.2), "scores") == (2, -0.2)
+    assert Session._token_score(
+        SimpleNamespace(token_id=3, logprob=-0.3), "scores"
+    ) == (3, -0.3)
+    with pytest.raises(Ds4GenerationError, match="token ids"):
+        Session._token_score((1,), "scores")
+    with pytest.raises(Ds4GenerationError, match="token ids"):
+        Session._token_score(
+            SimpleNamespace(token_id=True, logprob=-0.1), "scores"
+        )
+    with pytest.raises(Ds4GenerationError, match="numeric"):
+        Session._logprob_result(True, "logprob")
+
+    assert Session._snapshot_bytes(bytearray(b"A"), "snapshot") == b"A"
+    assert Session._snapshot_bytes(memoryview(b"B"), "snapshot") == b"B"
+    with pytest.raises(Ds4GenerationError, match="must return bytes"):
+        Session._snapshot_bytes("bad", "snapshot")
+
+    with pytest.raises(ValueError, match="seed"):
+        Session._normalize_sampling_options(
+            SamplingOptions(seed=cast(int, True))
+        )
+    options = SamplingOptions()
+    assert (
+        Session._native_sampling_options(
+            SimpleNamespace(SamplingOptions=None), options
+        )
+        is options
+    )

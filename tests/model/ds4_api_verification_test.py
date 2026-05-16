@@ -81,6 +81,35 @@ def test_require_compatible_binding_rejects_missing_symbol() -> None:
         require_compatible_binding(_fake_binding(__ds4_symbols__=symbols))
 
 
+def test_require_compatible_binding_discovers_symbols_from_attributes() -> (
+    None
+):
+    symbol_attributes: dict[str, object] = {
+        symbol: object() for symbol in DS4_REQUIRED_C_SYMBOLS
+    }
+
+    require_compatible_binding(
+        _fake_binding(__ds4_symbols__=None, **symbol_attributes)
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"__ds4_symbols__": "ds4_engine_open"}, "__ds4_symbols__"),
+        (
+            {"__ds4_api_version__": 0 if DS4_API_VERSION != 0 else 1},
+            "expected DS4 C API version",
+        ),
+    ],
+)
+def test_require_compatible_binding_rejects_metadata_mismatches(
+    overrides: dict[str, object], match: str
+) -> None:
+    with pytest.raises(Ds4ApiVersionError, match=match):
+        require_compatible_binding(_fake_binding(**overrides))
+
+
 def test_require_compatible_binding_rejects_wrong_commit() -> None:
     with pytest.raises(Ds4ApiVersionError, match="expected DS4 C API commit"):
         require_compatible_binding(_fake_binding(__ds4_commit__="old"))
@@ -100,6 +129,34 @@ def test_require_backend_available_reports_platform_unavailable() -> None:
     with pytest.raises(
         Ds4BackendUnavailable,
         match="macOS arm64 \\+ Metal, Linux \\+ CUDA",
+    ):
+        require_backend_available(binding, "metal")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"is_backend_available": None},
+        {
+            "is_backend_available": None,
+            "__ds4_available_backends__": ("metal",),
+        },
+    ],
+)
+def test_require_backend_available_accepts_metadata_fallbacks(
+    overrides: dict[str, object],
+) -> None:
+    require_backend_available(_fake_binding(**overrides), "metal")
+
+
+def test_require_backend_available_rejects_missing_metadata_entry() -> None:
+    binding = _fake_binding(
+        is_backend_available=None,
+        __ds4_available_backends__=("cuda",),
+    )
+
+    with pytest.raises(
+        Ds4BackendUnavailable, match="unavailable on this platform"
     ):
         require_backend_available(binding, "metal")
 

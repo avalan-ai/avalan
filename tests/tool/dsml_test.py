@@ -98,6 +98,35 @@ class DsmlToolsTestCase(TestCase):
             rendered,
         )
 
+    def test_render_empty_tool_inputs_return_none_or_empty(self):
+        self.assertIsNone(DsmlTools.render_tool_schemas(None))
+        self.assertIsNone(DsmlTools.render_tool_schemas([]))
+        self.assertEqual(DsmlTools.render_tool_calls(()), "")
+
+    def test_render_prompt_with_thinking_handles_intermediate_assistant(self):
+        rendered = DsmlTools.render_prompt(
+            None,
+            [
+                DsmlPromptMessage(role=MessageRole.USER, content="one"),
+                DsmlPromptMessage(
+                    role=MessageRole.ASSISTANT,
+                    content="two",
+                    reasoning="hidden",
+                ),
+                DsmlPromptMessage(role=MessageRole.USER, content="three"),
+                DsmlPromptMessage(
+                    role=MessageRole.ASSISTANT,
+                    content="four",
+                    reasoning="final",
+                ),
+            ],
+            None,
+            ThinkMode.HIGH,
+        )
+
+        self.assertIn("<｜Assistant｜></think>two", rendered)
+        self.assertIn("<｜Assistant｜><think>final</think>four", rendered)
+
     def test_parse_generated_message_returns_reasoning_and_raw_dsml(self):
         text = (
             "<think>Use calculator.</think>I will calculate.\n\n"
@@ -165,6 +194,34 @@ class DsmlToolsTestCase(TestCase):
         self.assertIsNone(
             DsmlTools.parse_generated_message("<｜DSML｜tool_calls>")
         )
+
+    def test_parse_generated_message_handles_unclosed_invoke_and_invalid_json(
+        self,
+    ):
+        malformed = '<tool_calls><invoke name="broken"></tool_calls>'
+        parsed = DsmlTools.parse_generated_message(malformed)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.calls, ())
+
+        invalid_json = (
+            "<tool_calls>"
+            '<invoke name="math.calculator">'
+            '<parameter name="value" string="false">not-json</parameter>'
+            "</invoke>"
+            "</tool_calls>"
+        )
+        parsed = DsmlTools.parse_generated_message(invalid_json)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.calls[0].arguments, {"value": None})
+
+    def test_parameter_end_after_returns_original_index_for_unknown_marker(
+        self,
+    ):
+        self.assertEqual(DsmlTools._parameter_end_after("abc", 1), 1)
 
     def test_stream_argument_deltas_omits_dsml_tags(self):
         raw = (

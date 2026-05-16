@@ -16,6 +16,7 @@ from avalan.entities import (
 )
 from avalan.event import EventType
 from avalan.event.manager import EventManager
+from avalan.model import manager as model_manager
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import ModelManager
@@ -237,6 +238,43 @@ class ModelManagerExtraTestCase(TestCase):
                 )
                 with self.assertRaisesRegex(ValueError, expected):
                     manager.load(uri)
+
+    def test_ds4_backend_config_from_mapping_rejects_invalid_values(self):
+        cases = (
+            ({"ds4_mtp_margin": "bad"}, "a number"),
+            ({"ds4_mtp_margin": -0.1}, "a non-negative number"),
+            ({"ds4_mtp_path": ""}, "a non-empty string"),
+            ({"ds4_quality": 1}, "a boolean"),
+            (
+                {"ds4_native_backend": "rocm"},
+                "one of auto, cpu, cuda, metal",
+            ),
+        )
+
+        for mapping, expected in cases:
+            with self.subTest(mapping=mapping):
+                with self.assertRaisesRegex(ValueError, expected):
+                    ModelManager.ds4_backend_config_from_mapping(mapping)
+
+    def test_private_ds4_config_helpers_cover_defensive_paths(self):
+        self.assertEqual(
+            model_manager._normalize_ds4_backend_config(
+                {"ds4_unknown": 1, "ds4_ctx": 2048},
+                reject_unknown=False,
+                allow_normalized_keys=False,
+            ),
+            {"ctx_size": 2048},
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unknown DS4 backend configuration key 'unsupported'",
+        ):
+            model_manager._validate_ds4_config_value(
+                "ds4_unsupported",
+                "unsupported",
+                1,
+            )
 
     def test_load_non_ds4_ignores_ds4_config(self):
         manager = ModelManager(self.hub, self.logger)
