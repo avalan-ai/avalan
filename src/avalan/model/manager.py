@@ -314,6 +314,31 @@ class ModelManager:
         modality: Modality | None = None,
     ) -> TransformerEngineSettings:
         engine_settings_args: dict[str, Any] = dict(settings or {})
+        if "backend" in engine_uri.params:
+            backend_param = engine_uri.params["backend"]
+            assert isinstance(backend_param, str)
+            engine_settings_args["backend"] = Backend(backend_param)
+
+        backend = engine_settings_args.get("backend", Backend.TRANSFORMERS)
+        if _is_ds4_backend(cast(Backend | str, backend)):
+            uri_backend_config = _normalize_ds4_backend_config(
+                engine_uri.params,
+                reject_unknown=True,
+                allow_normalized_keys=False,
+            )
+            explicit_backend_config = _normalize_ds4_backend_config(
+                cast(
+                    dict[str, object],
+                    engine_settings_args.get("backend_config") or {},
+                ),
+                reject_unknown=True,
+                allow_normalized_keys=True,
+            )
+            ds4_backend_config = {
+                **uri_backend_config,
+                **explicit_backend_config,
+            }
+            engine_settings_args["backend_config"] = ds4_backend_config or None
 
         if modality != Modality.EMBEDDING and not engine_uri.is_local:
             token = None

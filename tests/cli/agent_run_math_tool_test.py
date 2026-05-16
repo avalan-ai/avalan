@@ -331,6 +331,12 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         theme.agent.return_value = "agent_panel"
         theme.recent_messages.return_value = "recent_panel"
         hub = MagicMock()
+        hub.can_access.side_effect = AssertionError(
+            "DS4 local model paths must not query Hugging Face access."
+        )
+        hub.model.side_effect = AssertionError(
+            "DS4 local model paths must not query Hugging Face metadata."
+        )
         logger = MagicMock()
 
         orch = DummyOrchestrator(
@@ -342,7 +348,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 password=None,
                 vendor="local",
                 model_id="./ds4flash.gguf",
-                params={"backend": "ds4", "ds4_ctx": "4096"},
+                params={"ds4_ctx": "4096"},
             ),
         )
         dummy_stack = AsyncMock()
@@ -383,6 +389,10 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
         from_settings_patch.assert_awaited_once()
+        hub.can_access.assert_not_called()
+        hub.model.assert_not_called()
+        theme.agent.assert_called_once()
+        self.assertEqual(theme.agent.call_args.kwargs["models"], ["m"])
         tg_patch.assert_awaited_once()
         resp = tg_patch.await_args.kwargs["response"]
         tokens = []
