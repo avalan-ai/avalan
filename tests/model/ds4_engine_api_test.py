@@ -57,6 +57,12 @@ class FakeNativeOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class MinimalNativeOptions:
+    model_path: str
+    backend: NativeBackend
+
+
+@dataclass(frozen=True, slots=True)
 class FakeNativeSamplingOptions:
     temperature: float = 0.0
     top_k: int = 0
@@ -279,6 +285,43 @@ def test_engine_opens_with_valid_options_through_fake_native_layer(
     assert native.options.warm_weights is True
     assert engine.options.model_path == str(model_path)
     engine.close()
+
+
+def test_engine_defaults_work_with_minimal_native_engine_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    FakeNativeEngine.instances.clear()
+    _install_binding(
+        monkeypatch, _fake_binding(EngineOptions=MinimalNativeOptions)
+    )
+
+    engine = Engine(EngineOptions(model_path=str(model_path)))
+
+    native = cast(FakeNativeEngine, engine.native)
+    assert native.options == MinimalNativeOptions(
+        model_path=str(model_path), backend=NativeBackend.METAL
+    )
+    engine.close()
+
+
+def test_engine_requested_mtp_options_require_binding_support(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "ds4flash.gguf"
+    model_path.write_bytes(b"gguf")
+    _install_binding(
+        monkeypatch, _fake_binding(EngineOptions=MinimalNativeOptions)
+    )
+
+    with pytest.raises(Ds4BackendUnavailable, match="mtp_path"):
+        Engine(
+            EngineOptions(
+                model_path=str(model_path),
+                mtp_path=str(tmp_path / "mtp.gguf"),
+            )
+        )
 
 
 def test_engine_close_is_idempotent(

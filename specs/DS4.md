@@ -816,27 +816,39 @@ Verification:
 
 ### Slice 5.4: MTP And Directional Steering
 
-- [ ] Expose MTP options through `backend_config`.
-- [ ] Validate optional MTP and steering paths.
-- [ ] Pass MTP draft token count, margin, quality, warm-weights, and steering
+- [x] Expose MTP options through `backend_config`.
+- [x] Validate optional MTP and steering paths.
+- [x] Pass MTP draft token count, margin, quality, warm-weights, and steering
   coefficients to `EngineOptions`.
+
+Note: MTP options are available through DS4 backend config from CLI and URI
+settings. Directional steering remains URI/backend-config only. Avalan
+preflights MTP and steering file paths, requires a steering file when steering
+coefficients are non-zero, rejects negative MTP draft counts and margins, and
+capability-detects optional `pyds4.EngineOptions` fields so default runs still
+work with a minimal binding while requested advanced options fail with an
+actionable backend-unavailable error.
 
 Positive tests:
 
-- [ ] MTP options reach fake `EngineOptions`.
-- [ ] Directional steering options reach fake `EngineOptions`.
-- [ ] Missing optional features are capability-detected.
+- [x] MTP options reach fake `EngineOptions`.
+- [x] Directional steering options reach fake `EngineOptions`.
+- [x] Missing optional features are capability-detected.
 
 Negative tests:
 
-- [ ] Missing MTP/steering files raise validation errors.
-- [ ] Invalid MTP draft count or margin is rejected.
-- [ ] Unsupported MTP on current DS4 build raises an actionable error.
+- [x] Missing MTP/steering files raise validation errors.
+- [x] Invalid MTP draft count or margin is rejected.
+- [x] Unsupported MTP on current DS4 build raises an actionable error.
 
 Exit conditions:
 
-- [ ] Advanced options are documented as DS4-specific.
-- [ ] Defaults preserve phase-1 behavior.
+- [x] Advanced options are documented as DS4-specific.
+- [x] Defaults preserve phase-1 behavior.
+
+Verification:
+
+- [x] `poetry run pytest tests/model/ds4_engine_api_test.py tests/model/ds4_model_test.py tests/model/model_manager_extra_test.py --verbose -s`
 
 ### Slice 5.5: Native Tool Calls And DSML Replay
 

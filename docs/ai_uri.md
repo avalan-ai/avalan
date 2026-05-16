@@ -58,10 +58,12 @@ ai://local/%2FUsers/me/DS4%20models/ds4flash.gguf?backend=ds4
 
 DS4-specific parameters must use the `ds4_` prefix. Common keys are
 `ds4_ctx`, `ds4_native_backend`, `ds4_mtp`, `ds4_mtp_draft`,
-`ds4_mtp_margin`, `ds4_warm_weights`, and `ds4_quality`. Unknown `ds4_`
-parameters are rejected. The DS4 backend is not a generic GGUF loader, does
-not yet support native tool calls, and treats CPU mode as a debug/reference
-path only.
+`ds4_mtp_margin`, `ds4_warm_weights`, and `ds4_quality`. Advanced
+URI-only keys include `ds4_directional_steering_file`,
+`ds4_directional_steering_attn`, and `ds4_directional_steering_ffn`.
+Unknown `ds4_` parameters are rejected. The DS4 backend is not a generic
+GGUF loader, does not yet support native tool calls, and treats CPU mode as a
+debug/reference path only.
 
 ## Examples
 

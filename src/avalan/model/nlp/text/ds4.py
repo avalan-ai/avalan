@@ -1233,6 +1233,17 @@ class Ds4Model(TextGenerationModel):
         mtp_path = self._optional_file_path(
             config.get("mtp_path"), "DS4 MTP path"
         )
+        directional_steering_attn = self._float_config(
+            config, "directional_steering_attn", 0.0
+        )
+        directional_steering_ffn = self._float_config(
+            config, "directional_steering_ffn", 0.0
+        )
+        directional_steering_file = self._steering_file_path(
+            config,
+            directional_steering_attn,
+            directional_steering_ffn,
+        )
         native_backend = self._native_backend(config)
         if native_backend is Ds4NativeBackend.CPU:
             self._logger.warning(_CPU_WARNING)
@@ -1241,18 +1252,16 @@ class Ds4Model(TextGenerationModel):
             model_path=model_path,
             backend=native_backend,
             mtp_path=mtp_path,
-            n_threads=self._int_config(config, "n_threads", 0),
-            mtp_draft_tokens=self._int_config(config, "mtp_draft_tokens", 0),
-            mtp_margin=self._float_config(config, "mtp_margin", 0.0),
-            directional_steering_file=self._optional_string_config(
-                config, "directional_steering_file"
+            n_threads=self._non_negative_int_config(config, "n_threads", 0),
+            mtp_draft_tokens=self._non_negative_int_config(
+                config, "mtp_draft_tokens", 0
             ),
-            directional_steering_attn=self._float_config(
-                config, "directional_steering_attn", 0.0
+            mtp_margin=self._non_negative_float_config(
+                config, "mtp_margin", 0.0
             ),
-            directional_steering_ffn=self._float_config(
-                config, "directional_steering_ffn", 0.0
-            ),
+            directional_steering_file=directional_steering_file,
+            directional_steering_attn=directional_steering_attn,
+            directional_steering_ffn=directional_steering_ffn,
             warm_weights=self._bool_config(config, "warm_weights", False),
             quality=self._bool_config(config, "quality", False),
         )
@@ -1765,11 +1774,42 @@ class Ds4Model(TextGenerationModel):
             raise Ds4InvalidModel(f"{label} must be a non-empty path.")
         return cls._validated_file_path(value, label)
 
+    @classmethod
+    def _steering_file_path(
+        cls,
+        config: dict[str, object],
+        directional_steering_attn: float,
+        directional_steering_ffn: float,
+    ) -> str | None:
+        path = cls._optional_file_path(
+            config.get("directional_steering_file"),
+            "DS4 directional steering file",
+        )
+        if path is None and (
+            directional_steering_attn != 0.0 or directional_steering_ffn != 0.0
+        ):
+            raise Ds4InvalidModel(
+                "DS4 directional_steering_file is required when directional "
+                "steering coefficients are non-zero."
+            )
+        return path
+
     @staticmethod
     def _int_config(config: dict[str, object], key: str, default: int) -> int:
         value = config.get(key, default)
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"DS4 backend config {key!r} must be an integer.")
+        return value
+
+    @classmethod
+    def _non_negative_int_config(
+        cls, config: dict[str, object], key: str, default: int
+    ) -> int:
+        value = cls._int_config(config, key, default)
+        if value < 0:
+            raise ValueError(
+                f"DS4 backend config {key!r} must be non-negative."
+            )
         return value
 
     @staticmethod
@@ -1780,6 +1820,17 @@ class Ds4Model(TextGenerationModel):
         if isinstance(value, bool) or not isinstance(value, (float, int)):
             raise ValueError(f"DS4 backend config {key!r} must be a number.")
         return float(value)
+
+    @classmethod
+    def _non_negative_float_config(
+        cls, config: dict[str, object], key: str, default: float
+    ) -> float:
+        value = cls._float_config(config, key, default)
+        if value < 0.0:
+            raise ValueError(
+                f"DS4 backend config {key!r} must be non-negative."
+            )
+        return value
 
     @staticmethod
     def _bool_config(

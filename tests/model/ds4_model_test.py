@@ -647,6 +647,8 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
     model_path = _model_file(tmp_path)
     mtp_path = tmp_path / "mtp.gguf"
     mtp_path.write_bytes(b"mtp")
+    steering_path = tmp_path / "steer.bin"
+    steering_path.write_bytes(b"steer")
 
     model = Ds4Model(
         str(model_path),
@@ -657,7 +659,7 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
                 "mtp_path": str(mtp_path),
                 "mtp_draft_tokens": 2,
                 "mtp_margin": 0.25,
-                "directional_steering_file": "steer.bin",
+                "directional_steering_file": str(steering_path),
                 "directional_steering_attn": 0.5,
                 "directional_steering_ffn": -0.25,
                 "warm_weights": True,
@@ -674,7 +676,7 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
         mtp_path=str(mtp_path),
         mtp_draft_tokens=2,
         mtp_margin=0.25,
-        directional_steering_file="steer.bin",
+        directional_steering_file=str(steering_path),
         directional_steering_attn=0.5,
         directional_steering_ffn=-0.25,
         warm_weights=True,
@@ -779,6 +781,63 @@ def test_ds4_model_missing_mtp_path_raises_before_native_open(
             TransformerEngineSettings(
                 backend_config={"mtp_path": str(tmp_path / "missing-mtp.gguf")}
             ),
+        )
+
+    assert FakeNativeEngine.instances == []
+
+
+def test_ds4_model_missing_steering_path_raises_before_native_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    FakeNativeEngine.instances.clear()
+    _install_binding(monkeypatch, _fake_binding())
+    model_path = _model_file(tmp_path)
+
+    with pytest.raises(Ds4InvalidModel, match="directional steering file"):
+        Ds4Model(
+            str(model_path),
+            TransformerEngineSettings(
+                backend_config={
+                    "directional_steering_file": str(
+                        tmp_path / "missing-steer.bin"
+                    )
+                }
+            ),
+        )
+
+    assert FakeNativeEngine.instances == []
+
+
+def test_ds4_model_steering_coefficients_require_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    FakeNativeEngine.instances.clear()
+    _install_binding(monkeypatch, _fake_binding())
+    model_path = _model_file(tmp_path)
+
+    with pytest.raises(Ds4InvalidModel, match="directional_steering_file"):
+        Ds4Model(
+            str(model_path),
+            TransformerEngineSettings(
+                backend_config={"directional_steering_attn": 0.25}
+            ),
+        )
+
+    assert FakeNativeEngine.instances == []
+
+
+@pytest.mark.parametrize("key", ("mtp_draft_tokens", "mtp_margin"))
+def test_ds4_model_invalid_mtp_values_raise_before_native_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, key: str
+) -> None:
+    FakeNativeEngine.instances.clear()
+    _install_binding(monkeypatch, _fake_binding())
+    model_path = _model_file(tmp_path)
+
+    with pytest.raises(ValueError, match=key):
+        Ds4Model(
+            str(model_path),
+            TransformerEngineSettings(backend_config={key: -1}),
         )
 
     assert FakeNativeEngine.instances == []

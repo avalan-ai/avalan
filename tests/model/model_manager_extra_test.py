@@ -185,6 +185,32 @@ class ModelManagerExtraTestCase(TestCase):
             {"ctx_size": 4096, "native_backend": "cuda"},
         )
 
+    def test_load_ds4_uri_directional_steering_config(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = manager.parse_uri(
+            "ai://local/./model.gguf?backend=ds4"
+            "&ds4_directional_steering_file=steer.bin"
+            "&ds4_directional_steering_attn=0.5"
+            "&ds4_directional_steering_ffn=-0.25"
+        )
+        with (
+            patch.object(manager, "get_engine_settings") as get_mock,
+            patch.object(manager, "load_engine") as load_mock,
+        ):
+            get_mock.return_value = TransformerEngineSettings()
+            load_mock.return_value = "model"
+            manager.load(uri)
+
+        args = get_mock.call_args.args[1]
+        self.assertEqual(
+            args["backend_config"],
+            {
+                "directional_steering_file": "steer.bin",
+                "directional_steering_attn": 0.5,
+                "directional_steering_ffn": -0.25,
+            },
+        )
+
     def test_load_unknown_ds4_uri_key_raises(self):
         manager = ModelManager(self.hub, self.logger)
         uri = manager.parse_uri(

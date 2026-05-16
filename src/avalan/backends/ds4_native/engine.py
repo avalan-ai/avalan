@@ -12,12 +12,25 @@ from .types import Backend, EngineOptions, SamplingOptions, ThinkMode
 from collections.abc import Callable
 from dataclasses import replace
 from enum import StrEnum
+from inspect import Parameter, signature
 from pathlib import Path
 from threading import RLock
 from typing import NoReturn, Protocol, cast
 
 _SUPPORTED_CHAT_ROLES = frozenset(("assistant", "system", "user"))
 _MAX_PROBABILITY = 1.0
+_REQUIRED_ENGINE_OPTION_KEYS = frozenset(("model_path", "backend"))
+_ENGINE_OPTION_DEFAULTS = {
+    "mtp_path": None,
+    "n_threads": 0,
+    "mtp_draft_tokens": 0,
+    "mtp_margin": 0.0,
+    "directional_steering_file": None,
+    "directional_steering_attn": 0.0,
+    "directional_steering_ffn": 0.0,
+    "warm_weights": False,
+    "quality": False,
+}
 
 
 class _SessionHandle(Protocol):
@@ -443,21 +456,83 @@ class Engine:
         if not callable(native_options_type):
             return options
 
-        return native_options_type(
-            model_path=options.model_path,
-            backend=Engine._native_enum_value(
+        kwargs = {
+            "model_path": options.model_path,
+            "backend": Engine._native_enum_value(
                 binding, "Backend", options.backend
             ),
-            mtp_path=options.mtp_path,
-            n_threads=options.n_threads,
-            mtp_draft_tokens=options.mtp_draft_tokens,
-            mtp_margin=options.mtp_margin,
-            directional_steering_file=options.directional_steering_file,
-            directional_steering_attn=options.directional_steering_attn,
-            directional_steering_ffn=options.directional_steering_ffn,
-            warm_weights=options.warm_weights,
-            quality=options.quality,
+            "mtp_path": options.mtp_path,
+            "n_threads": options.n_threads,
+            "mtp_draft_tokens": options.mtp_draft_tokens,
+            "mtp_margin": options.mtp_margin,
+            "directional_steering_file": options.directional_steering_file,
+            "directional_steering_attn": options.directional_steering_attn,
+            "directional_steering_ffn": options.directional_steering_ffn,
+            "warm_weights": options.warm_weights,
+            "quality": options.quality,
+        }
+        supported_keys = Engine._native_engine_option_keys(native_options_type)
+        if supported_keys is not None:
+            missing_required = sorted(
+                _REQUIRED_ENGINE_OPTION_KEYS - supported_keys
+            )
+            if missing_required:
+                missing = ", ".join(missing_required)
+                raise Ds4LoadError(
+                    "DS4 binding EngineOptions does not support required "
+                    f"option(s): {missing}."
+                )
+
+            unsupported_requested = sorted(
+                key
+                for key, value in kwargs.items()
+                if key not in supported_keys
+                and Engine._engine_option_is_requested(key, value)
+            )
+            if unsupported_requested:
+                requested = ", ".join(unsupported_requested)
+                raise Ds4BackendUnavailable(
+                    "DS4 binding EngineOptions does not support requested "
+                    f"advanced option(s): {requested}. Install a pyds4 "
+                    "build with MTP and directional steering option support."
+                )
+
+            kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in supported_keys
+            }
+
+        return native_options_type(**kwargs)
+
+    @staticmethod
+    def _native_engine_option_keys(
+        native_options_type: object,
+    ) -> frozenset[str] | None:
+        try:
+            parameters = signature(
+                cast(Callable[..., object], native_options_type)
+            ).parameters
+        except (TypeError, ValueError):
+            return None
+        if any(
+            parameter.kind is Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            return None
+        return frozenset(
+            name
+            for name, parameter in parameters.items()
+            if name != "self"
+            and parameter.kind
+            in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
         )
+
+    @staticmethod
+    def _engine_option_is_requested(key: str, value: object) -> bool:
+        if key in _REQUIRED_ENGINE_OPTION_KEYS:
+            return True
+        return value != _ENGINE_OPTION_DEFAULTS.get(key)
 
     @staticmethod
     def _native_enum_value(

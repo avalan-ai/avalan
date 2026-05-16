@@ -109,6 +109,16 @@ Common URI keys are:
 - `ds4_warm_weights`
 - `ds4_quality`
 
+Advanced URI-only keys include:
+
+- `ds4_directional_steering_file`
+- `ds4_directional_steering_attn`
+- `ds4_directional_steering_ffn`
+
+MTP and directional steering file paths are validated before native engine
+open. Directional steering coefficients require
+`ds4_directional_steering_file`.
+
 Unknown `ds4_` URI parameters are rejected so configuration mistakes fail
 early.
 
