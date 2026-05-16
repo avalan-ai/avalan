@@ -89,6 +89,43 @@ def _make_response(
 
 
 class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
+    async def test_react_uses_explicit_output(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _dummy_response()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+        )
+
+        result = await resp._react(response, output="forced")
+
+        self.assertEqual(result, "forced")
+
+    async def test_response_text_and_calls_skips_events(self):
+        class Response:
+            is_async_generator = True
+
+            def __aiter__(self):
+                return self.output_gen()
+
+            async def output_gen(self):
+                yield "a"
+                yield Event(type=EventType.TOOL_DETECT)
+                yield Token(id=7, token="b")
+
+        text, calls = await OrchestratorResponse._response_text_and_calls(
+            Response()
+        )
+
+        self.assertEqual(text, "ab")
+        self.assertEqual(calls, [])
+
     async def test_tool_process_queue(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)

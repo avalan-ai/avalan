@@ -1940,6 +1940,39 @@ def test_ds4_generation_stream_rejects_malformed_dsml(
     run(run_case())
 
 
+def test_ds4_generation_stream_flushes_unsafe_non_dsml_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def generate_text_chunks(
+        self: Ds4Worker,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+    ):
+        yield "<"
+
+    monkeypatch.setattr(
+        Ds4Worker, "_generate_text_chunks", generate_text_chunks
+    )
+    worker = object.__new__(Ds4Worker)
+    plan = _Ds4GenerationPlan(
+        max_new_tokens=1,
+        sampling_options=SamplingOptions(),
+        stop_strings=(),
+        use_sampling=False,
+        parse_dsml_tools=True,
+    )
+
+    async def run_case() -> list[object]:
+        return [
+            chunk
+            async for chunk in worker._generate_dsml_tool_chunks(
+                object(), plan
+            )
+        ]
+
+    assert run(run_case()) == ["<"]
+
+
 def test_ds4_generation_stream_returns_token_details_when_requested(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -1132,6 +1132,12 @@ def test_native_engine_option_introspection_edges() -> None:
         )
         is False
     )
+    assert (
+        Engine._native_engine_options_supports(
+            SimpleNamespace(EngineOptions=object()), "native_log"
+        )
+        is True
+    )
 
     class MissingBackendOptions:
         def __init__(self, model_path: str) -> None:
