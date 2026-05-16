@@ -46,6 +46,7 @@ class Backend(StrEnum):
     TRANSFORMERS = "transformers"
     MLXLM = "mlx"
     VLLM = "vllm"
+    DS4 = "ds4"
 
 
 ToolValue = bool | float | int | str | None | list[Any] | dict[str, Any]
@@ -145,6 +146,7 @@ class ToolFormat(StrEnum):
     BRACKET = "bracket"
     OPENAI = "openai"
     HARMONY = "harmony"
+    DSML = "dsml"
 
 
 class VisionColorModel(StrEnum):
@@ -934,6 +936,7 @@ class TextPartition:
 class TransformerEngineSettings(EngineSettings):
     attention: AttentionImplementation | None = None
     backend: Backend = Backend.TRANSFORMERS
+    backend_config: dict[str, object] | None = None
     loader_class: TextGenerationLoaderClass | None = "auto"
     local_files_only: bool = False
     low_cpu_mem_usage: bool = False

@@ -27,6 +27,18 @@ def _collect_progs(parser: ArgumentParser) -> list[str]:
     return progs
 
 
+def _find_parser(parser: ArgumentParser, prog: str) -> ArgumentParser:
+    stack = [parser]
+    while stack:
+        candidate = stack.pop()
+        if candidate.prog == prog:
+            return candidate
+        for action in candidate._actions:
+            if isinstance(action, _SubParsersAction):
+                stack.extend(action.choices.values())
+    raise AssertionError(f"Parser {prog!r} was not found.")
+
+
 class CliInitTestCase(TestCase):
     def test_constructor_creates_parser_and_sets_help_full(self):
         logger = MagicMock()
@@ -87,6 +99,15 @@ class CliParallelOptionTestCase(TestCase):
 
 
 class CliModelRunOptionTestCase(TestCase):
+    def test_backend_help_includes_ds4_choice(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        help_text = cli._parser.format_help()
+
+        self.assertIn("{transformers,mlx,vllm,ds4}", help_text)
+
     def test_input_file_argument(self) -> None:
         logger = MagicMock()
         with patch.object(sys, "argv", ["prog"]):
@@ -105,6 +126,140 @@ class CliModelRunOptionTestCase(TestCase):
         )
 
         self.assertEqual(args.input_file, ["doc-1.pdf", "doc-2.pdf"])
+
+    def test_ds4_backend_options(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "model",
+                "run",
+                "model-id",
+                "--backend",
+                "ds4",
+                "--ds4-ctx",
+                "4096",
+                "--ds4-native-backend",
+                "metal",
+                "--ds4-mtp",
+                "draft.gguf",
+                "--ds4-mtp-draft",
+                "2",
+                "--ds4-mtp-margin",
+                "0.25",
+                "--ds4-warm-weights",
+                "--ds4-quality",
+                "--with-ds4-native-log",
+            ]
+        )
+
+        self.assertEqual(args.backend, "ds4")
+        self.assertEqual(args.ds4_ctx, 4096)
+        self.assertEqual(args.ds4_native_backend, "metal")
+        self.assertEqual(args.ds4_mtp, "draft.gguf")
+        self.assertEqual(args.ds4_mtp_draft, 2)
+        self.assertEqual(args.ds4_mtp_margin, 0.25)
+        self.assertTrue(args.ds4_warm_weights)
+        self.assertTrue(args.ds4_quality)
+        self.assertTrue(args.ds4_native_log)
+
+    def test_agent_run_ds4_backend_options(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--backend",
+                "ds4",
+                "--engine-uri",
+                "ai://local/./ds4flash.gguf",
+                "--ds4-ctx",
+                "4096",
+                "--ds4-native-backend",
+                "metal",
+                "--ds4-mtp",
+                "draft.gguf",
+                "--ds4-mtp-draft",
+                "2",
+                "--ds4-mtp-margin",
+                "0.25",
+                "--ds4-warm-weights",
+                "--ds4-quality",
+                "--no-ds4-native-log",
+            ]
+        )
+
+        self.assertEqual(args.backend, "ds4")
+        self.assertEqual(args.engine_uri, "ai://local/./ds4flash.gguf")
+        self.assertEqual(args.ds4_ctx, 4096)
+        self.assertEqual(args.ds4_native_backend, "metal")
+        self.assertEqual(args.ds4_mtp, "draft.gguf")
+        self.assertEqual(args.ds4_mtp_draft, 2)
+        self.assertEqual(args.ds4_mtp_margin, 0.25)
+        self.assertTrue(args.ds4_warm_weights)
+        self.assertTrue(args.ds4_quality)
+        self.assertFalse(args.ds4_native_log)
+
+    def test_documented_ds4_options_are_in_model_run_help(self) -> None:
+        logger = MagicMock()
+        docs = (
+            Path(__file__).resolve().parents[2] / "docs" / "DS4.md"
+        ).read_text(encoding="utf-8")
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        model_run_help = _find_parser(
+            cli._parser, "prog model run"
+        ).format_help()
+        agent_run_help = _find_parser(
+            cli._parser, "prog agent run"
+        ).format_help()
+
+        for option in (
+            "--ds4-ctx",
+            "--ds4-native-backend",
+            "--ds4-mtp",
+            "--ds4-mtp-draft",
+            "--ds4-mtp-margin",
+            "--ds4-warm-weights",
+            "--ds4-quality",
+            "--with-ds4-native-log",
+            "--ds4-native-log",
+            "--no-ds4-native-log",
+            "--reasoning-effort",
+        ):
+            self.assertIn(option, docs)
+            self.assertIn(option, model_run_help)
+            self.assertIn(option, agent_run_help)
+
+        self.assertIn("--no-reasoning", docs)
+        self.assertIn("--no-reasoning", model_run_help)
+
+    def test_ds4_docs_call_out_limitations(self) -> None:
+        docs = (
+            Path(__file__).resolve().parents[2] / "docs" / "DS4.md"
+        ).read_text(encoding="utf-8")
+        normalized_docs = docs.lower()
+
+        self.assertIn("not a generic gguf", normalized_docs)
+        self.assertIn("native ds4 tool calls use dsml", normalized_docs)
+        self.assertIn("renders tool schemas", normalized_docs)
+        self.assertIn("parses completed dsml tool blocks", normalized_docs)
+        self.assertIn("streams\n  argument deltas", normalized_docs)
+        self.assertIn("exact raw dsml replay metadata", normalized_docs)
+        self.assertIn("cpu backend exists for diagnostics", normalized_docs)
+        self.assertNotIn("generic gguf models are supported", normalized_docs)
+        self.assertNotIn(
+            "native ds4 tool calls are implemented", normalized_docs
+        )
+        self.assertNotIn(
+            "argument deltas are still in progress", normalized_docs
+        )
 
 
 class CliAgentPortTestCase(TestCase):
@@ -1035,6 +1190,16 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(CLI._can_use_anonymous_hub(args))
 
+    def test_can_use_anonymous_hub_for_local_ds4_model_run(self):
+        args = Namespace(
+            command="model",
+            model_command="run",
+            model="ai://local/../pyds4/.local/ds4/ds4flash.gguf",
+            backend="ds4",
+        )
+
+        self.assertTrue(CLI._can_use_anonymous_hub(args))
+
     async def test_call_uses_anonymous_hub_for_remote_model_run(self):
         captured_hub = None
 
@@ -1061,6 +1226,47 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__._huggingface_hub_class") as hub_class,
+            patch.object(CLI, "_main", AsyncMock(side_effect=capture_main)),
+        ):
+            await self.cli()
+
+        self.assertIsNotNone(captured_hub)
+        self.assertEqual(captured_hub.cache_dir, "~/.cache/huggingface/hub")
+        hub_class.assert_not_called()
+
+    async def test_call_uses_anonymous_hub_for_local_ds4_model_run(self):
+        captured_hub = None
+
+        async def capture_main(args, theme, console, hub):
+            nonlocal captured_hub
+            del args, theme, console
+            captured_hub = hub
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "model",
+                    "run",
+                    "ai://local/../pyds4/.local/ds4/ds4flash.gguf",
+                    "--backend",
+                    "ds4",
+                ],
+            ),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=SimpleNamespace(
+                    gettext=lambda s: s, ngettext=lambda s, p, n: s
+                ),
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=MagicMock()),
             patch("avalan.cli.__main__._huggingface_hub_class") as hub_class,
             patch.object(CLI, "_main", AsyncMock(side_effect=capture_main)),
         ):

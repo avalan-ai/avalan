@@ -65,6 +65,35 @@ class OrchestratorLoaderCoverageTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(import_module.call_count, 2)
 
+    async def test_lazy_pgsql_raw_memory_type_imports_when_uncached(
+        self,
+    ) -> None:
+        class LoadedPgsqlRawMemory:
+            pass
+
+        with (
+            patch.object(loader_module, "PgsqlRawMemory", None),
+            patch.object(
+                loader_module,
+                "import_module",
+                return_value=SimpleNamespace(
+                    PgsqlRawMemory=LoadedPgsqlRawMemory
+                ),
+            ) as import_module,
+        ):
+            self.assertIs(
+                OrchestratorLoader._pgsql_raw_memory_type(),
+                LoadedPgsqlRawMemory,
+            )
+            self.assertIs(
+                OrchestratorLoader._pgsql_raw_memory_type(),
+                LoadedPgsqlRawMemory,
+            )
+
+        import_module.assert_called_once_with(
+            "avalan.memory.permanent.pgsql.raw"
+        )
+
     async def test_run_chat_memory_and_debug_source(self) -> None:
         with NamedTemporaryFile() as debug_file, TemporaryDirectory() as tmp:
             config = f"""

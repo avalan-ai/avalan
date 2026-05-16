@@ -10,6 +10,7 @@ from ...entities import (
     Backend,
     EngineMessageScored,
     GenerationCacheStrategy,
+    Model,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
     ToolCall,
@@ -291,6 +292,37 @@ def get_tool_settings(
     )
 
 
+def _uses_ds4_backend(orchestrator: Orchestrator) -> bool:
+    """Return whether the active orchestrator engine uses DS4."""
+    engine_agent = orchestrator.engine_agent
+    if not engine_agent:
+        return False
+
+    engine_uri = getattr(engine_agent, "engine_uri", None)
+    params = getattr(engine_uri, "params", None)
+    if isinstance(params, dict):
+        backend = params.get("backend")
+        if backend == Backend.DS4 or backend == Backend.DS4.value:
+            return True
+
+    engine = orchestrator.engine
+    model_type = getattr(engine, "model_type", None)
+    return isinstance(model_type, str) and model_type.lower().startswith("ds4")
+
+
+def _agent_display_models(
+    orchestrator: Orchestrator,
+    hub: HuggingfaceHub,
+    *,
+    is_local: bool,
+) -> list[Model | str]:
+    """Return model display payloads without querying DS4 local paths."""
+    if not is_local or _uses_ds4_backend(orchestrator):
+        return list(orchestrator.model_ids)
+
+    return [hub.model(model_id) for model_id in orchestrator.model_ids]
+
+
 async def agent_message_search(
     args: Namespace,
     console: Console,
@@ -391,16 +423,18 @@ async def agent_message_search(
             assert orchestrator.engine_agent
             assert orchestrator.engine and orchestrator.engine.model_id
 
-            can_access = args.skip_hub_access_check or hub.can_access(
-                orchestrator.engine.model_id
-            )
             is_local = not isinstance(
                 orchestrator.engine, TextGenerationVendorModel
             )
-            models = [
-                hub.model(model_id) if is_local else model_id
-                for model_id in orchestrator.model_ids
-            ]
+            can_access = (
+                True
+                if _uses_ds4_backend(orchestrator)
+                else args.skip_hub_access_check
+                or hub.can_access(orchestrator.engine.model_id)
+            )
+            models = _agent_display_models(
+                orchestrator, hub, is_local=is_local
+            )
 
             console.print(
                 theme.agent(orchestrator, models=models, can_access=can_access)
@@ -577,14 +611,15 @@ async def agent_run(
             )
 
             can_access = (
-                args.skip_hub_access_check
+                True
+                if _uses_ds4_backend(orchestrator)
+                else args.skip_hub_access_check
                 or not is_local
                 or hub.can_access(orchestrator.engine.model_id)
             )
-            models = [
-                hub.model(model_id) if is_local else model_id
-                for model_id in orchestrator.model_ids
-            ]
+            models = _agent_display_models(
+                orchestrator, hub, is_local=is_local
+            )
 
             console.print(
                 theme.agent(orchestrator, models=models, can_access=can_access)

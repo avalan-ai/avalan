@@ -33,3 +33,36 @@ mkdir avalan-test/ && cd avalan-test/
 poetry init --no-interaction --python=">=3.12,<3.14"
 poetry add "avalan[all]" --no-cache
 ```
+
+## DS4 native backend
+
+Avalan's `ds4` extra installs the `pyds4` bridge used by the native DS4
+backend:
+
+```bash
+python3 -m pip install -U "avalan[ds4]"
+```
+
+The extra is scoped to platforms that can run DS4's native targets: macOS
+arm64 with Metal and Linux with CUDA. The DS4 CPU backend is a
+debug/reference path for correctness checks only and should not be treated as
+a production inference target.
+
+The DS4 backend is intentionally model-specific. It only supports
+DS4-supported DeepSeek V4 Flash GGUF files and is not a generic GGUF loader.
+
+If a published `pyds4` wheel is not available for your platform, build the
+binding from a local `pyds4` source checkout before installing Avalan:
+
+```bash
+git clone https://github.com/antirez/ds4.git /path/to/ds4
+
+DS4_SOURCE_DIR=/path/to/ds4 \
+PYDS4_BACKEND=metal \
+python3 -m pip install -e /path/to/pyds4
+
+python3 -m pip install -U "avalan[ds4]"
+```
+
+Use `PYDS4_BACKEND=cuda` for Linux CUDA builds. Local CPU builds are possible
+with `PYDS4_BACKEND=cpu`, but keep them limited to diagnostics.

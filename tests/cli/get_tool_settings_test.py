@@ -72,3 +72,20 @@ class GetToolSettingsTestCase(unittest.TestCase):
         )
         self.assertIsInstance(settings, DatabaseToolSettings)
         self.assertEqual(settings.dsn, "sqlite:///db.sqlite")
+
+    def test_uses_ds4_backend_requires_engine_agent(self):
+        orchestrator = Namespace(engine_agent=None, engine=Namespace())
+
+        self.assertFalse(agent_cmds._uses_ds4_backend(orchestrator))
+
+    def test_uses_ds4_backend_detects_uri_backend(self):
+        orchestrator = Namespace(
+            engine_agent=Namespace(
+                engine_uri=Namespace(
+                    params={"backend": agent_cmds.Backend.DS4}
+                )
+            ),
+            engine=Namespace(model_type="transformers"),
+        )
+
+        self.assertTrue(agent_cmds._uses_ds4_backend(orchestrator))

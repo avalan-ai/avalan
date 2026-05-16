@@ -61,16 +61,13 @@ class PlainInstallImportTestCase(TestCase):
         )
 
     def test_version_does_not_import_local_model_dependencies(self) -> None:
-        code = (
-            _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE
-            + """
+        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + """
 from avalan.cli.__main__ import main
 
 sys.argv = ["avalan", "--version"]
 main()
 print("local_model_loaded", local_model_dependency_loaded())
 """
-        )
         result = self._run_code(code)
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -79,10 +76,7 @@ print("local_model_loaded", local_model_dependency_loaded())
     def test_openai_vendor_load_does_not_import_local_model_dependencies(
         self,
     ) -> None:
-        code = (
-            _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE
-            + _OPENAI_STUB_CODE
-            + """
+        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + _OPENAI_STUB_CODE + """
 from contextlib import AsyncExitStack
 from logging import getLogger
 
@@ -104,7 +98,6 @@ print(
     local_model_dependency_loaded(),
 )
 """
-        )
         result = self._run_code(code)
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -113,10 +106,7 @@ print(
     def test_openai_agent_load_does_not_import_local_model_dependencies(
         self,
     ) -> None:
-        code = (
-            _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE
-            + _OPENAI_STUB_CODE
-            + """
+        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + _OPENAI_STUB_CODE + """
 import asyncio
 from contextlib import AsyncExitStack
 from logging import getLogger
@@ -164,7 +154,6 @@ async def main():
 
 asyncio.run(main())
 """
-        )
         result = self._run_code(code)
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -173,9 +162,7 @@ asyncio.run(main())
     def test_agent_server_setup_does_not_import_local_model_dependencies(
         self,
     ) -> None:
-        code = (
-            _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE
-            + """
+        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + """
 from logging import getLogger
 from types import SimpleNamespace
 from uuid import uuid4
@@ -230,7 +217,6 @@ print(
     local_model_dependency_loaded(),
 )
 """
-        )
         result = self._run_code(code)
 
         self.assertEqual(result.returncode, 0, result.stderr)

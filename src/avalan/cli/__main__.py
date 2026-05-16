@@ -1,5 +1,6 @@
 from .. import license, name, site, version
 from ..cli import CommandAbortException, has_input
+from ..cli.commands import is_ds4_backend_selected
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -1148,6 +1149,7 @@ class CLI:
             choices=[t.value for t in ReasoningTag],
             help="Reasoning tag style",
         )
+        CLI._add_ds4_backend_options(agent_run_parser)
 
         CLI._add_agent_settings_arguments(agent_run_parser)
         CLI._add_tool_settings_arguments(
@@ -1846,6 +1848,7 @@ class CLI:
                 "May be specified multiple times."
             ),
         )
+        CLI._add_ds4_backend_options(model_run_parser)
         model_run_parser.add_argument(
             "--text-context",
             type=str,
@@ -2246,6 +2249,75 @@ class CLI:
         return parser
 
     @staticmethod
+    def _add_ds4_backend_options(parser: ArgumentParser) -> _ArgumentGroup:
+        group = parser.add_argument_group("DS4 backend options")
+        group.add_argument(
+            "--ds4-ctx",
+            dest="ds4_ctx",
+            type=int,
+            default=None,
+            help="DS4 context size",
+        )
+        group.add_argument(
+            "--ds4-native-backend",
+            dest="ds4_native_backend",
+            type=str,
+            choices=["auto", "metal", "cuda", "cpu"],
+            default=None,
+            help="DS4 native backend",
+        )
+        group.add_argument(
+            "--ds4-mtp",
+            dest="ds4_mtp",
+            type=str,
+            default=None,
+            help="DS4 MTP model path",
+        )
+        group.add_argument(
+            "--ds4-mtp-draft",
+            dest="ds4_mtp_draft",
+            type=int,
+            default=None,
+            help="DS4 MTP draft-token count",
+        )
+        group.add_argument(
+            "--ds4-mtp-margin",
+            dest="ds4_mtp_margin",
+            type=float,
+            default=None,
+            help="DS4 MTP acceptance margin",
+        )
+        group.add_argument(
+            "--ds4-warm-weights",
+            dest="ds4_warm_weights",
+            action="store_true",
+            default=None,
+            help="Warm DS4 model weights when opening the engine",
+        )
+        group.add_argument(
+            "--ds4-quality",
+            dest="ds4_quality",
+            action="store_true",
+            default=None,
+            help="Enable DS4 quality mode",
+        )
+        group.add_argument(
+            "--with-ds4-native-log",
+            "--ds4-native-log",
+            dest="ds4_native_log",
+            action="store_true",
+            default=None,
+            help="Replay DS4 native stderr emitted while opening the engine",
+        )
+        group.add_argument(
+            "--no-ds4-native-log",
+            dest="ds4_native_log",
+            action="store_false",
+            help="Suppress DS4 native stderr emitted while opening the engine",
+        )
+        return group
+
+    @staticmethod
     def _add_agent_settings_arguments(
         parser: ArgumentParser,
     ) -> _ArgumentGroup:
@@ -2417,6 +2489,10 @@ class CLI:
         if command == "model" and (args.model_command or "display") == "run":
             assert isinstance(args.model, str)
             engine_uri = ModelManager.parse_uri(args.model)
+            if engine_uri.is_local and is_ds4_backend_selected(
+                args, engine_uri
+            ):
+                return False
             return bool(engine_uri.is_local)
         if command == "agent" and (
             (args.agent_command or "run") in {"run", "serve", "proxy"}
@@ -2425,6 +2501,10 @@ class CLI:
             if engine:
                 assert isinstance(engine, str)
                 engine_uri = ModelManager.parse_uri(engine)
+                if engine_uri.is_local and is_ds4_backend_selected(
+                    args, engine_uri
+                ):
+                    return False
                 return bool(engine_uri.is_local)
             specs = getattr(args, "specifications_file", None)
             if specs:
@@ -2434,6 +2514,10 @@ class CLI:
                 if engine_uri_str:
                     assert isinstance(engine_uri_str, str)
                     engine_uri = ModelManager.parse_uri(engine_uri_str)
+                    if engine_uri.is_local and is_ds4_backend_selected(
+                        args, engine_uri
+                    ):
+                        return False
                     return bool(engine_uri.is_local)
         return True
 
@@ -2444,7 +2528,9 @@ class CLI:
             return False
         assert isinstance(args.model, str)
         engine_uri = ModelManager.parse_uri(args.model)
-        return not bool(engine_uri.is_local)
+        return not bool(engine_uri.is_local) or is_ds4_backend_selected(
+            args, engine_uri
+        )
 
     async def __call__(self) -> None:
         argv, chat_opts = self._extract_chat_settings(sys.argv[1:])

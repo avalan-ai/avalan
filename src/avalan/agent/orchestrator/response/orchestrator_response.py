@@ -24,7 +24,7 @@ from ...engine import EngineAgent
 from base64 import b64encode
 from dataclasses import asdict, is_dataclass
 from inspect import iscoroutine
-from json import dumps
+from json import dumps, loads
 from queue import Queue
 from time import perf_counter
 from typing import Any, AsyncIterator, Callable, cast
@@ -121,12 +121,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return output
 
     async def to_json(self) -> str:
-        await self._react(self._response)
-        return await self._response.to_json()
+        output = await self._react(self._response)
+        return TextGenerationResponse.extract_json(output)
 
     async def to(self, entity_class: type) -> Any:
-        await self._react(self._response)
-        return await self._response.to(entity_class)
+        json = await self.to_json()
+        return entity_class(**loads(json))
 
     def __aiter__(self) -> "OrchestratorResponse":
         if self._event_manager:
@@ -382,7 +382,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if self._event_manager:
             response.add_done_callback(self._on_consumed)
 
-        text = output or await response.to_str()
+        structured_calls: list[ToolCall] = []
+        if output is None:
+            text, structured_calls = await self._response_text_and_calls(
+                response
+            )
+        else:
+            text = output
 
         if self._tool_context is None:
             self._tool_context = ToolCallContext(
@@ -407,9 +413,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 )
 
             calls = (
-                self._tool_manager.get_calls(delta)
-                if self._tool_manager
-                else None
+                structured_calls
+                if structured_calls
+                else (
+                    self._tool_manager.get_calls(delta)
+                    if self._tool_manager
+                    else None
+                )
             )
             if not calls:
                 break
@@ -455,12 +465,35 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     await self._event_manager.trigger(result_event)
 
             current_response = await self._react_process(delta, results)
-            new_text = await current_response.to_str()
+            new_text, structured_calls = await self._response_text_and_calls(
+                current_response
+            )
             delta = new_text.replace(previous_text, "")
             previous_text = new_text
 
         self._response = current_response
         return delta
+
+    @staticmethod
+    async def _response_text_and_calls(
+        response: TextGenerationResponse,
+    ) -> tuple[str, list[ToolCall]]:
+        if not response.is_async_generator:
+            return await response.to_str(), []
+
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        async for item in response:
+            if isinstance(item, ToolCallToken):
+                if item.call is not None:
+                    calls.append(item.call)
+                continue
+            if isinstance(item, Event):
+                continue
+            text_parts.append(
+                item.token if hasattr(item, "token") else str(item)
+            )
+        return "".join(text_parts), calls
 
     async def _react_process(
         self, output: str, results: list[ToolCallResult | ToolCallError]

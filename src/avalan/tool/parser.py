@@ -5,6 +5,7 @@ from ..entities import (
     ToolCall,
     ToolFormat,
 )
+from .dsml import DsmlTools
 
 from ast import literal_eval
 from dataclasses import dataclass, field
@@ -42,27 +43,22 @@ class ToolCallParser:
     def __call__(
         self, text: str
     ) -> tuple[str, dict[str, Any]] | list[ToolCall] | None:
-        calls = (
-            self._parse_json(text)
-            if self._tool_format is ToolFormat.JSON
-            else (
-                self._parse_react(text)
-                if self._tool_format is ToolFormat.REACT
-                else (
-                    self._parse_bracket(text)
-                    if self._tool_format is ToolFormat.BRACKET
-                    else (
-                        self._parse_openai_json(text)
-                        if self._tool_format is ToolFormat.OPENAI
-                        else (
-                            self._parse_harmony(text)
-                            if self._tool_format is ToolFormat.HARMONY
-                            else None
-                        )
-                    )
-                )
-            )
-        )
+        calls: tuple[str, dict[str, Any]] | list[ToolCall] | None
+        match self._tool_format:
+            case ToolFormat.JSON:
+                calls = self._parse_json(text)
+            case ToolFormat.REACT:
+                calls = self._parse_react(text)
+            case ToolFormat.BRACKET:
+                calls = self._parse_bracket(text)
+            case ToolFormat.OPENAI:
+                calls = self._parse_openai_json(text)
+            case ToolFormat.HARMONY:
+                calls = self._parse_harmony(text)
+            case ToolFormat.DSML:
+                calls = DsmlTools.parse_tool_calls(text)
+            case _:
+                calls = None
         if not calls:
             calls = self._parse_tag(text)
         return calls
@@ -157,6 +153,15 @@ class ToolCallParser:
         parsed: tuple[str, dict[str, Any]] | list[ToolCall] | None = None
         if "<|call|>" in text and "<|channel|>" in text:
             parsed = self._parse_harmony(text)
+        elif any(
+            marker in text
+            for marker in (
+                DsmlTools.TOOL_CALLS_START,
+                "<DSML｜tool_calls>",
+                "<tool_calls>",
+            )
+        ):
+            parsed = DsmlTools.parse_tool_calls(text)
         elif self._tool_format:
             parsed = self(text)
 
@@ -306,6 +311,9 @@ class ToolCallParser:
                 ]
             )
             end.append("<|channel|>final<|message|>")
+        elif self._tool_format is ToolFormat.DSML:
+            start.extend(DsmlTools.TOOL_CALL_START_PREFIXES)
+            end.extend(DsmlTools.TOOL_CALL_END_MARKERS)
         max_len = max(len(s) for s in start)
         tail = buffer[-max_len:]
         for s in start:

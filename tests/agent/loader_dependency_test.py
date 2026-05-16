@@ -16,8 +16,7 @@ class LoaderDependencyTestCase(TestCase):
             python_path = f"{python_path}{pathsep}{environment['PYTHONPATH']}"
         environment["PYTHONPATH"] = python_path
 
-        script = dedent(
-            """
+        script = dedent("""
             import importlib.abc
             import sys
 
@@ -34,8 +33,7 @@ class LoaderDependencyTestCase(TestCase):
 
             sys.meta_path.insert(0, BlockPgvector())
             import avalan.cli.commands.agent
-            """
-        )
+            """)
 
         result = run(
             [executable, "-c", script],

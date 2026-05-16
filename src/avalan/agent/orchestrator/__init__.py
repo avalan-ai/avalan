@@ -421,7 +421,7 @@ class Orchestrator:
 
                 if isinstance(input, list):
                     assert input and isinstance(input[-1], Message)
-                    cast(list[Message], input)[-1] = message
+                    input[-1] = message
                 else:
                     input = message
 

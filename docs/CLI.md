@@ -81,7 +81,7 @@ usage: avalan [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tokenizer-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
               [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
-              [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+              [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
               [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
               [--skip-hub-access-check] [--verbose] [--version]
               [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--help-full]
@@ -114,7 +114,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -143,7 +143,7 @@ usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--toke
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                     [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
-                    [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                    [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -176,7 +176,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -205,7 +205,7 @@ usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                             [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                            [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                            [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                             {search} ...
@@ -237,7 +237,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -266,7 +266,7 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR] [--subfolder SUB
 plicate}]
                                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                                    [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                                   [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                                   [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                                    [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                                    [--skip-hub-access-check] [--verbose] [--version]
                                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] --function
@@ -327,7 +327,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -432,7 +432,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--display-events]
@@ -497,7 +497,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -638,7 +638,7 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [
 plicate}]
                           [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                           [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                          [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
+                          [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                           [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                           [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--id ID]
                           [--participant PARTICIPANT] [--host HOST] [--port PORT] [--mcp-prefix MCP_PREFIX]
@@ -697,7 +697,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -824,7 +824,7 @@ usage: avalan agent proxy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [
 plicate}]
                           [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                           [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                          [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
+                          [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                           [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                           [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--id ID]
                           [--participant PARTICIPANT] [--host HOST] [--port PORT] [--mcp-prefix MCP_PREFIX]
@@ -883,7 +883,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1009,7 +1009,7 @@ usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                          [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--engine-uri ENGINE_URI]
@@ -1048,7 +1048,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1121,7 +1121,7 @@ usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--toke
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                     [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
-                    [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                    [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1154,7 +1154,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1183,7 +1183,7 @@ usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] 
 plicate}]
                            [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                            [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                           [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
+                           [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                            [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                            [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--delete]
                            --model MODEL [--delete-revision DELETE_REVISION]
@@ -1212,7 +1212,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1247,7 +1247,7 @@ usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER
 plicate}]
                              [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                              [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                             [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                             [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                              [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                              [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                              [--workers WORKERS] [--local-dir LOCAL_DIR] [--local-dir-symlinks]
@@ -1280,7 +1280,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1312,7 +1312,7 @@ usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                          [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--model MODEL] [--summary]
@@ -1341,7 +1341,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1371,7 +1371,7 @@ usage: avalan deploy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tok
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                      [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                      [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1404,7 +1404,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1432,7 +1432,7 @@ usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                          [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1465,7 +1465,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1493,7 +1493,7 @@ usage: avalan flow [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--token
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
-                   [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                   [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                    [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                    [--skip-hub-access-check] [--verbose] [--version]
                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1526,7 +1526,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1554,7 +1554,7 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--t
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                        [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                       [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                       [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                        [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                        [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                        [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1587,7 +1587,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1615,7 +1615,7 @@ usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tok
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                      [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                      [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1648,7 +1648,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1677,7 +1677,7 @@ usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOL
 plicate}]
                                 [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                                 [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                                [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                                [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                                 [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                                 [--verbose] [--version]
                                 [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1716,7 +1716,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1768,7 +1768,7 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                             [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                            [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                            [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load] [--special-token SPECIAL_TOKEN] [--token TOKEN]
@@ -1806,7 +1806,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1875,7 +1875,7 @@ usage: avalan memory document index [-h] [--cache-dir CACHE_DIR] [--subfolder SU
 plicate}]
                                     [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                                    [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                                    [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                                     [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                                     [--skip-hub-access-check] [--verbose] [--version]
                                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1916,7 +1916,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -1991,7 +1991,7 @@ usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                             [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                            [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                            [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                             [--base-url BASE_URL] [--load] [--special-token SPECIAL_TOKEN] [--token TOKEN]
@@ -2025,7 +2025,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2064,7 +2064,7 @@ usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                             [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                            [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                            [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                             [--workers WORKERS] [--local-dir LOCAL_DIR] [--local-dir-symlinks]
@@ -2097,7 +2097,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2129,7 +2129,7 @@ usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--base-url BASE_URL]
@@ -2164,11 +2164,15 @@ wering,text_sequence_classification,text_sequence_to_sequence,text_translation,t
 ,vision_image_classification,vision_image_to_text,vision_text_to_image,vision_text_to_animation,vision_text_to_video,vision_imag
 e_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}]
                         [--min-p MIN_P] [--repetition-penalty REPETITION_PENALTY] [--skip-special-tokens] [--system SYSTEM]
-                        [--developer DEVELOPER] [--text-context TEXT_CONTEXT] [--text-labeled-only]
+                        [--developer DEVELOPER] [--input-file INPUT_FILE] [--ds4-ctx DS4_CTX]
+                        [--ds4-native-backend {auto,metal,cuda,cpu}] [--ds4-mtp DS4_MTP]
+                        [--ds4-mtp-draft DS4_MTP_DRAFT] [--ds4-mtp-margin DS4_MTP_MARGIN]
+                        [--ds4-warm-weights] [--ds4-quality] [--text-context TEXT_CONTEXT] [--text-labeled-only]
                         [--text-max-length TEXT_MAX_LENGTH] [--text-num-beams TEXT_NUM_BEAMS] [--text-disable-cache]
                         [--text-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                         [--text-from-lang TEXT_FROM_LANG] [--text-to-lang TEXT_TO_LANG] [--start-thinking]
                         [--chat-disable-thinking] [--no-reasoning] [--reasoning-tag {think,channel}]
+                        [--reasoning-effort {none,minimal,low,medium,high,xhigh,max}]
                         [--reasoning-max-new-tokens REASONING_MAX_NEW_TOKENS] [--reasoning-stop-on-max-new-tokens]
                         [--stop_on_keyword STOP_ON_KEYWORD] [--temperature TEMPERATURE] [--top-k TOP_K] [--top-p TOP_P]
                         [--trust-remote-code]
@@ -2201,7 +2205,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2330,6 +2334,8 @@ e_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
   --system SYSTEM       Use this as system prompt
   --developer DEVELOPER
                         Use this as developer prompt
+  --input-file INPUT_FILE
+                        Attach a local file as native input for text generation. May be specified multiple times.
   --text-context TEXT_CONTEXT
                         Context string for question answering
   --text-labeled-only   If specified, only tokens with labels detected are returned. Only applicable to
@@ -2352,6 +2358,8 @@ e_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
   --no-reasoning        Disable reasoning parser
   --reasoning-tag {think,channel}
                         Reasoning tag style
+  --reasoning-effort {none,minimal,low,medium,high,xhigh,max}
+                        Reasoning effort level
   --reasoning-max-new-tokens REASONING_MAX_NEW_TOKENS
                         Maximum number of reasoning tokens
   --reasoning-stop-on-max-new-tokens
@@ -2364,6 +2372,18 @@ e_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
   --top-p TOP_P         If set to < 1, only the smallest set of most probable tokens with probabilities that add up to top_p
                         or higher are kept for generation.
   --trust-remote-code
+
+DS4 backend options:
+  --ds4-ctx DS4_CTX     DS4 context size
+  --ds4-native-backend {auto,metal,cuda,cpu}
+                        DS4 native backend
+  --ds4-mtp DS4_MTP     DS4 MTP model path
+  --ds4-mtp-draft DS4_MTP_DRAFT
+                        DS4 MTP draft-token count
+  --ds4-mtp-margin DS4_MTP_MARGIN
+                        DS4 MTP acceptance margin
+  --ds4-warm-weights    Warm DS4 model weights when opening the engine
+  --ds4-quality         Enable DS4 quality mode
 ```
 
 ### avalan model search
@@ -2376,7 +2396,7 @@ usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] 
 plicate}]
                            [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                            [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                           [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
+                           [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                            [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                            [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
                            [--search SEARCH] [--filter FILTER] [--library LIBRARY] [--author AUTHOR] [--gated | --open]
@@ -2406,7 +2426,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2446,7 +2466,7 @@ usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDE
 plicate}]
                               [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
                               [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
-                              [--backend {transformers,mlx,vllm}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                              [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                               [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                               [--verbose] [--version]
                               [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--base-url BASE_URL]
@@ -2480,7 +2500,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2517,7 +2537,7 @@ usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] --tokenizer TOKENIZER
@@ -2547,7 +2567,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2582,7 +2602,7 @@ usage: avalan train [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--toke
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                     [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
-                    [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}] [--locales LOCALES]
+                    [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
                     [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -2615,7 +2635,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
@@ -2643,7 +2663,7 @@ usage: avalan train run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm}]
+                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -2676,7 +2696,7 @@ plicate}
   --locale LOCALE       Language to use (defaults to en_US)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm}
+  --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
   --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
   --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory

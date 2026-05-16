@@ -2,14 +2,18 @@ import tomllib
 from pathlib import Path
 
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 
-def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
+def _optional_dependencies() -> dict[str, list[str]]:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    return data["project"]["optional-dependencies"]
 
-    optional_deps = data["project"]["optional-dependencies"]
+
+def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
+    optional_deps = _optional_dependencies()
     vendors = optional_deps["vendors"]
 
     assert "aioboto3>=15.0.0,<16.0.0" in vendors
@@ -17,10 +21,7 @@ def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
 
 
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-
-    optional_deps = data["project"]["optional-dependencies"]
+    optional_deps = _optional_dependencies()
     selected_extras = ("agent", "server", "tool", "vendors")
     dependencies = {
         canonicalize_name(Requirement(requirement).name)
@@ -36,5 +37,76 @@ def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
         "torchaudio",
         "torchvision",
         "transformers",
+        "pyds4",
         "vllm",
     }
+
+
+def test_ds4_extra_declares_platform_scoped_pyds4_dependency() -> None:
+    requirements = [
+        Requirement(requirement)
+        for requirement in _optional_dependencies()["ds4"]
+    ]
+
+    assert {
+        canonicalize_name(requirement.name) for requirement in requirements
+    } == {"pyds4"}
+    assert all(
+        requirement.specifier == SpecifierSet() for requirement in requirements
+    )
+    assert all(
+        requirement.url == "git+https://github.com/avalan-ai/pyds4.git@main"
+        for requirement in requirements
+    )
+    assert all(requirement.marker is not None for requirement in requirements)
+    assert any(
+        requirement.marker is not None
+        and requirement.marker.evaluate(
+            {
+                "platform_system": "Darwin",
+                "platform_machine": "arm64",
+            }
+        )
+        for requirement in requirements
+    )
+    assert any(
+        requirement.marker is not None
+        and requirement.marker.evaluate(
+            {
+                "platform_system": "Linux",
+                "platform_machine": "x86_64",
+            }
+        )
+        for requirement in requirements
+    )
+    assert not any(
+        requirement.marker is not None
+        and requirement.marker.evaluate(
+            {
+                "platform_system": "Darwin",
+                "platform_machine": "x86_64",
+            }
+        )
+        for requirement in requirements
+    )
+    assert not any(
+        requirement.marker is not None
+        and requirement.marker.evaluate(
+            {
+                "platform_system": "Windows",
+                "platform_machine": "AMD64",
+            }
+        )
+        for requirement in requirements
+    )
+
+
+def test_core_dependencies_omit_optional_ds4_binding() -> None:
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in data["project"]["dependencies"]
+    }
+
+    assert "pyds4" not in dependencies

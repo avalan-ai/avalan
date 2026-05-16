@@ -1753,6 +1753,84 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         console.print.assert_called_once()
 
+    async def test_run_local_ds4_model_skips_hub_summary(self):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            model="ai://local/../pyds4/.local/ds4/ds4flash.gguf",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=False,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=0.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            backend="ds4",
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        hub = MagicMock()
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(
+            model_id="../pyds4/.local/ds4/ds4flash.gguf",
+            is_local=True,
+            params={},
+        )
+        lm = MagicMock()
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ),
+            patch.object(model_cmds, "get_input", return_value=None),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        hub.can_access.assert_not_called()
+        hub.model.assert_not_called()
+        theme.model.assert_not_called()
+        console.print.assert_not_called()
+        manager.load.assert_called_once_with(
+            engine_uri=engine_uri,
+            modality=Modality.TEXT_GENERATION,
+        )
+
     async def test_run_local_model(self):
         args = Namespace(
             skip_display_reasoning_time=False,
@@ -5224,8 +5302,8 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme._ = lambda s: s
         theme.get_spinner.return_value = "sp"
-        theme.model.side_effect = (
-            lambda m, **kw: f"{m.id}-{kw.get('can_access')}"
+        theme.model.side_effect = lambda m, **kw: (
+            f"{m.id}-{kw.get('can_access')}"
         )
 
         model1 = SimpleNamespace(id="m1")

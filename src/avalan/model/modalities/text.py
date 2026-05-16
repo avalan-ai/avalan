@@ -1,3 +1,8 @@
+from ...backends.ds4_native import (
+    Ds4ApiVersionError,
+    Ds4BackendUnavailable,
+    import_compatible_binding,
+)
 from ...entities import (
     Backend,
     EngineUri,
@@ -64,6 +69,15 @@ def _stopping_criteria(
     return None
 
 
+def _normalize_backend(backend: Backend | str) -> Backend | str:
+    if isinstance(backend, Backend):
+        return backend
+    try:
+        return Backend(backend)
+    except ValueError:
+        return backend
+
+
 @lru_cache(maxsize=1)
 def _get_mlx_model() -> type[TextGenerationModel] | None:
     if not find_spec("mlx_lm"):
@@ -73,6 +87,26 @@ def _get_mlx_model() -> type[TextGenerationModel] | None:
     except ModuleNotFoundError:
         return None
     return loader if loader.is_available() else None
+
+
+@lru_cache(maxsize=1)
+def _get_ds4_model() -> type[TextGenerationModel] | None:
+    try:
+        import_compatible_binding()
+    except (Ds4ApiVersionError, Ds4BackendUnavailable):
+        return None
+    try:
+        module = import_module("avalan.model.nlp.text.ds4")
+    except ModuleNotFoundError:
+        return None
+    loader = getattr(module, "Ds4Model", None)
+    if loader is None:
+        return None
+    return (
+        cast(type[TextGenerationModel], loader)
+        if loader.is_available()
+        else None
+    )
 
 
 @ModalityRegistry.register(Modality.TEXT_GENERATION)
@@ -86,7 +120,7 @@ class TextGenerationModality:
     ) -> TextGenerationModel:
         assert engine_uri.model_id is not None
         if engine_uri.is_local:
-            match engine_settings.backend:
+            match _normalize_backend(engine_settings.backend):
                 case Backend.MLXLM:
                     mlx_loader = _get_mlx_model()
                     if mlx_loader is None:
@@ -97,6 +131,21 @@ class TextGenerationModality:
                         raise ModuleNotFoundError(msg)
 
                     return mlx_loader(
+                        model_id=engine_uri.model_id,
+                        settings=engine_settings,
+                        logger=logger,
+                    )
+                case Backend.DS4:
+                    ds4_loader = _get_ds4_model()
+                    if ds4_loader is None:
+                        msg = (
+                            "The pyds4 dependency is not installed or "
+                            "unavailable. Install avalan[ds4] to enable the "
+                            "DS4 backend."
+                        )
+                        raise ModuleNotFoundError(msg)
+
+                    return ds4_loader(
                         model_id=engine_uri.model_id,
                         settings=engine_settings,
                         logger=logger,
@@ -292,10 +341,12 @@ class TextGenerationModality:
     ) -> Any:
         assert operation.input and operation.parameters["text"]
 
-        criteria = _stopping_criteria(operation, model)
         mlx_model = _get_mlx_model() if engine_uri.is_local else None
+        ds4_model = _get_ds4_model() if engine_uri.is_local else None
         is_mlx = mlx_model is not None and isinstance(model, mlx_model)
-        if engine_uri.is_local and not is_mlx:
+        is_ds4 = ds4_model is not None and isinstance(model, ds4_model)
+        if engine_uri.is_local and not is_mlx and not is_ds4:
+            criteria = _stopping_criteria(operation, model)
             return await model(
                 operation.input,
                 system_prompt=operation.parameters["text"].system_prompt,
@@ -309,6 +360,17 @@ class TextGenerationModality:
                     "text"
                 ].skip_special_tokens
                 or False,
+                tool=tool,
+            )
+        if is_ds4:
+            return await model(
+                operation.input,
+                system_prompt=operation.parameters["text"].system_prompt,
+                developer_prompt=operation.parameters["text"].developer_prompt,
+                settings=operation.generation_settings or GenerationSettings(),
+                manual_sampling=operation.parameters["text"].manual_sampling
+                or False,
+                pick=operation.parameters["text"].pick_tokens,
                 tool=tool,
             )
         return await model(

@@ -108,6 +108,34 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[-1], "done")
         self.assertFalse(parser._inside_call)
 
+    async def test_dsml_streaming_emits_tool_call_tokens_and_event(self):
+        manager = MagicMock()
+        manager.is_potential_tool_call.side_effect = lambda _buffer, token: (
+            bool(token.strip())
+        )
+        manager.tool_format = ToolFormat.DSML
+        base_parser = ToolCallParser(tool_format=ToolFormat.DSML)
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        manager.get_calls.side_effect = base_parser
+
+        parser = ToolCallResponseParser(manager, None)
+        tokens: list = []
+        for part in (
+            "<｜DSML｜tool_calls>",
+            '<｜DSML｜invoke name="math.calculator">',
+            '<｜DSML｜parameter name="expression">2 + 2',
+            "</｜DSML｜parameter>",
+            "</｜DSML｜invoke>",
+            "</｜DSML｜tool_calls>",
+        ):
+            tokens.extend(await parser.push(part))
+
+        self.assertTrue(
+            all(isinstance(token, ToolCallToken) for token in tokens[:-1])
+        )
+        self.assertEqual(tokens[-1].type, EventType.TOOL_PROCESS)
+        self.assertFalse(parser._inside_call)
+
     async def test_harmony_flush_emits_event_for_missing_call_closure(self):
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = True

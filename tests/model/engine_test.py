@@ -355,6 +355,98 @@ class EngineLoadTestCase(TestCase):
         self.assertIsInstance(engine._config, ModelConfig)
         self.assertEqual(engine._config.torch_dtype, float32)
 
+    def test_accepts_loaded_model_hook_allows_native_model(self):
+        class NativeModel:
+            pass
+
+        class NativeEngine(Engine):
+            def __init__(self):
+                self.fake_model = NativeModel()
+                self.accepted_model: object | None = None
+                super().__init__(
+                    "native",
+                    TransformerEngineSettings(
+                        auto_load_model=True,
+                        auto_load_tokenizer=False,
+                        enable_eval=False,
+                    ),
+                )
+
+            async def __call__(self, input, **kwargs):
+                return "out"
+
+            def _load_model(self):
+                return self.fake_model
+
+            def _accepts_loaded_model(self, model: object) -> bool:
+                self.accepted_model = model
+                return model is self.fake_model
+
+        engine = NativeEngine()
+
+        self.assertIs(engine.model, engine.fake_model)
+        self.assertIs(engine.accepted_model, engine.fake_model)
+        self.assertTrue(engine._loaded_model)
+
+    def test_unknown_native_model_is_rejected_when_hook_returns_false(self):
+        class NativeEngine(Engine):
+            async def __call__(self, input, **kwargs):
+                return "out"
+
+            def _load_model(self):
+                return object()
+
+        with self.assertRaisesRegex(
+            AssertionError, "Unexpected pretrained model type"
+        ):
+            NativeEngine(
+                "native",
+                TransformerEngineSettings(
+                    auto_load_model=True,
+                    auto_load_tokenizer=False,
+                    enable_eval=False,
+                ),
+            )
+
+    def test_loaded_model_hook_is_not_used_for_tokenizer_validation(self):
+        class TokenizerValidationEngine(Engine):
+            hook_called = False
+
+            @property
+            def uses_tokenizer(self) -> bool:
+                return True
+
+            async def __call__(self, input, **kwargs):
+                return "out"
+
+            def _load_model(self):
+                return object()
+
+            def _load_tokenizer_with_tokens(
+                self,
+                tokenizer_name_or_path: str | None,
+                use_fast: bool = True,
+            ):
+                return object()
+
+            def _accepts_loaded_model(self, model: object) -> bool:
+                type(self).hook_called = True
+                return True
+
+        with self.assertRaisesRegex(
+            AssertionError, "Unexpected pretrained tokenizer type"
+        ):
+            TokenizerValidationEngine(
+                "native",
+                TransformerEngineSettings(
+                    auto_load_model=True,
+                    auto_load_tokenizer=True,
+                    enable_eval=False,
+                ),
+            )
+
+        self.assertFalse(TokenizerValidationEngine.hook_called)
+
 
 class GetDeviceMemoryTestCase(TestCase):
     def test_cuda(self):

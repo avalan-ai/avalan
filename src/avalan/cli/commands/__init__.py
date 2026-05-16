@@ -7,10 +7,11 @@ from ...entities import (
     TextGenerationLoaderClass,
     WeightType,
 )
+from ...model.manager import ModelManager
 
 from argparse import Namespace
 from logging import Logger
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 class ModelSettings(TypedDict):
@@ -40,10 +41,22 @@ class ModelSettings(TypedDict):
     tokenizer_subfolder: str | None
     trust_remote_code: bool | None
     weight_type: WeightType
+    backend_config: NotRequired[dict[str, object] | None]
 
 
 def _normalize_modality(modality: Modality | str) -> Modality:
     return modality if isinstance(modality, Modality) else Modality(modality)
+
+
+def is_ds4_backend_selected(args: Namespace, engine_uri: EngineUri) -> bool:
+    """Return whether CLI or URI settings select the DS4 backend."""
+    params = getattr(engine_uri, "params", {})
+    uri_backend = params.get("backend") if isinstance(params, dict) else None
+    cli_backend = getattr(args, "backend", None)
+    return uri_backend == Backend.DS4.value or cli_backend in {
+        Backend.DS4,
+        Backend.DS4.value,
+    }
 
 
 def get_model_settings(
@@ -66,7 +79,7 @@ def get_model_settings(
         or Modality.TEXT_GENERATION
     )
     modality = _normalize_modality(modality)
-    return dict(
+    settings: ModelSettings = dict(
         base_url=getattr(args, "base_url", None),
         engine_uri=engine_uri,
         attention=getattr(args, "attention", None),
@@ -98,3 +111,16 @@ def get_model_settings(
         trust_remote_code=getattr(args, "trust_remote_code", None),
         weight_type=args.weight_type,
     )
+
+    uri_backend = engine_uri.params.get("backend")
+    resolved_backend = (
+        uri_backend if isinstance(uri_backend, str) else settings["backend"]
+    )
+    if resolved_backend == Backend.DS4.value:
+        backend_config = ModelManager.ds4_backend_config_from_mapping(
+            vars(args)
+        )
+        if backend_config:
+            settings["backend_config"] = backend_config
+
+    return settings

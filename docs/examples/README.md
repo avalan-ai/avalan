@@ -23,6 +23,7 @@ This directory showcases configuration files and small programs that demonstrate
 - [text_generation_mlxlm.py](text_generation_mlxlm.py) – Runs an MLX‑LM model locally. Swap `model` ids or tune `temperature` and `max_new_tokens`.
 - [text_generation_ollama.py](text_generation_ollama.py) – Uses an Ollama server; ensure one is running. Switch `model` or generation parameters.
 - [text_generation_vllm.py](text_generation_vllm.py) – Example with vLLM. Change `model` id or `GenerationSettings` values.
+- [DS4 CLI examples](../DS4.md) – Runs DS4-supported DeepSeek V4 Flash GGUFs with the native `ds4` backend. Adjust `ds4_ctx`, `ds4_native_backend`, or URI parameters for your hardware.
 
 ## NLP tasks
 - [sequence_classification.py](sequence_classification.py) – Sentiment analysis. Replace the sample `text` or choose another `model`.

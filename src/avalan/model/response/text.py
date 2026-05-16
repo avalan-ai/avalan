@@ -163,6 +163,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         return self._output_token_count
 
     @property
+    def is_async_generator(self) -> bool:
+        return self._use_async_generator
+
+    @property
     def can_think(self) -> bool:
         return bool(self._reasoning_parser)
 
@@ -221,6 +225,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
             token_str = token if isinstance(token, str) else token.token
             self._buffer.write(token_str)
+
+            if isinstance(token, ToolCallToken) and token.call is not None:
+                self._output_token_count += 1
+                return token
 
             if not self._reasoning_parser or (
                 self._reasoning_parser.is_thinking_budget_exhausted
@@ -304,8 +312,12 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
     async def to_json(self) -> str:
         text = await self.to_str()
+        return self.extract_json(text)
+
+    @classmethod
+    def extract_json(cls, text: str) -> str:
         assert text
-        for pattern in self._json_patterns:
+        for pattern in cls._json_patterns:
             match = pattern.search(text)
             if match:
                 json_str = match.group(1)

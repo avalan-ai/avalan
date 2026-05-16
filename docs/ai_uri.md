@@ -38,6 +38,35 @@ Parsing an AI URI results in an `EngineUri` structure containing:
 
 When `vendor` is `None`, the model is considered local.  Otherwise, the URI describes a remote engine hosted by the given vendor.
 
+## Backend-specific parameters
+
+Local engines can select a backend with `backend=<name>`. For DS4, use
+`backend=ds4` with a DS4-supported DeepSeek V4 Flash GGUF file:
+
+```bash
+ai://local/./ds4flash.gguf?backend=ds4&ds4_ctx=4096&ds4_native_backend=metal
+```
+
+Relative local paths are written as URI paths. Absolute paths use a double
+slash after `local`, or an encoded leading slash:
+
+```bash
+ai://local/../pyds4/.local/ds4/ds4flash.gguf?backend=ds4
+ai://local//Users/me/models/ds4flash.gguf?backend=ds4
+ai://local/%2FUsers/me/DS4%20models/ds4flash.gguf?backend=ds4
+```
+
+DS4-specific parameters must use the `ds4_` prefix. Common keys are
+`ds4_ctx`, `ds4_native_backend`, `ds4_mtp`, `ds4_mtp_draft`,
+`ds4_mtp_margin`, `ds4_warm_weights`, and `ds4_quality`. Advanced
+URI-only keys include `ds4_directional_steering_file`,
+`ds4_directional_steering_attn`, and `ds4_directional_steering_ffn`.
+Unknown `ds4_` parameters are rejected. The DS4 backend is not a generic
+GGUF loader. Native DS4 tool calls are experimental: Avalan can render tool
+schemas and parse completed DSML tool blocks, but exact raw DSML replay and
+streaming argument deltas are still in progress. CPU mode is a
+debug/reference path only.
+
 ## Examples
 
 | URI                                        | Parsed Result                                                   |
@@ -51,5 +80,6 @@ When `vendor` is `None`, the model is considered local.  Otherwise, the URI desc
 | `ai://ollama/llama3`                        | vendor `ollama`, model `llama3`                                |
 | `ai://litellm/gpt-3.5-turbo`                | vendor `litellm`, model `gpt-3.5-turbo`                        |
 | `ai://tg_key@together/mistral-7b`           | vendor `together`, model `mistral-7b`                          |
+| `ai://local/./ds4flash.gguf?backend=ds4&ds4_ctx=4096` | local DS4 GGUF with DS4 backend config             |
 
 These examples correspond to those used in the test-suite and highlight both local and remote forms.

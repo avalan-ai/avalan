@@ -21,7 +21,8 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 - 🔌 **Multiple backends** including
   [`transformers`](https://github.com/huggingface/transformers),
   [`vLLM`](https://github.com/vllm-project/vllm), and
-  [`mlx-lm`](https://github.com/ml-explore/mlx-lm).
+  [`mlx-lm`](https://github.com/ml-explore/mlx-lm), plus native DS4 for
+  [`DS4`](https://github.com/antirez/ds4)-supported DeepSeek V4 Flash GGUFs.
 - 🧰 **Built-in tools and memory** for browser automation, code execution,
   databases, MCP, search, YouTube, and vector-backed retrieval.
 - 🧠 **Composable orchestration** with flows, branching, reasoning strategies, and
@@ -69,8 +70,22 @@ Add hardware-specific extras when needed:
 - `nvidia` – Linux + NVIDIA bundle for vLLM and quantization support.
 - `vllm` – the vLLM runtime without the full NVIDIA bundle.
 - `quantization` – 4-bit and 8-bit model loading.
+- `ds4` – native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
+  through `pyds4`. Production targets are macOS arm64 with Metal and Linux
+  with CUDA; CPU mode is only a debug/reference path.
 
 For the leanest install, omit the extras list entirely.
+
+DS4 users can install the optional backend with:
+
+```sh
+python3 -m pip install -U "avalan[ds4]"
+```
+
+If no `pyds4` wheel is available for your platform, build or install the
+binding first, then install Avalan. See [docs/INSTALL.md](docs/INSTALL.md#ds4-native-backend)
+for the supported targets and source-build path, and
+[docs/DS4.md](docs/DS4.md) for CLI examples and current limitations.
 
 ### 🛠️ From Source with Poetry
 
@@ -260,6 +275,57 @@ The output shows the reasoning and the correct final answer:
 │ \boxed{25}                                                            │
 │                                                                       │
 └─ 💻 26 tokens in · 🧮 158 token out · 🌱 ttft: 1.14 s · ⚡ 14.90 t/s ─┘
+```
+
+### DS4 native backend
+
+DS4 is available as a local text-generation backend for DS4-supported
+DeepSeek V4 Flash GGUF files. It is not a generic GGUF backend.
+DS4 opens the GGUF directly from the filesystem and does not require
+`HF_TOKEN`.
+
+```sh
+export DS4_MODEL=/path/to/ds4flash.gguf
+
+printf '%s\n' 'Write a short greeting.' \
+    | avalan model run "ai://local/${DS4_MODEL}?backend=ds4" \
+        --ds4-ctx 4096 \
+        --ds4-native-backend metal \
+        --max-new-tokens 64 \
+        --temperature 0
+```
+
+Use `--ds4-native-backend cuda` on Linux CUDA builds. CPU mode is only a
+debug/reference path. Native DS4 tool calls use the DSML protocol:
+Avalan renders tool schemas, parses completed DSML tool blocks, streams
+argument deltas, and preserves exact raw DSML replay metadata for session
+alignment.
+Use `ai://local//absolute/path.gguf` for absolute paths, or a normal
+`ai://local/relative/path.gguf` URI for paths relative to the current
+directory. See [docs/DS4.md](docs/DS4.md) for URI configuration examples,
+disabled reasoning, agent-tool examples, and integration-test environment
+variables.
+
+#### Tool use
+
+DS4-backed agents can use Avalan tools through the native DSML protocol:
+
+```sh
+printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
+  | avalan agent run \
+      --engine-uri "ai://local/${DS4_MODEL}" \
+      --backend ds4 \
+      --ds4-ctx 4096 \
+      --ds4-native-backend metal \
+      --tool "math.calculator" \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --run-temperature 0 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
 ```
 
 ### Modalities
