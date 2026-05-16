@@ -129,6 +129,7 @@ class GetModelSettingsTestCase(unittest.TestCase):
             ds4_mtp_margin=0.1,
             ds4_warm_weights=True,
             ds4_quality=True,
+            ds4_native_log=True,
         )
 
         result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
@@ -143,8 +144,31 @@ class GetModelSettingsTestCase(unittest.TestCase):
                 "mtp_margin": 0.1,
                 "warm_weights": True,
                 "quality": True,
+                "native_log": True,
             },
         )
+
+    def test_ds4_cli_omits_native_log_when_unspecified(self):
+        engine_uri = MagicMock()
+        engine_uri.params = {}
+        args = Namespace(
+            device="cpu",
+            disable_loading_progress_bar=False,
+            loader_class="auto",
+            backend="ds4",
+            low_cpu_mem_usage=False,
+            quiet=True,
+            revision=None,
+            special_token=None,
+            tokenizer=None,
+            token=None,
+            weight_type="bf16",
+            ds4_native_log=None,
+        )
+
+        result = get_model_settings(args, MagicMock(), MagicMock(), engine_uri)
+
+        self.assertNotIn("backend_config", result)
 
     def test_ds4_cli_options_do_not_affect_non_ds4_backend(self):
         engine_uri = MagicMock()

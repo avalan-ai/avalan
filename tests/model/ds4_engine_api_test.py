@@ -54,6 +54,7 @@ class FakeNativeOptions:
     directional_steering_ffn: float = 0.0
     warm_weights: bool = False
     quality: bool = False
+    native_log: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1104,6 +1105,33 @@ def test_engine_static_validation_helpers_cover_edges(tmp_path: Path) -> None:
 def test_native_engine_option_introspection_edges() -> None:
     options = EngineOptions(model_path="model.gguf")
     assert Engine._native_engine_options(SimpleNamespace(), options) is options
+    assert (
+        Engine._native_engine_options(
+            SimpleNamespace(EngineOptions=FakeNativeOptions),
+            EngineOptions(model_path="model.gguf", native_log=False),
+        ).native_log
+        is False
+    )
+    assert (
+        Engine._native_log_context_enabled(
+            SimpleNamespace(EngineOptions=FakeNativeOptions),
+            EngineOptions(model_path="model.gguf", native_log=False),
+        )
+        is True
+    )
+
+    class OldNativeOptions:
+        def __init__(self, model_path: str, backend: NativeBackend) -> None:
+            self.model_path = model_path
+            self.backend = backend
+
+    assert (
+        Engine._native_log_context_enabled(
+            SimpleNamespace(EngineOptions=OldNativeOptions),
+            EngineOptions(model_path="model.gguf", native_log=False),
+        )
+        is False
+    )
 
     class MissingBackendOptions:
         def __init__(self, model_path: str) -> None:

@@ -2301,6 +2301,20 @@ class CLI:
             default=None,
             help="Enable DS4 quality mode",
         )
+        group.add_argument(
+            "--with-ds4-native-log",
+            "--ds4-native-log",
+            dest="ds4_native_log",
+            action="store_true",
+            default=None,
+            help="Replay DS4 native stderr emitted while opening the engine",
+        )
+        group.add_argument(
+            "--no-ds4-native-log",
+            dest="ds4_native_log",
+            action="store_false",
+            help="Suppress DS4 native stderr emitted while opening the engine",
+        )
         return group
 
     @staticmethod

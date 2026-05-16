@@ -9,7 +9,9 @@ from .errors import (
 from .metadata import DS4_BINDING_IMPORT_NAME, DS4_SUPPORTED_NATIVE_BACKENDS
 from .types import Backend, EngineOptions, SamplingOptions, ThinkMode
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from enum import StrEnum
 from inspect import Parameter, signature
@@ -30,7 +32,28 @@ _ENGINE_OPTION_DEFAULTS = {
     "directional_steering_ffn": 0.0,
     "warm_weights": False,
     "quality": False,
+    "native_log": False,
 }
+
+
+@contextmanager
+def _native_stderr_context(native_log: bool) -> Iterator[None]:
+    """Suppress native stderr while pyds4 opens noisy engines."""
+    if native_log or os.name != "posix":
+        yield
+        return
+
+    original_fd = os.dup(2)
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull_fd, 2)
+            yield
+        finally:
+            os.dup2(original_fd, 2)
+            os.close(devnull_fd)
+    finally:
+        os.close(original_fd)
 
 
 class _SessionHandle(Protocol):
@@ -40,6 +63,8 @@ class _SessionHandle(Protocol):
 
 class Engine:
     """Own a validated DS4 native engine through the pyds4 binding."""
+
+    _native_stderr_context = staticmethod(_native_stderr_context)
 
     def __init__(
         self,
@@ -71,7 +96,10 @@ class Engine:
         try:
             # The blocking native open is delegated to pyds4.Engine; the
             # compiled binding is responsible for releasing the GIL there.
-            self._native = native_engine_type(native_options)
+            with _native_stderr_context(
+                self._native_log_context_enabled(self._binding, self._options)
+            ):
+                self._native = native_engine_type(native_options)
         except (
             Ds4BackendUnavailable,
             Ds4InvalidModel,
@@ -470,6 +498,7 @@ class Engine:
             "directional_steering_ffn": options.directional_steering_ffn,
             "warm_weights": options.warm_weights,
             "quality": options.quality,
+            "native_log": options.native_log,
         }
         supported_keys = Engine._native_engine_option_keys(native_options_type)
         if supported_keys is not None:
@@ -487,6 +516,7 @@ class Engine:
                 key
                 for key, value in kwargs.items()
                 if key not in supported_keys
+                and key != "native_log"
                 and Engine._engine_option_is_requested(key, value)
             )
             if unsupported_requested:
@@ -504,6 +534,22 @@ class Engine:
             }
 
         return native_options_type(**kwargs)
+
+    @staticmethod
+    def _native_log_context_enabled(
+        binding: object, options: EngineOptions
+    ) -> bool:
+        if options.native_log:
+            return True
+        return Engine._native_engine_options_supports(binding, "native_log")
+
+    @staticmethod
+    def _native_engine_options_supports(binding: object, key: str) -> bool:
+        native_options_type = getattr(binding, "EngineOptions", None)
+        if not callable(native_options_type):
+            return True
+        supported_keys = Engine._native_engine_option_keys(native_options_type)
+        return supported_keys is None or key in supported_keys
 
     @staticmethod
     def _native_engine_option_keys(

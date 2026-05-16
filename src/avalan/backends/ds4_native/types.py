@@ -33,6 +33,7 @@ class EngineOptions:
     directional_steering_ffn: float = 0.0
     warm_weights: bool = False
     quality: bool = False
+    native_log: bool = False
 
 
 @dataclass(frozen=True, slots=True)

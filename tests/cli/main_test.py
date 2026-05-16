@@ -151,6 +151,7 @@ class CliModelRunOptionTestCase(TestCase):
                 "0.25",
                 "--ds4-warm-weights",
                 "--ds4-quality",
+                "--with-ds4-native-log",
             ]
         )
 
@@ -162,6 +163,7 @@ class CliModelRunOptionTestCase(TestCase):
         self.assertEqual(args.ds4_mtp_margin, 0.25)
         self.assertTrue(args.ds4_warm_weights)
         self.assertTrue(args.ds4_quality)
+        self.assertTrue(args.ds4_native_log)
 
     def test_agent_run_ds4_backend_options(self) -> None:
         logger = MagicMock()
@@ -188,6 +190,7 @@ class CliModelRunOptionTestCase(TestCase):
                 "0.25",
                 "--ds4-warm-weights",
                 "--ds4-quality",
+                "--no-ds4-native-log",
             ]
         )
 
@@ -200,6 +203,7 @@ class CliModelRunOptionTestCase(TestCase):
         self.assertEqual(args.ds4_mtp_margin, 0.25)
         self.assertTrue(args.ds4_warm_weights)
         self.assertTrue(args.ds4_quality)
+        self.assertFalse(args.ds4_native_log)
 
     def test_documented_ds4_options_are_in_model_run_help(self) -> None:
         logger = MagicMock()
@@ -224,6 +228,9 @@ class CliModelRunOptionTestCase(TestCase):
             "--ds4-mtp-margin",
             "--ds4-warm-weights",
             "--ds4-quality",
+            "--with-ds4-native-log",
+            "--ds4-native-log",
+            "--no-ds4-native-log",
             "--reasoning-effort",
         ):
             self.assertIn(option, docs)

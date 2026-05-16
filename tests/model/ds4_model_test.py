@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import threading
 from asyncio import run
 from collections.abc import Callable
@@ -94,6 +95,7 @@ class FakeNativeOptions:
     directional_steering_ffn: float = 0.0
     warm_weights: bool = False
     quality: bool = False
+    native_log: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +691,7 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
                 "directional_steering_ffn": -0.25,
                 "warm_weights": True,
                 "quality": True,
+                "native_log": False,
             },
         ),
     )
@@ -706,8 +709,137 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
         directional_steering_ffn=-0.25,
         warm_weights=True,
         quality=True,
+        native_log=False,
     )
     model.close()
+
+
+def test_ds4_model_can_suppress_native_engine_open_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    base_engine = _fake_async_engine_type(FakeNativeEngine)
+
+    class NoisyAsyncEngine(base_engine):
+        @classmethod
+        async def open(cls, options: FakeNativeOptions) -> "NoisyAsyncEngine":
+            if options.native_log:
+                os.write(2, b"native debug line\n")
+            return cls(options)
+
+    NoisyAsyncEngine.__module__ = "pyds4"
+    _install_binding(
+        monkeypatch,
+        _fake_binding(AsyncEngine=NoisyAsyncEngine),
+    )
+
+    model = Ds4Model(
+        str(_model_file(tmp_path)),
+        TransformerEngineSettings(backend_config={"native_log": False}),
+    )
+
+    model.close()
+    captured = capfd.readouterr()
+    assert "native debug line" not in captured.err
+
+
+def test_ds4_model_suppresses_native_engine_open_stderr_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    base_engine = _fake_async_engine_type(FakeNativeEngine)
+
+    class NoisyAsyncEngine(base_engine):
+        @classmethod
+        async def open(cls, options: FakeNativeOptions) -> "NoisyAsyncEngine":
+            if options.native_log:
+                os.write(2, b"native debug line\n")
+            return cls(options)
+
+    NoisyAsyncEngine.__module__ = "pyds4"
+    _install_binding(
+        monkeypatch,
+        _fake_binding(AsyncEngine=NoisyAsyncEngine),
+    )
+
+    model = Ds4Model(str(_model_file(tmp_path)))
+
+    model.close()
+    captured = capfd.readouterr()
+    assert "native debug line" not in captured.err
+
+
+def test_ds4_model_suppresses_native_engine_open_stderr_for_older_pyds4(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    @dataclass(frozen=True, slots=True)
+    class OldNativeOptions:
+        model_path: str
+        backend: NativeBackend
+
+    base_engine = _fake_async_engine_type(FakeNativeEngine)
+
+    class NoisyAsyncEngine(base_engine):
+        @classmethod
+        async def open(cls, options: OldNativeOptions) -> "NoisyAsyncEngine":
+            os.write(2, b"native debug line\n")
+            return cls(
+                FakeNativeOptions(
+                    model_path=options.model_path,
+                    backend=options.backend,
+                )
+            )
+
+    NoisyAsyncEngine.__module__ = "pyds4"
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=NoisyAsyncEngine,
+            EngineOptions=OldNativeOptions,
+        ),
+    )
+
+    model = Ds4Model(
+        str(_model_file(tmp_path)),
+        TransformerEngineSettings(backend_config={"native_log": False}),
+    )
+
+    model.close()
+    captured = capfd.readouterr()
+    assert "native debug line" not in captured.err
+
+
+def test_ds4_model_replays_native_engine_open_stderr_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    base_engine = _fake_async_engine_type(FakeNativeEngine)
+
+    class NoisyAsyncEngine(base_engine):
+        @classmethod
+        async def open(cls, options: FakeNativeOptions) -> "NoisyAsyncEngine":
+            os.write(2, b"native debug line\n")
+            return cls(options)
+
+    NoisyAsyncEngine.__module__ = "pyds4"
+    _install_binding(
+        monkeypatch,
+        _fake_binding(AsyncEngine=NoisyAsyncEngine),
+    )
+
+    model = Ds4Model(
+        str(_model_file(tmp_path)),
+        TransformerEngineSettings(backend_config={"native_log": True}),
+    )
+
+    model.close()
+    captured = capfd.readouterr()
+    assert "native debug line" in captured.err
 
 
 def test_ds4_model_uses_async_engine_by_default(

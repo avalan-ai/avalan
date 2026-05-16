@@ -66,6 +66,7 @@ The DS4-specific flags are available on both `model run` and `agent run`:
 - `--ds4-mtp-margin`
 - `--ds4-warm-weights`
 - `--ds4-quality`
+- `--with-ds4-native-log` / `--ds4-native-log` / `--no-ds4-native-log`
 
 ## Disabled Reasoning
 
@@ -108,6 +109,11 @@ Common URI keys are:
 - `ds4_mtp_margin`
 - `ds4_warm_weights`
 - `ds4_quality`
+- `ds4_native_log`
+
+Avalan suppresses DS4 native startup logs by default. Use
+`--with-ds4-native-log`, `--ds4-native-log`, or `ds4_native_log=true` when
+debugging native engine startup.
 
 Advanced URI-only keys include:
 

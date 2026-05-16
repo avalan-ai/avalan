@@ -680,31 +680,34 @@ class Ds4Worker:
             self._binding, self._options
         )
         open_method = getattr(async_engine_type, "open", None)
-        if callable(open_method):
-            try:
-                self._engine = await open_method(native_options)
-            except (
-                Ds4BackendUnavailable,
-                Ds4InvalidModel,
-                Ds4LoadError,
-            ):
-                raise
-            except Exception as error:
-                Ds4Engine._raise_mapped_open_error(error)
-        else:
-            try:
-                self._engine = async_engine_type(native_options)
-            except (
-                Ds4BackendUnavailable,
-                Ds4InvalidModel,
-                Ds4LoadError,
-            ):
-                raise
-            except Exception as error:
-                Ds4Engine._raise_mapped_open_error(error)
-            enter = getattr(self._engine, "__aenter__", None)
-            if callable(enter):
-                await enter()
+        with Ds4Engine._native_stderr_context(
+            Ds4Engine._native_log_context_enabled(self._binding, self._options)
+        ):
+            if callable(open_method):
+                try:
+                    self._engine = await open_method(native_options)
+                except (
+                    Ds4BackendUnavailable,
+                    Ds4InvalidModel,
+                    Ds4LoadError,
+                ):
+                    raise
+                except Exception as error:
+                    Ds4Engine._raise_mapped_open_error(error)
+            else:
+                try:
+                    self._engine = async_engine_type(native_options)
+                except (
+                    Ds4BackendUnavailable,
+                    Ds4InvalidModel,
+                    Ds4LoadError,
+                ):
+                    raise
+                except Exception as error:
+                    Ds4Engine._raise_mapped_open_error(error)
+                enter = getattr(self._engine, "__aenter__", None)
+                if callable(enter):
+                    await enter()
 
         self._session = await self._call_async(
             self._require_engine(), "create_session", self._ctx_size
@@ -1402,6 +1405,7 @@ class Ds4Model(TextGenerationModel):
             directional_steering_ffn=directional_steering_ffn,
             warm_weights=self._bool_config(config, "warm_weights", False),
             quality=self._bool_config(config, "quality", False),
+            native_log=self._bool_config(config, "native_log", False),
         )
         worker = Ds4Worker(
             options,

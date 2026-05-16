@@ -164,7 +164,7 @@ class ModelManagerExtraTestCase(TestCase):
         manager = ModelManager(self.hub, self.logger)
         uri = manager.parse_uri(
             "ai://local/./model.gguf?backend=ds4&ds4_ctx=4096"
-            "&ds4_native_backend=metal"
+            "&ds4_native_backend=metal&ds4_native_log=false"
         )
 
         settings = manager.get_engine_settings(
@@ -174,7 +174,11 @@ class ModelManagerExtraTestCase(TestCase):
         self.assertEqual(settings.backend, Backend.DS4)
         self.assertEqual(
             settings.backend_config,
-            {"ctx_size": 4096, "native_backend": "metal"},
+            {
+                "ctx_size": 4096,
+                "native_backend": "metal",
+                "native_log": False,
+            },
         )
 
     def test_get_engine_settings_ds4_explicit_config_overrides_uri(self):

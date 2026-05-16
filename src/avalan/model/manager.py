@@ -55,6 +55,7 @@ _DS4_CONFIG_KEY_ALIASES = {
     "mtp_margin": "mtp_margin",
     "warm_weights": "warm_weights",
     "quality": "quality",
+    "native_log": "native_log",
     "directional_steering_file": "directional_steering_file",
     "directional_steering_attn": "directional_steering_attn",
     "directional_steering_ffn": "directional_steering_ffn",
@@ -135,7 +136,7 @@ def _validate_ds4_config_value(
             return _ds4_float(key, value, non_negative=True)
         case "directional_steering_attn" | "directional_steering_ffn":
             return _ds4_float(key, value, non_negative=False)
-        case "warm_weights" | "quality":
+        case "warm_weights" | "quality" | "native_log":
             return _ds4_bool(key, value)
     raise ValueError(
         f"Unknown DS4 backend configuration key {normalized_key!r}."
