@@ -1,0 +1,7 @@
+{
+  "command": "printf '%s\\n' 'What is (4 + 6) and then that result times 5, divided by 2?' | poetry run avalan agent run --engine-uri \"ai://local//Users/mariano/Code/ai/pyds4/.local/ds4/ds4flash.gguf?backend=ds4&ds4_ctx=4096&ds4_native_backend=metal\" --tool 'math.calculator' --run-max-new-tokens 256 --role 'You are a helpful assistant named Tool, that can resolve user requests using tools.' --display-events --display-tools",
+  "return_code": 137,
+  "duration_seconds": 205.424,
+  "raw_path": "/Users/mariano/Code/ai/avalan/artifacts/ds4_tool_calling_terminal.raw",
+  "events_path": "/Users/mariano/Code/ai/avalan/artifacts/ds4_tool_calling_terminal.events.jsonl"
+}

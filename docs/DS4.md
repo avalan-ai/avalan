@@ -122,13 +122,35 @@ open. Directional steering coefficients require
 Unknown `ds4_` URI parameters are rejected so configuration mistakes fail
 early.
 
+## Agent Tools
+
+DS4 uses its native DSML tool protocol internally. You can run the same
+agent-tool flow as other local backends by pointing the engine URI at the
+DS4 GGUF:
+
+```bash
+printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
+  | avalan agent run \
+      --engine-uri "ai://local/${DS4_MODEL}?backend=ds4&ds4_ctx=4096&ds4_native_backend=metal" \
+      --tool "math.calculator" \
+      --run-max-new-tokens 256 \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --display-events \
+      --display-tools
+```
+
+Do not override DS4's internal tool protocol with a generic tool format.
+Avalan keeps DSML for DS4 prompt rendering and exact replay even when other
+backends use JSON, ReAct, OpenAI, or Harmony formats.
+
 ## Current Limitations
 
 - DS4 only supports DS4-supported DeepSeek V4 Flash GGUF files in Avalan.
 - Generic GGUF models are not supported by this backend.
-- Native DS4 tool calls are experimental. Avalan can render tool schemas and
-  parse completed DSML tool blocks, but exact raw DSML replay and streaming
-  argument deltas are still in progress.
+- Native DS4 tool calls use DSML and are still treated as DS4-specific.
+  Avalan renders tool schemas, parses completed DSML tool blocks, streams
+  argument deltas, and preserves exact raw DSML replay metadata for session
+  alignment.
 - CPU inference is a debug/reference path, not a production target.
 
 ## Integration Tests

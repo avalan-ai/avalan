@@ -18,6 +18,8 @@ from avalan.entities import (
     Modality,
     OperationParameters,
     OperationTextParameters,
+    ToolCall,
+    ToolCallToken,
 )
 from avalan.entities import (
     Operation as EntitiesOperation,
@@ -67,6 +69,31 @@ class DummyEngine:
         return 0
 
 
+class DummyDs4Engine(DummyEngine):
+    model_id = "./ds4flash.gguf"
+    model_type = "ds4"
+    tokenizer = None
+
+    async def __call__(self, input, *, tool=None):
+        DummyEngine.last_tool = tool
+        if isinstance(input, Message):
+
+            async def gen():
+                yield ToolCallToken(
+                    token="",
+                    call=ToolCall(
+                        id="ds4_tool_call_1",
+                        name="math.calculator",
+                        arguments={"expression": "(4 + 6) * 5 / 2"},
+                    ),
+                )
+
+            return TextGenerationResponse(
+                lambda: gen(), logger=getLogger(), use_async_generator=True
+            )
+        return await super().__call__(input, tool=tool)
+
+
 class DummyModelManager:
     def __init__(self) -> None:
         self.passed_tool = None
@@ -101,7 +128,12 @@ class DummyAgent(EngineAgent):
 
 
 class DummyOrchestrator:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        engine=None,
+        engine_uri: EngineUri | None = None,
+    ):
         self.event_manager = EventManager()
         self.memory = MagicMock()
         self.memory.has_recent_message = False
@@ -115,7 +147,7 @@ class DummyOrchestrator:
             enable_tools=["math.calculator"],
             settings=ToolManagerSettings(),
         )
-        self.engine_uri = EngineUri(
+        self.engine_uri = engine_uri or EngineUri(
             host=None,
             port=None,
             user=None,
@@ -124,7 +156,7 @@ class DummyOrchestrator:
             model_id="m",
             params={},
         )
-        self.engine = DummyEngine()
+        self.engine = engine or DummyEngine()
         self.model_manager = DummyModelManager()
         self.agent = DummyAgent(
             self.engine,
@@ -276,6 +308,93 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             any(
                 isinstance(t, Event)
                 and t.type == EventType.TOOL_RESULT
+                and t.payload["result"].result == "25"
+                for t in tokens
+            )
+        )
+        self.assertTrue(any(isinstance(t, str) and "25" in t for t in tokens))
+
+    async def test_cli_run_math_tool_with_ds4_backend_uri(self):
+        args = make_args()
+        args.backend = "ds4"
+        args.engine_uri = "ai://local/./ds4flash.gguf?backend=ds4&ds4_ctx=4096"
+        console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">", "agent_output": "<"}
+        theme.get_spinner.return_value = "sp"
+        theme.agent.return_value = "agent_panel"
+        theme.recent_messages.return_value = "recent_panel"
+        hub = MagicMock()
+        logger = MagicMock()
+
+        orch = DummyOrchestrator(
+            engine=DummyDs4Engine(),
+            engine_uri=EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor="local",
+                model_id="./ds4flash.gguf",
+                params={"backend": "ds4", "ds4_ctx": "4096"},
+            ),
+        )
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        async def from_settings(settings, **_kwargs):
+            self.assertEqual(settings.uri, args.engine_uri)
+            self.assertEqual(settings.engine_config, {"backend": "ds4"})
+            self.assertEqual(settings.tools, ["math.calculator"])
+            return orch
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(side_effect=from_settings),
+            ) as from_settings_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=(
+                    "What is (4 + 6) and then that result times 5, divided"
+                    " by 2?"
+                ),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
+        from_settings_patch.assert_awaited_once()
+        tg_patch.assert_awaited_once()
+        resp = tg_patch.await_args.kwargs["response"]
+        tokens = []
+        async for t in resp:
+            tokens.append(t)
+
+        self.assertIs(DummyEngine.last_tool, orch.tool)
+        self.assertTrue(
+            any(
+                isinstance(t, Event)
+                and t.type == EventType.TOOL_RESULT
+                and t.payload["result"].name == "math.calculator"
                 and t.payload["result"].result == "25"
                 for t in tokens
             )
