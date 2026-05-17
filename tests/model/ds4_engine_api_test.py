@@ -19,6 +19,7 @@ from avalan.backends.ds4_native.errors import (
 )
 from avalan.backends.ds4_native.metadata import (
     DS4_API_COMMIT,
+    DS4_API_VERSION,
     DS4_REQUIRED_C_SYMBOLS,
 )
 from avalan.backends.ds4_native.types import (
@@ -230,19 +231,30 @@ class FakeSession:
 
 def _fake_binding(**overrides: object) -> SimpleNamespace:
     values: dict[str, object] = {
-        "__ds4_commit__": DS4_API_COMMIT,
-        "__ds4_symbols__": DS4_REQUIRED_C_SYMBOLS,
         "Backend": NativeBackend,
         "Engine": FakeNativeEngine,
         "EngineOptions": FakeNativeOptions,
         "SamplingOptions": FakeNativeSamplingOptions,
         "ThinkMode": NativeThinkMode,
+        "capabilities": lambda: _fake_capabilities(),
         "is_backend_available": lambda backend: backend == "metal",
         "think_mode_for_context": lambda mode, ctx_size: (
             NativeThinkMode.HIGH
             if mode == NativeThinkMode.MAX and ctx_size < 8192
             else mode
         ),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _fake_capabilities(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "available_backends": ("metal",),
+        "backend": "metal",
+        "ds4_api_version": DS4_API_VERSION,
+        "ds4_commit": DS4_API_COMMIT,
+        "required_symbols": DS4_REQUIRED_C_SYMBOLS,
     }
     values.update(overrides)
     return SimpleNamespace(**values)

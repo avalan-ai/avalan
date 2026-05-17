@@ -1,15 +1,25 @@
 import tomllib
 from pathlib import Path
 
+from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 
-def _optional_dependencies() -> dict[str, list[str]]:
+def _pyproject() -> dict[str, object]:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    return tomllib.loads(pyproject.read_text(encoding="utf-8"))
+
+
+def _optional_dependencies() -> dict[str, list[str]]:
+    data = _pyproject()
     return data["project"]["optional-dependencies"]
+
+
+def _test_group_dependencies() -> dict[str, object]:
+    data = _pyproject()
+    return data["tool"]["poetry"]["group"]["test"]["dependencies"]
 
 
 def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
@@ -52,12 +62,10 @@ def test_ds4_extra_declares_platform_scoped_pyds4_dependency() -> None:
         canonicalize_name(requirement.name) for requirement in requirements
     } == {"pyds4"}
     assert all(
-        requirement.specifier == SpecifierSet() for requirement in requirements
-    )
-    assert all(
-        requirement.url == "git+https://github.com/avalan-ai/pyds4.git@main"
+        requirement.specifier == SpecifierSet(">=1.0.2,<2.0.0")
         for requirement in requirements
     )
+    assert all(requirement.url is None for requirement in requirements)
     assert all(requirement.marker is not None for requirement in requirements)
     assert any(
         requirement.marker is not None
@@ -101,9 +109,41 @@ def test_ds4_extra_declares_platform_scoped_pyds4_dependency() -> None:
     )
 
 
+def test_test_group_installs_pyds4_for_ds4_bridge_tests() -> None:
+    dependency = _test_group_dependencies()["pyds4"]
+
+    assert isinstance(dependency, dict)
+    assert dependency["version"] == ">=1.0.2,<2.0.0"
+    assert "markers" in dependency
+    marker = Marker(str(dependency["markers"]))
+    assert marker.evaluate(
+        {
+            "platform_system": "Linux",
+            "platform_machine": "x86_64",
+        }
+    )
+    assert marker.evaluate(
+        {
+            "platform_system": "Darwin",
+            "platform_machine": "arm64",
+        }
+    )
+    assert not marker.evaluate(
+        {
+            "platform_system": "Darwin",
+            "platform_machine": "x86_64",
+        }
+    )
+    assert not marker.evaluate(
+        {
+            "platform_system": "Windows",
+            "platform_machine": "AMD64",
+        }
+    )
+
+
 def test_core_dependencies_omit_optional_ds4_binding() -> None:
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    data = _pyproject()
     dependencies = {
         canonicalize_name(Requirement(requirement).name)
         for requirement in data["project"]["dependencies"]

@@ -3,7 +3,7 @@ import json
 import os
 import threading
 from asyncio import run
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -36,6 +36,7 @@ from avalan.backends.ds4_native.errors import (
 )
 from avalan.backends.ds4_native.metadata import (
     DS4_API_COMMIT,
+    DS4_API_VERSION,
     DS4_REQUIRED_C_SYMBOLS,
 )
 from avalan.entities import (
@@ -69,6 +70,10 @@ from avalan.tool.dsml import DsmlParseResult, DsmlPromptMessage
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import MathToolSet
 
+_PYDS4_SKIP_REASON = (
+    "pyds4 is not installed; install the test group to run DS4 bridge tests."
+)
+
 
 class NativeBackend(StrEnum):
     METAL = "metal"
@@ -80,6 +85,13 @@ class NativeThinkMode(StrEnum):
     NONE = "none"
     HIGH = "high"
     MAX = "max"
+
+
+class NativeTokenScoreMode(StrEnum):
+    NONE = "none"
+    TOKEN_LOGPROB = "token_logprob"
+    TOP_LOGPROBS = "top_logprobs"
+    TOKEN_LOGPROB_AND_TOP_LOGPROBS = "token_logprob_and_top_logprobs"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +119,71 @@ class FakeNativeSamplingOptions:
     seed: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FakeNativeGenerationScoreOptions:
+    mode: NativeTokenScoreMode = NativeTokenScoreMode.NONE
+    top_k: int = 0
+
+
+class FakeStopStringBuffer:
+    def __init__(self, stop_strings: Iterable[str] | str = ()) -> None:
+        if isinstance(stop_strings, str):
+            normalized = (stop_strings,)
+        else:
+            normalized = tuple(stop_strings)
+        if any(not isinstance(item, str) or not item for item in normalized):
+            raise ValueError("stop_strings must be non-empty strings")
+        self._stop_strings = normalized
+        self._pending = ""
+        self._stopped = False
+        self._keep = (
+            max(len(stop_string) for stop_string in normalized) - 1
+            if normalized
+            else 0
+        )
+
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
+
+    def push(self, text: str) -> tuple[str, ...]:
+        if self._stopped:
+            return ()
+        if not self._stop_strings:
+            return (text,) if text else ()
+
+        self._pending += text
+        stop_index = self._stop_index()
+        if stop_index is not None:
+            chunk = self._pending[:stop_index]
+            self._pending = ""
+            self._stopped = True
+            return (chunk,) if chunk else ()
+
+        emit_length = len(self._pending) - self._keep
+        if emit_length <= 0:
+            return ()
+        chunk = self._pending[:emit_length]
+        self._pending = self._pending[emit_length:]
+        return (chunk,) if chunk else ()
+
+    def flush(self) -> tuple[str, ...]:
+        if self._pending and not self._stopped:
+            chunk = self._pending
+            self._pending = ""
+            return (chunk,)
+        self._pending = ""
+        return ()
+
+    def _stop_index(self) -> int | None:
+        first_index: int | None = None
+        for stop_string in self._stop_strings:
+            index = self._pending.find(stop_string)
+            if index >= 0 and (first_index is None or index < first_index):
+                first_index = index
+        return first_index
+
+
 class FakeNativeSession:
     def __init__(self, engine: "FakeNativeEngine", ctx_size: int) -> None:
         self.argmax_calls = 0
@@ -123,6 +200,9 @@ class FakeNativeSession:
         self.sample_options: list[FakeNativeSamplingOptions] = []
         self.save_payload_calls = 0
         self.save_snapshot_calls = 0
+        self.next_token_score_options: list[
+            FakeNativeGenerationScoreOptions | None
+        ] = []
         self.token_logprob_calls: list[int] = []
         self.tokens: list[int] = []
         self.top_logprobs_calls: list[int] = []
@@ -374,6 +454,7 @@ def _fake_async_engine_type(
             decode: bool = False,
             stop_on_eos: bool = True,
             exclude_token_id: int | None = None,
+            scores: FakeNativeGenerationScoreOptions | None = None,
         ) -> SimpleNamespace:
             def step() -> SimpleNamespace:
                 if options is not None and exclude_token_id is not None:
@@ -390,6 +471,23 @@ def _fake_async_engine_type(
 
                 is_eos = token_id == self._owner._native.eos_token_id
                 should_advance = advance and not (stop_on_eos and is_eos)
+                score_options = scores or FakeNativeGenerationScoreOptions()
+                top_logprobs: tuple[tuple[int, float], ...] = ()
+                token_logprob: float | None = None
+                self._native.next_token_score_options.append(scores)
+                if not (stop_on_eos and is_eos):
+                    if score_options.mode in {
+                        NativeTokenScoreMode.TOP_LOGPROBS,
+                        NativeTokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS,
+                    }:
+                        top_logprobs = tuple(
+                            self._native.top_logprobs(score_options.top_k)
+                        )
+                    if score_options.mode in {
+                        NativeTokenScoreMode.TOKEN_LOGPROB,
+                        NativeTokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS,
+                    }:
+                        token_logprob = self._native.token_logprob(token_id)
                 if should_advance:
                     try:
                         self._native.eval(token_id)
@@ -407,6 +505,8 @@ def _fake_async_engine_type(
                     is_eos=is_eos,
                     advanced=should_advance,
                     token_bytes=token_bytes,
+                    token_logprob=token_logprob,
+                    top_logprobs=top_logprobs,
                 )
 
             return cast(SimpleNamespace, await self._owner._call(step))
@@ -573,16 +673,18 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
         type[Any], overrides.get("Engine", FakeNativeEngine)
     )
     values: dict[str, object] = {
-        "__ds4_commit__": DS4_API_COMMIT,
-        "__ds4_symbols__": DS4_REQUIRED_C_SYMBOLS,
         "AsyncEngine": overrides.get(
             "AsyncEngine", _fake_async_engine_type(native_engine_type)
         ),
         "Backend": NativeBackend,
         "Engine": native_engine_type,
         "EngineOptions": FakeNativeOptions,
+        "GenerationScoreOptions": FakeNativeGenerationScoreOptions,
         "SamplingOptions": FakeNativeSamplingOptions,
+        "StopStringBuffer": FakeStopStringBuffer,
         "ThinkMode": NativeThinkMode,
+        "TokenScoreMode": NativeTokenScoreMode,
+        "capabilities": lambda: _fake_capabilities(),
         "is_backend_available": (
             lambda backend: backend in {"metal", "cuda", "cpu"}
         ),
@@ -592,8 +694,53 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
+def _fake_capabilities(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "available_backends": ("metal", "cuda", "cpu"),
+        "backend": "metal",
+        "ds4_api_version": DS4_API_VERSION,
+        "ds4_commit": DS4_API_COMMIT,
+        "logprobs": True,
+        "mtp": True,
+        "payloads": True,
+        "progress": True,
+        "required_symbols": DS4_REQUIRED_C_SYMBOLS,
+        "snapshots": True,
+        "speculative_eval": False,
+        "top_logprobs": True,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def _install_binding(monkeypatch: pytest.MonkeyPatch, binding: object) -> None:
     monkeypatch.setattr(availability, "import_module", lambda _: binding)
+
+
+@pytest.fixture
+def require_pyds4() -> None:
+    pytest.importorskip("pyds4", reason=_PYDS4_SKIP_REASON)
+
+
+def _available_pyds4_backend(pyds4: object) -> str:
+    capabilities = getattr(pyds4, "capabilities")()
+    available_backends = getattr(capabilities, "available_backends", ())
+    available = {
+        str(getattr(backend, "value", backend))
+        for backend in available_backends
+    }
+    for backend in ("metal", "cuda", "cpu"):
+        if backend in available:
+            return backend
+    pytest.skip("pyds4 does not report an available DS4 backend.")
+
+
+def test_available_pyds4_backend_accepts_cpu_only_binding() -> None:
+    pyds4 = SimpleNamespace(
+        capabilities=lambda: SimpleNamespace(available_backends=("cpu",))
+    )
+
+    assert _available_pyds4_backend(pyds4) == "cpu"
 
 
 def _model_file(tmp_path: Path) -> Path:
@@ -711,6 +858,29 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
         quality=True,
         native_log=False,
     )
+    model.close()
+
+
+def test_ds4_model_load_accepts_complete_pyds4_capabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    FakeNativeEngine.instances.clear()
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            capabilities=lambda: _fake_capabilities(
+                logprobs=True,
+                payloads=True,
+                snapshots=True,
+                speculative_eval=True,
+                top_logprobs=True,
+            )
+        ),
+    )
+
+    model = Ds4Model(str(_model_file(tmp_path)))
+
+    assert len(FakeNativeEngine.instances) == 1
     model.close()
 
 
@@ -1420,6 +1590,31 @@ def test_ds4_stop_string_spanning_token_boundaries_is_detected(
     model.close()
 
 
+def test_ds4_generation_requires_pyds4_stop_string_buffer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding(StopStringBuffer=None))
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    fake.token_text_map = {101: b"A"}
+
+    with pytest.raises(Ds4LoadError, match="StopStringBuffer"):
+        response = run(
+            model(
+                "hello",
+                settings=GenerationSettings(
+                    max_new_tokens=1,
+                    temperature=0.0,
+                    use_async_generator=False,
+                ),
+            )
+        )
+        run(response.to_str())
+
+    model.close()
+
+
 def test_ds4_eos_stops_generation_without_emitting_or_eval(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2020,9 +2215,77 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
         Token(id=101, token="A", probability=exp(-0.1)),
         Token(id=102, token="B", probability=exp(-1.5)),
     ]
+    assert fake.sessions[0].next_token_score_options == [
+        FakeNativeGenerationScoreOptions(
+            mode=NativeTokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS,
+            top_k=2,
+        )
+    ]
     assert fake.sessions[0].top_logprobs_calls == [2]
     assert fake.sessions[0].token_logprob_calls == [101]
     assert fake.sessions[0].eval_calls == [101]
+
+
+def test_ds4_generation_stream_accepts_real_pyds4_score_types(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pyds4 = pytest.importorskip("pyds4", reason=_PYDS4_SKIP_REASON)
+    fake_async_engine = _fake_async_engine_type(
+        FakeNativeEngine, logprobs=True
+    )
+    monkeypatch.setattr(pyds4, "AsyncEngine", fake_async_engine)
+    FakeNativeEngine.instances.clear()
+
+    async def run_case() -> tuple[list[object], FakeNativeEngine]:
+        model = Ds4Model(
+            str(_model_file(tmp_path)),
+            TransformerEngineSettings(
+                backend_config={
+                    "native_backend": _available_pyds4_backend(pyds4)
+                }
+            ),
+        )
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        fake.token_logprobs = {101: -0.25}
+        fake.token_text_map = {101: b"A", 102: b"B"}
+        fake.top_logprobs = [
+            pyds4.TokenScore(token_id=101, logprob=-0.25),
+            pyds4.TokenScore(token_id=102, logprob=-1.25),
+        ]
+        response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+            manual_sampling=True,
+            pick=2,
+        )
+        chunks: list[object] = [chunk async for chunk in response]
+        model.close()
+        return chunks, fake
+
+    chunks, fake = run(run_case())
+
+    assert len(chunks) == 1
+    detail = chunks[0]
+    assert isinstance(detail, TokenDetail)
+    assert detail.id == 101
+    assert detail.token == "A"
+    assert detail.probability == pytest.approx(exp(-0.25))
+    assert detail.tokens == [
+        Token(id=101, token="A", probability=exp(-0.25)),
+        Token(id=102, token="B", probability=exp(-1.25)),
+    ]
+    score_options = fake.sessions[0].next_token_score_options
+    assert len(score_options) == 1
+    assert isinstance(score_options[0], pyds4.GenerationScoreOptions)
+    assert score_options[0].mode is (
+        pyds4.TokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS
+    )
+    assert score_options[0].top_k == 2
 
 
 def test_ds4_token_details_reject_invalid_top_k(
@@ -2046,7 +2309,15 @@ def test_ds4_token_details_reject_invalid_top_k(
 def test_ds4_token_details_require_native_logprob_support(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _install_binding(monkeypatch, _fake_binding())
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            capabilities=lambda: _fake_capabilities(
+                logprobs=False,
+                top_logprobs=False,
+            ),
+        ),
+    )
     model = Ds4Model(str(_model_file(tmp_path)))
     fake = _latest_fake_engine()
     fake.argmax_script = [101]
@@ -2065,6 +2336,56 @@ def test_ds4_token_details_require_native_logprob_support(
 
     with pytest.raises(NotImplementedError, match="token logprobs"):
         run(response.to_str())
+    model.close()
+
+
+def test_ds4_missing_logprob_capability_only_blocks_token_details(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, logprobs=True
+            ),
+            capabilities=lambda: _fake_capabilities(
+                logprobs=False,
+                top_logprobs=False,
+            ),
+        ),
+    )
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    fake.token_text_map = {101: b"A"}
+
+    plain = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=False,
+            ),
+        )
+    )
+    assert run(plain.to_str()) == "A"
+
+    detailed = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=False,
+            ),
+            manual_sampling=True,
+            pick=1,
+        )
+    )
+    with pytest.raises(NotImplementedError, match="token logprobs"):
+        run(detailed.to_str())
+    assert fake.sessions[0].token_logprob_calls == []
     model.close()
 
 
@@ -2190,8 +2511,48 @@ def test_ds4_token_text_failure_restores_snapshot_when_available(
     model.close()
 
 
-def test_ds4_disk_kv_cache_hit_restores_matching_token_prefix(
+def test_ds4_missing_snapshot_capability_rebuilds_on_generation_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, snapshots=True
+            ),
+            capabilities=lambda: _fake_capabilities(snapshots=False),
+        ),
+    )
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    fake.fail_token_text_ids = {101}
+
+    response = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=False,
+            ),
+        )
+    )
+
+    with pytest.raises(Ds4GenerationError, match="token_text failed"):
+        run(response.to_str())
+
+    assert fake.sessions[0].save_snapshot_calls == 0
+    assert fake.sessions[0].load_snapshot_calls == 0
+    assert fake.sessions[0].invalidate_calls == 1
+    assert len(fake.sessions) == 2
+    model.close()
+
+
+def test_ds4_disk_kv_cache_hit_restores_matching_token_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2247,7 +2608,9 @@ def test_ds4_disk_kv_cache_hit_restores_matching_token_prefix(
 
 
 def test_ds4_disk_kv_cache_misses_for_different_prefix_or_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2325,7 +2688,9 @@ def test_ds4_disk_kv_cache_misses_for_different_prefix_or_context(
 
 
 def test_ds4_disk_kv_cache_corrupt_payload_is_skipped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2373,12 +2738,14 @@ def test_ds4_disk_kv_cache_corrupt_payload_is_skipped(
 
     assert run(response.to_str()) == "<102>"
     assert fake.session_sync_calls == [(30, 0, 5, 20), (30, 0, 5, 20)]
-    assert fake.sessions[0].load_payload_calls == 1
+    assert fake.sessions[0].load_payload_calls == 0
     model.close()
 
 
 def test_ds4_disk_kv_cache_write_failure_falls_back_to_live_session(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2459,11 +2826,70 @@ def test_ds4_disk_kv_cache_disabled_leaves_no_files(
     model.close()
 
 
+def test_ds4_missing_payload_capability_disables_disk_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, payloads=True
+            ),
+            capabilities=lambda: _fake_capabilities(payloads=False),
+        ),
+    )
+    cache_dir = tmp_path / "kv"
+    model = Ds4Model(
+        str(_model_file(tmp_path)),
+        TransformerEngineSettings(
+            backend_config={
+                "kv_disk_dir": str(cache_dir),
+                "kv_disk_space_mb": 1,
+            }
+        ),
+    )
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101, 102]
+
+    first = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                use_async_generator=False,
+            ),
+        )
+    )
+    second = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                use_async_generator=False,
+            ),
+        )
+    )
+
+    assert run(first.to_str()) == "<101>"
+    assert run(second.to_str()) == "<102>"
+    assert fake.session_sync_calls == [
+        (30, 0, 5, 20),
+        (30, 0, 5, 20),
+    ]
+    assert fake.sessions[0].save_payload_calls == 0
+    assert fake.sessions[0].load_payload_calls == 0
+    assert not cache_dir.exists()
+    model.close()
+
+
 def test_ds4_disk_kv_cache_budget_evicts_least_useful_entries(
     tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = cast(Logger, MagicMock(spec=Logger))
-    cache = _Ds4DiskKvCache(tmp_path / "kv", 700, logger, "namespace")
+    cache = _Ds4DiskKvCache(tmp_path / "kv", 150, logger, "namespace")
     session = SimpleNamespace(save_payload=lambda: b"x" * 100)
 
     run(cache.store(session, [1], 16))
@@ -3456,6 +3882,7 @@ def test_ds4_generation_string_and_extra_validation(
 
 def test_ds4_disk_kv_cache_handles_payload_edge_cases(
     tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache = _Ds4DiskKvCache(tmp_path / "kv", 1024, logger, "namespace")
@@ -3473,86 +3900,52 @@ def test_ds4_disk_kv_cache_handles_payload_edge_cases(
     cache_dir = tmp_path / "kv"
     cache_dir.mkdir()
     entry = cache._entry_path([1], 16)
-    entry.metadata_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "key": entry.key,
-                "namespace": "namespace",
-                "ctx_size": 32,
-                "token_sha256": entry.token_digest,
-                "payload_file": entry.payload_path.name,
-            }
-        ),
-        encoding="utf-8",
-    )
+    metadata = cache._cache.metadata_for([1], 16, payload_size=99)
+    cache._cache.write_metadata(metadata)
     entry.payload_path.write_bytes(b"payload")
     session = SimpleNamespace(load_payload=lambda payload: None)
 
     assert run(cache.restore(session, [1], 16)) is False
-    assert not entry.metadata_path.exists()
-    assert not entry.payload_path.exists()
+    assert entry.metadata_path.exists()
+    assert entry.payload_path.exists()
 
     entry = cache._entry_path([2], 16)
-    entry.metadata_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "key": entry.key,
-                "namespace": "namespace",
-                "ctx_size": 16,
-                "token_sha256": entry.token_digest,
-                "payload_file": entry.payload_path.name,
-            }
-        ),
-        encoding="utf-8",
-    )
+    metadata = cache._cache.metadata_for([2], 16, payload_size=0)
+    cache._cache.write_metadata(metadata)
     entry.payload_path.mkdir()
 
     assert run(cache.restore(session, [2], 16)) is False
 
 
-def test_ds4_disk_kv_cache_metadata_edges(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_ds4_disk_kv_cache_delegated_metadata_edges(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache = _Ds4DiskKvCache(tmp_path / "kv", 1024, logger, "namespace")
     entry = cache._entry_path([1], 16)
-    entry.metadata_path.parent.mkdir(parents=True)
+    cache._cache.store(
+        SimpleNamespace(save_payload=lambda: b"payload"),
+        [1],
+        16,
+    )
 
     def fail_write_text(self: Path, text: str, encoding: str) -> int:
         _ = self, text, encoding
         raise OSError("metadata write failed")
 
     monkeypatch.setattr(Path, "write_text", fail_write_text)
-    cache._record_hit({"hit_count": "bad"}, entry)
+    session = SimpleNamespace(load_payload=lambda payload: None)
+    assert run(cache.restore(session, [1], 16)) is True
     logger.warning.assert_called()
 
-    def fail_glob(self: Path, pattern: str) -> tuple[Path, ...]:
-        _ = self, pattern
-        raise OSError("glob failed")
-
-    monkeypatch.setattr(Path, "glob", fail_glob)
-    assert cache._cache_entries() == []
-
-    def fail_stat(self: Path) -> object:
-        _ = self
-        raise OSError("stat failed")
-
-    monkeypatch.setattr(Path, "stat", fail_stat)
-    assert cache._path_size(entry.metadata_path) == 0
-
-    def fail_unlink(self: Path, missing_ok: bool = False) -> None:
-        _ = self, missing_ok
-        raise OSError("unlink failed")
-
-    monkeypatch.setattr(Path, "unlink", fail_unlink)
-    cache._delete_entry(entry)
-    assert logger.warning.call_count >= 3
+    assert entry.payload_path.exists()
 
 
 def test_ds4_disk_kv_cache_skips_invalid_metadata_entries(
     tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache_dir = tmp_path / "kv"
@@ -3564,7 +3957,7 @@ def test_ds4_disk_kv_cache_skips_invalid_metadata_entries(
     )
     cache = _Ds4DiskKvCache(cache_dir, 1024, logger, "namespace")
 
-    assert cache._cache_entries() == []
+    assert cache._cache.evict(0) == ()
 
 
 def test_ds4_worker_dsml_replay_no_match_and_eviction_edges(
@@ -3625,6 +4018,8 @@ def test_ds4_worker_aclose_snapshot_and_pending_reset_edges(
     )
 
     run(worker.aclose())
+    assert run(worker._load_snapshot(object(), b"snapshot")) is False
+    worker._capabilities = SimpleNamespace(snapshots=False)
     assert run(worker._load_snapshot(object(), b"snapshot")) is False
     run(worker._store_disk_cache(object(), [1]))
 
@@ -3787,6 +4182,95 @@ def test_ds4_worker_logprob_probability_and_bytes_edge_helpers(
     )
     assert step.is_eos is True
 
+    class ManualSession:
+        def __init__(self) -> None:
+            self.eval_calls: list[int] = []
+
+        def argmax(self) -> int:
+            return 5
+
+        def eval(self, token_id: int) -> None:
+            self.eval_calls.append(token_id)
+
+        def token_logprob(self, token_id: int) -> float:
+            assert token_id == 5
+            return -0.4
+
+        def top_logprobs(self, top_k: int) -> list[tuple[int, float]]:
+            assert top_k == 2
+            return [(5, -0.4), (6, -1.4)]
+
+    manual_session = ManualSession()
+    manual_step = run(
+        worker._detailed_generation_step(
+            SimpleNamespace(
+                eos_token_id=9,
+                token_text=lambda token_id: f"T{token_id}".encode(),
+            ),
+            manual_session,
+            _Ds4GenerationPlan(
+                max_new_tokens=1,
+                sampling_options=SamplingOptions(),
+                stop_strings=(),
+                use_sampling=False,
+                emit_token_details=True,
+                top_logprobs=2,
+            ),
+            3,
+        )
+    )
+    assert manual_step.token_id == 5
+    assert manual_step.token_bytes == b"T5"
+    assert manual_step.token_detail == TokenDetail(
+        id=5,
+        token="T5",
+        probability=pytest.approx(exp(-0.4)),
+        probability_distribution="log_softmax",
+        step=3,
+        tokens=[
+            Token(id=5, token="T5", probability=exp(-0.4)),
+            Token(id=6, token="T6", probability=exp(-1.4)),
+        ],
+    )
+    assert manual_session.eval_calls == [5]
+
+    eos_from_step = run(
+        worker._token_detail_step_from_generation_step(
+            SimpleNamespace(),
+            SimpleNamespace(token_id=9, is_eos=True),
+            _Ds4GenerationPlan(
+                max_new_tokens=1,
+                sampling_options=SamplingOptions(),
+                stop_strings=(),
+                use_sampling=False,
+            ),
+            0,
+        )
+    )
+    assert eos_from_step.is_eos is True
+
+    decoded_step = run(
+        worker._token_detail_step_from_generation_step(
+            SimpleNamespace(token_text=lambda token_id: b"decoded"),
+            SimpleNamespace(
+                token_id=7,
+                is_eos=False,
+                token_logprob=None,
+                top_logprobs=((7, -0.7),),
+            ),
+            _Ds4GenerationPlan(
+                max_new_tokens=1,
+                sampling_options=SamplingOptions(),
+                stop_strings=(),
+                use_sampling=False,
+            ),
+            1,
+        )
+    )
+    assert decoded_step.token_bytes == b"decoded"
+    assert decoded_step.token_detail is not None
+    assert decoded_step.token_detail.probability == pytest.approx(exp(-0.7))
+
     class SampleSession:
         def sample(self, options: object) -> int:
             assert isinstance(options, FakeNativeSamplingOptions)
@@ -3809,6 +4293,12 @@ def test_ds4_worker_logprob_probability_and_bytes_edge_helpers(
         Ds4Worker._require_logprob_support(
             SimpleNamespace(token_logprob=lambda token_id: 0.0),
             1,
+        )
+    with pytest.raises(Ds4LoadError, match="must be a boolean"):
+        Ds4Worker._require_logprob_support(
+            SimpleNamespace(token_logprob=lambda token_id: 0.0),
+            0,
+            SimpleNamespace(logprobs="yes"),
         )
 
     class AwaitableEosEngine:
@@ -3891,6 +4381,64 @@ def test_ds4_worker_logprob_probability_and_bytes_edge_helpers(
     assert Ds4Worker._bytes_value(memoryview(b"B"), "bytes") == b"B"
     with pytest.raises(Ds4GenerationError, match="must return bytes"):
         Ds4Worker._bytes_value("bad", "bytes")
+
+
+def test_ds4_worker_score_option_and_signature_edge_helpers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worker = Ds4Worker(
+        _worker_options(_model_file(tmp_path)), 16, MagicMock(spec=Logger)
+    )
+    assert ds4_module._capability_bool(SimpleNamespace(), "missing") is None
+    plan = _Ds4GenerationPlan(
+        max_new_tokens=1,
+        sampling_options=SamplingOptions(),
+        stop_strings=(),
+        use_sampling=False,
+    )
+
+    worker._binding = _fake_binding(GenerationScoreOptions=None)
+    assert worker._generation_score_options(plan) is None
+
+    class BadTokenScoreMode:
+        def __new__(cls, value: str) -> "BadTokenScoreMode":
+            _ = value
+            raise ValueError("bad mode")
+
+    worker._binding = _fake_binding(TokenScoreMode=BadTokenScoreMode)
+    assert worker._generation_score_options(plan) is None
+
+    worker._binding = _fake_binding(TokenScoreMode=SimpleNamespace())
+    assert worker._generation_score_options(plan) is None
+
+    def bad_score_options(*, mode: object, top_k: int) -> object:
+        _ = mode, top_k
+        raise TypeError("bad score options")
+
+    worker._binding = _fake_binding(
+        GenerationScoreOptions=bad_score_options,
+        TokenScoreMode=SimpleNamespace(TOKEN_LOGPROB="token_logprob"),
+    )
+    assert worker._generation_score_options(plan) is None
+
+    def next_token() -> None:
+        pass
+
+    next_token.__signature__ = "bad"  # type: ignore[attr-defined]
+    assert (
+        Ds4Worker._method_supports_keyword(
+            SimpleNamespace(next_token=next_token), "next_token", "scores"
+        )
+        is True
+    )
+
+    monkeypatch.setattr(
+        ds4_module.importlib,
+        "import_module",
+        lambda _: SimpleNamespace(Ds4DiskKvCache=None),
+    )
+    with pytest.raises(Ds4LoadError, match="Ds4DiskKvCache"):
+        _Ds4DiskKvCache._cache_type()
 
 
 def test_ds4_worker_reset_session_warns_and_returns_create_error(

@@ -1,3 +1,4 @@
+from enum import Enum
 from os import environ
 from pathlib import Path
 from subprocess import run
@@ -31,9 +32,26 @@ from avalan.backends.ds4_native.metadata import (
 
 def _fake_binding(**overrides: object) -> SimpleNamespace:
     values: dict[str, object] = {
-        "__ds4_commit__": DS4_API_COMMIT,
-        "__ds4_symbols__": DS4_REQUIRED_C_SYMBOLS,
-        "is_backend_available": lambda backend: backend == "metal",
+        "capabilities": lambda: _fake_capabilities(),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _fake_capabilities(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "available_backends": ("metal",),
+        "backend": "metal",
+        "ds4_api_version": DS4_API_VERSION,
+        "ds4_commit": DS4_API_COMMIT,
+        "logprobs": True,
+        "mtp": True,
+        "payloads": True,
+        "progress": True,
+        "required_symbols": DS4_REQUIRED_C_SYMBOLS,
+        "snapshots": True,
+        "speculative_eval": True,
+        "top_logprobs": True,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -66,11 +84,18 @@ def test_ds4_api_metadata_locks_verified_commit_and_symbols() -> None:
     assert set(DS4_REQUIRED_C_SYMBOLS) <= set(DS4_PUBLIC_C_SYMBOLS)
 
 
-def test_require_compatible_startup_accepts_fake_binding() -> None:
+def test_require_compatible_startup_accepts_pyds4_capabilities() -> None:
     require_compatible_startup(_fake_binding(), "metal")
 
 
-def test_require_compatible_binding_rejects_missing_symbol() -> None:
+def test_require_compatible_startup_rejects_missing_capabilities() -> None:
+    with pytest.raises(Ds4ApiVersionError, match="capabilities"):
+        require_compatible_startup(SimpleNamespace(), "metal")
+
+
+def test_require_compatible_binding_rejects_missing_capability_symbol() -> (
+    None
+):
     symbols = tuple(
         symbol
         for symbol in DS4_REQUIRED_C_SYMBOLS
@@ -78,27 +103,56 @@ def test_require_compatible_binding_rejects_missing_symbol() -> None:
     )
 
     with pytest.raises(Ds4ApiVersionError, match="ds4_session_eval"):
-        require_compatible_binding(_fake_binding(__ds4_symbols__=symbols))
+        require_compatible_binding(
+            _fake_binding(
+                capabilities=lambda: _fake_capabilities(
+                    required_symbols=symbols
+                )
+            )
+        )
 
 
-def test_require_compatible_binding_discovers_symbols_from_attributes() -> (
-    None
-):
-    symbol_attributes: dict[str, object] = {
-        symbol: object() for symbol in DS4_REQUIRED_C_SYMBOLS
-    }
-
-    require_compatible_binding(
-        _fake_binding(__ds4_symbols__=None, **symbol_attributes)
+def test_require_backend_available_uses_pyds4_capabilities() -> None:
+    binding = _fake_binding(
+        capabilities=lambda: _fake_capabilities(available_backends=("cuda",)),
     )
+
+    with pytest.raises(
+        Ds4BackendUnavailable, match="unavailable on this platform"
+    ):
+        require_backend_available(binding, "metal")
+
+
+def test_require_backend_available_normalizes_enum_capabilities() -> None:
+    class Backend(Enum):
+        METAL = "metal"
+
+    binding = _fake_binding(
+        capabilities=lambda: _fake_capabilities(
+            available_backends=(Backend.METAL,)
+        ),
+    )
+
+    require_backend_available(binding, "metal")
 
 
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
-        ({"__ds4_symbols__": "ds4_engine_open"}, "__ds4_symbols__"),
         (
-            {"__ds4_api_version__": 0 if DS4_API_VERSION != 0 else 1},
+            {
+                "capabilities": lambda: _fake_capabilities(
+                    required_symbols="ds4_engine_open"
+                )
+            },
+            "required_symbols",
+        ),
+        (
+            {
+                "capabilities": lambda: _fake_capabilities(
+                    ds4_api_version=0 if DS4_API_VERSION != 0 else 1
+                )
+            },
             "expected DS4 C API version",
         ),
     ],
@@ -112,7 +166,11 @@ def test_require_compatible_binding_rejects_metadata_mismatches(
 
 def test_require_compatible_binding_rejects_wrong_commit() -> None:
     with pytest.raises(Ds4ApiVersionError, match="expected DS4 C API commit"):
-        require_compatible_binding(_fake_binding(__ds4_commit__="old"))
+        require_compatible_binding(
+            _fake_binding(
+                capabilities=lambda: _fake_capabilities(ds4_commit="old")
+            )
+        )
 
 
 def test_require_backend_available_rejects_unsupported_backend() -> None:
@@ -122,7 +180,7 @@ def test_require_backend_available_rejects_unsupported_backend() -> None:
 
 def test_require_backend_available_reports_platform_unavailable() -> None:
     binding = _fake_binding(
-        is_backend_available=lambda backend: False,
+        capabilities=lambda: _fake_capabilities(available_backends=("cuda",)),
         backend_unavailable_reason=lambda backend: "Metal runtime missing.",
     )
 
@@ -133,26 +191,25 @@ def test_require_backend_available_reports_platform_unavailable() -> None:
         require_backend_available(binding, "metal")
 
 
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"is_backend_available": None},
-        {
-            "is_backend_available": None,
-            "__ds4_available_backends__": ("metal",),
-        },
-    ],
-)
-def test_require_backend_available_accepts_metadata_fallbacks(
-    overrides: dict[str, object],
-) -> None:
-    require_backend_available(_fake_binding(**overrides), "metal")
+def test_require_backend_available_rejects_missing_capabilities() -> None:
+    with pytest.raises(Ds4ApiVersionError, match="capabilities"):
+        require_backend_available(SimpleNamespace(), "metal")
 
 
-def test_require_backend_available_rejects_missing_metadata_entry() -> None:
+def test_require_backend_available_rejects_malformed_available_backends() -> (
+    None
+):
     binding = _fake_binding(
-        is_backend_available=None,
-        __ds4_available_backends__=("cuda",),
+        capabilities=lambda: _fake_capabilities(available_backends="metal")
+    )
+
+    with pytest.raises(Ds4ApiVersionError, match="available_backends"):
+        require_backend_available(binding, "metal")
+
+
+def test_require_backend_available_rejects_unavailable_backend() -> None:
+    binding = _fake_binding(
+        capabilities=lambda: _fake_capabilities(available_backends=("cuda",)),
     )
 
     with pytest.raises(

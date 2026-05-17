@@ -12,7 +12,7 @@ from .metadata import (
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 _UNAVAILABLE_SUFFIX = (
     "Install avalan[ds4] and ensure DS4 supports this platform. "
@@ -32,20 +32,37 @@ class Ds4BindingMetadata:
     native_backend_name: str
 
 
-def _binding_symbols(binding: object) -> set[str]:
-    symbols = getattr(binding, "__ds4_symbols__", None)
-    if symbols is None:
-        return {
-            symbol
-            for symbol in DS4_REQUIRED_C_SYMBOLS
-            if hasattr(binding, symbol)
-        }
+def binding_capabilities(binding: object) -> object | None:
+    """Return pyds4 capability metadata when the binding exposes it."""
+    capabilities = getattr(binding, "capabilities", None)
+    if not callable(capabilities):
+        return None
+    value = capabilities()
+    return value if value is not None else None
+
+
+def _missing_capabilities_error() -> NoReturn:
+    raise Ds4ApiVersionError(
+        "DS4 binding must expose pyds4 capabilities(). Install a current "
+        "pyds4 build."
+    )
+
+
+def _require_binding_capabilities(binding: object) -> object:
+    capabilities = binding_capabilities(binding)
+    if capabilities is None:
+        _missing_capabilities_error()
+    return capabilities
+
+
+def _binding_capability_symbols(capabilities: object) -> set[str]:
+    symbols = getattr(capabilities, "required_symbols", None)
     if isinstance(symbols, Collection) and not isinstance(
         symbols, (bytes, str)
     ):
         return {str(symbol) for symbol in symbols}
     raise Ds4ApiVersionError(
-        "DS4 binding metadata __ds4_symbols__ must be a collection of "
+        "DS4 binding capabilities required_symbols must be a collection of "
         "public C symbol names."
     )
 
@@ -59,18 +76,29 @@ def _binding_version(binding: object) -> str:
     )
 
 
-def _binding_api_version(binding: object) -> int | None:
-    version = getattr(binding, "__ds4_api_version__", DS4_API_VERSION)
+def _binding_api_version(capabilities: object) -> int | None:
+    version = getattr(capabilities, "ds4_api_version", None)
     if isinstance(version, int) or version is None:
         return version
     raise Ds4ApiVersionError(
-        "DS4 binding metadata __ds4_api_version__ must be an integer or None."
+        "DS4 binding capabilities ds4_api_version must be an integer or None."
     )
 
 
+def _backend_name(value: object) -> str | None:
+    raw_value = getattr(value, "value", value)
+    if raw_value is None:
+        return None
+    name = str(raw_value)
+    return name if name else None
+
+
 def _binding_native_backend_name(
-    binding: object, fallback_backend_name: str
+    binding: object, fallback_backend_name: str, capabilities: object
 ) -> str:
+    capability_backend = _backend_name(getattr(capabilities, "backend", None))
+    if capability_backend:
+        return capability_backend
     native_backend_name = getattr(binding, "__ds4_native_backend__", None)
     if isinstance(native_backend_name, str) and native_backend_name:
         return native_backend_name
@@ -96,14 +124,15 @@ def _require_safe_import(binding: object, module_name: str) -> None:
 
 def require_compatible_binding(binding: object) -> None:
     """Validate that a DS4 binding matches Avalan's pinned API surface."""
-    binding_commit = getattr(binding, "__ds4_commit__", None)
+    capabilities = _require_binding_capabilities(binding)
+    binding_commit = getattr(capabilities, "ds4_commit", None)
     if binding_commit != DS4_API_COMMIT:
         raise Ds4ApiVersionError(
             "DS4 binding API mismatch: expected DS4 C API commit "
             f"{DS4_API_COMMIT}, got {binding_commit!r}."
         )
 
-    symbols = _binding_symbols(binding)
+    symbols = _binding_capability_symbols(capabilities)
     missing = tuple(
         symbol for symbol in DS4_REQUIRED_C_SYMBOLS if symbol not in symbols
     )
@@ -114,7 +143,7 @@ def require_compatible_binding(binding: object) -> None:
             f"{missing_symbols}."
         )
 
-    binding_api_version = _binding_api_version(binding)
+    binding_api_version = _binding_api_version(capabilities)
     if binding_api_version != DS4_API_VERSION:
         raise Ds4ApiVersionError(
             "DS4 binding API mismatch: expected DS4 C API version "
@@ -141,30 +170,26 @@ def require_backend_available(binding: object, backend: str) -> None:
             f"Supported native backends: {supported}."
         )
 
-    available = getattr(binding, "is_backend_available", None)
-    if callable(available):
-        available_fn = cast(Callable[[str], object], available)
-        if bool(available_fn(backend)):
-            return
-        reason = _backend_unavailable_reason(binding, backend)
-        details = f" {reason}" if reason else ""
-        raise Ds4BackendUnavailable(
-            f"DS4 native backend {backend!r} is unavailable on this "
-            f"platform.{details} {_UNAVAILABLE_SUFFIX}"
-        )
-
-    available_backends = getattr(binding, "__ds4_available_backends__", None)
-    if available_backends is None:
-        return
-    if (
-        isinstance(available_backends, Collection)
-        and not isinstance(available_backends, (bytes, str))
-        and backend in {str(item) for item in available_backends}
+    capabilities = _require_binding_capabilities(binding)
+    available_backends = getattr(capabilities, "available_backends", None)
+    if not isinstance(available_backends, Collection) or isinstance(
+        available_backends, (bytes, str)
     ):
+        raise Ds4ApiVersionError(
+            "DS4 binding capabilities available_backends must be a collection "
+            "of backend names."
+        )
+    if backend in {
+        name
+        for name in (_backend_name(item) for item in available_backends)
+        if name is not None
+    }:
         return
+    reason = _backend_unavailable_reason(binding, backend)
+    details = f" {reason}" if reason else ""
     raise Ds4BackendUnavailable(
-        f"DS4 native backend {backend!r} is unavailable on this platform. "
-        f"{_UNAVAILABLE_SUFFIX}"
+        f"DS4 native backend {backend!r} is unavailable on this "
+        f"platform.{details} {_UNAVAILABLE_SUFFIX}"
     )
 
 
@@ -182,13 +207,14 @@ def binding_metadata(
 ) -> Ds4BindingMetadata:
     """Return stable metadata for a compatible DS4 binding."""
     require_compatible_binding(binding)
+    capabilities = _require_binding_capabilities(binding)
     return Ds4BindingMetadata(
         module_name=module_name,
         binding_version=_binding_version(binding),
         ds4_commit=DS4_API_COMMIT,
         ds4_api_version=DS4_API_VERSION,
         native_backend_name=_binding_native_backend_name(
-            binding, native_backend_name
+            binding, native_backend_name, capabilities
         ),
     )
 

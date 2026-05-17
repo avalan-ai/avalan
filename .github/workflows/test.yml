@@ -21,14 +21,23 @@ permissions:
 
 jobs:
   test:
+    name: test (${{ matrix.target.name }}, Python ${{ matrix.python }})
     env:
       IGNORE_VENV_CACHE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ignore_venv_cache == 'true' }}
+      PYDS4_BACKEND: ${{ matrix.target.backend }}
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12']
+        python: ['3.11', '3.12', '3.13']
+        target:
+          - name: linux-cuda
+            os: ubuntu-latest
+            backend: cuda
+          - name: macos-metal
+            os: macos-15
+            backend: metal
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.target.os }}
 
     steps:
       - name: Check out repository
@@ -47,7 +56,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local
-          key: poetry-v12-2.3.3
+          key: poetry-v13-${{ runner.os }}-2.3.3
+
+      - name: Add Poetry to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Poetry
         if: steps.cached-poetry.outputs.cache-hit != 'true'
@@ -63,6 +75,7 @@ jobs:
         run: |
           poetry config virtualenvs.create true
           poetry config virtualenvs.in-project true
+          poetry config installer.only-binary pyds4
 
       - name: Load cached venv
         id: cached-poetry-dependencies
@@ -70,19 +83,41 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-v12-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          key: venv-v13-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
           restore-keys: |
-            venv-v12-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+            venv-v13-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Install dependencies
         run: poetry sync --all-extras --with test --no-interaction
 
-      - name: Install Linux MLX runtime
-        run: poetry run pip install "mlx[cpu]==0.28.0"
+      - name: Verify pyds4 backend
+        run: |
+          poetry run python - <<'PY'
+          import os
 
-      - name: Install MLX-LM runtime (Python 3.12 only)
-        if: matrix.python == '3.12'
-        run: poetry run pip install "mlx-lm==0.26.3"
+          import pyds4
+
+          expected = os.environ["PYDS4_BACKEND"]
+          capabilities = pyds4.capabilities()
+          actual = getattr(pyds4, "__ds4_native_backend__", None)
+          if not actual:
+              actual = getattr(capabilities, "backend", None)
+          if hasattr(actual, "value"):
+              actual = actual.value
+          if str(actual).lower() != expected:
+              raise SystemExit(
+                  f"pyds4 backend {actual!r} does not match {expected!r}"
+              )
+          print(f"pyds4 backend: {actual}")
+          PY
+
+      - name: Install Linux MLX runtime
+        if: matrix.target.os == 'ubuntu-latest'
+        run: poetry run pip install "mlx[cpu]==0.31.2"
+
+      - name: Install Linux MLX-LM runtime
+        if: matrix.target.os == 'ubuntu-latest'
+        run: poetry run pip install "mlx-lm[cpu]==0.31.3"
 
       - name: Run tests with coverage analysis
         run: make test coverage no-install
@@ -94,7 +129,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           format: cobertura
           file: coverage.xml
-          flag-name: unit-tests-${{ matrix.python }}
+          flag-name: unit-tests-${{ matrix.target.name }}-${{ matrix.python }}
           parallel: true
           fail-on-error: true
 
@@ -108,3 +143,60 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
+
+  wheel:
+    name: wheel (${{ matrix.target.name }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+        target:
+          - name: linux-cuda
+            os: ubuntu-latest
+            backend: cuda
+          - name: macos-metal
+            os: macos-15
+            backend: metal
+
+    runs-on: ${{ matrix.target.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python }} + Poetry cache
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Load cached Poetry installation
+        id: cached-poetry
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-v13-${{ runner.os }}-2.3.3
+
+      - name: Add Poetry to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Poetry
+        if: steps.cached-poetry.outputs.cache-hit != 'true'
+        uses: snok/install-poetry@v1
+        with:
+          version: 2.3.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          virtualenvs-path: .venv
+          installer-parallel: true
+
+      - name: Build wheel
+        run: poetry build --format wheel --clean
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: avalan-wheel-${{ matrix.target.name }}-${{ matrix.python }}
+          path: dist/*.whl

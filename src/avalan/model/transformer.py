@@ -189,6 +189,8 @@ class TransformerModel(Engine, ABC):
     ) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         _l = self._log
         tokenizer = self._load_tokenizer(tokenizer_name_or_path, use_fast)
+        # Cleanup is intended for WordPiece and can corrupt BPE output.
+        tokenizer.clean_up_tokenization_spaces = False
         if self._settings.tokens:
             _l(
                 f"Adding {len(self._settings.tokens)} tokens to tokenizer "

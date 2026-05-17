@@ -1,11 +1,10 @@
 from ..entities import MessageRole, MessageToolCall, ToolCall, ToolValue
 
-import html
-import json
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from importlib import import_module
+from types import ModuleType
+from typing import Any, cast
 from uuid import uuid4
 
 
@@ -30,43 +29,7 @@ class DsmlParseResult:
 
 
 class DsmlTools:
-    """Render and parse DSML tool-call blocks."""
-
-    TOOL_CALLS_START = "<｜DSML｜tool_calls>"
-    TOOL_CALLS_END = "</｜DSML｜tool_calls>"
-    TOOL_CALL_START_PREFIXES = (
-        "<｜DSML｜tool_calls",
-        "<DSML｜tool_calls",
-        "<tool_calls",
-    )
-    TOOL_CALL_END_MARKERS = (
-        "</｜DSML｜tool_calls>",
-        "</DSML｜tool_calls>",
-        "</tool_calls>",
-    )
-    PARAMETER_END_MARKERS = (
-        "</｜DSML｜parameter>",
-        "</DSML｜parameter>",
-        "</parameter>",
-    )
-    _INVOKE_START_RE = re.compile(
-        r"<(?:｜DSML｜|DSML｜)?invoke\s+name=\"([^\"]+)\"\s*>",
-        re.DOTALL,
-    )
-    _PARAM_START_RE = re.compile(
-        r"<(?:｜DSML｜|DSML｜)?parameter\b[^>]*>",
-        re.DOTALL,
-    )
-    _TOOL_CALLS_START_RE = re.compile(
-        r"\n?\n?<(?:(?:｜DSML｜|DSML｜)tool_calls|tool_calls)>",
-    )
-    _PARAM_RE = re.compile(
-        r"<(?:｜DSML｜|DSML｜)?parameter\s+"
-        r"name=\"([^\"]+)\"(?:\s+string=\"(true|false)\")?\s*>"
-        r"(.*?)"
-        r"</(?:｜DSML｜|DSML｜)?parameter>",
-        re.DOTALL,
-    )
+    """Render and parse DSML tool-call blocks through pyds4."""
 
     @classmethod
     def render_prompt(
@@ -80,94 +43,29 @@ class DsmlTools:
         ) = None,
     ) -> str:
         """Return a rendered DSML chat prompt including tool context."""
-        system_parts = [system_content] if system_content else []
-        if tool_schemas:
-            system_parts.append(cls.tools_prompt(tool_schemas))
-
-        rendered = [
-            "<｜begin▁of▁sentence｜>",
-            "\n\n".join(system_parts),
-        ]
-        pending_assistant = False
-        pending_tool_result = False
-        think = cls._thinking_enabled(think_mode)
-        tool_context = bool(tool_schemas) or any(
-            message.tool_calls or message.role is MessageRole.TOOL
-            for message in messages
+        dsml = cls._pyds4_dsml()
+        prompt = dsml.DsmlPrompt(
+            system_content=system_content,
+            messages=[
+                cls._to_pyds4_message(dsml, message) for message in messages
+            ],
+            tool_schemas=tool_schemas or (),
         )
-        last_user_index = max(
-            (
-                index
-                for index, message in enumerate(messages)
-                if message.role in {MessageRole.USER, MessageRole.TOOL}
+        return cast(
+            str,
+            dsml.render_prompt(
+                prompt,
+                think_mode,
+                replay_lookup=cls._replay_adapter(replay_lookup),
             ),
-            default=-1,
         )
-
-        for index, message in enumerate(messages):
-            if message.role is MessageRole.USER:
-                rendered.extend(("<｜User｜>", message.content))
-                pending_assistant = True
-                pending_tool_result = False
-            elif message.role is MessageRole.TOOL:
-                if not pending_tool_result:
-                    rendered.append("<｜User｜>")
-                rendered.append(cls.render_tool_result(message.content))
-                pending_assistant = True
-                pending_tool_result = True
-            elif message.role is MessageRole.ASSISTANT:
-                if pending_assistant:
-                    rendered.append("<｜Assistant｜>")
-                    if think:
-                        if tool_context or index > last_user_index:
-                            rendered.extend(
-                                (
-                                    "<think>",
-                                    message.reasoning or "",
-                                    "</think>",
-                                )
-                            )
-                        else:
-                            rendered.append("</think>")
-                    else:
-                        rendered.append("</think>")
-                rendered.append(message.content)
-                rendered.append(
-                    cls.render_tool_calls(message.tool_calls, replay_lookup)
-                )
-                rendered.append("<｜end▁of▁sentence｜>")
-                pending_assistant = False
-                pending_tool_result = False
-
-        if pending_assistant:
-            rendered.append("<｜Assistant｜>")
-            rendered.append("<think>" if think else "</think>")
-        return "".join(rendered)
 
     @classmethod
     def render_tool_schemas(
         cls, schemas: list[dict[str, object]] | None
     ) -> str | None:
         """Return DSML newline-delimited tool schemas."""
-        if not schemas:
-            return None
-        lines = []
-        for schema in schemas:
-            function_schema = (
-                schema.get("function")
-                if schema.get("type") == "function"
-                and isinstance(schema.get("function"), dict)
-                else schema
-            )
-            lines.append(
-                json.dumps(
-                    function_schema,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=False,
-                )
-            )
-        return "\n".join(lines)
+        return cast(str | None, cls._pyds4_dsml().tool_schema_text(schemas))
 
     @classmethod
     def render_tool_calls(
@@ -178,36 +76,20 @@ class DsmlTools:
         ) = None,
     ) -> str:
         """Return canonical DSML text for assistant tool calls."""
-        if not calls:
-            return ""
-        if replay_lookup is not None:
-            replay = replay_lookup(calls)
-            if replay is not None:
-                return replay
-        parts = ["\n\n", cls.TOOL_CALLS_START, "\n"]
-        for call in calls:
-            parts.extend(
-                (
-                    '<｜DSML｜invoke name="',
-                    cls._escape_attr(call.name),
-                    '">\n',
-                )
-            )
-            arguments = (
-                call.arguments
-                if isinstance(call.arguments, dict)
-                else {"arguments": call.arguments}
-            )
-            for name, value in arguments.items():
-                parts.append(cls._render_parameter(str(name), value))
-            parts.append("</｜DSML｜invoke>\n")
-        parts.append(cls.TOOL_CALLS_END)
-        return "".join(parts)
+        dsml = cls._pyds4_dsml()
+        native_calls = tuple(cls._to_pyds4_call(dsml, call) for call in calls)
+        return cast(
+            str,
+            dsml.render_tool_calls(
+                native_calls,
+                cls._replay_adapter(replay_lookup),
+            ),
+        )
 
     @classmethod
     def render_tool_result(cls, content: str) -> str:
         """Return canonical DSML text for a tool result."""
-        return f"<tool_result>{cls._escape_text(content)}</tool_result>"
+        return cast(str, cls._pyds4_dsml().render_tool_result(content))
 
     @classmethod
     def parse_tool_calls(cls, text: str) -> list[ToolCall] | None:
@@ -220,238 +102,139 @@ class DsmlTools:
     @classmethod
     def parse_generated_message(cls, text: str) -> DsmlParseResult | None:
         """Parse generated DSML text into content, calls, and metadata."""
-        start_match = cls._TOOL_CALLS_START_RE.search(text)
-        if not start_match:
-            content, reasoning = cls.split_reasoning(text)
-            return DsmlParseResult(content, (), reasoning)
-
-        end_match = re.search(
-            r"</(?:(?:｜DSML｜|DSML｜)tool_calls|tool_calls)>",
-            text[start_match.end() :],
-        )
-        if not end_match:
+        parsed = cls._pyds4_dsml().parse_generated_message(text)
+        status = getattr(parsed.status, "value", parsed.status)
+        if status != "complete":
             return None
-
-        content, reasoning = cls.split_reasoning(
-            text[: start_match.start()].rstrip()
-        )
-        block_start = start_match.end()
-        block_end = block_start + end_match.start()
-        raw_end = start_match.end() + end_match.end()
-        block = text[block_start:block_end]
-        calls = cls._parse_calls(block)
+        calls = tuple(cls._to_tool_call(call) for call in parsed.calls)
         return DsmlParseResult(
-            content,
-            tuple(calls),
-            reasoning,
-            text[start_match.start() : raw_end],
+            parsed.content,
+            calls,
+            parsed.reasoning,
+            parsed.raw_dsml,
         )
 
     @classmethod
     def tool_call_start_span(cls, text: str) -> tuple[int, int] | None:
         """Return the first generated DSML tool-call block start span."""
-        match = cls._TOOL_CALLS_START_RE.search(text)
-        return (match.start(), match.end()) if match else None
+        return cast(
+            tuple[int, int] | None,
+            cls._pyds4_dsml().tool_call_start_span(text),
+        )
+
+    @classmethod
+    def tool_call_start_suffix_length(cls, text: str) -> int:
+        """Return trailing text length that may become a DSML start marker."""
+        return cast(
+            int,
+            cls._pyds4_dsml().tool_call_start_suffix_length(text),
+        )
+
+    @classmethod
+    def tool_call_buffer_status(cls, text: str) -> str:
+        """Return pyds4's DSML buffer status value for ``text``."""
+        status = cls._pyds4_dsml().tool_call_buffer_status(text)
+        return cast(str, getattr(status, "value", status))
 
     @classmethod
     def stream_argument_deltas(
         cls, raw_dsml: str, emitted_until: int
     ) -> tuple[tuple[str, ...], int]:
-        """Return new DSML parameter-value deltas from ``raw_dsml``.
-
-        ``emitted_until`` is an absolute character offset into ``raw_dsml``.
-        The returned offset should be passed into the next call for the same
-        growing DSML block. Incomplete parameter close tags are retained so
-        tag text is not emitted as argument data.
-        """
-        assert emitted_until >= 0
-
-        deltas: list[str] = []
-        cursor = 0
-        new_emitted_until = emitted_until
-        keep = max(len(marker) for marker in cls.PARAMETER_END_MARKERS) - 1
-
-        while True:
-            start_match = cls._PARAM_START_RE.search(raw_dsml, cursor)
-            if not start_match:
-                break
-
-            value_start = start_match.end()
-            end_index = cls._first_parameter_end_index(raw_dsml, value_start)
-            if end_index is None:
-                value_end = max(value_start, len(raw_dsml) - keep)
-                next_cursor = len(raw_dsml)
-            else:
-                value_end = end_index
-                next_cursor = cls._parameter_end_after(raw_dsml, end_index)
-
-            segment_start = max(value_start, new_emitted_until)
-            if segment_start < value_end:
-                deltas.append(raw_dsml[segment_start:value_end])
-                new_emitted_until = value_end
-
-            if end_index is None:
-                break
-            cursor = next_cursor
-
-        return tuple(delta for delta in deltas if delta), new_emitted_until
+        """Return new DSML parameter-value deltas from ``raw_dsml``."""
+        return cast(
+            tuple[tuple[str, ...], int],
+            cls._pyds4_dsml().stream_argument_deltas(
+                raw_dsml,
+                emitted_until,
+            ),
+        )
 
     @classmethod
     def split_reasoning(cls, text: str) -> tuple[str, str | None]:
         """Return visible content and optional DSML thinking text."""
-        if text.startswith("<think>") and "</think>" in text:
-            reasoning, content = text.removeprefix("<think>").split(
-                "</think>", 1
-            )
-            return content, reasoning
-        return text, None
+        return cast(
+            tuple[str, str | None],
+            cls._pyds4_dsml().split_reasoning(text),
+        )
 
     @classmethod
     def tools_prompt(cls, tool_schemas: str) -> str:
         """Return DSML tool-use instructions for a system prompt."""
-        return (
-            "## Tools\n\n"
-            "You have access to a set of tools to help answer the user "
-            "question. You can invoke tools by writing a "
-            '"<｜DSML｜tool_calls>" block like the following:\n\n'
-            "<｜DSML｜tool_calls>\n"
-            '<｜DSML｜invoke name="$TOOL_NAME">\n'
-            '<｜DSML｜parameter name="$PARAMETER_NAME" '
-            'string="true|false">$PARAMETER_VALUE'
-            "</｜DSML｜parameter>\n"
-            "...\n"
-            "</｜DSML｜invoke>\n"
-            '<｜DSML｜invoke name="$TOOL_NAME2">\n'
-            "...\n"
-            "</｜DSML｜invoke>\n"
-            "</｜DSML｜tool_calls>\n\n"
-            "String parameters should be specified as raw text and set "
-            '`string="true"`. Preserve characters such as `>`, `&`, and '
-            "`&&` exactly; never replace normal string characters with XML "
-            "or HTML entity escapes. Only if a string value itself contains "
-            "the exact closing parameter tag `</｜DSML｜parameter>`, write "
-            "that tag as `&lt;/｜DSML｜parameter>` inside the value. For all "
-            "other types (numbers, booleans, arrays, objects), pass the "
-            'value in JSON format and set `string="false"`.\n\n'
-            "If thinking_mode is enabled (triggered by <think>), you MUST "
-            "output your complete reasoning inside <think>...</think> "
-            "BEFORE any tool calls or final response.\n\n"
-            "Otherwise, output directly after </think> with tool calls or "
-            "final response.\n\n"
-            "### Available Tool Schemas\n\n"
-            f"{tool_schemas}\n\n"
-            "You MUST strictly follow the above defined tool name and "
-            "parameter schemas to invoke tool calls. Use the exact parameter "
-            "names from the schemas."
-        )
+        rendered = cls._pyds4_dsml().tools_prompt(tool_schemas)
+        if rendered is None:
+            raise ValueError("tool_schemas must not be empty.")
+        return cast(str, rendered)
 
     @staticmethod
-    def _thinking_enabled(think_mode: object) -> bool:
-        value = getattr(think_mode, "value", think_mode)
-        return value in {"high", "max"}
-
-    @classmethod
-    def _parse_calls(cls, block: str) -> list[ToolCall]:
-        calls: list[ToolCall] = []
-        position = 0
-        while True:
-            match = cls._INVOKE_START_RE.search(block, position)
-            if not match:
-                return calls
-            invoke_end = re.search(
-                r"</(?:｜DSML｜|DSML｜)?invoke>", block[match.end() :]
-            )
-            if not invoke_end:
-                return []
-            body_end = match.end() + invoke_end.start()
-            body = block[match.end() : body_end]
-            arguments: dict[str, ToolValue] = {}
-            for parameter in cls._PARAM_RE.finditer(body):
-                name = html.unescape(parameter.group(1))
-                raw_value = parameter.group(3)
-                if parameter.group(2) == "false":
-                    value = cls._json_value(raw_value)
-                else:
-                    value = html.unescape(raw_value)
-                arguments[name] = value
-            calls.append(
-                ToolCall(
-                    id=f"ds4_tool_{uuid4().hex}",
-                    name=html.unescape(match.group(1)),
-                    arguments=arguments,
-                )
-            )
-            position = body_end + invoke_end.end()
-
-    @classmethod
-    def _first_parameter_end_index(cls, text: str, start: int) -> int | None:
-        indexes = [
-            index
-            for marker in cls.PARAMETER_END_MARKERS
-            for index in (text.find(marker, start),)
-            if index >= 0
-        ]
-        return min(indexes) if indexes else None
-
-    @classmethod
-    def _parameter_end_after(cls, text: str, index: int) -> int:
-        for marker in cls.PARAMETER_END_MARKERS:
-            if text.startswith(marker, index):
-                return index + len(marker)
-        return index
-
-    @staticmethod
-    def _json_value(value: str) -> ToolValue:
+    def _pyds4_dsml() -> ModuleType:
         try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-        return cast(ToolValue, parsed)
+            return import_module("pyds4.dsml")
+        except ModuleNotFoundError as error:
+            if error.name is not None and error.name not in {
+                "pyds4",
+                "pyds4.dsml",
+            }:
+                raise
+            raise RuntimeError(
+                "Avalan DSML helpers require pyds4. Install avalan[ds4]."
+            ) from error
 
     @classmethod
-    def _render_parameter(cls, name: str, value: object) -> str:
-        is_string = isinstance(value, str)
-        rendered_value = (
-            cls._escape_parameter_text(cast(str, value))
-            if is_string
-            else cls._escape_json_literal(
-                json.dumps(
-                    value,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=False,
-                )
+    def _replay_adapter(
+        cls,
+        replay_lookup: (
+            Callable[[tuple[MessageToolCall, ...]], str | None] | None
+        ),
+    ) -> Callable[[tuple[object, ...]], str | None] | None:
+        if replay_lookup is None:
+            return None
+
+        def replay(calls: tuple[object, ...]) -> str | None:
+            avalan_calls = tuple(
+                cls._to_message_tool_call(call) for call in calls
             )
-        )
-        return (
-            f'<｜DSML｜parameter name="{cls._escape_attr(name)}" '
-            f'string="{"true" if is_string else "false"}">'
-            f"{rendered_value}</｜DSML｜parameter>\n"
-        )
+            return replay_lookup(avalan_calls)
 
-    @staticmethod
-    def _escape_attr(value: str) -> str:
-        return (
-            value.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-        )
+        return replay
 
-    @staticmethod
-    def _escape_text(value: str) -> str:
-        return (
-            value.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+    @classmethod
+    def _to_pyds4_message(
+        cls,
+        dsml: ModuleType,
+        message: DsmlPromptMessage,
+    ) -> object:
+        return dsml.DsmlMessage(
+            role=message.role.value,
+            content=message.content,
+            reasoning=message.reasoning,
+            tool_calls=tuple(
+                cls._to_pyds4_call(dsml, call) for call in message.tool_calls
+            ),
         )
 
     @staticmethod
-    def _escape_parameter_text(value: str) -> str:
-        return value.replace("</｜DSML｜parameter>", "&lt;/｜DSML｜parameter>")
+    def _to_pyds4_call(dsml: ModuleType, call: MessageToolCall) -> object:
+        return dsml.DsmlToolCall(
+            id=call.id,
+            name=call.name,
+            arguments=cast(object, call.arguments),
+        )
 
     @staticmethod
-    def _escape_json_literal(value: str) -> str:
-        return value.replace(
-            "</｜DSML｜parameter>", "\\u003c/｜DSML｜parameter>"
+    def _to_message_tool_call(call: object) -> MessageToolCall:
+        return MessageToolCall(
+            id=cast(str | None, getattr(call, "id", None)),
+            name=cast(str, getattr(call, "name")),
+            arguments=cast(Any, getattr(call, "arguments", {})),
+        )
+
+    @staticmethod
+    def _to_tool_call(call: object) -> ToolCall:
+        arguments = getattr(call, "arguments", None)
+        if not isinstance(arguments, dict):
+            arguments = {}
+        return ToolCall(
+            id=f"ds4_tool_{uuid4().hex}",
+            name=cast(str, getattr(call, "name")),
+            arguments=cast(dict[str, ToolValue], arguments),
         )

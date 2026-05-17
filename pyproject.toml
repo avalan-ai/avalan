@@ -11,9 +11,7 @@ license = { text = "MIT" }
 authors = [
   { name = "The Avalan Team", email = "avalan@avalan.ai" },
 ]
-# the upper 3.13 python version limit is because of vllm
-# @see https://github.com/vllm-project/vllm/issues/12083
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "packaging>=25.0,<26.0",
   "humanize>=4.12.3,<5.0.0",
@@ -28,6 +26,8 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Operating System :: OS Independent"
 ]
 
@@ -43,10 +43,9 @@ avalan = "avalan.cli.__main__:main"
 
 [project.optional-dependencies]
 local = [
-  # version limited because of vllm
   "huggingface-hub>=1.0.0,<2.0.0",
   "hf-xet>=1.4.3,<2.0.0 ; platform_machine == 'x86_64' or platform_machine == 'amd64' or platform_machine == 'AMD64' or platform_machine == 'arm64' or platform_machine == 'aarch64'",
-  "torch>=2.7.1,<2.8.0",
+  "torch>=2.11.0,<2.12.0",
   "transformers>=5.5.4,<6.0.0",
   "accelerate>=1.9.0,<2.0.0",
   "sentence-transformers>=5.4.1,<6.0.0",
@@ -57,8 +56,7 @@ agent = [
 ]
 audio = [
   "soundfile>=0.13.1,<0.14.0",
-  # version limited because of vllm
-  "torchaudio>=2.7.1,<2.8.0",
+  "torchaudio>=2.11.0,<2.12.0",
 ]
 memory = [
   "beautifulsoup4>=4.14.2,<5.0.0",
@@ -78,7 +76,7 @@ quantization = [
 ]
 server = [
   "a2a-sdk>=0.3.6,<0.4.0",
-  "fastapi>=0.116.1,<0.117.0",
+  "fastapi>=0.136.1,<0.137.0",
   "mcp>=1.12.3,<2.0.0",
   "pydantic>=2.11.7,<3.0.0",
   "uvicorn>=0.35.0,<0.36.0",
@@ -103,18 +101,17 @@ secrets = [
 translation = [
   "protobuf>=6.31.1,<7.0.0",
   "sentencepiece>=0.2.0,<0.3.0",
-  "tiktoken>=0.10.0,<0.11.0",
+  "tiktoken>=0.13.0,<0.14.0",
 ]
 vendors = [
   "aioboto3>=15.0.0,<16.0.0",
-  "anthropic>=0.61.0,<0.62.0",
+  "anthropic>=0.71.0,<0.72.0",
   "diffusers>=0.37.1,<0.38.0",
   "google-genai>=1.28.0,<2.0.0",
   "litellm>=1.75.0,<2.0.0",
-  # version limited because of vllm
-  "openai>=1.90.0,<1.91.0",
+  "openai>=2.0.0,<3.0.0",
   "pillow>=11.3.0,<12.0.0",
-  "tiktoken>=0.10.0,<0.11.0",
+  "tiktoken>=0.13.0,<0.14.0",
 ]
 vision = [
   "diffusers>=0.37.1,<0.38.0",
@@ -122,10 +119,10 @@ vision = [
   "imageio-ffmpeg>=0.6.0,<0.7.0",
   "opencv-python>=4.12.0.88,<5.0.0",
   "pillow>=11.3.0,<12.0.0",
-  "torchvision>=0.22.1,<0.23.0",
+  "torchvision>=0.26.0,<0.27.0",
 ]
 vllm = [
-  "vllm>=0.10.0,<0.11.0 ; platform_system == 'Linux'",
+  "vllm>=0.21.0,<0.22.0 ; platform_system == 'Linux'",
 ]
 mlx = [
   "mlx>=0.31.2,<0.32.0 ; platform_system == 'Darwin' and platform_machine == 'arm64'",
@@ -136,11 +133,10 @@ apple = [
   "mlx-lm>=0.31.3,<0.32.0 ; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 ds4 = [
-  "pyds4 @ git+https://github.com/avalan-ai/pyds4.git@main ; platform_system == 'Darwin' and platform_machine == 'arm64'",
-  "pyds4 @ git+https://github.com/avalan-ai/pyds4.git@main ; platform_system == 'Linux'",
+  "pyds4>=1.0.2,<2.0.0 ; platform_system == 'Linux' or (platform_system == 'Darwin' and platform_machine == 'arm64')",
 ]
 nvidia = [
-  "vllm>=0.10.0,<0.11.0 ; platform_system == 'Linux'",
+  "vllm>=0.21.0,<0.22.0 ; platform_system == 'Linux'",
   "bitsandbytes>=0.46.1,<0.47.0 ; platform_system == 'Linux'",
 ]
 
@@ -203,6 +199,7 @@ optional = true
 
 [tool.poetry.group.test.dependencies]
 matplotlib = ">=3.8.0,<4.0.0"
+pyds4 = {version = ">=1.0.2,<2.0.0", markers = "platform_system == 'Linux' or (platform_system == 'Darwin' and platform_machine == 'arm64')"}
 pytest = ">=8.4.1,<9.0.0"
 pytest-cov = ">=6.2.1,<7.0.0"
 

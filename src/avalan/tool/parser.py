@@ -153,14 +153,7 @@ class ToolCallParser:
         parsed: tuple[str, dict[str, Any]] | list[ToolCall] | None = None
         if "<|call|>" in text and "<|channel|>" in text:
             parsed = self._parse_harmony(text)
-        elif any(
-            marker in text
-            for marker in (
-                DsmlTools.TOOL_CALLS_START,
-                "<DSML｜tool_calls>",
-                "<tool_calls>",
-            )
-        ):
+        elif "tool_calls" in text and self._has_dsml_tool_call_start(text):
             parsed = DsmlTools.parse_tool_calls(text)
         elif self._tool_format:
             parsed = self(text)
@@ -260,6 +253,14 @@ class ToolCallParser:
 
         return None
 
+    def _has_dsml_tool_call_start(self, text: str) -> bool:
+        try:
+            return DsmlTools.tool_call_start_span(text) is not None
+        except RuntimeError:
+            if self._tool_format is ToolFormat.DSML:
+                raise
+            return False
+
     @staticmethod
     def _merge_thinking(
         message_dict: dict[str, object], thinking: str | None
@@ -299,6 +300,11 @@ class ToolCallParser:
     def tool_call_status(
         self, buffer: str
     ) -> "ToolCallParser.ToolCallBufferStatus":
+        if self._tool_format is ToolFormat.DSML:
+            dsml_status = self._dsml_tool_call_status(buffer)
+            if dsml_status is not self.ToolCallBufferStatus.NONE:
+                return dsml_status
+
         start = ["<tool_call", "<tool ", "<tool>"]
         end = ["</tool_call>", "</tool>", "/>", "<|call|>"]
         if self._tool_format is ToolFormat.HARMONY:
@@ -311,9 +317,6 @@ class ToolCallParser:
                 ]
             )
             end.append("<|channel|>final<|message|>")
-        elif self._tool_format is ToolFormat.DSML:
-            start.extend(DsmlTools.TOOL_CALL_START_PREFIXES)
-            end.extend(DsmlTools.TOOL_CALL_END_MARKERS)
         max_len = max(len(s) for s in start)
         tail = buffer[-max_len:]
         for s in start:
@@ -327,6 +330,20 @@ class ToolCallParser:
                     return self.ToolCallBufferStatus.CLOSED
                 return self.ToolCallBufferStatus.OPEN
         return self.ToolCallBufferStatus.NONE
+
+    def _dsml_tool_call_status(
+        self, buffer: str
+    ) -> "ToolCallParser.ToolCallBufferStatus":
+        status = DsmlTools.tool_call_buffer_status(buffer)
+        match status:
+            case "prefix":
+                return self.ToolCallBufferStatus.PREFIX
+            case "open":
+                return self.ToolCallBufferStatus.OPEN
+            case "closed":
+                return self.ToolCallBufferStatus.CLOSED
+            case _:
+                return self.ToolCallBufferStatus.NONE
 
     def _parse_json(self, text: str) -> tuple[str, dict[str, Any]] | None:
         try:
