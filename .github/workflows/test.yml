@@ -30,9 +30,9 @@ jobs:
       matrix:
         python: ['3.11', '3.12']
         target:
-          - name: linux-cpu
+          - name: linux-cuda
             os: ubuntu-latest
-            backend: cpu
+            backend: cuda
           - name: macos-metal
             os: macos-15
             backend: metal
@@ -75,6 +75,7 @@ jobs:
         run: |
           poetry config virtualenvs.create true
           poetry config virtualenvs.in-project true
+          poetry config installer.only-binary pyds4
 
       - name: Load cached venv
         id: cached-poetry-dependencies

@@ -5994,15 +5994,17 @@ yaml = ["pyyaml (>=6.0.1)"]
 
 [[package]]
 name = "pyds4"
-version = "1.0.0"
+version = "1.0.1"
 description = "Python bindings for the DS4 native inference engine"
 optional = false
 python-versions = ">=3.11"
 groups = ["main", "test"]
 files = [
-    {file = "pyds4-1.0.0-cp311-cp311-macosx_15_0_arm64.whl", hash = "sha256:42928d6c2a00242201d27076cd686818de699d330afe514c627bcd51d523f650"},
-    {file = "pyds4-1.0.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:ec5d90e934d60fcb02f52bc1567bf9eb832c71283f5d13c4b1c1c644e6d562b6"},
-    {file = "pyds4-1.0.0.tar.gz", hash = "sha256:cf83f97d281b9e5faf5c33ab51d228e1644eeaf24773d9d88d9e1a505ba1a4b3"},
+    {file = "pyds4-1.0.1-cp311-cp311-macosx_15_0_arm64.whl", hash = "sha256:4ddc03be73e79789bfa53544a2eeb9df01db465762eb989c1732a541e65245dd"},
+    {file = "pyds4-1.0.1-cp311-cp311-manylinux_2_38_x86_64.whl", hash = "sha256:a62f63fc756657feac9009d94b2145a31a2eb08f4731b2422c066dfe4360cc77"},
+    {file = "pyds4-1.0.1-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:02681c5236074a09cdbcdc1a64b531df3a72f30d5bf8691479161f23461408ec"},
+    {file = "pyds4-1.0.1-cp312-cp312-manylinux_2_38_x86_64.whl", hash = "sha256:668179ebf5f973b4fa053a3bb5a7da315542e5af0341f1b5ea3efa5f78a3a949"},
+    {file = "pyds4-1.0.1.tar.gz", hash = "sha256:a6a487cba41f8b0c730f4a4a7e98ce45e85c0ea133e58b2249deb0580d2a94d3"},
 ]
 markers = {main = "extra == \"ds4\" and (platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")", test = "(platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")"}
 
@@ -9190,4 +9192,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "d3be021bad6349adef60863dc5c9606b5cbe8a8831b92d9185d66b50fe38893f"
+content-hash = "3d74a726e4c19e14b6c4afb6682adafadf138045087bd3659e43a296526ee639"

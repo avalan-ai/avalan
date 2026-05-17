@@ -62,7 +62,7 @@ def test_ds4_extra_declares_platform_scoped_pyds4_dependency() -> None:
         canonicalize_name(requirement.name) for requirement in requirements
     } == {"pyds4"}
     assert all(
-        requirement.specifier == SpecifierSet(">=1.0.0,<2.0.0")
+        requirement.specifier == SpecifierSet(">=1.0.1,<2.0.0")
         for requirement in requirements
     )
     assert all(requirement.url is None for requirement in requirements)
@@ -113,7 +113,7 @@ def test_test_group_installs_pyds4_for_ds4_bridge_tests() -> None:
     dependency = _test_group_dependencies()["pyds4"]
 
     assert isinstance(dependency, dict)
-    assert dependency["version"] == ">=1.0.0,<2.0.0"
+    assert dependency["version"] == ">=1.0.1,<2.0.0"
     assert "markers" in dependency
     marker = Marker(str(dependency["markers"]))
     assert marker.evaluate(
