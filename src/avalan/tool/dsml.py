@@ -141,6 +141,14 @@ class DsmlTools:
         )
 
     @classmethod
+    def tool_call_start_suffix_length(cls, text: str) -> int:
+        """Return trailing text length that may become a DSML start marker."""
+        return cast(
+            int,
+            cls._pyds4_dsml().tool_call_start_suffix_length(text),
+        )
+
+    @classmethod
     def stream_argument_deltas(
         cls, raw_dsml: str, emitted_until: int
     ) -> tuple[tuple[str, ...], int]:

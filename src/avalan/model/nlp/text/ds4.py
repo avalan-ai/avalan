@@ -82,17 +82,6 @@ _CONTEXT_ERROR_MARKERS = (
 _WORKER_JOIN_TIMEOUT_SECONDS = 2.0
 _BYTES_PER_MIB = 1024 * 1024
 _DS4_TOOL_REPLAY_MAX_ENTRIES = 10000
-_DSML_TOOL_START_MARKERS = (
-    "\n\n<｜DSML｜tool_calls>",
-    "\n<｜DSML｜tool_calls>",
-    DsmlTools.TOOL_CALLS_START,
-    "\n\n<DSML｜tool_calls>",
-    "\n<DSML｜tool_calls>",
-    "<DSML｜tool_calls>",
-    "\n\n<tool_calls>",
-    "\n<tool_calls>",
-    "<tool_calls>",
-)
 _TOKEN_SCORE_MODE_VALUES = {
     "TOKEN_LOGPROB": "token_logprob",
     "TOKEN_LOGPROB_AND_TOP_LOGPROBS": "token_logprob_and_top_logprobs",
@@ -606,7 +595,10 @@ class Ds4Worker:
             if dsml_start is None:
                 start_span = DsmlTools.tool_call_start_span(text)
                 if start_span is None:
-                    safe_end = len(text) - self._dsml_start_suffix_length(text)
+                    suffix_length = DsmlTools.tool_call_start_suffix_length(
+                        text
+                    )
+                    safe_end = len(text) - suffix_length
                     if content_emitted_until < safe_end:
                         yield text[content_emitted_until:safe_end]
                         content_emitted_until = safe_end
@@ -633,21 +625,6 @@ class Ds4Worker:
             yield text[content_emitted_until:]
         for call in parsed.calls:
             yield ToolCallToken(token="", call=call)
-
-    @staticmethod
-    def _dsml_start_suffix_length(text: str) -> int:
-        """Return unsafe suffix length that may become a DSML start marker."""
-        max_length = min(
-            len(text), max(len(marker) for marker in _DSML_TOOL_START_MARKERS)
-        )
-        for length in range(max_length, 0, -1):
-            suffix = text[-length:]
-            if any(
-                marker.startswith(suffix)
-                for marker in _DSML_TOOL_START_MARKERS
-            ):
-                return length
-        return 0
 
     def _remember_dsml_tool_replay(self, parsed: DsmlParseResult) -> None:
         if not parsed.raw_dsml or not parsed.calls:

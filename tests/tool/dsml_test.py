@@ -221,6 +221,32 @@ class DsmlToolsTestCase(TestCase):
             DsmlTools.parse_generated_message("<｜DSML｜tool_calls>")
         )
 
+    def test_tool_call_start_suffix_length_tracks_marker_variants(self):
+        self.assertEqual(
+            DsmlTools.tool_call_start_suffix_length(
+                "visible\n\n<｜DSML｜tool"
+            ),
+            len("\n\n<｜DSML｜tool"),
+        )
+        self.assertEqual(
+            DsmlTools.tool_call_start_suffix_length("visible\n<DSML｜tool"),
+            len("\n<DSML｜tool"),
+        )
+        self.assertEqual(
+            DsmlTools.tool_call_start_suffix_length("visible<tool_calls>"),
+            len("<tool_calls>"),
+        )
+        self.assertEqual(
+            DsmlTools.tool_call_start_suffix_length("visible only"),
+            0,
+        )
+
+    def test_tool_call_start_suffix_length_rejects_invalid_text(self):
+        with self.assertRaises(TypeError):
+            DsmlTools.tool_call_start_suffix_length(  # type: ignore[arg-type]
+                object()
+            )
+
     def test_parse_generated_message_rejects_malformed_dsml(
         self,
     ):
