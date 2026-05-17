@@ -3,7 +3,7 @@ import json
 import os
 import threading
 from asyncio import run
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -119,6 +119,65 @@ class FakeNativeSamplingOptions:
 class FakeNativeGenerationScoreOptions:
     mode: NativeTokenScoreMode = NativeTokenScoreMode.NONE
     top_k: int = 0
+
+
+class FakeStopStringBuffer:
+    def __init__(self, stop_strings: Iterable[str] | str = ()) -> None:
+        if isinstance(stop_strings, str):
+            normalized = (stop_strings,)
+        else:
+            normalized = tuple(stop_strings)
+        if any(not isinstance(item, str) or not item for item in normalized):
+            raise ValueError("stop_strings must be non-empty strings")
+        self._stop_strings = normalized
+        self._pending = ""
+        self._stopped = False
+        self._keep = (
+            max(len(stop_string) for stop_string in normalized) - 1
+            if normalized
+            else 0
+        )
+
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
+
+    def push(self, text: str) -> tuple[str, ...]:
+        if self._stopped:
+            return ()
+        if not self._stop_strings:
+            return (text,) if text else ()
+
+        self._pending += text
+        stop_index = self._stop_index()
+        if stop_index is not None:
+            chunk = self._pending[:stop_index]
+            self._pending = ""
+            self._stopped = True
+            return (chunk,) if chunk else ()
+
+        emit_length = len(self._pending) - self._keep
+        if emit_length <= 0:
+            return ()
+        chunk = self._pending[:emit_length]
+        self._pending = self._pending[emit_length:]
+        return (chunk,) if chunk else ()
+
+    def flush(self) -> tuple[str, ...]:
+        if self._pending and not self._stopped:
+            chunk = self._pending
+            self._pending = ""
+            return (chunk,)
+        self._pending = ""
+        return ()
+
+    def _stop_index(self) -> int | None:
+        first_index: int | None = None
+        for stop_string in self._stop_strings:
+            index = self._pending.find(stop_string)
+            if index >= 0 and (first_index is None or index < first_index):
+                first_index = index
+        return first_index
 
 
 class FakeNativeSession:
@@ -618,6 +677,7 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
         "EngineOptions": FakeNativeOptions,
         "GenerationScoreOptions": FakeNativeGenerationScoreOptions,
         "SamplingOptions": FakeNativeSamplingOptions,
+        "StopStringBuffer": FakeStopStringBuffer,
         "ThinkMode": NativeThinkMode,
         "TokenScoreMode": NativeTokenScoreMode,
         "capabilities": lambda: _fake_capabilities(),
@@ -1497,6 +1557,31 @@ def test_ds4_stop_string_spanning_token_boundaries_is_detected(
 
     assert run(response.to_str()) == "hello "
     assert fake.sessions[0].eval_calls == [101, 102]
+    model.close()
+
+
+def test_ds4_generation_requires_pyds4_stop_string_buffer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding(StopStringBuffer=None))
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    fake.token_text_map = {101: b"A"}
+
+    with pytest.raises(Ds4LoadError, match="StopStringBuffer"):
+        response = run(
+            model(
+                "hello",
+                settings=GenerationSettings(
+                    max_new_tokens=1,
+                    temperature=0.0,
+                    use_async_generator=False,
+                ),
+            )
+        )
+        run(response.to_str())
+
     model.close()
 
 

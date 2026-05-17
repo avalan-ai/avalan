@@ -46,7 +46,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Coroutine,
-    Iterator,
+    Iterable,
 )
 from dataclasses import dataclass, replace
 from inspect import Parameter, signature
@@ -55,7 +55,7 @@ from math import exp
 from pathlib import Path
 from queue import Queue
 from threading import Thread
-from typing import Any, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 
 _CPU_WARNING = (
     "DS4 CPU backend is debug/reference only and is not recommended for "
@@ -246,58 +246,13 @@ class _Ds4DiskKvCache:
         return cast(type[object], cache_type)
 
 
-class _StopStringBuffer:
-    """Buffer recent text so stop strings spanning tokens are suppressed."""
-
-    def __init__(self, stop_strings: tuple[str, ...]) -> None:
-        self._pending = ""
-        self._stopped = False
-        self._stop_strings = stop_strings
-        self._keep = (
-            max(len(stop_string) for stop_string in stop_strings) - 1
-            if stop_strings
-            else 0
-        )
-
+class _StopStringBufferProtocol(Protocol):
     @property
-    def stopped(self) -> bool:
-        return self._stopped
+    def stopped(self) -> bool: ...
 
-    def push(self, text: str) -> Iterator[str]:
-        if not self._stop_strings:
-            if text:
-                yield text
-            return
+    def push(self, text: str) -> Iterable[str]: ...
 
-        self._pending += text
-        stop_index = self._stop_index()
-        if stop_index is not None:
-            text_before_stop = self._pending[:stop_index]
-            self._pending = ""
-            self._stopped = True
-            if text_before_stop:
-                yield text_before_stop
-            return
-
-        emit_length = len(self._pending) - self._keep
-        if emit_length > 0:
-            chunk = self._pending[:emit_length]
-            self._pending = self._pending[emit_length:]
-            if chunk:
-                yield chunk
-
-    def flush(self) -> Iterator[str]:
-        if self._pending and not self._stopped:
-            yield self._pending
-        self._pending = ""
-
-    def _stop_index(self) -> int | None:
-        first_index: int | None = None
-        for stop_string in self._stop_strings:
-            index = self._pending.find(stop_string)
-            if index >= 0 and (first_index is None or index < first_index):
-                first_index = index
-        return first_index
+    def flush(self) -> Iterable[str]: ...
 
 
 class Ds4Worker:
@@ -639,7 +594,7 @@ class Ds4Worker:
         self, session: object, generation_plan: _Ds4GenerationPlan
     ) -> AsyncGenerator[str | TokenDetail, None]:
         engine = self._require_engine()
-        stop_buffer = _StopStringBuffer(generation_plan.stop_strings)
+        stop_buffer = self._stop_string_buffer(generation_plan.stop_strings)
 
         for step_index in range(generation_plan.max_new_tokens):
             step = (
@@ -666,6 +621,19 @@ class Ds4Worker:
 
         for chunk in stop_buffer.flush():
             yield chunk
+
+    def _stop_string_buffer(
+        self, stop_strings: tuple[str, ...]
+    ) -> _StopStringBufferProtocol:
+        buffer_type = getattr(
+            self._require_binding(), "StopStringBuffer", None
+        )
+        if not callable(buffer_type):
+            raise Ds4LoadError(
+                "DS4 binding does not expose StopStringBuffer. Install a "
+                "current pyds4 build with public stop-string buffering."
+            )
+        return cast(_StopStringBufferProtocol, buffer_type(stop_strings))
 
     async def _plain_generation_step(
         self, session: object, generation_plan: _Ds4GenerationPlan
