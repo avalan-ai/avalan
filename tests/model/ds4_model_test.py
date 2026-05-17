@@ -2112,6 +2112,61 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
     assert fake.sessions[0].eval_calls == [101]
 
 
+def test_ds4_generation_stream_accepts_real_pyds4_score_types(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pyds4 = pytest.importorskip("pyds4")
+    fake_async_engine = _fake_async_engine_type(
+        FakeNativeEngine, logprobs=True
+    )
+    monkeypatch.setattr(pyds4, "AsyncEngine", fake_async_engine)
+    FakeNativeEngine.instances.clear()
+
+    async def run_case() -> tuple[list[object], FakeNativeEngine]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        fake.token_logprobs = {101: -0.25}
+        fake.token_text_map = {101: b"A", 102: b"B"}
+        fake.top_logprobs = [
+            pyds4.TokenScore(token_id=101, logprob=-0.25),
+            pyds4.TokenScore(token_id=102, logprob=-1.25),
+        ]
+        response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+            manual_sampling=True,
+            pick=2,
+        )
+        chunks: list[object] = [chunk async for chunk in response]
+        model.close()
+        return chunks, fake
+
+    chunks, fake = run(run_case())
+
+    assert len(chunks) == 1
+    detail = chunks[0]
+    assert isinstance(detail, TokenDetail)
+    assert detail.id == 101
+    assert detail.token == "A"
+    assert detail.probability == pytest.approx(exp(-0.25))
+    assert detail.tokens == [
+        Token(id=101, token="A", probability=exp(-0.25)),
+        Token(id=102, token="B", probability=exp(-1.25)),
+    ]
+    score_options = fake.sessions[0].next_token_score_options
+    assert len(score_options) == 1
+    assert isinstance(score_options[0], pyds4.GenerationScoreOptions)
+    assert score_options[0].mode is (
+        pyds4.TokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS
+    )
+    assert score_options[0].top_k == 2
+
+
 def test_ds4_token_details_reject_invalid_top_k(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

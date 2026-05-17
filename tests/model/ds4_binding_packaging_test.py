@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -52,6 +53,21 @@ def test_import_compatible_binding_uses_pyds4_without_opening_model(
 
     assert import_compatible_binding() is binding
     assert opened is False
+
+
+def test_import_compatible_binding_accepts_installed_local_pyds4() -> None:
+    pyds4 = pytest.importorskip("pyds4")
+
+    binding = import_compatible_binding()
+    metadata = binding_metadata(binding)
+    capabilities = binding.capabilities()
+
+    assert binding is pyds4
+    assert Path(binding.__file__).resolve().name == "__init__.py"
+    assert metadata.ds4_commit == DS4_API_COMMIT
+    assert metadata.ds4_api_version == DS4_API_VERSION
+    assert capabilities.ds4_commit == DS4_API_COMMIT
+    assert set(DS4_REQUIRED_C_SYMBOLS) <= set(capabilities.required_symbols)
 
 
 def test_binding_metadata_reports_stable_fallback_fields() -> None:
