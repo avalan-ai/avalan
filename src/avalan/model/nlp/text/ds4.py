@@ -38,6 +38,7 @@ from .generation import TextGenerationModel
 
 import asyncio
 import hashlib
+import importlib
 import json
 from asyncio import CancelledError
 from collections.abc import (
@@ -54,8 +55,7 @@ from math import exp
 from pathlib import Path
 from queue import Queue
 from threading import Thread
-from time import time
-from typing import TypeVar, cast
+from typing import Any, TypeVar, cast
 
 _CPU_WARNING = (
     "DS4 CPU backend is debug/reference only and is not recommended for "
@@ -80,7 +80,6 @@ _CONTEXT_ERROR_MARKERS = (
     "prompt exceeds context",
 )
 _WORKER_JOIN_TIMEOUT_SECONDS = 2.0
-_DS4_KV_CACHE_VERSION = 1
 _BYTES_PER_MIB = 1024 * 1024
 _DS4_TOOL_REPLAY_MAX_ENTRIES = 10000
 _DSML_TOOL_START_MARKERS = (
@@ -161,7 +160,7 @@ class _Ds4CacheEntryPath:
 
 
 class _Ds4DiskKvCache:
-    """Store DS4 payload helper bytes by token-prefix cache key."""
+    """Adapt Avalan's async DS4 worker to pyds4's generic cache helper."""
 
     def __init__(
         self,
@@ -169,11 +168,17 @@ class _Ds4DiskKvCache:
         budget_bytes: int,
         logger: Logger,
         namespace: str,
+        backend: str = _DEFAULT_NATIVE_BACKEND.value,
     ) -> None:
         self._budget_bytes = budget_bytes
         self._directory = directory
         self._logger = logger
         self._namespace = namespace
+        self._cache: Any = self._cache_type()(
+            directory,
+            namespace,
+            backend=backend,
+        )
 
     async def restore(
         self,
@@ -185,36 +190,25 @@ class _Ds4DiskKvCache:
         if not callable(getattr(session, "load_payload", None)):
             return False
 
-        entry = self._entry_path(prompt_tokens, ctx_size)
-        metadata = self._read_metadata(entry.metadata_path)
-        if metadata is None:
-            return False
-        if not self._metadata_matches(metadata, entry, ctx_size):
-            self._delete_entry(entry)
-            return False
-
-        try:
-            payload = entry.payload_path.read_bytes()
-        except OSError as error:
+        result = await self._cache.arestore(
+            session,
+            prompt_tokens,
+            ctx_size,
+            sync_on_miss=False,
+        )
+        if result.status == "hit":
+            if result.warning:
+                self._logger.warning(
+                    "DS4 disk KV cache metadata update failed: %s",
+                    result.warning,
+                )
+            return True
+        if result.error:
             self._logger.warning(
-                "DS4 disk KV cache payload read failed; using live"
-                " session: %s",
-                error,
+                "DS4 disk KV cache restore failed; using live session: %s",
+                result.error,
             )
-            return False
-
-        try:
-            await Ds4Worker._call_async(session, "load_payload", payload)
-        except Exception as error:
-            self._logger.warning(
-                "DS4 disk KV cache payload restore failed; "
-                "using live session: %s",
-                error,
-            )
-            return False
-
-        self._record_hit(metadata, entry)
-        return True
+        return False
 
     async def store(
         self,
@@ -226,198 +220,41 @@ class _Ds4DiskKvCache:
         if not callable(getattr(session, "save_payload", None)):
             return
 
-        try:
-            payload = await Ds4Worker._call_async(session, "save_payload")
-            payload_bytes = Ds4Worker._bytes_value(payload, "save_payload")
-        except Exception as error:
+        result = await self._cache.astore(
+            session,
+            prompt_tokens,
+            ctx_size,
+            size_budget_bytes=self._budget_bytes,
+        )
+        if result.status == "stored":
+            return
+        if result.error:
             self._logger.warning(
                 "DS4 disk KV cache payload save failed; "
                 "continuing without cache: %s",
-                error,
-            )
-            return
-
-        entry = self._entry_path(prompt_tokens, ctx_size)
-        now = time()
-        metadata: dict[str, object] = {
-            "version": _DS4_KV_CACHE_VERSION,
-            "key": entry.key,
-            "namespace": self._namespace,
-            "ctx_size": ctx_size,
-            "token_count": len(prompt_tokens),
-            "token_sha256": entry.token_digest,
-            "payload_file": entry.payload_path.name,
-            "payload_size": len(payload_bytes),
-            "hit_count": 0,
-            "created_at": now,
-            "accessed_at": now,
-        }
-
-        try:
-            self._directory.mkdir(parents=True, exist_ok=True)
-            payload_tmp = entry.payload_path.with_suffix(".payload.tmp")
-            metadata_tmp = entry.metadata_path.with_suffix(".json.tmp")
-            payload_tmp.write_bytes(payload_bytes)
-            metadata_tmp.write_text(
-                json.dumps(metadata, sort_keys=True),
-                encoding="utf-8",
-            )
-            payload_tmp.replace(entry.payload_path)
-            metadata_tmp.replace(entry.metadata_path)
-            self._enforce_budget()
-        except OSError as error:
-            self._logger.warning(
-                "DS4 disk KV cache write failed; continuing without cache: %s",
-                error,
+                result.error,
             )
 
     def _entry_path(
         self, prompt_tokens: list[int], ctx_size: int
     ) -> _Ds4CacheEntryPath:
-        token_digest = self._token_digest(prompt_tokens)
-        key_source = (
-            f"{self._namespace}:{ctx_size}:{len(prompt_tokens)}:{token_digest}"
-        )
-        key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()
+        entry = self._cache.entry_for(prompt_tokens, ctx_size)
         return _Ds4CacheEntryPath(
-            key=key,
-            metadata_path=self._directory / f"{key}.json",
-            payload_path=self._directory / f"{key}.payload",
-            token_digest=token_digest,
+            key=entry.key,
+            metadata_path=entry.metadata_path,
+            payload_path=entry.payload_path,
+            token_digest=entry.token_sha256,
         )
 
     @staticmethod
-    def _token_digest(prompt_tokens: list[int]) -> str:
-        payload = json.dumps(
-            prompt_tokens,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-
-    @staticmethod
-    def _read_metadata(path: Path) -> dict[str, object] | None:
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return None
-        return value if isinstance(value, dict) else None
-
-    def _metadata_matches(
-        self,
-        metadata: dict[str, object],
-        entry: _Ds4CacheEntryPath,
-        ctx_size: int,
-    ) -> bool:
-        return (
-            metadata.get("version") == _DS4_KV_CACHE_VERSION
-            and metadata.get("key") == entry.key
-            and metadata.get("namespace") == self._namespace
-            and metadata.get("ctx_size") == ctx_size
-            and metadata.get("token_sha256") == entry.token_digest
-            and metadata.get("payload_file") == entry.payload_path.name
-        )
-
-    def _record_hit(
-        self, metadata: dict[str, object], entry: _Ds4CacheEntryPath
-    ) -> None:
-        hit_count = metadata.get("hit_count", 0)
-        metadata["hit_count"] = (
-            hit_count + 1 if isinstance(hit_count, int) else 1
-        )
-        metadata["accessed_at"] = time()
-        try:
-            entry.metadata_path.write_text(
-                json.dumps(metadata, sort_keys=True),
-                encoding="utf-8",
+    def _cache_type() -> Any:
+        module = importlib.import_module("pyds4.kv_cache")
+        cache_type = getattr(module, "Ds4DiskKvCache", None)
+        if not callable(cache_type):
+            raise Ds4LoadError(
+                "DS4 binding does not expose pyds4.kv_cache.Ds4DiskKvCache."
             )
-        except OSError as error:
-            self._logger.warning(
-                "DS4 disk KV cache metadata update failed: %s", error
-            )
-
-    def _enforce_budget(self) -> None:
-        entries = self._cache_entries()
-        total_size = sum(size for _, _, size in entries)
-        if total_size <= self._budget_bytes:
-            return
-
-        for metadata, entry, size in sorted(
-            entries,
-            key=lambda item: (
-                self._metadata_int(item[0], "hit_count"),
-                self._metadata_float(item[0], "accessed_at"),
-                self._metadata_float(item[0], "created_at"),
-                item[1].key,
-            ),
-        ):
-            _ = metadata
-            self._delete_entry(entry)
-            total_size -= size
-            if total_size <= self._budget_bytes:
-                return
-
-    def _cache_entries(
-        self,
-    ) -> list[tuple[dict[str, object], _Ds4CacheEntryPath, int]]:
-        entries: list[tuple[dict[str, object], _Ds4CacheEntryPath, int]] = []
-        try:
-            metadata_paths = tuple(self._directory.glob("*.json"))
-        except OSError:
-            return entries
-
-        for metadata_path in metadata_paths:
-            metadata = self._read_metadata(metadata_path)
-            if metadata is None:
-                continue
-            key = metadata.get("key")
-            token_digest = metadata.get("token_sha256")
-            payload_file = metadata.get("payload_file")
-            if (
-                not isinstance(key, str)
-                or not isinstance(token_digest, str)
-                or not isinstance(payload_file, str)
-            ):
-                continue
-            payload_path = self._directory / payload_file
-            entry = _Ds4CacheEntryPath(
-                key=key,
-                metadata_path=metadata_path,
-                payload_path=payload_path,
-                token_digest=token_digest,
-            )
-            size = self._path_size(metadata_path) + self._path_size(
-                payload_path
-            )
-            entries.append((metadata, entry, size))
-        return entries
-
-    @staticmethod
-    def _metadata_int(metadata: dict[str, object], key: str) -> int:
-        value = metadata.get(key, 0)
-        return value if isinstance(value, int) else 0
-
-    @staticmethod
-    def _metadata_float(metadata: dict[str, object], key: str) -> float:
-        value = metadata.get(key, 0.0)
-        return float(value) if isinstance(value, (float, int)) else 0.0
-
-    @staticmethod
-    def _path_size(path: Path) -> int:
-        try:
-            return path.stat().st_size
-        except OSError:
-            return 0
-
-    def _delete_entry(self, entry: _Ds4CacheEntryPath) -> None:
-        for path in (entry.payload_path, entry.metadata_path):
-            try:
-                path.unlink(missing_ok=True)
-            except OSError as error:
-                self._logger.warning(
-                    "DS4 disk KV cache eviction failed for %s: %s",
-                    path,
-                    error,
-                )
+        return cast(type[object], cache_type)
 
 
 class _StopStringBuffer:
@@ -1482,6 +1319,7 @@ class Ds4Worker:
             config.budget_bytes,
             logger,
             namespace,
+            backend=options.backend.value,
         )
 
     def _require_binding(self) -> object:

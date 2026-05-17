@@ -2548,7 +2548,7 @@ def test_ds4_disk_kv_cache_corrupt_payload_is_skipped(
 
     assert run(response.to_str()) == "<102>"
     assert fake.session_sync_calls == [(30, 0, 5, 20), (30, 0, 5, 20)]
-    assert fake.sessions[0].load_payload_calls == 1
+    assert fake.sessions[0].load_payload_calls == 0
     model.close()
 
 
@@ -2694,7 +2694,7 @@ def test_ds4_disk_kv_cache_budget_evicts_least_useful_entries(
     tmp_path: Path,
 ) -> None:
     logger = cast(Logger, MagicMock(spec=Logger))
-    cache = _Ds4DiskKvCache(tmp_path / "kv", 700, logger, "namespace")
+    cache = _Ds4DiskKvCache(tmp_path / "kv", 150, logger, "namespace")
     session = SimpleNamespace(save_payload=lambda: b"x" * 100)
 
     run(cache.store(session, [1], 16))
@@ -3704,82 +3704,45 @@ def test_ds4_disk_kv_cache_handles_payload_edge_cases(
     cache_dir = tmp_path / "kv"
     cache_dir.mkdir()
     entry = cache._entry_path([1], 16)
-    entry.metadata_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "key": entry.key,
-                "namespace": "namespace",
-                "ctx_size": 32,
-                "token_sha256": entry.token_digest,
-                "payload_file": entry.payload_path.name,
-            }
-        ),
-        encoding="utf-8",
-    )
+    metadata = cache._cache.metadata_for([1], 16, payload_size=99)
+    cache._cache.write_metadata(metadata)
     entry.payload_path.write_bytes(b"payload")
     session = SimpleNamespace(load_payload=lambda payload: None)
 
     assert run(cache.restore(session, [1], 16)) is False
-    assert not entry.metadata_path.exists()
-    assert not entry.payload_path.exists()
+    assert entry.metadata_path.exists()
+    assert entry.payload_path.exists()
 
     entry = cache._entry_path([2], 16)
-    entry.metadata_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "key": entry.key,
-                "namespace": "namespace",
-                "ctx_size": 16,
-                "token_sha256": entry.token_digest,
-                "payload_file": entry.payload_path.name,
-            }
-        ),
-        encoding="utf-8",
-    )
+    metadata = cache._cache.metadata_for([2], 16, payload_size=0)
+    cache._cache.write_metadata(metadata)
     entry.payload_path.mkdir()
 
     assert run(cache.restore(session, [2], 16)) is False
 
 
-def test_ds4_disk_kv_cache_metadata_edges(
+def test_ds4_disk_kv_cache_delegated_metadata_edges(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache = _Ds4DiskKvCache(tmp_path / "kv", 1024, logger, "namespace")
     entry = cache._entry_path([1], 16)
-    entry.metadata_path.parent.mkdir(parents=True)
+    cache._cache.store(
+        SimpleNamespace(save_payload=lambda: b"payload"),
+        [1],
+        16,
+    )
 
     def fail_write_text(self: Path, text: str, encoding: str) -> int:
         _ = self, text, encoding
         raise OSError("metadata write failed")
 
     monkeypatch.setattr(Path, "write_text", fail_write_text)
-    cache._record_hit({"hit_count": "bad"}, entry)
+    session = SimpleNamespace(load_payload=lambda payload: None)
+    assert run(cache.restore(session, [1], 16)) is True
     logger.warning.assert_called()
 
-    def fail_glob(self: Path, pattern: str) -> tuple[Path, ...]:
-        _ = self, pattern
-        raise OSError("glob failed")
-
-    monkeypatch.setattr(Path, "glob", fail_glob)
-    assert cache._cache_entries() == []
-
-    def fail_stat(self: Path) -> object:
-        _ = self
-        raise OSError("stat failed")
-
-    monkeypatch.setattr(Path, "stat", fail_stat)
-    assert cache._path_size(entry.metadata_path) == 0
-
-    def fail_unlink(self: Path, missing_ok: bool = False) -> None:
-        _ = self, missing_ok
-        raise OSError("unlink failed")
-
-    monkeypatch.setattr(Path, "unlink", fail_unlink)
-    cache._delete_entry(entry)
-    assert logger.warning.call_count >= 3
+    assert entry.payload_path.exists()
 
 
 def test_ds4_disk_kv_cache_skips_invalid_metadata_entries(
@@ -3795,7 +3758,7 @@ def test_ds4_disk_kv_cache_skips_invalid_metadata_entries(
     )
     cache = _Ds4DiskKvCache(cache_dir, 1024, logger, "namespace")
 
-    assert cache._cache_entries() == []
+    assert cache._cache.evict(0) == ()
 
 
 def test_ds4_worker_dsml_replay_no_match_and_eviction_edges(
