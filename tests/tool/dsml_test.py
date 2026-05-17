@@ -440,6 +440,24 @@ class ToolCallParserDsmlTestCase(TestCase):
     def test_message_tool_calls_ignores_missing_pyds4_auto_probe(self):
         parser = ToolCallParser()
 
+        with patch(
+            "avalan.tool.dsml.import_module",
+            side_effect=ModuleNotFoundError("pyds4"),
+        ):
+            self.assertEqual(
+                parser.message_tool_calls(
+                    "<tool_calls>"
+                    '<invoke name="math.calculator">'
+                    '<parameter name="expression">2 + 2</parameter>'
+                    "</invoke>"
+                    "</tool_calls>"
+                ),
+                [],
+            )
+
+    def test_message_tool_calls_ignores_dsml_probe_runtime_error(self):
+        parser = ToolCallParser()
+
         with patch.object(
             DsmlTools,
             "tool_call_start_span",
@@ -449,6 +467,20 @@ class ToolCallParserDsmlTestCase(TestCase):
                 parser.message_tool_calls("mentions tool_calls only"),
                 [],
             )
+
+    def test_message_tool_calls_detects_dsml_when_pyds4_available(self):
+        parser = ToolCallParser()
+
+        calls = parser.message_tool_calls(
+            "<tool_calls>"
+            '<invoke name="math.calculator">'
+            '<parameter name="expression">2 + 2</parameter>'
+            "</invoke>"
+            "</tool_calls>"
+        )
+
+        self.assertEqual(calls[0]["name"], "math.calculator")
+        self.assertEqual(calls[0]["arguments"], {"expression": "2 + 2"})
 
     def test_message_tool_calls_reraises_missing_pyds4_for_dsml_format(self):
         parser = ToolCallParser(tool_format=ToolFormat.DSML)

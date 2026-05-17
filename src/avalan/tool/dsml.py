@@ -170,6 +170,11 @@ class DsmlTools:
         try:
             return import_module("pyds4.dsml")
         except ModuleNotFoundError as error:
+            if error.name is not None and error.name not in {
+                "pyds4",
+                "pyds4.dsml",
+            }:
+                raise
             raise RuntimeError(
                 "Avalan DSML helpers require pyds4. Install avalan[ds4]."
             ) from error

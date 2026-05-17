@@ -85,11 +85,19 @@ def _binding_api_version(capabilities: object) -> int | None:
     )
 
 
+def _backend_name(value: object) -> str | None:
+    raw_value = getattr(value, "value", value)
+    if raw_value is None:
+        return None
+    name = str(raw_value)
+    return name if name else None
+
+
 def _binding_native_backend_name(
     binding: object, fallback_backend_name: str, capabilities: object
 ) -> str:
-    capability_backend = getattr(capabilities, "backend", None)
-    if isinstance(capability_backend, str) and capability_backend:
+    capability_backend = _backend_name(getattr(capabilities, "backend", None))
+    if capability_backend:
         return capability_backend
     native_backend_name = getattr(binding, "__ds4_native_backend__", None)
     if isinstance(native_backend_name, str) and native_backend_name:
@@ -171,7 +179,11 @@ def require_backend_available(binding: object, backend: str) -> None:
             "DS4 binding capabilities available_backends must be a collection "
             "of backend names."
         )
-    if backend in {str(item) for item in available_backends}:
+    if backend in {
+        name
+        for name in (_backend_name(item) for item in available_backends)
+        if name is not None
+    }:
         return
     reason = _backend_unavailable_reason(binding, backend)
     details = f" {reason}" if reason else ""

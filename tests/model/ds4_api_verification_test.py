@@ -1,3 +1,4 @@
+from enum import Enum
 from os import environ
 from pathlib import Path
 from subprocess import run
@@ -120,6 +121,19 @@ def test_require_backend_available_uses_pyds4_capabilities() -> None:
         Ds4BackendUnavailable, match="unavailable on this platform"
     ):
         require_backend_available(binding, "metal")
+
+
+def test_require_backend_available_normalizes_enum_capabilities() -> None:
+    class Backend(Enum):
+        METAL = "metal"
+
+    binding = _fake_binding(
+        capabilities=lambda: _fake_capabilities(
+            available_backends=(Backend.METAL,)
+        ),
+    )
+
+    require_backend_available(binding, "metal")
 
 
 @pytest.mark.parametrize(
