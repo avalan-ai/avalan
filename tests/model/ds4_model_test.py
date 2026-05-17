@@ -83,6 +83,13 @@ class NativeThinkMode(StrEnum):
     MAX = "max"
 
 
+class NativeTokenScoreMode(StrEnum):
+    NONE = "none"
+    TOKEN_LOGPROB = "token_logprob"
+    TOP_LOGPROBS = "top_logprobs"
+    TOKEN_LOGPROB_AND_TOP_LOGPROBS = "token_logprob_and_top_logprobs"
+
+
 @dataclass(frozen=True, slots=True)
 class FakeNativeOptions:
     model_path: str
@@ -108,6 +115,12 @@ class FakeNativeSamplingOptions:
     seed: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FakeNativeGenerationScoreOptions:
+    mode: NativeTokenScoreMode = NativeTokenScoreMode.NONE
+    top_k: int = 0
+
+
 class FakeNativeSession:
     def __init__(self, engine: "FakeNativeEngine", ctx_size: int) -> None:
         self.argmax_calls = 0
@@ -124,6 +137,9 @@ class FakeNativeSession:
         self.sample_options: list[FakeNativeSamplingOptions] = []
         self.save_payload_calls = 0
         self.save_snapshot_calls = 0
+        self.next_token_score_options: list[
+            FakeNativeGenerationScoreOptions | None
+        ] = []
         self.token_logprob_calls: list[int] = []
         self.tokens: list[int] = []
         self.top_logprobs_calls: list[int] = []
@@ -375,6 +391,7 @@ def _fake_async_engine_type(
             decode: bool = False,
             stop_on_eos: bool = True,
             exclude_token_id: int | None = None,
+            scores: FakeNativeGenerationScoreOptions | None = None,
         ) -> SimpleNamespace:
             def step() -> SimpleNamespace:
                 if options is not None and exclude_token_id is not None:
@@ -391,6 +408,23 @@ def _fake_async_engine_type(
 
                 is_eos = token_id == self._owner._native.eos_token_id
                 should_advance = advance and not (stop_on_eos and is_eos)
+                score_options = scores or FakeNativeGenerationScoreOptions()
+                top_logprobs: tuple[tuple[int, float], ...] = ()
+                token_logprob: float | None = None
+                self._native.next_token_score_options.append(scores)
+                if not (stop_on_eos and is_eos):
+                    if score_options.mode in {
+                        NativeTokenScoreMode.TOP_LOGPROBS,
+                        NativeTokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS,
+                    }:
+                        top_logprobs = tuple(
+                            self._native.top_logprobs(score_options.top_k)
+                        )
+                    if score_options.mode in {
+                        NativeTokenScoreMode.TOKEN_LOGPROB,
+                        NativeTokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS,
+                    }:
+                        token_logprob = self._native.token_logprob(token_id)
                 if should_advance:
                     try:
                         self._native.eval(token_id)
@@ -408,6 +442,8 @@ def _fake_async_engine_type(
                     is_eos=is_eos,
                     advanced=should_advance,
                     token_bytes=token_bytes,
+                    token_logprob=token_logprob,
+                    top_logprobs=top_logprobs,
                 )
 
             return cast(SimpleNamespace, await self._owner._call(step))
@@ -582,8 +618,10 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
         "Backend": NativeBackend,
         "Engine": native_engine_type,
         "EngineOptions": FakeNativeOptions,
+        "GenerationScoreOptions": FakeNativeGenerationScoreOptions,
         "SamplingOptions": FakeNativeSamplingOptions,
         "ThinkMode": NativeThinkMode,
+        "TokenScoreMode": NativeTokenScoreMode,
         "is_backend_available": (
             lambda backend: backend in {"metal", "cuda", "cpu"}
         ),
@@ -2062,6 +2100,12 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
     assert detail.tokens == [
         Token(id=101, token="A", probability=exp(-0.1)),
         Token(id=102, token="B", probability=exp(-1.5)),
+    ]
+    assert fake.sessions[0].next_token_score_options == [
+        FakeNativeGenerationScoreOptions(
+            mode=NativeTokenScoreMode.TOKEN_LOGPROB_AND_TOP_LOGPROBS,
+            top_k=2,
+        )
     ]
     assert fake.sessions[0].top_logprobs_calls == [2]
     assert fake.sessions[0].token_logprob_calls == [101]

@@ -48,6 +48,7 @@ from collections.abc import (
     Iterator,
 )
 from dataclasses import dataclass, replace
+from inspect import Parameter, signature
 from logging import Logger, getLogger
 from math import exp
 from pathlib import Path
@@ -93,6 +94,10 @@ _DSML_TOOL_START_MARKERS = (
     "\n<tool_calls>",
     "<tool_calls>",
 )
+_TOKEN_SCORE_MODE_VALUES = {
+    "TOKEN_LOGPROB": "token_logprob",
+    "TOKEN_LOGPROB_AND_TOP_LOGPROBS": "token_logprob_and_top_logprobs",
+}
 
 _T = TypeVar("_T")
 
@@ -872,6 +877,27 @@ class Ds4Worker:
         self._require_logprob_support(
             session, generation_plan.top_logprobs, self._capabilities
         )
+        score_options = self._generation_score_options(generation_plan)
+        if score_options is not None and self._method_supports_keyword(
+            session, "next_token", "scores"
+        ):
+            step = await self._call_async(
+                session,
+                "next_token",
+                (
+                    self._native_sampling_options(
+                        generation_plan.sampling_options
+                    )
+                    if generation_plan.use_sampling
+                    else None
+                ),
+                decode=True,
+                scores=score_options,
+            )
+            return await self._token_detail_step_from_generation_step(
+                engine, step, generation_plan, step_index
+            )
+
         token_id = await self._select_token(session, generation_plan)
         eos_token_id = await self._eos_token_id(engine)
         is_eos = token_id == eos_token_id
@@ -888,6 +914,112 @@ class Ds4Worker:
         token_text = await self._call_async(engine, "token_text", token_id)
         token_bytes = self._bytes_value(token_text, "token_text")
         text = token_bytes.decode("utf-8", errors="replace")
+        detail = TokenDetail(
+            id=token_id,
+            token=text,
+            probability=chosen_probability,
+            probability_distribution=generation_plan.probability_distribution,
+            step=step_index,
+            tokens=(
+                [
+                    Token(
+                        id=alternative.token_id,
+                        token=await self._token_string(
+                            engine, alternative.token_id
+                        ),
+                        probability=alternative.probability,
+                    )
+                    for alternative in alternatives
+                ]
+                if alternatives
+                else None
+            ),
+        )
+        return _Ds4Step(token_id, False, token_bytes, detail)
+
+    def _generation_score_options(
+        self, generation_plan: _Ds4GenerationPlan
+    ) -> object | None:
+        binding = self._require_binding()
+        score_options_type = getattr(binding, "GenerationScoreOptions", None)
+        score_mode_type = getattr(binding, "TokenScoreMode", None)
+        if not callable(score_options_type) or score_mode_type is None:
+            return None
+
+        mode_name = (
+            "TOKEN_LOGPROB_AND_TOP_LOGPROBS"
+            if generation_plan.top_logprobs > 0
+            else "TOKEN_LOGPROB"
+        )
+        mode = getattr(score_mode_type, mode_name, None)
+        if mode is None and callable(score_mode_type):
+            try:
+                mode = score_mode_type(_TOKEN_SCORE_MODE_VALUES[mode_name])
+            except (TypeError, ValueError):
+                return None
+        if mode is None:
+            return None
+
+        try:
+            return cast(
+                object,
+                score_options_type(
+                    mode=mode,
+                    top_k=generation_plan.top_logprobs,
+                ),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _method_supports_keyword(
+        target: object, name: str, keyword: str
+    ) -> bool:
+        method = getattr(target, name, None)
+        if not callable(method):
+            return False
+        try:
+            parameters = signature(method).parameters
+        except (TypeError, ValueError):
+            return True
+        return keyword in parameters or any(
+            parameter.kind is Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+    async def _token_detail_step_from_generation_step(
+        self,
+        engine: object,
+        step: object,
+        generation_plan: _Ds4GenerationPlan,
+        step_index: int,
+    ) -> _Ds4Step:
+        token_id = self._token_id(
+            getattr(step, "token_id", None), "next_token"
+        )
+        if bool(getattr(step, "is_eos", False)):
+            return _Ds4Step(token_id, True, None, None)
+
+        token_bytes = getattr(step, "token_bytes", None)
+        if token_bytes is None:
+            token_bytes = await self._call_async(
+                engine, "token_text", token_id
+            )
+        token_bytes = self._bytes_value(token_bytes, "token_text")
+        text = token_bytes.decode("utf-8", errors="replace")
+
+        alternatives = [
+            self._token_probability(score, "top_logprobs")
+            for score in getattr(step, "top_logprobs", ()) or ()
+        ]
+        token_logprob = getattr(step, "token_logprob", None)
+        chosen_probability = (
+            self._probability_from_logprob(token_logprob, "token_logprob")
+            if token_logprob is not None
+            else await self._chosen_token_probability(
+                object(), token_id, alternatives
+            )
+        )
         detail = TokenDetail(
             id=token_id,
             token=text,
