@@ -45,8 +45,9 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 
 ## 📦 Install
 
-Avalan supports Python 3.11 and 3.12. Install the smallest profile that fits
-your workflow.
+Avalan supports Python 3.11 through 3.14, except Python 3.14.1 due to
+upstream PyTorch wheel metadata. Install the smallest profile that fits your
+workflow.
 
 ### 🍺 Homebrew (macOS)
 

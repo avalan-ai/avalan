@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12']
+        python: ['3.11', '3.12', '3.13', '3.14']
         target:
           - name: linux-cuda
             os: ubuntu-latest
@@ -113,11 +113,11 @@ jobs:
 
       - name: Install Linux MLX runtime
         if: matrix.target.os == 'ubuntu-latest'
-        run: poetry run pip install "mlx[cpu]==0.28.0"
+        run: poetry run pip install "mlx[cpu]==0.31.2"
 
-      - name: Install MLX-LM runtime (Python 3.12 only)
-        if: matrix.python == '3.12' && matrix.target.os == 'ubuntu-latest'
-        run: poetry run pip install "mlx-lm==0.26.3"
+      - name: Install Linux MLX-LM runtime
+        if: matrix.target.os == 'ubuntu-latest'
+        run: poetry run pip install "mlx-lm[cpu]==0.31.3"
 
       - name: Run tests with coverage analysis
         run: make test coverage no-install
@@ -143,3 +143,60 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
+
+  wheel:
+    name: wheel (${{ matrix.target.name }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+        target:
+          - name: linux-cuda
+            os: ubuntu-latest
+            backend: cuda
+          - name: macos-metal
+            os: macos-15
+            backend: metal
+
+    runs-on: ${{ matrix.target.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python }} + Poetry cache
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Load cached Poetry installation
+        id: cached-poetry
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-v13-${{ runner.os }}-2.3.3
+
+      - name: Add Poetry to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Poetry
+        if: steps.cached-poetry.outputs.cache-hit != 'true'
+        uses: snok/install-poetry@v1
+        with:
+          version: 2.3.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          virtualenvs-path: .venv
+          installer-parallel: true
+
+      - name: Build wheel
+        run: poetry build --format wheel --clean
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: avalan-wheel-${{ matrix.target.name }}-${{ matrix.python }}
+          path: dist/*.whl
