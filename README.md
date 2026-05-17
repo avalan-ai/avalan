@@ -1199,6 +1199,7 @@ The example below uses a local 8B LLM, enables recent memory, and loads a calcul
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --backend mlx \
       --tool "math.calculator" \
       --memory-recent \
       --run-max-new-tokens 8192 \
