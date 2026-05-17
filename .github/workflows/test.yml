@@ -56,7 +56,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local
-          key: poetry-v12-2.3.3
+          key: poetry-v13-${{ runner.os }}-2.3.3
+
+      - name: Add Poetry to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Poetry
         if: steps.cached-poetry.outputs.cache-hit != 'true'
