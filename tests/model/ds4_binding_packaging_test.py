@@ -23,11 +23,21 @@ from avalan.backends.ds4_native.metadata import (
 
 def _fake_binding(**overrides: object) -> SimpleNamespace:
     values: dict[str, object] = {
-        "__ds4_commit__": DS4_API_COMMIT,
-        "__ds4_symbols__": DS4_REQUIRED_C_SYMBOLS,
         "__version__": "0.1.0",
         "__ds4_native_backend__": "metal",
-        "is_backend_available": lambda backend: backend == "metal",
+        "capabilities": lambda: _fake_capabilities(),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _fake_capabilities(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "available_backends": ("metal",),
+        "backend": "metal",
+        "ds4_api_version": DS4_API_VERSION,
+        "ds4_commit": DS4_API_COMMIT,
+        "required_symbols": DS4_REQUIRED_C_SYMBOLS,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -70,7 +80,7 @@ def test_import_compatible_binding_accepts_installed_local_pyds4() -> None:
     assert set(DS4_REQUIRED_C_SYMBOLS) <= set(capabilities.required_symbols)
 
 
-def test_binding_metadata_reports_stable_fallback_fields() -> None:
+def test_binding_metadata_reports_stable_capability_fields() -> None:
     metadata = binding_metadata(_fake_binding())
 
     assert metadata.module_name == DS4_BINDING_IMPORT_NAME
@@ -82,7 +92,11 @@ def test_binding_metadata_reports_stable_fallback_fields() -> None:
 
 def test_binding_metadata_falls_back_without_binding_version() -> None:
     metadata = binding_metadata(
-        _fake_binding(__version__=None, __ds4_native_backend__=""),
+        _fake_binding(
+            __version__=None,
+            __ds4_native_backend__="",
+            capabilities=lambda: _fake_capabilities(backend=""),
+        ),
         native_backend_name="cpu",
     )
 
@@ -121,7 +135,9 @@ def test_import_compatible_binding_rejects_unsafe_import(
 def test_import_compatible_binding_rejects_platform_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    binding = _fake_binding(is_backend_available=lambda backend: False)
+    binding = _fake_binding(
+        capabilities=lambda: _fake_capabilities(available_backends=())
+    )
     monkeypatch.setattr(availability, "import_module", lambda _: binding)
 
     with pytest.raises(
@@ -132,7 +148,9 @@ def test_import_compatible_binding_rejects_platform_unavailable(
 
 
 def test_require_compatible_binding_rejects_invalid_api_version() -> None:
-    with pytest.raises(Ds4ApiVersionError, match="__ds4_api_version__"):
+    with pytest.raises(Ds4ApiVersionError, match="ds4_api_version"):
         availability.require_compatible_binding(
-            _fake_binding(__ds4_api_version__="1")
+            _fake_binding(
+                capabilities=lambda: _fake_capabilities(ds4_api_version="1")
+            )
         )

@@ -610,8 +610,6 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
         type[Any], overrides.get("Engine", FakeNativeEngine)
     )
     values: dict[str, object] = {
-        "__ds4_commit__": DS4_API_COMMIT,
-        "__ds4_symbols__": DS4_REQUIRED_C_SYMBOLS,
         "AsyncEngine": overrides.get(
             "AsyncEngine", _fake_async_engine_type(native_engine_type)
         ),
@@ -622,6 +620,7 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
         "SamplingOptions": FakeNativeSamplingOptions,
         "ThinkMode": NativeThinkMode,
         "TokenScoreMode": NativeTokenScoreMode,
+        "capabilities": lambda: _fake_capabilities(),
         "is_backend_available": (
             lambda backend: backend in {"metal", "cuda", "cpu"}
         ),
@@ -637,14 +636,14 @@ def _fake_capabilities(**overrides: object) -> SimpleNamespace:
         "backend": "metal",
         "ds4_api_version": DS4_API_VERSION,
         "ds4_commit": DS4_API_COMMIT,
-        "logprobs": False,
+        "logprobs": True,
         "mtp": True,
-        "payloads": False,
+        "payloads": True,
         "progress": True,
         "required_symbols": DS4_REQUIRED_C_SYMBOLS,
-        "snapshots": False,
+        "snapshots": True,
         "speculative_eval": False,
-        "top_logprobs": False,
+        "top_logprobs": True,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -2188,7 +2187,15 @@ def test_ds4_token_details_reject_invalid_top_k(
 def test_ds4_token_details_require_native_logprob_support(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _install_binding(monkeypatch, _fake_binding())
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            capabilities=lambda: _fake_capabilities(
+                logprobs=False,
+                top_logprobs=False,
+            ),
+        ),
+    )
     model = Ds4Model(str(_model_file(tmp_path)))
     fake = _latest_fake_engine()
     fake.argmax_script = [101]
