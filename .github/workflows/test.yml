@@ -21,14 +21,23 @@ permissions:
 
 jobs:
   test:
+    name: test (${{ matrix.target.name }}, Python ${{ matrix.python }})
     env:
       IGNORE_VENV_CACHE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ignore_venv_cache == 'true' }}
+      PYDS4_BACKEND: ${{ matrix.target.backend }}
     strategy:
       fail-fast: false
       matrix:
         python: ['3.11', '3.12']
+        target:
+          - name: linux-cpu
+            os: ubuntu-latest
+            backend: cpu
+          - name: macos-metal
+            os: macos-15
+            backend: metal
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.target.os }}
 
     steps:
       - name: Check out repository
@@ -70,18 +79,40 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-v12-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          key: venv-v13-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
           restore-keys: |
-            venv-v12-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+            venv-v13-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Install dependencies
         run: poetry sync --all-extras --with test --no-interaction
 
+      - name: Verify pyds4 backend
+        run: |
+          poetry run python - <<'PY'
+          import os
+
+          import pyds4
+
+          expected = os.environ["PYDS4_BACKEND"]
+          capabilities = pyds4.capabilities()
+          actual = getattr(pyds4, "__ds4_native_backend__", None)
+          if not actual:
+              actual = getattr(capabilities, "backend", None)
+          if hasattr(actual, "value"):
+              actual = actual.value
+          if str(actual).lower() != expected:
+              raise SystemExit(
+                  f"pyds4 backend {actual!r} does not match {expected!r}"
+              )
+          print(f"pyds4 backend: {actual}")
+          PY
+
       - name: Install Linux MLX runtime
+        if: matrix.target.os == 'ubuntu-latest'
         run: poetry run pip install "mlx[cpu]==0.28.0"
 
       - name: Install MLX-LM runtime (Python 3.12 only)
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.12' && matrix.target.os == 'ubuntu-latest'
         run: poetry run pip install "mlx-lm==0.26.3"
 
       - name: Run tests with coverage analysis
@@ -94,64 +125,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           format: cobertura
           file: coverage.xml
-          flag-name: unit-tests-${{ matrix.python }}
+          flag-name: unit-tests-${{ matrix.target.name }}-${{ matrix.python }}
           parallel: true
           fail-on-error: true
-
-  ds4-bridge:
-    name: DS4 bridge (${{ matrix.target.name }}, Python ${{ matrix.python }})
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.11', '3.12']
-        target:
-          - name: linux-cpu
-            os: ubuntu-latest
-            backend: cpu
-          - name: macos-metal
-            os: macos-15
-            backend: metal
-
-    runs-on: ${{ matrix.target.os }}
-
-    env:
-      PYDS4_BACKEND: ${{ matrix.target.backend }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 2.3.3
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          virtualenvs-path: .venv
-          installer-parallel: true
-
-      - name: Configure Poetry
-        run: |
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
-
-      - name: Install DS4 bridge dependencies
-        run: poetry sync --extras "ds4 tool" --with test --no-interaction
-
-      - name: Run DS4 bridge tests
-        run: |
-          poetry run pytest \
-            tests/model/ds4_binding_packaging_test.py::test_import_compatible_binding_accepts_installed_local_pyds4 \
-            tests/model/ds4_model_test.py::test_ds4_generation_stream_accepts_real_pyds4_score_types \
-            tests/tool/dsml_test.py \
-            --verbose
 
   finish:
     if: ${{ always() }}
