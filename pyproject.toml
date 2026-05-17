@@ -11,7 +11,7 @@ license = { text = "MIT" }
 authors = [
   { name = "The Avalan Team", email = "avalan@avalan.ai" },
 ]
-requires-python = ">=3.11,!=3.14.1,<3.15"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "packaging>=25.0,<26.0",
   "humanize>=4.12.3,<5.0.0",
@@ -28,7 +28,6 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Operating System :: OS Independent"
 ]
 

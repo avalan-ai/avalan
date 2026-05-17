@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13', '3.14']
+        python: ['3.11', '3.12', '3.13']
         target:
           - name: linux-cuda
             os: ubuntu-latest
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13', '3.14']
+        python: ['3.11', '3.12', '3.13']
         target:
           - name: linux-cuda
             os: ubuntu-latest
