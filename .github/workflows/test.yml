@@ -143,7 +143,7 @@ jobs:
           poetry config virtualenvs.in-project true
 
       - name: Install DS4 bridge dependencies
-        run: poetry sync --extras ds4 --with test --no-interaction
+        run: poetry sync --extras "ds4 tool" --with test --no-interaction
 
       - name: Run DS4 bridge tests
         run: |
