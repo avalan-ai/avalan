@@ -136,6 +136,51 @@ class DsmlToolsTestCase(TestCase):
         self.assertIsNone(DsmlTools.render_tool_schemas([]))
         self.assertEqual(DsmlTools.render_tool_calls(()), "")
 
+    def test_render_tool_result_escapes_content(self):
+        self.assertEqual(
+            DsmlTools.render_tool_result("value <4> & done"),
+            "<tool_result>value &lt;4&gt; &amp; done</tool_result>",
+        )
+
+    def test_split_reasoning_returns_visible_content(self):
+        self.assertEqual(
+            DsmlTools.split_reasoning("<think>hidden</think>visible"),
+            ("visible", "hidden"),
+        )
+
+    def test_tools_prompt_rejects_empty_schema_text(self):
+        with self.assertRaises(ValueError):
+            DsmlTools.tools_prompt("")
+
+    def test_tools_prompt_rejects_none_from_dsml_module(self):
+        fake_dsml = type(
+            "FakeDsml",
+            (),
+            {"tools_prompt": staticmethod(lambda _: None)},
+        )()
+
+        with patch.object(DsmlTools, "_pyds4_dsml", return_value=fake_dsml):
+            with self.assertRaises(ValueError):
+                DsmlTools.tools_prompt("schema")
+
+    def test_tools_prompt_returns_rendered_prompt(self):
+        fake_dsml = type(
+            "FakeDsml",
+            (),
+            {"tools_prompt": staticmethod(lambda _: "prompt")},
+        )()
+
+        with patch.object(DsmlTools, "_pyds4_dsml", return_value=fake_dsml):
+            self.assertEqual(DsmlTools.tools_prompt("schema"), "prompt")
+
+    def test_missing_pyds4_module_raises_runtime_error(self):
+        with patch(
+            "avalan.tool.dsml.import_module",
+            side_effect=ModuleNotFoundError("pyds4"),
+        ):
+            with self.assertRaises(RuntimeError):
+                DsmlTools.render_tool_result("content")
+
     def test_render_prompt_with_thinking_handles_intermediate_assistant(self):
         rendered = DsmlTools.render_prompt(
             None,
@@ -227,6 +272,24 @@ class DsmlToolsTestCase(TestCase):
         self.assertIsNone(
             DsmlTools.parse_generated_message("<｜DSML｜tool_calls>")
         )
+
+    def test_parse_tool_calls_returns_none_without_calls(self):
+        self.assertIsNone(DsmlTools.parse_tool_calls("visible content"))
+
+    def test_to_tool_call_defaults_non_dict_arguments(self):
+        call_id = _uuid4()
+        native_call = type(
+            "NativeCall",
+            (),
+            {"name": "math.calculator", "arguments": "bad"},
+        )()
+
+        with patch("avalan.tool.dsml.uuid4", return_value=call_id):
+            call = DsmlTools._to_tool_call(native_call)
+
+        self.assertEqual(call.id, f"ds4_tool_{call_id.hex}")
+        self.assertEqual(call.name, "math.calculator")
+        self.assertEqual(call.arguments, {})
 
     def test_tool_call_start_suffix_length_tracks_marker_variants(self):
         self.assertEqual(
@@ -386,6 +449,17 @@ class ToolCallParserDsmlTestCase(TestCase):
                 parser.message_tool_calls("mentions tool_calls only"),
                 [],
             )
+
+    def test_message_tool_calls_reraises_missing_pyds4_for_dsml_format(self):
+        parser = ToolCallParser(tool_format=ToolFormat.DSML)
+
+        with patch.object(
+            DsmlTools,
+            "tool_call_start_span",
+            side_effect=RuntimeError("pyds4 missing"),
+        ):
+            with self.assertRaises(RuntimeError):
+                parser.message_tool_calls("mentions tool_calls only")
 
     def test_dsml_tool_call_status_reports_prefix_open_and_closed(self):
         parser = ToolCallParser(tool_format=ToolFormat.DSML)

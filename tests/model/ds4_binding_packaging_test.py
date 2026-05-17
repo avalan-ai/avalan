@@ -104,6 +104,15 @@ def test_binding_metadata_falls_back_without_binding_version() -> None:
     assert metadata.native_backend_name == "cpu"
 
 
+def test_binding_metadata_uses_binding_backend_when_capability_empty() -> None:
+    metadata = binding_metadata(
+        _fake_binding(capabilities=lambda: _fake_capabilities(backend="")),
+        native_backend_name="cpu",
+    )
+
+    assert metadata.native_backend_name == "metal"
+
+
 def test_import_compatible_binding_rejects_import_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

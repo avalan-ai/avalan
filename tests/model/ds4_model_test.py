@@ -4019,6 +4019,8 @@ def test_ds4_worker_aclose_snapshot_and_pending_reset_edges(
 
     run(worker.aclose())
     assert run(worker._load_snapshot(object(), b"snapshot")) is False
+    worker._capabilities = SimpleNamespace(snapshots=False)
+    assert run(worker._load_snapshot(object(), b"snapshot")) is False
     run(worker._store_disk_cache(object(), [1]))
 
     async def run_case() -> bool:
@@ -4180,6 +4182,95 @@ def test_ds4_worker_logprob_probability_and_bytes_edge_helpers(
     )
     assert step.is_eos is True
 
+    class ManualSession:
+        def __init__(self) -> None:
+            self.eval_calls: list[int] = []
+
+        def argmax(self) -> int:
+            return 5
+
+        def eval(self, token_id: int) -> None:
+            self.eval_calls.append(token_id)
+
+        def token_logprob(self, token_id: int) -> float:
+            assert token_id == 5
+            return -0.4
+
+        def top_logprobs(self, top_k: int) -> list[tuple[int, float]]:
+            assert top_k == 2
+            return [(5, -0.4), (6, -1.4)]
+
+    manual_session = ManualSession()
+    manual_step = run(
+        worker._detailed_generation_step(
+            SimpleNamespace(
+                eos_token_id=9,
+                token_text=lambda token_id: f"T{token_id}".encode(),
+            ),
+            manual_session,
+            _Ds4GenerationPlan(
+                max_new_tokens=1,
+                sampling_options=SamplingOptions(),
+                stop_strings=(),
+                use_sampling=False,
+                emit_token_details=True,
+                top_logprobs=2,
+            ),
+            3,
+        )
+    )
+    assert manual_step.token_id == 5
+    assert manual_step.token_bytes == b"T5"
+    assert manual_step.token_detail == TokenDetail(
+        id=5,
+        token="T5",
+        probability=pytest.approx(exp(-0.4)),
+        probability_distribution="log_softmax",
+        step=3,
+        tokens=[
+            Token(id=5, token="T5", probability=exp(-0.4)),
+            Token(id=6, token="T6", probability=exp(-1.4)),
+        ],
+    )
+    assert manual_session.eval_calls == [5]
+
+    eos_from_step = run(
+        worker._token_detail_step_from_generation_step(
+            SimpleNamespace(),
+            SimpleNamespace(token_id=9, is_eos=True),
+            _Ds4GenerationPlan(
+                max_new_tokens=1,
+                sampling_options=SamplingOptions(),
+                stop_strings=(),
+                use_sampling=False,
+            ),
+            0,
+        )
+    )
+    assert eos_from_step.is_eos is True
+
+    decoded_step = run(
+        worker._token_detail_step_from_generation_step(
+            SimpleNamespace(token_text=lambda token_id: b"decoded"),
+            SimpleNamespace(
+                token_id=7,
+                is_eos=False,
+                token_logprob=None,
+                top_logprobs=((7, -0.7),),
+            ),
+            _Ds4GenerationPlan(
+                max_new_tokens=1,
+                sampling_options=SamplingOptions(),
+                stop_strings=(),
+                use_sampling=False,
+            ),
+            1,
+        )
+    )
+    assert decoded_step.token_bytes == b"decoded"
+    assert decoded_step.token_detail is not None
+    assert decoded_step.token_detail.probability == pytest.approx(exp(-0.7))
+
     class SampleSession:
         def sample(self, options: object) -> int:
             assert isinstance(options, FakeNativeSamplingOptions)
@@ -4202,6 +4293,12 @@ def test_ds4_worker_logprob_probability_and_bytes_edge_helpers(
         Ds4Worker._require_logprob_support(
             SimpleNamespace(token_logprob=lambda token_id: 0.0),
             1,
+        )
+    with pytest.raises(Ds4LoadError, match="must be a boolean"):
+        Ds4Worker._require_logprob_support(
+            SimpleNamespace(token_logprob=lambda token_id: 0.0),
+            0,
+            SimpleNamespace(logprobs="yes"),
         )
 
     class AwaitableEosEngine:
@@ -4284,6 +4381,64 @@ def test_ds4_worker_logprob_probability_and_bytes_edge_helpers(
     assert Ds4Worker._bytes_value(memoryview(b"B"), "bytes") == b"B"
     with pytest.raises(Ds4GenerationError, match="must return bytes"):
         Ds4Worker._bytes_value("bad", "bytes")
+
+
+def test_ds4_worker_score_option_and_signature_edge_helpers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worker = Ds4Worker(
+        _worker_options(_model_file(tmp_path)), 16, MagicMock(spec=Logger)
+    )
+    assert ds4_module._capability_bool(SimpleNamespace(), "missing") is None
+    plan = _Ds4GenerationPlan(
+        max_new_tokens=1,
+        sampling_options=SamplingOptions(),
+        stop_strings=(),
+        use_sampling=False,
+    )
+
+    worker._binding = _fake_binding(GenerationScoreOptions=None)
+    assert worker._generation_score_options(plan) is None
+
+    class BadTokenScoreMode:
+        def __new__(cls, value: str) -> "BadTokenScoreMode":
+            _ = value
+            raise ValueError("bad mode")
+
+    worker._binding = _fake_binding(TokenScoreMode=BadTokenScoreMode)
+    assert worker._generation_score_options(plan) is None
+
+    worker._binding = _fake_binding(TokenScoreMode=SimpleNamespace())
+    assert worker._generation_score_options(plan) is None
+
+    def bad_score_options(*, mode: object, top_k: int) -> object:
+        _ = mode, top_k
+        raise TypeError("bad score options")
+
+    worker._binding = _fake_binding(
+        GenerationScoreOptions=bad_score_options,
+        TokenScoreMode=SimpleNamespace(TOKEN_LOGPROB="token_logprob"),
+    )
+    assert worker._generation_score_options(plan) is None
+
+    def next_token() -> None:
+        pass
+
+    next_token.__signature__ = "bad"  # type: ignore[attr-defined]
+    assert (
+        Ds4Worker._method_supports_keyword(
+            SimpleNamespace(next_token=next_token), "next_token", "scores"
+        )
+        is True
+    )
+
+    monkeypatch.setattr(
+        ds4_module.importlib,
+        "import_module",
+        lambda _: SimpleNamespace(Ds4DiskKvCache=None),
+    )
+    with pytest.raises(Ds4LoadError, match="Ds4DiskKvCache"):
+        _Ds4DiskKvCache._cache_type()
 
 
 def test_ds4_worker_reset_session_warns_and_returns_create_error(
