@@ -12,6 +12,7 @@ from ....backends.ds4_native import (
     import_compatible_binding,
 )
 from ....backends.ds4_native import Engine as Ds4Engine
+from ....backends.ds4_native.availability import binding_capabilities
 from ....backends.ds4_native.metadata import DS4_BINDING_IMPORT_NAME
 from ....entities import (
     GenerationSettings,
@@ -94,6 +95,17 @@ _DSML_TOOL_START_MARKERS = (
 )
 
 _T = TypeVar("_T")
+
+
+def _capability_bool(capabilities: object | None, name: str) -> bool | None:
+    if capabilities is None:
+        return None
+    value = getattr(capabilities, name, None)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise Ds4LoadError(f"DS4 capability {name!r} must be a boolean.")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,6 +480,7 @@ class Ds4Worker:
         disk_cache_config: _Ds4DiskCacheConfig | None = None,
     ) -> None:
         self._binding: object | None = None
+        self._capabilities: object | None = None
         self._closed = True
         self._ctx_size = ctx_size
         self._engine: object | None = None
@@ -669,6 +682,9 @@ class Ds4Worker:
         self._binding = import_compatible_binding(
             backend=self._options.backend.value
         )
+        self._capabilities = binding_capabilities(self._binding)
+        if _capability_bool(self._capabilities, "payloads") is False:
+            self._disk_cache = None
         async_engine_type = getattr(self._binding, "AsyncEngine", None)
         if not callable(async_engine_type):
             raise Ds4LoadError(
@@ -853,7 +869,9 @@ class Ds4Worker:
         generation_plan: _Ds4GenerationPlan,
         step_index: int,
     ) -> object:
-        self._require_logprob_support(session, generation_plan.top_logprobs)
+        self._require_logprob_support(
+            session, generation_plan.top_logprobs, self._capabilities
+        )
         token_id = await self._select_token(session, generation_plan)
         eos_token_id = await self._eos_token_id(engine)
         is_eos = token_id == eos_token_id
@@ -910,13 +928,28 @@ class Ds4Worker:
         return self._token_id(value, operation)
 
     @staticmethod
-    def _require_logprob_support(session: object, top_k: int) -> None:
-        if not callable(getattr(session, "token_logprob", None)):
+    def _require_logprob_support(
+        session: object,
+        top_k: int,
+        capabilities: object | None = None,
+    ) -> None:
+        logprobs = _capability_bool(capabilities, "logprobs")
+        top_logprobs = _capability_bool(capabilities, "top_logprobs")
+        if logprobs is False or (
+            logprobs is None
+            and not callable(getattr(session, "token_logprob", None))
+        ):
             raise NotImplementedError(
                 "DS4 native backend does not support token logprobs. Install a"
                 " pyds4 build with token_logprob support."
             )
-        if top_k > 0 and not callable(getattr(session, "top_logprobs", None)):
+        if top_k > 0 and (
+            top_logprobs is False
+            or (
+                top_logprobs is None
+                and not callable(getattr(session, "top_logprobs", None))
+            )
+        ):
             raise NotImplementedError(
                 "DS4 native backend does not support token logprobs. "
                 "Install a pyds4 build with top_logprobs support."
@@ -933,9 +966,14 @@ class Ds4Worker:
     async def _token_probabilities(
         self, engine: object, session: object, top_k: int
     ) -> list[_Ds4TokenProbability]:
+        _ = engine
         if top_k == 0:
             return []
-        if not callable(getattr(session, "top_logprobs", None)):
+        top_logprobs = _capability_bool(self._capabilities, "top_logprobs")
+        if top_logprobs is False or (
+            top_logprobs is None
+            and not callable(getattr(session, "top_logprobs", None))
+        ):
             raise NotImplementedError(
                 "DS4 native backend does not support token logprobs. "
                 "Install a pyds4 build with top_logprobs support."
@@ -1109,12 +1147,16 @@ class Ds4Worker:
         task.add_done_callback(self._reset_tasks.discard)
 
     async def _save_snapshot(self, session: object) -> bytes | None:
+        if _capability_bool(self._capabilities, "snapshots") is False:
+            return None
         if not callable(getattr(session, "save_snapshot", None)):
             return None
         value = await self._call_async(session, "save_snapshot")
         return self._snapshot_bytes(value, "save_snapshot")
 
     async def _load_snapshot(self, session: object, snapshot: bytes) -> bool:
+        if _capability_bool(self._capabilities, "snapshots") is False:
+            return False
         if not callable(getattr(session, "load_snapshot", None)):
             return False
         await self._call_async(session, "load_snapshot", snapshot)

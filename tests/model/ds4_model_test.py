@@ -36,6 +36,7 @@ from avalan.backends.ds4_native.errors import (
 )
 from avalan.backends.ds4_native.metadata import (
     DS4_API_COMMIT,
+    DS4_API_VERSION,
     DS4_REQUIRED_C_SYMBOLS,
 )
 from avalan.entities import (
@@ -592,6 +593,25 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
+def _fake_capabilities(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "available_backends": ("metal", "cuda", "cpu"),
+        "backend": "metal",
+        "ds4_api_version": DS4_API_VERSION,
+        "ds4_commit": DS4_API_COMMIT,
+        "logprobs": False,
+        "mtp": True,
+        "payloads": False,
+        "progress": True,
+        "required_symbols": DS4_REQUIRED_C_SYMBOLS,
+        "snapshots": False,
+        "speculative_eval": False,
+        "top_logprobs": False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def _install_binding(monkeypatch: pytest.MonkeyPatch, binding: object) -> None:
     monkeypatch.setattr(availability, "import_module", lambda _: binding)
 
@@ -711,6 +731,29 @@ def test_ds4_model_load_passes_normalized_engine_options_to_pyds4(
         quality=True,
         native_log=False,
     )
+    model.close()
+
+
+def test_ds4_model_load_accepts_complete_pyds4_capabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    FakeNativeEngine.instances.clear()
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            capabilities=lambda: _fake_capabilities(
+                logprobs=True,
+                payloads=True,
+                snapshots=True,
+                speculative_eval=True,
+                top_logprobs=True,
+            )
+        ),
+    )
+
+    model = Ds4Model(str(_model_file(tmp_path)))
+
+    assert len(FakeNativeEngine.instances) == 1
     model.close()
 
 
@@ -2068,6 +2111,56 @@ def test_ds4_token_details_require_native_logprob_support(
     model.close()
 
 
+def test_ds4_missing_logprob_capability_only_blocks_token_details(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, logprobs=True
+            ),
+            capabilities=lambda: _fake_capabilities(
+                logprobs=False,
+                top_logprobs=False,
+            ),
+        ),
+    )
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    fake.token_text_map = {101: b"A"}
+
+    plain = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=False,
+            ),
+        )
+    )
+    assert run(plain.to_str()) == "A"
+
+    detailed = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=False,
+            ),
+            manual_sampling=True,
+            pick=1,
+        )
+    )
+    with pytest.raises(NotImplementedError, match="token logprobs"):
+        run(detailed.to_str())
+    assert fake.sessions[0].token_logprob_calls == []
+    model.close()
+
+
 def test_ds4_eval_call_order_matches_verified_session_semantics(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2187,6 +2280,44 @@ def test_ds4_token_text_failure_restores_snapshot_when_available(
     assert fake.sessions[0].invalidate_calls == 0
     assert fake.sessions[0].tokens == [30, 0, 5, 20]
     assert len(fake.sessions) == 1
+    model.close()
+
+
+def test_ds4_missing_snapshot_capability_rebuilds_on_generation_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, snapshots=True
+            ),
+            capabilities=lambda: _fake_capabilities(snapshots=False),
+        ),
+    )
+    model = Ds4Model(str(_model_file(tmp_path)))
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101]
+    fake.fail_token_text_ids = {101}
+
+    response = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=False,
+            ),
+        )
+    )
+
+    with pytest.raises(Ds4GenerationError, match="token_text failed"):
+        run(response.to_str())
+
+    assert fake.sessions[0].save_snapshot_calls == 0
+    assert fake.sessions[0].load_snapshot_calls == 0
+    assert fake.sessions[0].invalidate_calls == 1
+    assert len(fake.sessions) == 2
     model.close()
 
 
@@ -2455,6 +2586,62 @@ def test_ds4_disk_kv_cache_disabled_leaves_no_files(
 
     assert run(response.to_str()) == "<101>"
     assert fake.sessions[0].save_payload_calls == 0
+    assert not cache_dir.exists()
+    model.close()
+
+
+def test_ds4_missing_payload_capability_disables_disk_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(
+        monkeypatch,
+        _fake_binding(
+            AsyncEngine=_fake_async_engine_type(
+                FakeNativeEngine, payloads=True
+            ),
+            capabilities=lambda: _fake_capabilities(payloads=False),
+        ),
+    )
+    cache_dir = tmp_path / "kv"
+    model = Ds4Model(
+        str(_model_file(tmp_path)),
+        TransformerEngineSettings(
+            backend_config={
+                "kv_disk_dir": str(cache_dir),
+                "kv_disk_space_mb": 1,
+            }
+        ),
+    )
+    fake = _latest_fake_engine()
+    fake.argmax_script = [101, 102]
+
+    first = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                use_async_generator=False,
+            ),
+        )
+    )
+    second = run(
+        model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                use_async_generator=False,
+            ),
+        )
+    )
+
+    assert run(first.to_str()) == "<101>"
+    assert run(second.to_str()) == "<102>"
+    assert fake.session_sync_calls == [
+        (30, 0, 5, 20),
+        (30, 0, 5, 20),
+    ]
+    assert fake.sessions[0].save_payload_calls == 0
+    assert fake.sessions[0].load_payload_calls == 0
     assert not cache_dir.exists()
     model.close()
 

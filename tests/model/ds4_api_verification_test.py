@@ -39,6 +39,25 @@ def _fake_binding(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
+def _fake_capabilities(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "available_backends": ("metal",),
+        "backend": "metal",
+        "ds4_api_version": DS4_API_VERSION,
+        "ds4_commit": DS4_API_COMMIT,
+        "logprobs": True,
+        "mtp": True,
+        "payloads": True,
+        "progress": True,
+        "required_symbols": DS4_REQUIRED_C_SYMBOLS,
+        "snapshots": True,
+        "speculative_eval": True,
+        "top_logprobs": True,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def test_ds4_api_metadata_locks_verified_commit_and_symbols() -> None:
     assert DS4_BACKEND_NAME == "ds4"
     assert DS4_BINDING_IMPORT_NAME == "pyds4"
@@ -68,6 +87,47 @@ def test_ds4_api_metadata_locks_verified_commit_and_symbols() -> None:
 
 def test_require_compatible_startup_accepts_fake_binding() -> None:
     require_compatible_startup(_fake_binding(), "metal")
+
+
+def test_require_compatible_startup_accepts_pyds4_capabilities() -> None:
+    binding = _fake_binding(
+        __ds4_symbols__=None,
+        capabilities=lambda: _fake_capabilities(),
+        is_backend_available=lambda backend: False,
+    )
+
+    require_compatible_startup(binding, "metal")
+
+
+def test_require_compatible_binding_rejects_missing_capability_symbol() -> (
+    None
+):
+    symbols = tuple(
+        symbol
+        for symbol in DS4_REQUIRED_C_SYMBOLS
+        if symbol != "ds4_session_eval"
+    )
+
+    with pytest.raises(Ds4ApiVersionError, match="ds4_session_eval"):
+        require_compatible_binding(
+            _fake_binding(
+                capabilities=lambda: _fake_capabilities(
+                    required_symbols=symbols
+                )
+            )
+        )
+
+
+def test_require_backend_available_uses_pyds4_capabilities() -> None:
+    binding = _fake_binding(
+        capabilities=lambda: _fake_capabilities(available_backends=("cuda",)),
+        is_backend_available=lambda backend: True,
+    )
+
+    with pytest.raises(
+        Ds4BackendUnavailable, match="unavailable on this platform"
+    ):
+        require_backend_available(binding, "metal")
 
 
 def test_require_compatible_binding_rejects_missing_symbol() -> None:
