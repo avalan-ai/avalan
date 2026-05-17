@@ -98,6 +98,61 @@ jobs:
           parallel: true
           fail-on-error: true
 
+  ds4-bridge:
+    name: DS4 bridge (${{ matrix.target.name }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
+        target:
+          - name: linux-cpu
+            os: ubuntu-latest
+            backend: cpu
+          - name: macos-metal
+            os: macos-15
+            backend: metal
+
+    runs-on: ${{ matrix.target.os }}
+
+    env:
+      PYDS4_BACKEND: ${{ matrix.target.backend }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 2.3.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          virtualenvs-path: .venv
+          installer-parallel: true
+
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Install DS4 bridge dependencies
+        run: poetry sync --extras ds4 --with test --no-interaction
+
+      - name: Run DS4 bridge tests
+        run: |
+          poetry run pytest \
+            tests/model/ds4_binding_packaging_test.py::test_import_compatible_binding_accepts_installed_local_pyds4 \
+            tests/model/ds4_model_test.py::test_ds4_generation_stream_accepts_real_pyds4_score_types \
+            tests/tool/dsml_test.py \
+            --verbose
+
   finish:
     if: ${{ always() }}
     needs: test

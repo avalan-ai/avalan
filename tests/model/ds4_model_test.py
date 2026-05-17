@@ -722,6 +722,27 @@ def require_pyds4() -> None:
     pytest.importorskip("pyds4", reason=_PYDS4_SKIP_REASON)
 
 
+def _available_pyds4_backend(pyds4: object) -> str:
+    capabilities = getattr(pyds4, "capabilities")()
+    available_backends = getattr(capabilities, "available_backends", ())
+    available = {
+        str(getattr(backend, "value", backend))
+        for backend in available_backends
+    }
+    for backend in ("metal", "cuda", "cpu"):
+        if backend in available:
+            return backend
+    pytest.skip("pyds4 does not report an available DS4 backend.")
+
+
+def test_available_pyds4_backend_accepts_cpu_only_binding() -> None:
+    pyds4 = SimpleNamespace(
+        capabilities=lambda: SimpleNamespace(available_backends=("cpu",))
+    )
+
+    assert _available_pyds4_backend(pyds4) == "cpu"
+
+
 def _model_file(tmp_path: Path) -> Path:
     model_path = tmp_path / "ds4flash.gguf"
     model_path.write_bytes(b"gguf")
@@ -2216,7 +2237,14 @@ def test_ds4_generation_stream_accepts_real_pyds4_score_types(
     FakeNativeEngine.instances.clear()
 
     async def run_case() -> tuple[list[object], FakeNativeEngine]:
-        model = Ds4Model(str(_model_file(tmp_path)))
+        model = Ds4Model(
+            str(_model_file(tmp_path)),
+            TransformerEngineSettings(
+                backend_config={
+                    "native_backend": _available_pyds4_backend(pyds4)
+                }
+            ),
+        )
         fake = _latest_fake_engine()
         fake.argmax_script = [101]
         fake.token_logprobs = {101: -0.25}
