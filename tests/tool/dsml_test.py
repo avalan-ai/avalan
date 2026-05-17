@@ -1,3 +1,6 @@
+import subprocess
+import sys
+from pathlib import Path
 from unittest import TestCase, main
 from unittest.mock import patch
 from uuid import uuid4 as _uuid4
@@ -9,6 +12,29 @@ from avalan.tool.parser import ToolCallParser
 
 
 class DsmlToolsTestCase(TestCase):
+    def test_importing_dsml_module_does_not_import_pyds4(self):
+        env = {
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
+        }
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "import avalan.tool.dsml as dsml; "
+                    "print(hasattr(dsml, 'DsmlTools')); "
+                    "print('pyds4' in sys.modules)"
+                ),
+            ],
+            check=True,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.stdout.splitlines(), ["True", "False"])
+
     def test_render_tool_schemas_uses_function_payload(self):
         schemas = [
             {
@@ -195,16 +221,10 @@ class DsmlToolsTestCase(TestCase):
             DsmlTools.parse_generated_message("<｜DSML｜tool_calls>")
         )
 
-    def test_parse_generated_message_handles_unclosed_invoke_and_invalid_json(
+    def test_parse_generated_message_rejects_malformed_dsml(
         self,
     ):
         malformed = '<tool_calls><invoke name="broken"></tool_calls>'
-        parsed = DsmlTools.parse_generated_message(malformed)
-
-        self.assertIsNotNone(parsed)
-        assert parsed is not None
-        self.assertEqual(parsed.calls, ())
-
         invalid_json = (
             "<tool_calls>"
             '<invoke name="math.calculator">'
@@ -212,16 +232,15 @@ class DsmlToolsTestCase(TestCase):
             "</invoke>"
             "</tool_calls>"
         )
-        parsed = DsmlTools.parse_generated_message(invalid_json)
 
-        self.assertIsNotNone(parsed)
-        assert parsed is not None
-        self.assertEqual(parsed.calls[0].arguments, {"value": None})
+        self.assertIsNone(DsmlTools.parse_generated_message(malformed))
+        self.assertIsNone(DsmlTools.parse_generated_message(invalid_json))
 
-    def test_parameter_end_after_returns_original_index_for_unknown_marker(
+    def test_stream_argument_deltas_rejects_invalid_offsets(
         self,
     ):
-        self.assertEqual(DsmlTools._parameter_end_after("abc", 1), 1)
+        with self.assertRaises(ValueError):
+            DsmlTools.stream_argument_deltas("", -1)
 
     def test_stream_argument_deltas_omits_dsml_tags(self):
         raw = (
