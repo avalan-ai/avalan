@@ -70,6 +70,10 @@ from avalan.tool.dsml import DsmlParseResult, DsmlPromptMessage
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import MathToolSet
 
+_PYDS4_SKIP_REASON = (
+    "pyds4 is not installed; install the test group to run DS4 bridge tests."
+)
+
 
 class NativeBackend(StrEnum):
     METAL = "metal"
@@ -711,6 +715,11 @@ def _fake_capabilities(**overrides: object) -> SimpleNamespace:
 
 def _install_binding(monkeypatch: pytest.MonkeyPatch, binding: object) -> None:
     monkeypatch.setattr(availability, "import_module", lambda _: binding)
+
+
+@pytest.fixture
+def require_pyds4() -> None:
+    pytest.importorskip("pyds4", reason=_PYDS4_SKIP_REASON)
 
 
 def _model_file(tmp_path: Path) -> Path:
@@ -2199,7 +2208,7 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
 def test_ds4_generation_stream_accepts_real_pyds4_score_types(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    pyds4 = pytest.importorskip("pyds4")
+    pyds4 = pytest.importorskip("pyds4", reason=_PYDS4_SKIP_REASON)
     fake_async_engine = _fake_async_engine_type(
         FakeNativeEngine, logprobs=True
     )
@@ -2513,7 +2522,9 @@ def test_ds4_missing_snapshot_capability_rebuilds_on_generation_failure(
 
 
 def test_ds4_disk_kv_cache_hit_restores_matching_token_prefix(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2569,7 +2580,9 @@ def test_ds4_disk_kv_cache_hit_restores_matching_token_prefix(
 
 
 def test_ds4_disk_kv_cache_misses_for_different_prefix_or_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2647,7 +2660,9 @@ def test_ds4_disk_kv_cache_misses_for_different_prefix_or_context(
 
 
 def test_ds4_disk_kv_cache_corrupt_payload_is_skipped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2700,7 +2715,9 @@ def test_ds4_disk_kv_cache_corrupt_payload_is_skipped(
 
 
 def test_ds4_disk_kv_cache_write_failure_falls_back_to_live_session(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2782,7 +2799,9 @@ def test_ds4_disk_kv_cache_disabled_leaves_no_files(
 
 
 def test_ds4_missing_payload_capability_disables_disk_cache(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     _install_binding(
         monkeypatch,
@@ -2839,6 +2858,7 @@ def test_ds4_missing_payload_capability_disables_disk_cache(
 
 def test_ds4_disk_kv_cache_budget_evicts_least_useful_entries(
     tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = cast(Logger, MagicMock(spec=Logger))
     cache = _Ds4DiskKvCache(tmp_path / "kv", 150, logger, "namespace")
@@ -3834,6 +3854,7 @@ def test_ds4_generation_string_and_extra_validation(
 
 def test_ds4_disk_kv_cache_handles_payload_edge_cases(
     tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache = _Ds4DiskKvCache(tmp_path / "kv", 1024, logger, "namespace")
@@ -3869,7 +3890,9 @@ def test_ds4_disk_kv_cache_handles_payload_edge_cases(
 
 
 def test_ds4_disk_kv_cache_delegated_metadata_edges(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache = _Ds4DiskKvCache(tmp_path / "kv", 1024, logger, "namespace")
@@ -3894,6 +3917,7 @@ def test_ds4_disk_kv_cache_delegated_metadata_edges(
 
 def test_ds4_disk_kv_cache_skips_invalid_metadata_entries(
     tmp_path: Path,
+    require_pyds4: None,
 ) -> None:
     logger = MagicMock(spec=Logger)
     cache_dir = tmp_path / "kv"

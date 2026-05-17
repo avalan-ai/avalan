@@ -5994,25 +5994,22 @@ yaml = ["pyyaml (>=6.0.1)"]
 
 [[package]]
 name = "pyds4"
-version = "0.1.0"
+version = "1.0.0"
 description = "Python bindings for the DS4 native inference engine"
-optional = true
+optional = false
 python-versions = ">=3.11"
-groups = ["main"]
-markers = "extra == \"ds4\" and (platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")"
-files = []
-develop = false
+groups = ["main", "test"]
+files = [
+    {file = "pyds4-1.0.0-cp311-cp311-macosx_15_0_arm64.whl", hash = "sha256:42928d6c2a00242201d27076cd686818de699d330afe514c627bcd51d523f650"},
+    {file = "pyds4-1.0.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:ec5d90e934d60fcb02f52bc1567bf9eb832c71283f5d13c4b1c1c644e6d562b6"},
+    {file = "pyds4-1.0.0.tar.gz", hash = "sha256:cf83f97d281b9e5faf5c33ab51d228e1644eeaf24773d9d88d9e1a505ba1a4b3"},
+]
+markers = {main = "extra == \"ds4\" and (platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")", test = "(platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")"}
 
 [package.extras]
 dev = ["black (>=25.1.0)", "mypy (>=1.20.0)", "pybind11 (>=2.12)", "ruff (>=0.11.11)"]
-release = ["build (>=1.2)"]
+release = ["auditwheel (>=6.0) ; sys_platform == \"linux\"", "build (>=1.2)", "cmake (>=3.20)", "ninja (>=1.5)", "twine (>=6.0)"]
 test = ["pytest (>=8)"]
-
-[package.source]
-type = "git"
-url = "https://github.com/avalan-ai/pyds4.git"
-reference = "main"
-resolved_reference = "a4146fd9b1e16aa666cbe6f8fa68d15998f45e6e"
 
 [[package]]
 name = "pyee"
@@ -9176,7 +9173,7 @@ type = ["pytest-mypy"]
 agent = ["jinja2"]
 apple = ["mlx", "mlx-lm"]
 audio = ["soundfile", "torchaudio"]
-ds4 = ["pyds4", "pyds4"]
+ds4 = ["pyds4"]
 local = ["accelerate", "hf-xet", "huggingface-hub", "sentence-transformers", "torch", "transformers"]
 memory = ["beautifulsoup4", "boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "pypdf", "tree-sitter", "tree-sitter-python"]
 mlx = ["mlx", "mlx-lm"]
@@ -9193,4 +9190,4 @@ vllm = ["vllm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "599d2d9808bac5866f70ff077c6044deb0d112e829c831960786e625bee3e385"
+content-hash = "d3be021bad6349adef60863dc5c9606b5cbe8a8831b92d9185d66b50fe38893f"

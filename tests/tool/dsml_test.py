@@ -5,10 +5,17 @@ from unittest import TestCase, main
 from unittest.mock import patch
 from uuid import uuid4 as _uuid4
 
+import pytest
+
 from avalan.backends.ds4_native import ThinkMode
 from avalan.entities import MessageRole, MessageToolCall, ToolCall, ToolFormat
 from avalan.tool.dsml import DsmlPromptMessage, DsmlTools
 from avalan.tool.parser import ToolCallParser
+
+pytest.importorskip(
+    "pyds4",
+    reason="pyds4 is not installed; install the test group to run DS4 tests.",
+)
 
 
 class DsmlToolsTestCase(TestCase):
