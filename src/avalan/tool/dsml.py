@@ -31,24 +31,6 @@ class DsmlParseResult:
 class DsmlTools:
     """Render and parse DSML tool-call blocks through pyds4."""
 
-    TOOL_CALLS_START = "<｜DSML｜tool_calls>"
-    TOOL_CALLS_END = "</｜DSML｜tool_calls>"
-    TOOL_CALL_START_PREFIXES = (
-        "<｜DSML｜tool_calls",
-        "<DSML｜tool_calls",
-        "<tool_calls",
-    )
-    TOOL_CALL_END_MARKERS = (
-        "</｜DSML｜tool_calls>",
-        "</DSML｜tool_calls>",
-        "</tool_calls>",
-    )
-    PARAMETER_END_MARKERS = (
-        "</｜DSML｜parameter>",
-        "</DSML｜parameter>",
-        "</parameter>",
-    )
-
     @classmethod
     def render_prompt(
         cls,
@@ -147,6 +129,12 @@ class DsmlTools:
             int,
             cls._pyds4_dsml().tool_call_start_suffix_length(text),
         )
+
+    @classmethod
+    def tool_call_buffer_status(cls, text: str) -> str:
+        """Return pyds4's DSML buffer status value for ``text``."""
+        status = cls._pyds4_dsml().tool_call_buffer_status(text)
+        return cast(str, getattr(status, "value", status))
 
     @classmethod
     def stream_argument_deltas(

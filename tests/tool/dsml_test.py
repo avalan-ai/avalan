@@ -329,23 +329,86 @@ class ToolCallParserDsmlTestCase(TestCase):
             "math.calculator",
         )
 
+    def test_message_tool_calls_uses_dsml_start_helper(self):
+        parser = ToolCallParser()
+        text = "generated tool_calls message"
+        call = ToolCall(
+            id="call_1",
+            name="math.calculator",
+            arguments={"expression": "2 + 2"},
+        )
+
+        with (
+            patch.object(
+                DsmlTools,
+                "tool_call_start_span",
+                return_value=(0, len(text)),
+            ) as start_span,
+            patch.object(
+                DsmlTools,
+                "parse_tool_calls",
+                return_value=[call],
+            ) as parse_tool_calls,
+        ):
+            calls = parser.message_tool_calls(text)
+
+        start_span.assert_called_once_with(text)
+        parse_tool_calls.assert_called_once_with(text)
+        self.assertEqual(calls[0]["name"], "math.calculator")
+        self.assertEqual(calls[0]["arguments"], {"expression": "2 + 2"})
+
+    def test_message_tool_calls_skips_dsml_helper_for_plain_text(self):
+        parser = ToolCallParser()
+
+        with patch.object(
+            DsmlTools,
+            "tool_call_start_span",
+            side_effect=AssertionError("unexpected DSML import"),
+        ):
+            self.assertEqual(parser.message_tool_calls("plain text"), [])
+
+    def test_message_tool_calls_ignores_missing_pyds4_auto_probe(self):
+        parser = ToolCallParser()
+
+        with patch.object(
+            DsmlTools,
+            "tool_call_start_span",
+            side_effect=RuntimeError("pyds4 missing"),
+        ):
+            self.assertEqual(
+                parser.message_tool_calls("mentions tool_calls only"),
+                [],
+            )
+
     def test_dsml_tool_call_status_reports_prefix_open_and_closed(self):
         parser = ToolCallParser(tool_format=ToolFormat.DSML)
 
-        self.assertIs(
-            parser.tool_call_status("<｜DSM"),
-            ToolCallParser.ToolCallBufferStatus.PREFIX,
-        )
-        self.assertIs(
-            parser.tool_call_status("<｜DSML｜tool_calls>"),
-            ToolCallParser.ToolCallBufferStatus.OPEN,
-        )
-        self.assertIs(
-            parser.tool_call_status(
-                "<｜DSML｜tool_calls></｜DSML｜tool_calls>"
+        cases = (
+            ("plain text", ToolCallParser.ToolCallBufferStatus.NONE),
+            ("<｜DSM", ToolCallParser.ToolCallBufferStatus.PREFIX),
+            (
+                "<｜DSML｜tool_calls>",
+                ToolCallParser.ToolCallBufferStatus.OPEN,
             ),
-            ToolCallParser.ToolCallBufferStatus.CLOSED,
+            (
+                "<｜DSML｜tool_calls></｜DSML｜tool_calls>",
+                ToolCallParser.ToolCallBufferStatus.CLOSED,
+            ),
+            ("<DSML｜tool_calls>", ToolCallParser.ToolCallBufferStatus.OPEN),
+            (
+                "<DSML｜tool_calls></DSML｜tool_calls>",
+                ToolCallParser.ToolCallBufferStatus.CLOSED,
+            ),
+            ("<tool_calls>", ToolCallParser.ToolCallBufferStatus.OPEN),
+            (
+                "<tool_calls></tool_calls>",
+                ToolCallParser.ToolCallBufferStatus.CLOSED,
+            ),
         )
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertIs(parser.tool_call_status(text), expected)
 
 
 if __name__ == "__main__":
