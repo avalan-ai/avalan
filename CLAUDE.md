@@ -1,114 +1,138 @@
 # CLAUDE.md
 
-This repository contains the **avalan** framework, a Python project that
-orchestrates multiple models and provides a CLI for AI agents. The repository
-uses [Poetry](https://python-poetry.org/) for dependency management
-and `pytest` for testing.
+This repository contains the **avalan** framework: a multi-backend,
+multi-modal micro-framework for building, orchestrating, and deploying AI
+agents. It ships as a Python SDK and a CLI (`avl` / `avalan`), bridging
+local and hosted models behind a single runtime. Dependency management uses
+[Poetry](https://python-poetry.org/); testing uses `pytest`.
 
-## Formatting & Style
+## Codebase tour
 
-- Python files use 4 spaces per indentation as enforced by `.editorconfig`.
-- Avoid code duplication wherever possible.
-- Code must target Python **3.11** or newer with fully strict type hints.
-- Prefer `type | None` instead of `Optional[type]` for optional values.
-- Use assertions to ensure argument validity.
+Source lives under `src/avalan/`. Tests under `tests/` mirror this layout,
+with files named `*_test.py`.
+
+- `agent/` — Agent definition and execution. Agents are TOML + Jinja2
+  templates loaded by `AgentLoader` (`agent/loader.py`) and run by
+  `EngineAgent` (`agent/engine.py`); multi-agent coordination lives in
+  `agent/orchestrator/`. The reference template is
+  `agent/templates/blueprint.toml`.
+- `model/` — Model abstraction across vendors and backends. Vendor URIs
+  follow `ai://env:KEY@vendor/model-id`. Backends include `transformers`,
+  vLLM, MLX-LM, and native DS4. See `model/manager.py` and `model/vendor.py`.
+- `tool/` — Tool system. `Tool` (ABC, async) and `ToolSet` live in
+  `tool/__init__.py`; tools generate JSON schemas automatically and are
+  loaded by `tool/manager.py`. Built-ins: browser, code, databases, graph,
+  MCP, memory, search, YouTube.
+- `memory/` — `MemoryStore[T]` with transient (`RecentMessageMemory`) and
+  persistent (`memory/permanent/`: PostgreSQL, S3, FAISS, Elasticsearch)
+  backends; chunking strategies in `memory/partitioner/`.
+- `flow/` — DAG-based orchestration (`flow.py`, `parser.py`, `node.py`)
+  with per-domain node types (browser, code, db, MCP, etc.).
+- `event/` — Agent lifecycle events (`Event`, `EventType`).
+- `server/` — FastAPI app exposing OpenAI-compatible endpoints, MCP, and
+  the A2A protocol (`server/a2a/`).
+- `backends/` — Native inference backends (e.g., `backends/ds4_native/`).
+- `cli/` — Entry points `avl` and `avalan` resolve to
+  `cli/__main__.py:main`; subcommands live under `cli/commands/`
+  (`agent`, `model`, `memory`, `tool`, `tokenizer`, `deploy`, …).
+- `deploy/`, `secrets/`, `logic/`, `compat.py`, `entities.py`, `filters.py`,
+  `utils.py` — supporting modules. `entities.py` holds the shared data
+  models (`Message`, `ToolCall`, `GenerationSettings`, …).
+
+Additional documentation: `docs/CLI.md`, `docs/DS4.md`, `docs/INSTALL.md`,
+`docs/ai_uri.md`, plus `docs/examples/` and `docs/tutorials/`.
+
+## Formatting & style
+
+- 4-space indentation (enforced by `.editorconfig`).
+- Target Python 3.11; avalan supports 3.11–3.13. Do not use
+  `from __future__ import annotations`.
+- Strict type hints throughout. Prefer `type | None` over `Optional[type]`.
+- `from X import Y` imports only — no inline imports. Sort by package name
+  alphabetically; relative imports at the top, also sorted alphabetically.
+- Use assertions to validate arguments.
 - Do not ignore exceptions unless instructed.
-- Don't use `from __future__ import annotations`.
-- Make sure you use `from X import Y` type of imports, don't use inline imports, and sort imports by package name alphabetically, leaving relative imports at the top, also sorted alphabetically.
 - Do not declare `__all__` lists.
+- Avoid code duplication.
 
-### Coding Standards
+### PEP standards
 
-Code must adhere to the following PEP standards:
+1. **PEP 8** — `snake_case` for modules/functions/variables, `PascalCase`
+   for classes, `UPPER_SNAKE` for constants; single space around binary
+   operators; no extra spaces inside brackets.
+2. **PEP 257** — triple-quoted docstrings immediately under
+   `def`/`class`/`module`; imperative voice ("Return", not "Returns");
+   wrap at ~72 chars; use `Args:` / `Returns:` / `Raises:` sections.
+3. **PEP 585** — built-in generics: `list[int]`, `dict[str, float]`,
+   `tuple[int, ...]`. Don't import `List` / `Dict` / `Tuple` from `typing`.
+4. **PEP 604** — union syntax: `str | float`, not `Union[str, float]`.
+5. **PEP 634/635/636** — use structural pattern matching (`match`/`case`)
+   where appropriate.
 
-1. **PEP 8**: Style guide for Python code: 4 spaces per indentation level;
-with naming conventions `lowercase_with_underscores` for modules/packages,
-`PascalCase` for classes, `lowercase_with_underscores` for
-functions/variables/parameters, `ALL_CAPS_WITH_UNDERSCORES` for constants;
-no extra spaces inside parentheses/brackets/braces, surround binary operators
-with a single space.
-
-2. **PEP 257**: write docstrings with triple-quoted strings immediately under
-`def`/`class`/`module` for one-line docstrings. For multiline docstrings
-write the summary, then a blank line, the extended description, and include
-optional and relevant sections like `Args:`, `Returns:`, `Raises:`. Follow
-imperative tone ("Return", not "Returns"), and wrap at ~72 chars.
-
-3. **PEP 585**: Write `list[int]`, `dict[str, float]`, `tuple[int, ...]`, etc.,
-using the built-in collection classes directly, instead of importing `List`,
-`Dict`, `Tuple` from `typing`.
-
-4. **PEP 604**: Write `str | float` instead of `Union[str, float]`.
-
-5. **PEP 634**, **PEP 635** and **PEP 636**: use structural pattern matching
-(`match` / `case`) when appropriate.
-
-Type hints encouraged throughout the codebase.
-
-Before committing, run `make lint` to perform syntax checks and formatting
-fixes with [black](https://black.readthedocs.io/en/stable/) and
-[ruff](https://docs.astral.sh/ruff/):
+Run `make lint` before committing — it runs `ruff format`, `black`,
+`ruff check --fix`, and `mypy` over `src/` and `tests/`:
 
 ```bash
 make lint
 ```
 
-## Tool Docstrings
+## Tool docstrings
 
-All subclasses of `Tool` must include descriptive docstrings in a consistent format:
+All `Tool` subclasses must include descriptive docstrings (agents rely on
+these when selecting tools):
 
-- Start with a summary sentence written in the imperative mood and ending with a period.
-- Follow the summary with a blank line, then `Args:` and `Returns:` sections documenting every user-provided parameter and the return value. Do **not** document the implicit `context` parameter.
-- Keep the docstring informative; agents rely on these descriptions when selecting tools.
-- Update the docstring format test in `tests/tool/tool_docstring_format_test.py` whenever new tools are introduced, including validations that ensure `context` is omitted.
+- Imperative summary sentence ending with a period.
+- Blank line, then `Args:` and `Returns:` sections covering every
+  user-provided parameter and the return value. **Do not document the
+  implicit `context` parameter.**
+- Update `tests/tool/tool_docstring_format_test.py` when introducing new
+  tools (it validates format and the absence of `context`).
 
-## Testing and coverage
+## Testing & coverage
 
-When adding or modifying code make sure you add unit tests for it, aiming to maintain **100% test coverage**, so test varying parameter values, and include negative testing.
+Aim for **100% test coverage**. Add unit tests alongside any code change,
+including negative cases and varied parameter values. Tests mirror the
+source layout under `tests/` and use the `*_test.py` naming convention.
 
-To get information about test coverage, use the `test-coverage` target from the `Makefile`. If you run it without arguments, like so:
-
-```bash
-make test-coverage
-```
-
-You'll get test coverage information for all files in `src/`, in the form:
-`path: percentage`. If you want to get the list of files where test coverage
-is less than 95%, do:
-
-```bash
-make test coverage -- -95
-```
-
-You can also add a specific path. For example, if you're looking for files
-that have less than 95% coverage on folder `src/avalan/tool`:
-
-```bash
-make test-coverage -- -95 src/avalan/tool
-```
-
-When working to increase code coverage **don't apply tricks** like using `exec` with `compile` to simulate lines covered.
-
-## Submitting changes
-
-Run the full test suite before every commit:
+Run the full suite before committing:
 
 ```bash
 poetry run pytest --verbose -s
 ```
 
-Tests must pass before you commit.
+Use `make test-coverage` to audit:
 
-### Commit Messages
+```bash
+make test-coverage                          # report all files in src/
+make test-coverage -- -95                   # files below 95%
+make test-coverage -- -95 src/avalan/tool   # below 95% under that path
+```
 
-- Keep commit messages short and descriptive (e.g. `Fix memory tests`).
+Do not fake coverage with `exec` / `compile` tricks.
+
+## Make targets
+
+- `make install` — `poetry sync --all-extras`.
+- `make lint` — format and type-check (`ruff`, `black`, `mypy`).
+- `make test` / `make tests` — run pytest with verbose output.
+- `make test-coverage [-- THRESHOLD [PATH]]` — coverage report; a negative
+  threshold filters to files below it.
+- `make version X.Y.Z` — bump `pyproject.toml` and push `release/vX.Y.Z`.
+- `make release X.Y.Z` — tag, publish to PyPI, and cut a GitHub release.
+
+## Submitting changes
+
+Tests must pass before every commit.
+
+### Commit messages
+
+- Short and descriptive (e.g. `Fix memory tests`).
 - Do not amend or rewrite previous commits.
 
-### Pull Request Message
+### Pull request body
 
-When you open a Pull Request, include two sections in the body:
+Include two sections:
 
-1. **Summary** – A short overview describing what was changed.
-2. **Testing** – Commands you executed and their output. If tests could not be
-run due to missing dependencies or network restrictions, mention this.
-
+1. **Summary** — overview of what changed.
+2. **Testing** — commands executed and their output. If tests could not be
+   run (missing deps, network restrictions, etc.), say so.
