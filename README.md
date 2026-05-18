@@ -21,8 +21,8 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 - 🔌 **Multiple backends** including
   [`transformers`](https://github.com/huggingface/transformers),
   [`vLLM`](https://github.com/vllm-project/vllm), and
-  [`mlx-lm`](https://github.com/ml-explore/mlx-lm), plus native DS4 for
-  [`DS4`](https://github.com/antirez/ds4)-supported DeepSeek V4 Flash GGUFs.
+  [`mlx-lm`](https://github.com/ml-explore/mlx-lm), plus native support for
+  [`DS4`](https://github.com/avalan-ai/pyds4)-supported DeepSeek V4 Flash GGUFs.
 - 🧰 **Built-in tools and memory** for browser automation, code execution,
   databases, MCP, search, YouTube, and vector-backed retrieval.
 - 🧠 **Composable orchestration** with flows, branching, reasoning strategies, and
@@ -77,7 +77,7 @@ Add hardware-specific extras when needed:
 - `vllm` – the vLLM runtime without the full NVIDIA bundle.
 - `quantization` – 4-bit and 8-bit model loading.
 - `ds4` – native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
-  through `pyds4`. Production targets are macOS arm64 with Metal and Linux
+  through [pyds4](https://github.com/avalan-ai/pyds4). Production targets are macOS arm64 with Metal and Linux
   with CUDA; CPU mode is only a debug/reference path.
 
 For the leanest install, omit the extras list entirely.
@@ -88,7 +88,7 @@ DS4 users can install the optional backend with:
 python3 -m pip install -U "avalan[ds4]"
 ```
 
-If no `pyds4` wheel is available for your platform, build or install the
+If no [pyds4](https://github.com/avalan-ai/pyds4) wheel is available for your platform, build or install the
 binding first, then install Avalan. See [docs/INSTALL.md](docs/INSTALL.md#ds4-native-backend)
 for the supported targets and source-build path, and
 [docs/DS4.md](docs/DS4.md) for CLI examples and current limitations.
@@ -286,7 +286,7 @@ The output shows the reasoning and the correct final answer:
 ### DS4 native backend
 
 DS4 is available as a local text-generation backend for DS4-supported
-DeepSeek V4 Flash GGUF files. It is not a generic GGUF backend.
+DeepSeek V4 Flash GGUF files via [pyds4](https://github.com/avalan-ai/pyds4). It is not a generic GGUF backend.
 DS4 opens the GGUF directly from the filesystem and does not require
 `HF_TOKEN`.
 
