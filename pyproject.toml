@@ -13,9 +13,9 @@ authors = [
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "packaging>=25.0,<26.0",
+  "packaging>=24.0,<27.0",
   "humanize>=4.12.3,<5.0.0",
-  "rich>=14.1.0,<15.0.0",
+  "rich>=13.7.0,<16.0.0",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -76,22 +76,27 @@ quantization = [
 ]
 server = [
   "a2a-sdk>=0.3.6,<0.4.0",
-  "fastapi>=0.136.1,<0.137.0",
+  "fastapi>=0.101.0,<1.0.0",
   "mcp>=1.12.3,<2.0.0",
-  "pydantic>=2.11.7,<3.0.0",
-  "uvicorn>=0.35.0,<0.36.0",
+  "pydantic>=2.0,<3.0.0",
+  "uvicorn>=0.27.0,<1.0.0",
 ]
 
 tool = [
-  "aiomysql>=0.2.0,<0.3.0",
-  "asyncpg>=0.30.0,<0.31.0",
-  "matplotlib>=3.8.0,<4.0.0",
-  "pandas>=2.3.1,<3.0.0",
-  "playwright>=1.54.0,<2.0.0",
-  "RestrictedPython>=8.0,<9.0.0",
+  "aiomysql>=0.1.1,<0.4.0",
+  "asyncpg>=0.29.0,<0.32.0",
+  "matplotlib>=3.6.0,<4.0.0",
   "SQLAlchemy>=2.0.43,<3.0.0",
-  "sqlglot>=27.20.0,<28.0.0",
-  "sympy>=1.14.0,<2.0.0",
+  "sqlglot>=22.0,<31.0.0",
+  "sympy>=1.12,<2.0.0",
+]
+code = [
+  "RestrictedPython>=8.0,<9.0.0",
+]
+browser = [
+  "playwright>=1.54.0,<2.0.0",
+]
+youtube = [
   "youtube-transcript-api>=1.2.2,<2.0.0",
 ]
 secrets = [
@@ -101,7 +106,6 @@ secrets = [
 translation = [
   "protobuf>=6.31.1,<7.0.0",
   "sentencepiece>=0.2.0,<0.3.0",
-  "tiktoken>=0.13.0,<0.14.0",
 ]
 vendors = [
   "aioboto3>=15.0.0,<16.0.0",
@@ -110,15 +114,14 @@ vendors = [
   "google-genai>=1.28.0,<2.0.0",
   "litellm>=1.75.0,<2.0.0",
   "openai>=2.0.0,<3.0.0",
-  "pillow>=11.3.0,<12.0.0",
-  "tiktoken>=0.13.0,<0.14.0",
+  "pillow>=10.0,<13.0",
 ]
 vision = [
   "diffusers>=0.37.1,<0.38.0",
   "imageio>=2.37.0,<3.0.0",
   "imageio-ffmpeg>=0.6.0,<0.7.0",
   "opencv-python>=4.12.0.88,<5.0.0",
-  "pillow>=11.3.0,<12.0.0",
+  "pillow>=10.0,<13.0",
   "torchvision>=0.26.0,<0.27.0",
 ]
 vllm = [

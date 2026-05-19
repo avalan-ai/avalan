@@ -122,7 +122,7 @@ Do not fake coverage with `exec` / `compile` tricks.
 
 ## Submitting changes
 
-Tests must pass before every commit.
+The full test suite must pass before every commit.
 
 ### Commit messages
 
