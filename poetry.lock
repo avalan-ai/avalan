@@ -134,7 +134,7 @@ description = "Happy Eyeballs for asyncio"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "aiohappyeyeballs-2.6.1-py3-none-any.whl", hash = "sha256:f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8"},
     {file = "aiohappyeyeballs-2.6.1.tar.gz", hash = "sha256:c3f9d0113123803ccadfdf3f0faa505bc78e6a72d1cc4806cbd719826e943558"},
@@ -147,7 +147,7 @@ description = "Async http client/server framework (asyncio)"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "aiohttp-3.13.5-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:02222e7e233295f40e011c1b00e3b0bd451f22cf853a0304c3595633ee47da4b"},
     {file = "aiohttp-3.13.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:bace460460ed20614fa6bc8cb09966c0b8517b8c58ad8046828c6078d25333b5"},
@@ -323,7 +323,7 @@ description = "aiosignal: a list of registered asynchronous callbacks"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "aiosignal-1.4.0-py3-none-any.whl", hash = "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"},
     {file = "aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7"},
@@ -340,7 +340,7 @@ description = "Document parameters, class attributes, return types, and variable
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "annotated_doc-0.0.4-py3-none-any.whl", hash = "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320"},
     {file = "annotated_doc-0.0.4.tar.gz", hash = "sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4"},
@@ -357,7 +357,7 @@ files = [
     {file = "annotated_types-0.7.0-py3-none-any.whl", hash = "sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53"},
     {file = "annotated_types-0.7.0.tar.gz", hash = "sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89"},
 ]
-markers = {main = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""}
+markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"}
 
 [[package]]
 name = "anthropic"
@@ -366,7 +366,7 @@ description = "The official Python library for the anthropic API"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "anthropic-0.71.1-py3-none-any.whl", hash = "sha256:6ca6c579f0899a445faeeed9c0eb97aa4bdb751196262f9ccc96edfc0bb12679"},
     {file = "anthropic-0.71.1.tar.gz", hash = "sha256:a77d156d3e7d318b84681b59823b2dee48a8ac508a3e54e49f0ab0d074e4b0da"},
@@ -588,7 +588,7 @@ description = "Classes Without Boilerplate"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373"},
     {file = "attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11"},
@@ -882,7 +882,7 @@ description = "Extensible memoizing collections and decorators"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "cachetools-6.2.0-py3-none-any.whl", hash = "sha256:1c76a8960c0041fcc21097e357f882197c79da0dbff766e7317890a65d7d8ba6"},
     {file = "cachetools-6.2.0.tar.gz", hash = "sha256:38b328c0889450f05f5e120f56ab68c8abaf424e1275522b138ffc93253f7e32"},
@@ -956,7 +956,7 @@ description = "Python package for providing Mozilla's CA Bundle."
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"translation\" or extra == \"memory\" or extra == \"tool\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\" or extra == \"translation\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\" or extra == \"translation\") and platform_system != \"Linux\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system != \"Linux\""
 files = [
     {file = "certifi-2025.10.5-py3-none-any.whl", hash = "sha256:0f212c2744a9bb6de0c56639a6f68afe01ecd92d91f14ae897c4fe7bbeeef0de"},
     {file = "certifi-2025.10.5.tar.gz", hash = "sha256:47c09d31ccf2acf0be3f701ea53595ee7e0b8fa08801c6624be771df09ae7b43"},
@@ -1067,7 +1067,7 @@ description = "The Real First Universal Charset Detector. Open, modern and activ
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"translation\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"translation\" or extra == \"vendors\" or extra == \"vision\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\")"
 files = [
     {file = "charset_normalizer-3.4.3-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:fb7f67a1bfa6e40b438170ebdc8158b78dc465a5a67b6dde178a46987b244a72"},
     {file = "charset_normalizer-3.4.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cc9370a2da1ac13f0153780040f465839e6cccb4a1e44810124b4e22483c93fe"},
@@ -1795,7 +1795,7 @@ description = "Distro - an OS platform information API"
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2"},
     {file = "distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed"},
@@ -1830,7 +1830,7 @@ description = "Parse Python docstrings in reST, Google and Numpydoc format"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b"},
     {file = "docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015"},
@@ -1978,7 +1978,7 @@ description = "FastAPI framework, high performance, easy to learn, fast to code,
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "fastapi-0.136.1-py3-none-any.whl", hash = "sha256:a6e9d7eeada96c93a4d69cb03836b44fa34e2854accb7244a1ece36cd4781c3f"},
     {file = "fastapi-0.136.1.tar.gz", hash = "sha256:7af665ad7acfa0a3baf8983d393b6b471b9da10ede59c60045f49fbc89a0fa7f"},
@@ -2381,7 +2381,7 @@ description = "A list-like structure which implements collections.abc.MutableSeq
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "frozenlist-1.8.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:b37f6d31b3dcea7deb5e9696e529a6aa4a898adc33db82da12e4c60a7c4d2011"},
     {file = "frozenlist-1.8.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:ef2b7b394f208233e471abc541cc6991f907ffd47dc72584acee3147899d6565"},
@@ -2667,7 +2667,7 @@ description = "Common protobufs used in Google APIs"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "googleapis_common_protos-1.70.0-py3-none-any.whl", hash = "sha256:b8bfcca8c25a2bb253e0e0b0adaf8c00773e5e6af6fd92397576680b807e0fd8"},
     {file = "googleapis_common_protos-1.70.0.tar.gz", hash = "sha256:0e1b44e0ea153e6594f9f394fef15193a68aaaea2d843f83e2742717ca753257"},
@@ -2686,7 +2686,7 @@ description = "Lightweight in-process concurrent programming"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"tool\""
+markers = "(platform_machine == \"aarch64\" or platform_machine == \"ppc64le\" or platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"win32\" or platform_machine == \"WIN32\" or extra == \"browser\") and (platform_system == \"Linux\" or extra == \"browser\" or extra == \"tool\") and (extra == \"tool\" or extra == \"browser\")"
 files = [
     {file = "greenlet-3.2.4-cp310-cp310-macosx_11_0_universal2.whl", hash = "sha256:8c68325b0d0acf8d91dde4e6f930967dd52a5302cd4062932a6b2e7c2969f47c"},
     {file = "greenlet-3.2.4-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:94385f101946790ae13da500603491f04a76b6e4c059dab271b3ce2e283b2590"},
@@ -3003,7 +3003,7 @@ description = "Consume Server-Sent Event (SSE) messages with HTTPX."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "httpx_sse-0.4.2-py3-none-any.whl", hash = "sha256:a9fa4afacb293fa50ef9bacb6cae8287ba5fd1f4b1c2d10a35bb981c41da31ab"},
     {file = "httpx_sse-0.4.2.tar.gz", hash = "sha256:5bb6a2771a51e6c7a5f5c645e40b8a5f57d8de708f46cb5f3868043c3c18124e"},
@@ -3084,7 +3084,7 @@ description = "Internationalized Domain Names in Applications (IDNA)"
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"translation\" or extra == \"memory\" or extra == \"tool\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\" or extra == \"translation\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\" or extra == \"translation\") and platform_system != \"Linux\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system != \"Linux\""
 files = [
     {file = "idna-3.10-py3-none-any.whl", hash = "sha256:946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3"},
     {file = "idna-3.10.tar.gz", hash = "sha256:12f65c9b470abda6dc35cf8e63cc574b1c52b11df2c86030af0ac09b01b13ea9"},
@@ -3259,7 +3259,7 @@ description = "Read metadata from Python packages"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\") or python_version == \"3.11\" and (extra == \"secrets\" or extra == \"vendors\" or extra == \"vision\") or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
+markers = "(python_version == \"3.11\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\") and (platform_system == \"Linux\" or python_version == \"3.11\" or extra == \"vendors\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
 files = [
     {file = "importlib_metadata-8.7.0-py3-none-any.whl", hash = "sha256:e5dd1551894c77868a30651cef00984d50e1002d06942a7101d34870c5f02afd"},
     {file = "importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000"},
@@ -3409,7 +3409,7 @@ description = "Fast iterable JSON parser."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "jiter-0.11.0-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:3893ce831e1c0094a83eeaf56c635a167d6fa8cc14393cc14298fd6fdc2a2449"},
     {file = "jiter-0.11.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:25c625b9b61b5a8725267fdf867ef2e51b429687f6a4eef211f4612e95607179"},
@@ -3498,7 +3498,7 @@ description = "JSON Matching Expressions"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\") or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\")"
 files = [
     {file = "jmespath-1.0.1-py3-none-any.whl", hash = "sha256:02e2e4cc71b5bcab88332eebf907519190dd9e6e82107fa7f83b1003a6252980"},
     {file = "jmespath-1.0.1.tar.gz", hash = "sha256:90261b206d6defd58fdd5e85f478bf633a2901798906be2ad389150c5c60edbe"},
@@ -3524,7 +3524,7 @@ description = "An implementation of JSON Schema validation for Python"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "jsonschema-4.25.1-py3-none-any.whl", hash = "sha256:3fba0169e345c7175110351d456342c364814cfcf3b964ba4587f22915230a63"},
     {file = "jsonschema-4.25.1.tar.gz", hash = "sha256:e4a9655ce0da0c0b67a085847e00a3a51449e1157f4f75e9fb5aa545e122eb85"},
@@ -3547,7 +3547,7 @@ description = "The JSON Schema meta-schemas and vocabularies, exposed as a Regis
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe"},
     {file = "jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d"},
@@ -4251,7 +4251,7 @@ description = "Model Context Protocol SDK"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "mcp-1.12.3-py3-none-any.whl", hash = "sha256:5483345bf39033b858920a5b6348a303acacf45b23936972160ff152107b850e"},
     {file = "mcp-1.12.3.tar.gz", hash = "sha256:ab2e05f5e5c13e1dc90a4a9ef23ac500a6121362a564447855ef0ab643a99fed"},
@@ -4378,7 +4378,7 @@ files = [
 
 [package.dependencies]
 numpy = [
-    {version = ">=1.23.3", markers = "python_version >= \"3.11\""},
+    {version = ">=1.23.3", markers = "python_version == \"3.11\""},
     {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
     {version = ">=2.1.0", markers = "python_version >= \"3.13\""},
 ]
@@ -4518,7 +4518,7 @@ description = "Python library for arbitrary-precision floating-point arithmetic"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\" or extra == \"tool\" or extra == \"memory\") or extra == \"memory\" or extra == \"local\" or extra == \"vision\" or extra == \"tool\""
+markers = "(extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\" or extra == \"tool\" or extra == \"memory\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"local\" or extra == \"vision\" or extra == \"tool\")"
 files = [
     {file = "mpmath-1.3.0-py3-none-any.whl", hash = "sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c"},
     {file = "mpmath-1.3.0.tar.gz", hash = "sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f"},
@@ -4591,7 +4591,7 @@ description = "multidict implementation"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "multidict-6.7.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:9f474ad5acda359c8758c8accc22032c6abe6dc87a8be2440d097785e27a9349"},
     {file = "multidict-6.7.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:4b7a9db5a870f780220e931d0002bbfd88fb53aceb6293251e2c839415c1b20e"},
@@ -4828,7 +4828,7 @@ description = "Python package for creating and manipulating graphs and networks"
 optional = true
 python-versions = ">=3.11"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\") or extra == \"local\" or extra == \"vision\""
+markers = "(extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"local\" or extra == \"vision\")"
 files = [
     {file = "networkx-3.5-py3-none-any.whl", hash = "sha256:0030d386a9a06dee3565298b4a734b68589749a544acbb6c412dc9e2489ec6ec"},
     {file = "networkx-3.5.tar.gz", hash = "sha256:d4c6f9cf81f52d69230866796b82afbccdec3db7ae4fbd1b65ea750feed50037"},
@@ -4977,7 +4977,7 @@ files = [
     {file = "numpy-2.2.6-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:d042d24c90c41b54fd506da306759e06e568864df8ec17ccc17e9e884634fd00"},
     {file = "numpy-2.2.6.tar.gz", hash = "sha256:e29554e2bef54a90aa5cc07da6ce955accb83f21ab5de01a62c8478897b264fd"},
 ]
-markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"audio\" or extra == \"memory\" or extra == \"quantization\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"audio\" or extra == \"memory\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\") or (extra == \"vision\" or extra == \"tool\" or extra == \"memory\" or extra == \"local\" or extra == \"audio\" or extra == \"vendors\") and platform_system != \"Linux\""}
+markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"audio\" or extra == \"memory\" or extra == \"quantization\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"audio\" or extra == \"memory\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\") or (extra == \"vision\" or extra == \"memory\" or extra == \"local\" or extra == \"audio\" or extra == \"tool\" or extra == \"vendors\") and platform_system != \"Linux\""}
 
 [[package]]
 name = "nvidia-cublas"
@@ -5337,7 +5337,7 @@ description = "The official Python library for the openai API"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "openai-2.37.0-py3-none-any.whl", hash = "sha256:814633888b8f3b1ffd6615697c6e4ef93632d08b7c2e28c8c5ef3556e5a10107"},
     {file = "openai-2.37.0.tar.gz", hash = "sha256:f4bc562cc5f3a43d40d678105572d9d44765f6e0f50c125f63055419b72f4bd9"},
@@ -5682,93 +5682,6 @@ files = [
 ]
 
 [[package]]
-name = "pandas"
-version = "2.3.1"
-description = "Powerful data structures for data analysis, time series, and statistics"
-optional = true
-python-versions = ">=3.9"
-groups = ["main"]
-markers = "extra == \"tool\""
-files = [
-    {file = "pandas-2.3.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:22c2e866f7209ebc3a8f08d75766566aae02bcc91d196935a1d9e59c7b990ac9"},
-    {file = "pandas-2.3.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:3583d348546201aff730c8c47e49bc159833f971c2899d6097bce68b9112a4f1"},
-    {file = "pandas-2.3.1-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0f951fbb702dacd390561e0ea45cdd8ecfa7fb56935eb3dd78e306c19104b9b0"},
-    {file = "pandas-2.3.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cd05b72ec02ebfb993569b4931b2e16fbb4d6ad6ce80224a3ee838387d83a191"},
-    {file = "pandas-2.3.1-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:1b916a627919a247d865aed068eb65eb91a344b13f5b57ab9f610b7716c92de1"},
-    {file = "pandas-2.3.1-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:fe67dc676818c186d5a3d5425250e40f179c2a89145df477dd82945eaea89e97"},
-    {file = "pandas-2.3.1-cp310-cp310-win_amd64.whl", hash = "sha256:2eb789ae0274672acbd3c575b0598d213345660120a257b47b5dafdc618aec83"},
-    {file = "pandas-2.3.1-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:2b0540963d83431f5ce8870ea02a7430adca100cec8a050f0811f8e31035541b"},
-    {file = "pandas-2.3.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:fe7317f578c6a153912bd2292f02e40c1d8f253e93c599e82620c7f69755c74f"},
-    {file = "pandas-2.3.1-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e6723a27ad7b244c0c79d8e7007092d7c8f0f11305770e2f4cd778b3ad5f9f85"},
-    {file = "pandas-2.3.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3462c3735fe19f2638f2c3a40bd94ec2dc5ba13abbb032dd2fa1f540a075509d"},
-    {file = "pandas-2.3.1-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:98bcc8b5bf7afed22cc753a28bc4d9e26e078e777066bc53fac7904ddef9a678"},
-    {file = "pandas-2.3.1-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:4d544806b485ddf29e52d75b1f559142514e60ef58a832f74fb38e48d757b299"},
-    {file = "pandas-2.3.1-cp311-cp311-win_amd64.whl", hash = "sha256:b3cd4273d3cb3707b6fffd217204c52ed92859533e31dc03b7c5008aa933aaab"},
-    {file = "pandas-2.3.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:689968e841136f9e542020698ee1c4fbe9caa2ed2213ae2388dc7b81721510d3"},
-    {file = "pandas-2.3.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:025e92411c16cbe5bb2a4abc99732a6b132f439b8aab23a59fa593eb00704232"},
-    {file = "pandas-2.3.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9b7ff55f31c4fcb3e316e8f7fa194566b286d6ac430afec0d461163312c5841e"},
-    {file = "pandas-2.3.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7dcb79bf373a47d2a40cf7232928eb7540155abbc460925c2c96d2d30b006eb4"},
-    {file = "pandas-2.3.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:56a342b231e8862c96bdb6ab97170e203ce511f4d0429589c8ede1ee8ece48b8"},
-    {file = "pandas-2.3.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:ca7ed14832bce68baef331f4d7f294411bed8efd032f8109d690df45e00c4679"},
-    {file = "pandas-2.3.1-cp312-cp312-win_amd64.whl", hash = "sha256:ac942bfd0aca577bef61f2bc8da8147c4ef6879965ef883d8e8d5d2dc3e744b8"},
-    {file = "pandas-2.3.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:9026bd4a80108fac2239294a15ef9003c4ee191a0f64b90f170b40cfb7cf2d22"},
-    {file = "pandas-2.3.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:6de8547d4fdb12421e2d047a2c446c623ff4c11f47fddb6b9169eb98ffba485a"},
-    {file = "pandas-2.3.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:782647ddc63c83133b2506912cc6b108140a38a37292102aaa19c81c83db2928"},
-    {file = "pandas-2.3.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2ba6aff74075311fc88504b1db890187a3cd0f887a5b10f5525f8e2ef55bfdb9"},
-    {file = "pandas-2.3.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:e5635178b387bd2ba4ac040f82bc2ef6e6b500483975c4ebacd34bec945fda12"},
-    {file = "pandas-2.3.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:6f3bf5ec947526106399a9e1d26d40ee2b259c66422efdf4de63c848492d91bb"},
-    {file = "pandas-2.3.1-cp313-cp313-win_amd64.whl", hash = "sha256:1c78cf43c8fde236342a1cb2c34bcff89564a7bfed7e474ed2fffa6aed03a956"},
-    {file = "pandas-2.3.1-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:8dfc17328e8da77be3cf9f47509e5637ba8f137148ed0e9b5241e1baf526e20a"},
-    {file = "pandas-2.3.1-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:ec6c851509364c59a5344458ab935e6451b31b818be467eb24b0fe89bd05b6b9"},
-    {file = "pandas-2.3.1-cp313-cp313t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:911580460fc4884d9b05254b38a6bfadddfcc6aaef856fb5859e7ca202e45275"},
-    {file = "pandas-2.3.1-cp313-cp313t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2f4d6feeba91744872a600e6edbbd5b033005b431d5ae8379abee5bcfa479fab"},
-    {file = "pandas-2.3.1-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:fe37e757f462d31a9cd7580236a82f353f5713a80e059a29753cf938c6775d96"},
-    {file = "pandas-2.3.1-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:5db9637dbc24b631ff3707269ae4559bce4b7fd75c1c4d7e13f40edc42df4444"},
-    {file = "pandas-2.3.1-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:4645f770f98d656f11c69e81aeb21c6fca076a44bed3dcbb9396a4311bc7f6d8"},
-    {file = "pandas-2.3.1-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:342e59589cc454aaff7484d75b816a433350b3d7964d7847327edda4d532a2e3"},
-    {file = "pandas-2.3.1-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d12f618d80379fde6af007f65f0c25bd3e40251dbd1636480dfffce2cf1e6da"},
-    {file = "pandas-2.3.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:dd71c47a911da120d72ef173aeac0bf5241423f9bfea57320110a978457e069e"},
-    {file = "pandas-2.3.1-cp39-cp39-musllinux_1_2_aarch64.whl", hash = "sha256:09e3b1587f0f3b0913e21e8b32c3119174551deb4a4eba4a89bc7377947977e7"},
-    {file = "pandas-2.3.1-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:2323294c73ed50f612f67e2bf3ae45aea04dce5690778e08a09391897f35ff88"},
-    {file = "pandas-2.3.1-cp39-cp39-win_amd64.whl", hash = "sha256:b4b0de34dc8499c2db34000ef8baad684cfa4cbd836ecee05f323ebfba348c7d"},
-    {file = "pandas-2.3.1.tar.gz", hash = "sha256:0a95b9ac964fe83ce317827f80304d37388ea77616b1425f0ae41c9d2d0d7bb2"},
-]
-
-[package.dependencies]
-numpy = [
-    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
-    {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
-]
-python-dateutil = ">=2.8.2"
-pytz = ">=2020.1"
-tzdata = ">=2022.7"
-
-[package.extras]
-all = ["PyQt5 (>=5.15.9)", "SQLAlchemy (>=2.0.0)", "adbc-driver-postgresql (>=0.8.0)", "adbc-driver-sqlite (>=0.8.0)", "beautifulsoup4 (>=4.11.2)", "bottleneck (>=1.3.6)", "dataframe-api-compat (>=0.1.7)", "fastparquet (>=2022.12.0)", "fsspec (>=2022.11.0)", "gcsfs (>=2022.11.0)", "html5lib (>=1.1)", "hypothesis (>=6.46.1)", "jinja2 (>=3.1.2)", "lxml (>=4.9.2)", "matplotlib (>=3.6.3)", "numba (>=0.56.4)", "numexpr (>=2.8.4)", "odfpy (>=1.4.1)", "openpyxl (>=3.1.0)", "pandas-gbq (>=0.19.0)", "psycopg2 (>=2.9.6)", "pyarrow (>=10.0.1)", "pymysql (>=1.0.2)", "pyreadstat (>=1.2.0)", "pytest (>=7.3.2)", "pytest-xdist (>=2.2.0)", "python-calamine (>=0.1.7)", "pyxlsb (>=1.0.10)", "qtpy (>=2.3.0)", "s3fs (>=2022.11.0)", "scipy (>=1.10.0)", "tables (>=3.8.0)", "tabulate (>=0.9.0)", "xarray (>=2022.12.0)", "xlrd (>=2.0.1)", "xlsxwriter (>=3.0.5)", "zstandard (>=0.19.0)"]
-aws = ["s3fs (>=2022.11.0)"]
-clipboard = ["PyQt5 (>=5.15.9)", "qtpy (>=2.3.0)"]
-compression = ["zstandard (>=0.19.0)"]
-computation = ["scipy (>=1.10.0)", "xarray (>=2022.12.0)"]
-consortium-standard = ["dataframe-api-compat (>=0.1.7)"]
-excel = ["odfpy (>=1.4.1)", "openpyxl (>=3.1.0)", "python-calamine (>=0.1.7)", "pyxlsb (>=1.0.10)", "xlrd (>=2.0.1)", "xlsxwriter (>=3.0.5)"]
-feather = ["pyarrow (>=10.0.1)"]
-fss = ["fsspec (>=2022.11.0)"]
-gcp = ["gcsfs (>=2022.11.0)", "pandas-gbq (>=0.19.0)"]
-hdf5 = ["tables (>=3.8.0)"]
-html = ["beautifulsoup4 (>=4.11.2)", "html5lib (>=1.1)", "lxml (>=4.9.2)"]
-mysql = ["SQLAlchemy (>=2.0.0)", "pymysql (>=1.0.2)"]
-output-formatting = ["jinja2 (>=3.1.2)", "tabulate (>=0.9.0)"]
-parquet = ["pyarrow (>=10.0.1)"]
-performance = ["bottleneck (>=1.3.6)", "numba (>=0.56.4)", "numexpr (>=2.8.4)"]
-plot = ["matplotlib (>=3.6.3)"]
-postgresql = ["SQLAlchemy (>=2.0.0)", "adbc-driver-postgresql (>=0.8.0)", "psycopg2 (>=2.9.6)"]
-pyarrow = ["pyarrow (>=10.0.1)"]
-spss = ["pyreadstat (>=1.2.0)"]
-sql-other = ["SQLAlchemy (>=2.0.0)", "adbc-driver-postgresql (>=0.8.0)", "adbc-driver-sqlite (>=0.8.0)"]
-test = ["hypothesis (>=6.46.1)", "pytest (>=7.3.2)", "pytest-xdist (>=2.2.0)"]
-xml = ["lxml (>=4.9.2)"]
-
-[[package]]
 name = "partial-json-parser"
 version = "0.2.1.1.post6"
 description = "Parse partial JSON generated by LLM"
@@ -5955,7 +5868,7 @@ files = [
     {file = "pillow-11.3.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:c84d689db21a1c397d001aa08241044aa2069e7587b398c8cc63020390b1c1b8"},
     {file = "pillow-11.3.0.tar.gz", hash = "sha256:3828ee7586cd0b2091b6209e5ad53e20d0649bbe87164a459d0676e035e8f523"},
 ]
-markers = {main = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vision\" or extra == \"tool\" or extra == \"vendors\") or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\""}
+markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vision\" or extra == \"tool\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\")"}
 
 [package.extras]
 docs = ["furo", "olefile", "sphinx (>=8.2)", "sphinx-autobuild", "sphinx-copybutton", "sphinx-inline-tabs", "sphinxext-opengraph"]
@@ -5990,7 +5903,7 @@ description = "A high-level API to automate web browsers"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"tool\""
+markers = "extra == \"browser\""
 files = [
     {file = "playwright-1.54.0-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:bf3b845af744370f1bd2286c2a9536f474cc8a88dc995b72ea9a5be714c9a77d"},
     {file = "playwright-1.54.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:780928b3ca2077aea90414b37e54edd0c4bbb57d1aafc42f7aa0b3fd2c2fac02"},
@@ -6062,7 +5975,7 @@ description = "Accelerated property cache"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "propcache-0.4.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:7c2d1fa3201efaf55d730400d945b5b3ab6e672e100ba0f9a409d950ab25d7db"},
     {file = "propcache-0.4.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:1eb2994229cc8ce7fe9b3db88f5465f5fd8651672840b2e426b88cdb1a30aac8"},
@@ -6235,7 +6148,7 @@ description = "Cross-platform lib for process and system monitoring."
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\") or extra == \"local\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\") and (platform_system == \"Linux\" or extra == \"local\")"
 files = [
     {file = "psutil-7.1.0-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:76168cef4397494250e9f4e73eb3752b146de1dd950040b29186d0cce1d5ca13"},
     {file = "psutil-7.1.0-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:5d007560c8c372efdff9e4579c2846d71de737e4605f611437255e81efcca2c5"},
@@ -6652,7 +6565,7 @@ description = "C parser in Python"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "implementation_name != \"PyPy\" and (implementation_name == \"pypy\" or platform_python_implementation != \"PyPy\" or extra == \"audio\") and (platform_system == \"Linux\" or platform_python_implementation != \"PyPy\" or extra == \"audio\") and (platform_system == \"Linux\" or sys_platform == \"linux\" or extra == \"memory\" or extra == \"audio\") and (platform_system == \"Linux\" or extra == \"secrets\" or extra == \"memory\" or extra == \"audio\") and (implementation_name == \"pypy\" or sys_platform == \"linux\" or extra == \"audio\" or extra == \"memory\") and (implementation_name == \"pypy\" or extra == \"audio\" or extra == \"memory\" or extra == \"secrets\") and (platform_python_implementation != \"PyPy\" or extra == \"audio\" or extra == \"vllm\" or extra == \"nvidia\") and (sys_platform == \"linux\" or extra == \"audio\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"memory\") and (extra == \"secrets\" or extra == \"memory\" or extra == \"audio\" or extra == \"vllm\" or extra == \"nvidia\")"
+markers = "platform_system == \"Linux\" and extra == \"secrets\" and sys_platform == \"linux\" and platform_python_implementation != \"PyPy\" and implementation_name != \"PyPy\" or platform_system == \"Linux\" and extra == \"memory\" and platform_python_implementation != \"PyPy\" and implementation_name != \"PyPy\" or platform_system == \"Linux\" and extra == \"audio\" and implementation_name != \"PyPy\" or platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\") and implementation_name == \"pypy\" or implementation_name != \"PyPy\" and (platform_python_implementation != \"PyPy\" or extra == \"audio\") and platform_system != \"Linux\" and (sys_platform == \"linux\" or extra == \"memory\" or extra == \"audio\") and (extra == \"secrets\" or extra == \"memory\" or extra == \"audio\")"
 files = [
     {file = "pycparser-2.23-py3-none-any.whl", hash = "sha256:e5c6e8d3fbad53479cab09ac03729e0a9faf2bee3db8208a550daf5af81a5934"},
     {file = "pycparser-2.23.tar.gz", hash = "sha256:78816d4f24add8f10a06d6f05b4d424ad9e96cfebf68a4ddc99c65c0720d00c2"},
@@ -6669,7 +6582,7 @@ files = [
     {file = "pydantic-2.12.5-py3-none-any.whl", hash = "sha256:e561593fccf61e8a20fc46dfc2dfe075b8be7d0188df33f221ad1f0139180f9d"},
     {file = "pydantic-2.12.5.tar.gz", hash = "sha256:4d351024c75c0f085a9febbb665ce8c0c6ec5d30e903bdb6394b7ede26aebb49"},
 ]
-markers = {main = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""}
+markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"}
 
 [package.dependencies]
 annotated-types = ">=0.6.0"
@@ -6812,7 +6725,7 @@ files = [
     {file = "pydantic_core-2.41.5-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:56121965f7a4dc965bff783d70b907ddf3d57f6eba29b6d2e5dabfaf07799c51"},
     {file = "pydantic_core-2.41.5.tar.gz", hash = "sha256:08daa51ea16ad373ffd5e7606252cc32f07bc72b28284b6bc9c6df804816476e"},
 ]
-markers = {main = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""}
+markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"}
 
 [package.dependencies]
 typing-extensions = ">=4.14.1"
@@ -6851,7 +6764,7 @@ description = "Settings management using Pydantic"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "pydantic_settings-2.11.0-py3-none-any.whl", hash = "sha256:fe2cea3413b9530d10f3a5875adffb17ada5c1e1bab0b2885546d7310415207c"},
     {file = "pydantic_settings-2.11.0.tar.gz", hash = "sha256:d0e87a1c7d33593beb7194adb8470fc426e95ba02af83a0f23474a04c9a08180"},
@@ -6887,7 +6800,7 @@ files = [
     {file = "pyds4-1.1.0-cp314-cp314-manylinux_2_38_x86_64.whl", hash = "sha256:6cc6f1d5990c6b7a799cbe1b8f397dd007fc1a6ff55be569a7eb3f77c3db2c16"},
     {file = "pyds4-1.1.0.tar.gz", hash = "sha256:f7efd564e1b647ef5efedac8e457841e34dc0d82b4e5d110b4fccbd963df03eb"},
 ]
-markers = {main = "extra == \"ds4\" and (platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")", test = "platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\""}
+markers = {main = "extra == \"ds4\" and (platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")", test = "(platform_system == \"Linux\" or platform_system == \"Darwin\") and (platform_system == \"Linux\" or platform_machine == \"arm64\")"}
 
 [package.extras]
 dev = ["black (>=25.1.0)", "mypy (>=1.20.0)", "pybind11 (>=2.12)", "ruff (>=0.11.11)"]
@@ -6901,7 +6814,7 @@ description = "A rough port of Node.js's EventEmitter to Python with a few trick
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"tool\""
+markers = "extra == \"browser\""
 files = [
     {file = "pyee-13.0.0-py3-none-any.whl", hash = "sha256:48195a3cddb3b1515ce0695ed76036b5ccc2ef3a9f963ff9f77aec0139845498"},
     {file = "pyee-13.0.0.tar.gz", hash = "sha256:b391e3c5a434d1f5118a25615001dbc8f669cf410ab67d04c4d4e07c55481c37"},
@@ -7063,7 +6976,7 @@ description = "Read key-value pairs from a .env file and set them as environment
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"memory\" or extra == \"vendors\") or extra == \"memory\" or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"memory\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "python_dotenv-1.1.1-py3-none-any.whl", hash = "sha256:31f23644fe2602f88ff55e1f5c79ba497e01224ee7737937930c448e4d0e24dc"},
     {file = "python_dotenv-1.1.1.tar.gz", hash = "sha256:a8a6399716257f45be6a007360200409fce5cda2661e3dec71d23dc15f6189ab"},
@@ -7095,7 +7008,7 @@ description = "A streaming multipart parser for Python"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104"},
     {file = "python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13"},
@@ -7155,19 +7068,6 @@ files = [
 
 [package.extras]
 dev = ["black", "build", "mypy", "pytest", "pytest-cov", "setuptools", "tox", "twine", "wheel"]
-
-[[package]]
-name = "pytz"
-version = "2025.2"
-description = "World timezone definitions, modern and historical"
-optional = true
-python-versions = "*"
-groups = ["main"]
-markers = "extra == \"tool\""
-files = [
-    {file = "pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00"},
-    {file = "pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3"},
-]
 
 [[package]]
 name = "pywin32"
@@ -7435,7 +7335,7 @@ description = "JSON Referencing + Python"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "referencing-0.36.2-py3-none-any.whl", hash = "sha256:e8699adbbf8b5c7de96d8ffa0eb5c158b3beafce084968e2ea8bb08c6794dcd0"},
     {file = "referencing-0.36.2.tar.gz", hash = "sha256:df2e89862cd09deabbdba16944cc3f10feb6b3e6f18e902f7cc25609a34775aa"},
@@ -7453,7 +7353,7 @@ description = "Alternative regular expression module, to replace re."
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"translation\" or extra == \"vendors\" or extra == \"vision\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"translation\" or extra == \"vendors\" or extra == \"vision\") or (extra == \"local\" or extra == \"translation\" or extra == \"vendors\" or extra == \"vision\") and platform_system != \"Linux\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\") and platform_system != \"Linux\""
 files = [
     {file = "regex-2026.4.4-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:74fa82dcc8143386c7c0392e18032009d1db715c25f4ba22d23dc2e04d02a20f"},
     {file = "regex-2026.4.4-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a85b620a388d6c9caa12189233109e236b3da3deffe4ff11b84ae84e218a274f"},
@@ -7578,7 +7478,7 @@ description = "Python HTTP for Humans."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"translation\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"translation\" or extra == \"vendors\" or extra == \"vision\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\")"
 files = [
     {file = "requests-2.32.5-py3-none-any.whl", hash = "sha256:2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6"},
     {file = "requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf"},
@@ -7601,7 +7501,7 @@ description = "RestrictedPython is a defined subset of the Python language which
 optional = true
 python-versions = "<3.15,>=3.9"
 groups = ["main"]
-markers = "extra == \"tool\""
+markers = "extra == \"code\""
 files = [
     {file = "restrictedpython-8.1-py3-none-any.whl", hash = "sha256:4769449c6cdb10f2071649ba386902befff0eff2a8fd6217989fa7b16aeae926"},
     {file = "restrictedpython-8.1.tar.gz", hash = "sha256:4a69304aceacf6bee74bdf153c728221d4e3109b39acbfe00b3494927080d898"},
@@ -7791,7 +7691,7 @@ description = "Python bindings to Rust's persistent data structures (rpds)"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"
 files = [
     {file = "rpds_py-0.27.1-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:68afeec26d42ab3b47e541b272166a0b4400313946871cba3ed3a4fc0cab1cef"},
     {file = "rpds_py-0.27.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:74e5b2f7bb6fa38b1b10546d27acbacf2a022a8b5543efb06cfebc72a59c85be"},
@@ -8498,7 +8398,7 @@ description = "Easily download, build, install, upgrade, and uninstall Python pa
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\") or extra == \"local\" or extra == \"vision\""
+markers = "(extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"local\" or extra == \"vision\")"
 files = [
     {file = "setuptools-80.9.0-py3-none-any.whl", hash = "sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922"},
     {file = "setuptools-80.9.0.tar.gz", hash = "sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c"},
@@ -8537,7 +8437,7 @@ files = [
     {file = "six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
     {file = "six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"},
 ]
-markers = {main = "(extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"tool\" or extra == \"vllm\" or extra == \"nvidia\") and (extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"tool\" or python_version >= \"3.12\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"tool\")"}
+markers = {main = "python_version >= \"3.12\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"tool\") or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"tool\""}
 
 [[package]]
 name = "sniffio"
@@ -8709,7 +8609,7 @@ description = "SSE plugin for Starlette"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "sse_starlette-3.0.2-py3-none-any.whl", hash = "sha256:16b7cbfddbcd4eaca11f7b586f3b8a080f1afe952c15813455b162edea619e5a"},
     {file = "sse_starlette-3.0.2.tar.gz", hash = "sha256:ccd60b5765ebb3584d0de2d7a6e4f745672581de4f5005ab31c3a25d10b52b3a"},
@@ -8731,7 +8631,7 @@ description = "The little ASGI library that shines."
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74"},
     {file = "starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933"},
@@ -8767,7 +8667,7 @@ description = "Computer algebra system (CAS) in Python"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\" or extra == \"tool\" or extra == \"memory\") or extra == \"memory\" or extra == \"local\" or extra == \"vision\" or extra == \"tool\""
+markers = "(extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\" or extra == \"tool\" or extra == \"memory\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"local\" or extra == \"vision\" or extra == \"tool\")"
 files = [
     {file = "sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5"},
     {file = "sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517"},
@@ -8832,7 +8732,7 @@ description = "tiktoken is a fast BPE tokeniser for use with OpenAI's models"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"translation\" or extra == \"vendors\") or extra == \"translation\" or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "tiktoken-0.13.0-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:47b1df8d73390a24f94980c75158cdd5c56d256f16d55f30cb49c230caba9ba4"},
     {file = "tiktoken-0.13.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:7d40c6c5aab171dcd6eb8455bc567bde404bb9def60cdb8c1299cc782b242bb9"},
@@ -9018,7 +8918,7 @@ description = "Tensors and Dynamic neural networks in Python with strong GPU acc
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\") or extra == \"local\" or extra == \"vision\""
+markers = "(extra == \"quantization\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vllm\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"local\" or extra == \"vision\")"
 files = [
     {file = "torch-2.11.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2c0d7fcfbc0c4e8bb5ebc3907cbc0c6a0da1b8f82b1fc6e14e914fa0b9baf74e"},
     {file = "torch-2.11.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:4cf8687f4aec3900f748d553483ef40e0ac38411c3c48d0a86a438f6d7a99b18"},
@@ -9117,7 +9017,7 @@ description = "An audio package for PyTorch"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\") or extra == \"audio\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"audio\") and (platform_system == \"Linux\" or extra == \"audio\")"
 files = [
     {file = "torchaudio-2.11.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:6ebb59c694909eccb5d61b7cc199d297692012c43286e36d92983aa7bad7586d"},
     {file = "torchaudio-2.11.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:be7ad472acb16d16e98c005f0219b0db06a47dfe8f7b4d177062e1638f871e3b"},
@@ -9156,7 +9056,7 @@ description = "image and video datasets and models for torch deep learning"
 optional = true
 python-versions = "!=3.14.1,>=3.10"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vision\") or extra == \"vision\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"vision\")"
 files = [
     {file = "torchvision-0.26.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:a06d4772a8e13e772906ed736cc53ec6639e5e60554f8e5fa6ca165aabebc464"},
     {file = "torchvision-0.26.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:2adfbe438473236191ff077a4a9a0c767436879c89628aa97137e959b0c11a94"},
@@ -9409,7 +9309,7 @@ files = [
     {file = "typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"},
     {file = "typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466"},
 ]
-markers = {main = "(python_version <= \"3.12\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"quantization\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\") and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"quantization\" or extra == \"memory\" or extra == \"tool\") or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") or (extra == \"vendors\" or extra == \"server\" or extra == \"local\" or extra == \"vision\" or extra == \"memory\" or extra == \"tool\") and platform_system != \"Linux\""}
+markers = {main = "(python_version < \"3.13\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"quantization\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"browser\") and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"quantization\" or extra == \"memory\" or extra == \"tool\" or extra == \"browser\") or platform_system == \"Darwin\" and python_version == \"3.13\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"browser\") or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\" or extra == \"browser\") or python_version == \"3.13\" and (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"browser\") and platform_system != \"Linux\" or (extra == \"vendors\" or extra == \"server\" or extra == \"local\" or extra == \"vision\" or extra == \"memory\" or extra == \"tool\" or extra == \"browser\") and platform_system != \"Linux\""}
 
 [[package]]
 name = "typing-inspection"
@@ -9422,7 +9322,7 @@ files = [
     {file = "typing_inspection-0.4.2-py3-none-any.whl", hash = "sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7"},
     {file = "typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464"},
 ]
-markers = {main = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") or extra == \"server\" or extra == \"vendors\""}
+markers = {main = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"server\" or extra == \"vendors\")"}
 
 [package.dependencies]
 typing-extensions = ">=4.12.0"
@@ -9434,7 +9334,7 @@ description = "Provider of IANA time zone data"
 optional = true
 python-versions = ">=2"
 groups = ["main"]
-markers = "(extra == \"memory\" or extra == \"tool\") and (sys_platform == \"win32\" or extra == \"tool\")"
+markers = "extra == \"memory\" and sys_platform == \"win32\""
 files = [
     {file = "tzdata-2025.2-py2.py3-none-any.whl", hash = "sha256:1a403fada01ff9221ca8044d701868fa132215d84beb92242d9acd2147f667a8"},
     {file = "tzdata-2025.2.tar.gz", hash = "sha256:b60a638fcc0daffadf82fe0f57e53d06bdec2f36c4df66280ae79bce6bd6f2b9"},
@@ -9447,7 +9347,7 @@ description = "HTTP library with thread-safe connection pooling, file post, and 
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"translation\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"server\" or extra == \"tool\" or extra == \"translation\" or extra == \"vision\""
+markers = "(extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\")"
 files = [
     {file = "urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc"},
     {file = "urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760"},
@@ -9466,7 +9366,7 @@ description = "The lightning-fast ASGI server."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") or extra == \"server\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\") and (platform_system == \"Linux\" or extra == \"server\")"
 files = [
     {file = "uvicorn-0.35.0-py3-none-any.whl", hash = "sha256:197535216b25ff9b785e29a0b79199f55222193d47f820816e7da751e9bc8d4a"},
     {file = "uvicorn-0.35.0.tar.gz", hash = "sha256:bc662f087f7cf2ce11a1d7fd70b90c9f98ef2e2831556dd078d131b96cc94a01"},
@@ -9765,7 +9665,7 @@ description = "An implementation of the WebSocket Protocol (RFC 6455 & 7692)"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "websockets-15.0.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:d63efaa0cd96cf0c5fe4d581521d9fa87744540d4bc999ae6e08595a1014b45b"},
     {file = "websockets-15.0.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:ac60e3b188ec7574cb761b08d50fcedf9d77f1530352db4eef1707fe9dee7205"},
@@ -10012,7 +9912,7 @@ description = "Yet another URL library"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") or extra == \"vendors\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\") and (platform_system == \"Linux\" or extra == \"vendors\")"
 files = [
     {file = "yarl-1.22.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:c7bd6683587567e5a49ee6e336e0612bec8329be1b7d4c8af5687dcdeb67ee1e"},
     {file = "yarl-1.22.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:5cdac20da754f3a723cceea5b3448e1a2074866406adeb4ef35b469d089adb8f"},
@@ -10193,7 +10093,7 @@ description = "Backport of pathlib-compatible object wrapper for zip files"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\") or python_version == \"3.11\" and (extra == \"secrets\" or extra == \"vendors\" or extra == \"vision\") or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
+markers = "(python_version == \"3.11\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\") and (platform_system == \"Linux\" or python_version == \"3.11\" or extra == \"vendors\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
 files = [
     {file = "zipp-3.23.0-py3-none-any.whl", hash = "sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e"},
     {file = "zipp-3.23.0.tar.gz", hash = "sha256:a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166"},
@@ -10211,6 +10111,8 @@ type = ["pytest-mypy"]
 agent = ["jinja2"]
 apple = ["mlx", "mlx-lm"]
 audio = ["soundfile", "torchaudio"]
+browser = ["playwright"]
+code = ["RestrictedPython"]
 ds4 = ["pyds4"]
 local = ["accelerate", "hf-xet", "huggingface-hub", "sentence-transformers", "torch", "transformers"]
 memory = ["beautifulsoup4", "boto3", "elasticsearch", "faiss-cpu", "markdownify", "markitdown", "pgvector", "psycopg", "pypdf", "tree-sitter", "tree-sitter-python"]
@@ -10219,13 +10121,13 @@ nvidia = ["bitsandbytes", "vllm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["a2a-sdk", "fastapi", "mcp", "pydantic", "uvicorn"]
-tool = ["RestrictedPython", "SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "pandas", "playwright", "sqlglot", "sympy", "youtube-transcript-api"]
-translation = ["protobuf", "sentencepiece", "tiktoken"]
-vendors = ["aioboto3", "anthropic", "diffusers", "google-genai", "litellm", "openai", "pillow", "tiktoken"]
+tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy", "youtube-transcript-api"]
+translation = ["protobuf", "sentencepiece"]
+vendors = ["aioboto3", "anthropic", "diffusers", "google-genai", "litellm", "openai", "pillow"]
 vision = ["diffusers", "imageio", "imageio-ffmpeg", "opencv-python", "pillow", "torchvision"]
 vllm = ["vllm"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "04cf66f58e84efbc0c83a60794443ac6890856ad0cc5420a9cba66187bdbde62"
+content-hash = "cc95209026f4406af6312607f13f1d2b5ae4e656182840036ce31eff704bb140"
