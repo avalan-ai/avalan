@@ -956,7 +956,7 @@ description = "Python package for providing Mozilla's CA Bundle."
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system != \"Linux\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"youtube\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"youtube\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"youtube\") and platform_system != \"Linux\""
 files = [
     {file = "certifi-2025.10.5-py3-none-any.whl", hash = "sha256:0f212c2744a9bb6de0c56639a6f68afe01ecd92d91f14ae897c4fe7bbeeef0de"},
     {file = "certifi-2025.10.5.tar.gz", hash = "sha256:47c09d31ccf2acf0be3f701ea53595ee7e0b8fa08801c6624be771df09ae7b43"},
@@ -1067,7 +1067,7 @@ description = "The Real First Universal Charset Detector. Open, modern and activ
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\")"
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"youtube\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"youtube\" or extra == \"vendors\" or extra == \"vision\")"
 files = [
     {file = "charset_normalizer-3.4.3-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:fb7f67a1bfa6e40b438170ebdc8158b78dc465a5a67b6dde178a46987b244a72"},
     {file = "charset_normalizer-3.4.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cc9370a2da1ac13f0153780040f465839e6cccb4a1e44810124b4e22483c93fe"},
@@ -1694,7 +1694,7 @@ description = "XML bomb protection for Python stdlib modules"
 optional = true
 python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
 groups = ["main"]
-markers = "extra == \"memory\" or extra == \"tool\""
+markers = "extra == \"memory\" or extra == \"youtube\""
 files = [
     {file = "defusedxml-0.7.1-py2.py3-none-any.whl", hash = "sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61"},
     {file = "defusedxml-0.7.1.tar.gz", hash = "sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69"},
@@ -3084,7 +3084,7 @@ description = "Internationalized Domain Names in Applications (IDNA)"
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"tool\") and platform_system != \"Linux\""
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"youtube\") and platform_system == \"Linux\" or platform_system == \"Darwin\" and platform_machine == \"arm64\" and (extra == \"mlx\" or extra == \"apple\" or extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"youtube\") or (extra == \"local\" or extra == \"vendors\" or extra == \"vision\" or extra == \"server\" or extra == \"memory\" or extra == \"youtube\") and platform_system != \"Linux\""
 files = [
     {file = "idna-3.10-py3-none-any.whl", hash = "sha256:946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3"},
     {file = "idna-3.10.tar.gz", hash = "sha256:12f65c9b470abda6dc35cf8e63cc574b1c52b11df2c86030af0ac09b01b13ea9"},
@@ -7478,7 +7478,7 @@ description = "Python HTTP for Humans."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"tool\" or extra == \"vendors\" or extra == \"vision\")"
+markers = "(extra == \"vllm\" or extra == \"nvidia\" or extra == \"vendors\" or extra == \"memory\" or extra == \"server\" or extra == \"youtube\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"server\" or extra == \"youtube\" or extra == \"vendors\" or extra == \"vision\")"
 files = [
     {file = "requests-2.32.5-py3-none-any.whl", hash = "sha256:2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6"},
     {file = "requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf"},
@@ -9347,7 +9347,7 @@ description = "HTTP library with thread-safe connection pooling, file post, and 
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "(extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"server\" or extra == \"tool\" or extra == \"vision\")"
+markers = "(extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"youtube\" or extra == \"vision\") and (platform_system == \"Linux\" or extra == \"memory\" or extra == \"secrets\" or extra == \"vendors\" or extra == \"server\" or extra == \"youtube\" or extra == \"vision\")"
 files = [
     {file = "urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc"},
     {file = "urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760"},
@@ -10058,7 +10058,7 @@ description = "This is a python API which allows you to get the transcripts/subt
 optional = true
 python-versions = "<3.15,>=3.8"
 groups = ["main"]
-markers = "extra == \"tool\""
+markers = "extra == \"youtube\""
 files = [
     {file = "youtube_transcript_api-1.2.4-py3-none-any.whl", hash = "sha256:03878759356da5caf5edac77431780b91448fb3d8c21d4496015bdc8a7bc43ff"},
     {file = "youtube_transcript_api-1.2.4.tar.gz", hash = "sha256:b72d0e96a335df599d67cee51d49e143cff4f45b84bcafc202ff51291603ddcd"},
@@ -10121,13 +10121,14 @@ nvidia = ["bitsandbytes", "vllm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["a2a-sdk", "fastapi", "mcp", "pydantic", "uvicorn"]
-tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy", "youtube-transcript-api"]
+tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy"]
 translation = ["protobuf", "sentencepiece"]
 vendors = ["aioboto3", "anthropic", "diffusers", "google-genai", "litellm", "openai", "pillow"]
 vision = ["diffusers", "imageio", "imageio-ffmpeg", "opencv-python", "pillow", "torchvision"]
 vllm = ["vllm"]
+youtube = ["youtube-transcript-api"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "cc95209026f4406af6312607f13f1d2b5ae4e656182840036ce31eff704bb140"
+content-hash = "c6af08cb0968680161b36f3728b07fc599574ee75ec085b93a752e5e05ddd945"
