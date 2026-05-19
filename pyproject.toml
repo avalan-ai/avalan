@@ -89,13 +89,15 @@ tool = [
   "SQLAlchemy>=2.0.43,<3.0.0",
   "sqlglot>=22.0,<31.0.0",
   "sympy>=1.12,<2.0.0",
-  "youtube-transcript-api>=1.2.2,<2.0.0",
 ]
 code = [
   "RestrictedPython>=8.0,<9.0.0",
 ]
 browser = [
   "playwright>=1.54.0,<2.0.0",
+]
+youtube = [
+  "youtube-transcript-api>=1.2.2,<2.0.0",
 ]
 secrets = [
   "boto3>=1.40.3,<2.0.0",
