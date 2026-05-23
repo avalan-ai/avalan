@@ -9,14 +9,39 @@ from ....tool.manager import ToolManager
 
 from asyncio import to_thread
 from dataclasses import asdict, replace
+from importlib import import_module
 from logging import Logger, getLogger
 from typing import Any, AsyncGenerator, Awaitable, Callable, Iterator, cast
 
-try:
-    from vllm import LLM, SamplingParams
-except ImportError:  # pragma: no cover - vllm may not be installed
-    LLM = None
-    SamplingParams = None
+_UNSET = object()
+LLM: Any = _UNSET
+SamplingParams: Any = _UNSET
+
+
+def _vllm_attribute(name: str) -> Any:
+    try:
+        module = import_module("vllm")
+    except ImportError:  # pragma: no cover - vllm may not be installed
+        return None
+    return getattr(module, name, None)
+
+
+def _llm_class() -> Any:
+    global LLM
+    if LLM is _UNSET:
+        LLM = _vllm_attribute("LLM")
+    assert LLM is not None and LLM is not _UNSET, "vLLM is not available"
+    return LLM
+
+
+def _sampling_params_class() -> Any:
+    global SamplingParams
+    if SamplingParams is _UNSET:
+        SamplingParams = _vllm_attribute("SamplingParams")
+    assert (
+        SamplingParams is not None and SamplingParams is not _UNSET
+    ), "vLLM is not available"
+    return SamplingParams
 
 
 class VllmStream(TextGenerationVendorStream):
@@ -63,17 +88,17 @@ class VllmModel(TextGenerationModel):
         return False
 
     def _load_model(self) -> Any:
-        assert LLM is not None, "vLLM is not available"
+        llm_class = _llm_class()
         assert self._model_id, "A model id is required."
-        return LLM(
+        return llm_class(
             model=self._model_id,
             tokenizer=self._settings.tokenizer_name_or_path or self._model_id,
             trust_remote_code=self._settings.trust_remote_code,
         )
 
     def _build_sampling_params(self, settings: GenerationSettings) -> Any:
-        assert SamplingParams is not None, "vLLM is not available"
-        return SamplingParams(
+        sampling_params_class = _sampling_params_class()
+        return sampling_params_class(
             temperature=(
                 settings.temperature
                 if settings.temperature is not None

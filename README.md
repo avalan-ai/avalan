@@ -65,6 +65,20 @@ brew install avalan-ai/avalan/avalan
 > This package installs the same extras profile as
 > `avalan[agent,server,tool,vendors]`.
 
+### 🐧 Ubuntu (PPA)
+
+```sh
+sudo apt update
+sudo apt install -y software-properties-common
+sudo add-apt-repository -y ppa:avalan-ai/avalan
+sudo apt update
+sudo apt install -y avalan
+```
+
+> [!TIP]
+> The Ubuntu package installs the same extras profile as
+> `avalan[agent,server,tool,vendors]`.
+
 ### 🐍 Pip
 
 ```sh
