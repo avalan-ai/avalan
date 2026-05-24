@@ -12,7 +12,6 @@ from ...entities import (
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.partitioner.text import TextPartitioner
 from ...memory.permanent import MemoryType
-from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from ...memory.source import MemorySource
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
@@ -29,11 +28,38 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from faiss import IndexFlatL2
-from markitdown import DocumentConverterResult, MarkItDown
 from numpy import abs, asarray, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from numpy.typing import NDArray
 from rich.console import Console
+
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    MarkItDown = None  # type: ignore[assignment, misc]
+
+try:
+    from ...memory.permanent.pgsql.raw import PgsqlRawMemory
+except ImportError:
+
+    class PgsqlRawMemory:  # type: ignore[no-redef]
+        @staticmethod
+        async def create_instance(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            raise RuntimeError(
+                "PostgreSQL memory requires a psycopg pq wrapper. "
+                "Install psycopg-binary, psycopg-c, or system libpq."
+            )
+
+
+def _markitdown() -> Any:
+    if MarkItDown is None:
+        raise RuntimeError(
+            "Document conversion requires the markitdown package. "
+            "It is unavailable on Python 3.14 until onnxruntime "
+            "publishes compatible wheels."
+        )
+    return MarkItDown()
 
 
 async def memory_document_index(
@@ -47,8 +73,8 @@ async def memory_document_index(
     assert args.partition_overlap and args.partition_window
     assert args.dsn and args.participant and args.namespace
 
-    def transform(html: bytes) -> DocumentConverterResult:
-        return MarkItDown().convert_stream(BytesIO(html))
+    def transform(html: bytes) -> Any:
+        return _markitdown().convert_stream(BytesIO(html))
 
     _, _i = theme._, theme.icons
     model_id = args.model

@@ -5,8 +5,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import numpy as np
-from psycopg import AsyncConnection, AsyncCursor
-from psycopg_pool import AsyncConnectionPool
+import pytest
+
+try:
+    from psycopg import AsyncConnection, AsyncCursor
+    from psycopg_pool import AsyncConnectionPool
+except ImportError:
+    pytest.skip("psycopg pq wrapper is unavailable", allow_module_level=True)
 
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import Entity, Hyperedge, Memory, MemoryType

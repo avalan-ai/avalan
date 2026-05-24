@@ -3,7 +3,14 @@ from types import SimpleNamespace
 import pytest
 from bs4 import BeautifulSoup
 
+from avalan.memory import source as memory_source_module
 from avalan.memory.source import MemorySource, MemorySourceDocument
+
+
+@pytest.fixture(autouse=True)
+def require_markitdown_package() -> None:
+    if memory_source_module.MarkItDown is None:
+        pytest.skip("markitdown is unavailable")
 
 
 class DummyResponse:
@@ -29,6 +36,15 @@ class DummyClient:
 
     async def aclose(self) -> None:
         raise AssertionError("DummyClient should not be closed")
+
+
+def test_memory_source_requires_markitdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("avalan.memory.source.MarkItDown", None)
+
+    with pytest.raises(RuntimeError, match="markitdown"):
+        MemorySource(client=DummyClient(response=DummyResponse()))
 
 
 @pytest.fixture

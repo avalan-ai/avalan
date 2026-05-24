@@ -4,10 +4,15 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+import pytest
 from numpy.random import rand
-from pgvector.psycopg import Vector
-from psycopg import AsyncConnection, AsyncCursor
-from psycopg_pool import AsyncConnectionPool
+
+try:
+    from pgvector.psycopg import Vector
+    from psycopg import AsyncConnection, AsyncCursor
+    from psycopg_pool import AsyncConnectionPool
+except ImportError:
+    pytest.skip("psycopg pq wrapper is unavailable", allow_module_level=True)
 
 from avalan.entities import EngineMessage, Message, MessageRole
 from avalan.memory.partitioner.text import TextPartition

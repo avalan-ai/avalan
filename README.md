@@ -46,14 +46,16 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 
 ## 📦 Install
 
-Avalan supports Python 3.11 through 3.13. Install the smallest profile that
+Avalan supports Python 3.11 through 3.14. Install the smallest profile that
 fits your workflow.
 
 > [!NOTE]
-> Python 3.14 support is currently held back by upstream package support:
-> `faiss-cpu` does not publish Python 3.14 Linux/macOS wheels yet, and
-> `cuda-tile` still declares `<3.14`. Recheck those packages before
-> re-enabling Python 3.14 CI targets.
+> The `vllm` extra, the vLLM runtime in the `nvidia` extra, and
+> `markitdown` document conversion in the `memory` extra are currently
+> limited to Python 3.11 through 3.13 by upstream dependencies. The pinned
+> `torchvision` release used by the `vision` extra also excludes Python
+> 3.14.1, and the `memory` extra omits `psycopg-binary` on Python 3.14 until
+> compatible wheels are published.
 
 ### 🍺 Homebrew (macOS)
 
@@ -94,8 +96,10 @@ python3 -m pip install -U "avalan[agent,server,tool,vendors]"
 Add hardware-specific extras when needed:
 
 - `mlx` or `apple` – Apple Silicon acceleration via MLX / MLX-LM.
-- `nvidia` – Linux + NVIDIA bundle for vLLM and quantization support.
-- `vllm` – the vLLM runtime without the full NVIDIA bundle.
+- `nvidia` – Linux + NVIDIA bundle for quantization support and vLLM
+  (vLLM on Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
+- `vllm` – the vLLM runtime without the full NVIDIA bundle
+  (Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
 - `quantization` – 4-bit and 8-bit model loading.
 - `ds4` – native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
   through [pyds4](https://github.com/avalan-ai/pyds4). Production targets are macOS arm64 with Metal and Linux

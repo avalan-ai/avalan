@@ -8,10 +8,15 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import numpy as np
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from psycopg import AsyncConnection, AsyncCursor
-from psycopg_pool import AsyncConnectionPool
+
+try:
+    from psycopg import AsyncConnection, AsyncCursor
+    from psycopg_pool import AsyncConnectionPool
+except ImportError:
+    pytest.skip("psycopg pq wrapper is unavailable", allow_module_level=True)
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import EngineMessage, Message, MessageRole, TextPartition

@@ -3,13 +3,18 @@ from dataclasses import dataclass
 from io import BytesIO
 from os.path import basename
 from re import DOTALL, MULTILINE, search, split
+from typing import Any
 from urllib.parse import urlparse
 
 from anyio import to_thread
 from bs4 import BeautifulSoup
 from httpx import AsyncClient, Response
-from markitdown import MarkItDown
 from pypdf import PdfReader
+
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    MarkItDown = None  # type: ignore[assignment, misc]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -24,7 +29,7 @@ class MemorySourceDocument:
 class MemorySource:
     _client: AsyncClient
     _max_description_chars: int | None
-    _md: MarkItDown
+    _md: Any
 
     def __init__(
         self,
@@ -34,11 +39,17 @@ class MemorySource:
         client: AsyncClient | None = None,
         max_description_chars: int | None = None,
     ) -> None:
+        if MarkItDown is None:
+            raise RuntimeError(
+                "Document conversion requires the markitdown package. "
+                "It is unavailable on Python 3.14 until onnxruntime "
+                "publishes compatible wheels."
+            )
         self._own_client: bool = client is None
         self._client: AsyncClient = client or AsyncClient(
             follow_redirects=follow_redirects, timeout=timeout
         )
-        self._md: MarkItDown = MarkItDown()
+        self._md = MarkItDown()
         self._max_description_chars = max_description_chars
 
     async def __aenter__(self) -> "MemorySource":

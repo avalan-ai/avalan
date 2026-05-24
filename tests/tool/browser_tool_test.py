@@ -186,7 +186,11 @@ class BrowserToolReadTestCase(IsolatedAsyncioTestCase):
         client = MagicMock()
         client.firefox = browser_type
 
-        tool = BrowserTool(settings, client)
+        with patch("avalan.tool.browser.MarkItDown") as md_patch:
+            md_patch.return_value.convert_stream.return_value = (
+                types.SimpleNamespace(text_content="parsed")
+            )
+            tool = BrowserTool(settings, client)
         tool._md.convert_stream = MagicMock(
             return_value=types.SimpleNamespace(text_content="parsed")
         )
@@ -198,6 +202,35 @@ class BrowserToolReadTestCase(IsolatedAsyncioTestCase):
         page.goto.assert_awaited_once_with("http://t")
         page.content.assert_awaited_once()
         self.assertEqual(content, "parsed")
+
+    async def test_read_uses_markdownify_when_markitdown_is_missing(self):
+        settings = BrowserToolSettings()
+        page = MagicMock()
+        page.goto = AsyncMock(
+            return_value=MagicMock(headers={"content-type": "text/html"})
+        )
+        page.content = AsyncMock(return_value="<html><body>hi</body></html>")
+        browser = MagicMock()
+        browser.new_page = AsyncMock(return_value=page)
+        browser_type = MagicMock()
+        browser_type.launch = AsyncMock(return_value=browser)
+        client = MagicMock()
+        client.firefox = browser_type
+
+        with (
+            patch("avalan.tool.browser.MarkItDown", None),
+            patch(
+                "avalan.tool.browser.markdownify_html",
+                return_value="hi",
+            ) as markdownify_patch,
+        ):
+            tool = BrowserTool(settings, client)
+            content = await tool._read("http://t")
+
+        markdownify_patch.assert_called_once_with(
+            "<html><body>hi</body></html>"
+        )
+        self.assertEqual(content, "hi")
 
     async def test_aexit_closes_resources(self):
         tool = BrowserTool(BrowserToolSettings(), MagicMock())

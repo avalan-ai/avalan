@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13']
+        python: ['3.11', '3.12', '3.13', '3.14']
         target:
           - name: linux-cuda
             os: ubuntu-latest
@@ -83,9 +83,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-v13-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          key: venv-v14-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
           restore-keys: |
-            venv-v13-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-
+            venv-v14-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Install dependencies
         run: poetry sync --all-extras --with test --no-interaction
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13']
+        python: ['3.11', '3.12', '3.13', '3.14']
         target:
           - name: linux-cuda
             os: ubuntu-latest

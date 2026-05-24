@@ -7,6 +7,7 @@ from asyncio import CancelledError, wait_for
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from email.message import EmailMessage
+from importlib import import_module
 from io import BytesIO, TextIOBase
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, cast, final
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 
 try:
     from faiss import IndexFlatL2
-    from markitdown import MarkItDown
     from numpy import vstack
     from playwright.async_api import (
         Browser,
@@ -47,6 +47,16 @@ except ImportError:
     Page = None  # type: ignore[assignment, misc]
     PlaywrightContextManager = None  # type: ignore[assignment, misc]
     async_playwright = None  # type: ignore[assignment]
+
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    MarkItDown = None  # type: ignore[assignment, misc]
+
+try:
+    markdownify_html: Any | None = import_module("markdownify").markdownify
+except ImportError:
+    markdownify_html = None
 
 
 @final
@@ -120,7 +130,7 @@ class BrowserTool(Tool):
         super().__init__()
         self._settings = settings
         self._client = client
-        self._md = MarkItDown()
+        self._md = MarkItDown() if MarkItDown is not None else None
         self._partitioner = partitioner
         self.__name__ = "open"
 
@@ -275,10 +285,18 @@ class BrowserTool(Tool):
         encoding = charset.lower() if isinstance(charset, str) else "utf-8"
         mime_type = m.get_content_type()
         byte_stream = BytesIO(contents.encode(encoding))
-        assert self._md is not None
-        result = self._md.convert_stream(byte_stream, mime_type=mime_type)
-        content = result.text_content
-        return content
+        if self._md is not None:
+            result = self._md.convert_stream(byte_stream, mime_type=mime_type)
+            converted_content: str = result.text_content
+            return converted_content
+
+        if markdownify_html is not None:
+            return cast(str, markdownify_html(contents))
+
+        raise RuntimeError(
+            "BrowserTool document conversion requires markitdown or "
+            "markdownify."
+        )
 
     def with_client(self, client: Any) -> "BrowserTool":
         self._client = client
