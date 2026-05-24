@@ -11,7 +11,7 @@ license = { text = "MIT" }
 authors = [
   { name = "The Avalan Team", email = "avalan@avalan.ai" },
 ]
-requires-python = ">=3.11,!=3.14.1,<3.15"
+requires-python = ">=3.11,<3.15"
 dependencies = [
   "packaging>=24.0,<27.0",
   "humanize>=4.12.3,<5.0.0",
@@ -64,9 +64,10 @@ memory = [
   "beautifulsoup4>=4.14.2,<5.0.0",
   "boto3>=1.40.3,<2.0.0",
   "faiss-cpu>=1.14.2,<2.0.0",
-  "markitdown[pdf]>=0.1.2,<0.2.0",
+  "markitdown[pdf]>=0.1.2,<0.2.0 ; python_version < '3.14'",
   "markdownify>=1.1.0,<2.0.0",
-  "psycopg[binary,pool]>=3.2.9,<4.0.0",
+  "psycopg[pool]>=3.2.9,<4.0.0",
+  "psycopg-binary>=3.2.9,<4.0.0 ; python_version < '3.14'",
   "pgvector>=0.4.1,<0.5.0",
   "pypdf>=6.1.1,<7.0.0",
   "tree-sitter>=0.25.1,<0.26.0",
@@ -130,7 +131,7 @@ vision = [
   "imageio-ffmpeg>=0.6.0,<0.7.0",
   "opencv-python>=4.12.0.88,<5.0.0",
   "pillow>=10.0,<13.0",
-  "torchvision>=0.26.0,<0.27.0",
+  "torchvision>=0.26.0,<0.27.0 ; python_full_version != '3.14.1'",
 ]
 vllm = [
   "vllm>=0.21.0,<0.22.0 ; platform_system == 'Linux' and python_version < '3.14'",

@@ -46,14 +46,16 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 
 ## 📦 Install
 
-Avalan supports Python 3.11 through 3.14, excluding Python 3.14.1 because
-the pinned `torchvision` release excludes that patch version. Install the
-smallest profile that fits your workflow.
+Avalan supports Python 3.11 through 3.14. Install the smallest profile that
+fits your workflow.
 
 > [!NOTE]
-> The `vllm` extra and the vLLM runtime in the `nvidia` extra are currently
-> limited to Python 3.11 through 3.13 because `cuda-tile`, a transitive vLLM
-> dependency, still declares `<3.14`.
+> The `vllm` extra, the vLLM runtime in the `nvidia` extra, and
+> `markitdown` document conversion in the `memory` extra are currently
+> limited to Python 3.11 through 3.13 by upstream dependencies. The pinned
+> `torchvision` release used by the `vision` extra also excludes Python
+> 3.14.1, and the `memory` extra omits `psycopg-binary` on Python 3.14 until
+> compatible wheels are published.
 
 ### 🍺 Homebrew (macOS)
 

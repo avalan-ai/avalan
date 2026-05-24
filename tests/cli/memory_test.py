@@ -1126,6 +1126,11 @@ class CliMemorySearchTestCase(IsolatedAsyncioTestCase):
 
 
 class CliMemoryDocumentTransformTestCase(TestCase):
+    def test_markitdown_helper_requires_dependency(self) -> None:
+        with patch.object(memory_cmds, "MarkItDown", None):
+            with self.assertRaisesRegex(RuntimeError, "markitdown"):
+                memory_cmds._markitdown()
+
     def test_transform_helper_converts_bytes(self) -> None:
         transform_code = memory_cmds.memory_document_index.__code__.co_consts[
             3

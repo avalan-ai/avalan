@@ -29,11 +29,25 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from faiss import IndexFlatL2
-from markitdown import DocumentConverterResult, MarkItDown
 from numpy import abs, asarray, corrcoef, dot, sum, vstack
 from numpy.linalg import norm
 from numpy.typing import NDArray
 from rich.console import Console
+
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    MarkItDown = None  # type: ignore[assignment, misc]
+
+
+def _markitdown() -> Any:
+    if MarkItDown is None:
+        raise RuntimeError(
+            "Document conversion requires the markitdown package. "
+            "It is unavailable on Python 3.14 until onnxruntime "
+            "publishes compatible wheels."
+        )
+    return MarkItDown()
 
 
 async def memory_document_index(
@@ -47,8 +61,8 @@ async def memory_document_index(
     assert args.partition_overlap and args.partition_window
     assert args.dsn and args.participant and args.namespace
 
-    def transform(html: bytes) -> DocumentConverterResult:
-        return MarkItDown().convert_stream(BytesIO(html))
+    def transform(html: bytes) -> Any:
+        return _markitdown().convert_stream(BytesIO(html))
 
     _, _i = theme._, theme.icons
     model_id = args.model
