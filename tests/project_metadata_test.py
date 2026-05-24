@@ -30,6 +30,18 @@ def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
     assert "diffusers>=0.37.1,<0.38.0" in vendors
 
 
+def test_project_metadata_advertises_python_314_support() -> None:
+    data = _pyproject()
+    project = data["project"]
+    specifier = SpecifierSet(str(project["requires-python"]))
+
+    assert "3.11" in specifier
+    assert "3.14" in specifier
+    assert "3.14.1" not in specifier
+    assert "3.15" not in specifier
+    assert "Programming Language :: Python :: 3.14" in project["classifiers"]
+
+
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     optional_deps = _optional_dependencies()
     selected_extras = ("agent", "server", "tool", "vendors")
@@ -50,6 +62,55 @@ def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
         "pyds4",
         "vllm",
     }
+
+
+def test_vllm_extras_remain_scoped_below_python_314() -> None:
+    optional_deps = _optional_dependencies()
+
+    for extra in ("vllm", "nvidia"):
+        requirements: list[Requirement] = []
+        for requirement in optional_deps[extra]:
+            parsed = Requirement(requirement)
+            if canonicalize_name(parsed.name) == "vllm":
+                requirements.append(parsed)
+
+        assert len(requirements) == 1
+        marker = requirements[0].marker
+
+        assert marker is not None
+        assert marker.evaluate(
+            {
+                "platform_system": "Linux",
+                "python_version": "3.13",
+            }
+        )
+        assert not marker.evaluate(
+            {
+                "platform_system": "Linux",
+                "python_version": "3.14",
+            }
+        )
+        assert not marker.evaluate(
+            {
+                "platform_system": "Darwin",
+                "python_version": "3.13",
+            }
+        )
+
+
+def test_memory_extra_requires_python_314_faiss_release() -> None:
+    requirements = [
+        Requirement(requirement)
+        for requirement in _optional_dependencies()["memory"]
+    ]
+    faiss_requirements = [
+        requirement
+        for requirement in requirements
+        if canonicalize_name(requirement.name) == "faiss-cpu"
+    ]
+
+    assert len(faiss_requirements) == 1
+    assert faiss_requirements[0].specifier == SpecifierSet(">=1.14.2,<2.0.0")
 
 
 def test_ds4_extra_declares_platform_scoped_pyds4_dependency() -> None:
