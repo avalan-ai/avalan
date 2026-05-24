@@ -3,12 +3,14 @@ from types import SimpleNamespace
 import pytest
 from bs4 import BeautifulSoup
 
+from avalan.memory import source as memory_source_module
 from avalan.memory.source import MemorySource, MemorySourceDocument
 
 
 @pytest.fixture(autouse=True)
 def require_markitdown_package() -> None:
-    pytest.importorskip("markitdown")
+    if memory_source_module.MarkItDown is None:
+        pytest.skip("markitdown is unavailable")
 
 
 class DummyResponse:

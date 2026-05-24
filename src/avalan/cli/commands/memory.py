@@ -12,7 +12,6 @@ from ...entities import (
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.partitioner.text import TextPartitioner
 from ...memory.permanent import MemoryType
-from ...memory.permanent.pgsql.raw import PgsqlRawMemory
 from ...memory.source import MemorySource
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.manager import ModelManager
@@ -38,6 +37,19 @@ try:
     from markitdown import MarkItDown
 except ImportError:
     MarkItDown = None  # type: ignore[assignment, misc]
+
+try:
+    from ...memory.permanent.pgsql.raw import PgsqlRawMemory
+except ImportError:
+
+    class PgsqlRawMemory:  # type: ignore[no-redef]
+        @staticmethod
+        async def create_instance(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            raise RuntimeError(
+                "PostgreSQL memory requires a psycopg pq wrapper. "
+                "Install psycopg-binary, psycopg-c, or system libpq."
+            )
 
 
 def _markitdown() -> Any:

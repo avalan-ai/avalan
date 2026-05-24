@@ -11,19 +11,11 @@ from avalan.entities import (
 )
 from avalan.memory import RecentMessageMemory
 from avalan.memory.permanent import PermanentMessageScored
-from avalan.memory.permanent.pgsql import PgsqlMemory
 
-
-class DummyPgsqlMemory(PgsqlMemory[object]):
-    async def append(self, agent_id, data):
-        del agent_id, data
-
-    async def reset(self):
-        return None
-
-    async def search(self, query):
-        del query
-        return None
+try:
+    from avalan.memory.permanent.pgsql import PgsqlMemory
+except ImportError:
+    PgsqlMemory = None  # type: ignore[assignment, misc]
 
 
 class RecentMessageMemoryCoverageTestCase(IsolatedAsyncioTestCase):
@@ -48,6 +40,20 @@ class PgsqlMemoryCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_ensure_vector_extension_success_fetches_vector(
         self,
     ) -> None:
+        if PgsqlMemory is None:
+            self.skipTest("psycopg pq wrapper is unavailable")
+
+        class DummyPgsqlMemory(PgsqlMemory[object]):
+            async def append(self, agent_id, data):
+                del agent_id, data
+
+            async def reset(self):
+                return None
+
+            async def search(self, query):
+                del query
+                return None
+
         memory = DummyPgsqlMemory(
             dsn="postgresql://db",
             logger=MagicMock(),
@@ -69,6 +75,9 @@ class PgsqlMemoryCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(cursor.fetchone.await_count, 2)
 
     async def test_to_engine_messages_scored_reverse_and_limit(self) -> None:
+        if PgsqlMemory is None:
+            self.skipTest("psycopg pq wrapper is unavailable")
+
         base_kwargs = {
             "session_id": uuid4(),
             "author": MessageRole.USER,

@@ -2,10 +2,15 @@ from dataclasses import dataclass
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-from psycopg import AsyncConnection, AsyncCursor
-from psycopg.errors import UndefinedFile
-from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+import pytest
+
+try:
+    from psycopg import AsyncConnection, AsyncCursor
+    from psycopg.errors import UndefinedFile
+    from psycopg.rows import dict_row
+    from psycopg_pool import AsyncConnectionPool
+except ImportError:
+    pytest.skip("psycopg pq wrapper is unavailable", allow_module_level=True)
 
 from avalan.memory.permanent import (
     RecordNotFoundException,
