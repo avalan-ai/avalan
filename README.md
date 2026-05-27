@@ -1904,6 +1904,39 @@ You can customize the MCP tool identity with `--mcp-name` (defaults to `run`) an
 > [!TIP]
 > Use `--protocol mcp` (optionally along with other `--protocol` flags) to expose only the MCP interface when serving your agent.
 
+##### Example: Use an avalan agent from Codex CLI
+
+Start an avalan agent as a streamable HTTP MCP server:
+
+```sh
+avalan agent serve \
+    --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini" \
+    --protocol mcp \
+    --mcp-name ask_avalan \
+    --mcp-description "Ask the avalan-hosted agent." \
+    --run-max-new-tokens 256 \
+    --developer "Answer concisely." \
+    --host 127.0.0.1 \
+    --port 9001 \
+    -vvv
+```
+
+In another terminal, point Codex CLI at that MCP endpoint:
+
+```sh
+codex mcp add avalan --url http://127.0.0.1:9001/mcp
+```
+
+Interactive Codex sessions will show the `ask_avalan` tool for approval when
+the model uses it. For non-interactive `codex exec`, approve that MCP server's
+tools in the command configuration:
+
+```sh
+codex exec \
+    -c 'mcp_servers.avalan.default_tools_approval_mode="approve"' \
+    'Use the ask_avalan MCP tool to ask: What is avalan?'
+```
+
 #### A2A server
 
 Avalan also embeds an A2A-compatible server alongside the OpenAI-compatible
