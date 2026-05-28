@@ -46,16 +46,11 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 
 ## 📦 Install
 
-Avalan supports Python 3.11 through 3.14. Install the smallest profile that
-fits your workflow.
+Avalan supports Python 3.11 through 3.14.
 
-> [!NOTE]
-> The `vllm` extra, the vLLM runtime in the `nvidia` extra, and
-> `markitdown` document conversion in the `memory` extra are currently
-> limited to Python 3.11 through 3.13 by upstream dependencies. The pinned
-> `torchvision` release used by the `vision` extra also excludes Python
-> 3.14.1, and the `memory` extra omits `psycopg-binary` on Python 3.14 until
-> compatible wheels are published.
+> [!TIP]
+> Pre-packaged installations of avalan install the same extras profile as
+> `avalan[agent,server,tool,vendors]`.
 
 ### 🍺 Homebrew (macOS)
 
@@ -63,35 +58,19 @@ fits your workflow.
 brew install avalan-ai/avalan/avalan
 ```
 
-> [!TIP]
-> This package installs the same extras profile as
-> `avalan[agent,server,tool,vendors]`.
-
 ### 🐧 Ubuntu (PPA)
 
 ```sh
-sudo apt update
-sudo apt install -y software-properties-common
 sudo add-apt-repository -y ppa:avalan-ai/avalan
 sudo apt update
 sudo apt install -y avalan
 ```
-
-> [!TIP]
-> The Ubuntu package installs the same extras profile as
-> `avalan[agent,server,tool,vendors]`.
 
 ### 🐍 Pip
 
 ```sh
 python3 -m pip install -U "avalan[agent,server,tool,vendors]"
 ```
-
-> [!NOTE]
-> The `tool` extra installs the shared math, graph, and database tool
-> dependencies. Add focused extras for tools that need heavier integrations:
-> `code` for `code.*`, `browser` for `browser.*`, and `youtube` for
-> `youtube.*`.
 
 Add hardware-specific extras when needed:
 
@@ -124,11 +103,6 @@ for the supported targets and source-build path, and
 poetry install --extras "agent server tool vendors" --with test
 ```
 
-> [!NOTE]
-> Include `code`, `browser`, or `youtube` in the extras list when working with
-> those toolsets. For browser-backed tools, for example, use
-> `poetry install --extras "agent server tool browser vendors" --with test`.
-
 > [!TIP]
 > On macOS ensure the Xcode command line tools are present and install the build dependencies before compiling extras that rely on `sentencepiece`:
 >
@@ -136,12 +110,6 @@ poetry install --extras "agent server tool vendors" --with test
 > xcode-select --install
 > brew install cmake pkg-config protobuf sentencepiece
 > ```
-
-When you need bleeding-edge `transformers` features, install the latest nightly:
-
-```sh
-poetry run pip install --no-cache-dir "git+https://github.com/huggingface/transformers"
-```
 
 ## ⚡ Quickstart
 
@@ -2025,6 +1993,14 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
   selection.
 - [docs/tutorials](docs/tutorials) – longer walkthroughs for advanced
   workflows.
+
+> [!NOTE]
+> The `vllm` extra, the vLLM runtime in the `nvidia` extra, and
+> `markitdown` document conversion in the `memory` extra are currently
+> limited to Python 3.11 through 3.13 by upstream dependencies. The pinned
+> `torchvision` release used by the `vision` extra also excludes Python
+> 3.14.1, and the `memory` extra omits `psycopg-binary` on Python 3.14 until
+> compatible wheels are published.
 
 ## Community & Support
 
