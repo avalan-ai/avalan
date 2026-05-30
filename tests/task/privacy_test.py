@@ -1,0 +1,467 @@
+from collections.abc import Mapping
+from math import inf
+from unittest import TestCase, main
+
+from avalan.task import (
+    DROPPED_MARKER,
+    ENCRYPTED_MARKER,
+    HASHED_MARKER,
+    REDACTED_MARKER,
+    STORED_MARKER,
+    EncryptedPrivacyValue,
+    PrivacyAction,
+    PrivacyField,
+    PrivacySanitizationError,
+    PrivacySanitizer,
+    TaskKeyMaterial,
+    TaskKeyPurpose,
+    TaskPrivacyPolicy,
+    privacy_policy_fields,
+    privacy_policy_hash_fields,
+    privacy_policy_raw_fields,
+    privacy_policy_store_fields,
+    privacy_policy_with_defaults,
+)
+
+
+class DeterministicHmacProvider:
+    def hmac_key(
+        self,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+    ) -> TaskKeyMaterial:
+        self.purpose = purpose
+        return TaskKeyMaterial(
+            key_id=key_id or "hmac-v1",
+            algorithm="hmac-sha256",
+            secret=b"test-hmac-key",
+        )
+
+
+class DeterministicEncryptionProvider:
+    def encrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> EncryptedPrivacyValue:
+        self.value = value
+        self.purpose = purpose
+        return EncryptedPrivacyValue(
+            ciphertext=b"encrypted:" + value,
+            key_id=key_id or "enc-v1",
+            algorithm="test-aead",
+            metadata=context,
+        )
+
+
+class SecretObject:
+    def __str__(self) -> str:
+        return "private prompt with /Users/person/secret.pdf"
+
+    def __repr__(self) -> str:
+        return "raw model output"
+
+
+class PrivacyTest(TestCase):
+    def test_policy_defaults_inherit_unspecified_keys(self) -> None:
+        policy = privacy_policy_with_defaults(
+            {
+                "input": PrivacyAction.REDACT,
+                "output": "encrypt",
+                "raw_retention_days": 7,
+            }
+        )
+
+        self.assertEqual(policy.input, PrivacyAction.REDACT)
+        self.assertEqual(policy.prompt, PrivacyAction.REDACT)
+        self.assertEqual(policy.output, PrivacyAction.ENCRYPT)
+        self.assertEqual(policy.file_bytes, PrivacyAction.DROP)
+        self.assertEqual(policy.token_text, PrivacyAction.DROP)
+        self.assertEqual(policy.tool_arguments, PrivacyAction.REDACT)
+        self.assertEqual(policy.tool_results, PrivacyAction.REDACT)
+        self.assertEqual(policy.events, PrivacyAction.REDACT)
+        self.assertEqual(policy.errors, PrivacyAction.REDACT)
+        self.assertEqual(policy.raw_retention_days, 7)
+        self.assertEqual(
+            privacy_policy_with_defaults(None), TaskPrivacyPolicy()
+        )
+
+    def test_policy_field_helpers_are_ordered_and_action_specific(
+        self,
+    ) -> None:
+        policy = TaskPrivacyPolicy(
+            input=PrivacyAction.HASH,
+            output=PrivacyAction.ENCRYPT,
+            tool_results=PrivacyAction.STORE,
+            raw_retention_days=7,
+        )
+
+        self.assertEqual(
+            tuple(privacy_policy_fields(policy)),
+            (
+                "input",
+                "prompt",
+                "output",
+                "files",
+                "file_bytes",
+                "token_text",
+                "tool_arguments",
+                "tool_results",
+                "events",
+                "errors",
+            ),
+        )
+        self.assertEqual(
+            privacy_policy_hash_fields(policy),
+            ("input", "files"),
+        )
+        self.assertEqual(
+            privacy_policy_raw_fields(policy),
+            ("output", "tool_results"),
+        )
+        self.assertEqual(
+            privacy_policy_store_fields(policy),
+            ("tool_results",),
+        )
+
+    def test_policy_default_overrides_reject_invalid_shapes(self) -> None:
+        with self.assertRaises(AssertionError):
+            privacy_policy_with_defaults({"unknown": "drop"})
+        with self.assertRaises(AssertionError):
+            privacy_policy_with_defaults({"raw_retention_days": "7"})
+        with self.assertRaises(ValueError):
+            privacy_policy_with_defaults({"input": "unknown"})
+
+    def test_default_policy_drops_or_redacts_sensitive_values(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        self.assertEqual(
+            sanitizer.sanitize(PrivacyField.TOKEN_TEXT, "secret token"),
+            {"privacy": DROPPED_MARKER},
+        )
+        self.assertEqual(
+            sanitizer.sanitize("prompt", "private prompt"),
+            {"privacy": REDACTED_MARKER},
+        )
+        self.assertEqual(
+            sanitizer.sanitize(
+                PrivacyField.TOOL_ARGUMENTS,
+                {"status": "started", "arguments": {"secret": "raw"}},
+            ),
+            {"status": "started"},
+        )
+
+    def test_hash_uses_keyed_hmac_without_storing_raw_value(self) -> None:
+        provider = DeterministicHmacProvider()
+        sanitizer = PrivacySanitizer(hmac_provider=provider)
+
+        sanitized = sanitizer.sanitize(
+            PrivacyField.INPUT,
+            {"query": "private prompt"},
+        )
+
+        self.assertEqual(provider.purpose, TaskKeyPurpose.PRIVACY_HASH)
+        self.assertEqual(sanitized["privacy"], HASHED_MARKER)
+        self.assertEqual(sanitized["algorithm"], "hmac-sha256")
+        self.assertEqual(sanitized["key_id"], "hmac-v1")
+        self.assertEqual(
+            sanitized["digest"],
+            "37259ead8f79dbec72fbbd917aafd6b04706b06187cdf2594966c222ded0b8f9",
+        )
+        self.assertNotIn("private prompt", str(sanitized))
+
+    def test_hash_accepts_binary_values_and_historical_key_ids(self) -> None:
+        sanitizer = PrivacySanitizer(hmac_provider=DeterministicHmacProvider())
+
+        bytes_value = sanitizer.sanitize(
+            PrivacyField.INPUT,
+            b"private bytes",
+            key_id="hmac-old",
+        )
+        bytearray_value = sanitizer.sanitize(
+            PrivacyField.INPUT,
+            bytearray(b"private bytes"),
+            key_id="hmac-old",
+        )
+
+        self.assertEqual(bytes_value["key_id"], "hmac-old")
+        self.assertEqual(bytearray_value["key_id"], "hmac-old")
+        self.assertEqual(bytes_value["digest"], bytearray_value["digest"])
+
+    def test_hash_fails_closed_without_hmac_provider(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        with self.assertRaises(PrivacySanitizationError) as error:
+            sanitizer.sanitize(PrivacyField.INPUT, "secret")
+
+        self.assertEqual(
+            str(error.exception), "privacy HMAC key is unavailable"
+        )
+
+    def test_encrypt_delegates_to_provider_without_plaintext_output(
+        self,
+    ) -> None:
+        provider = DeterministicEncryptionProvider()
+        policy = TaskPrivacyPolicy(
+            output=PrivacyAction.ENCRYPT,
+            raw_retention_days=3,
+        )
+        sanitizer = PrivacySanitizer(
+            policy,
+            encryption_provider=provider,
+            raw_storage_allowed=True,
+        )
+
+        sanitized = sanitizer.sanitize(PrivacyField.OUTPUT, {"answer": "raw"})
+
+        self.assertEqual(provider.purpose, TaskKeyPurpose.RAW_VALUE)
+        self.assertEqual(provider.value, b'{"answer":"raw"}')
+        self.assertEqual(sanitized["privacy"], ENCRYPTED_MARKER)
+        self.assertEqual(sanitized["algorithm"], "test-aead")
+        self.assertEqual(sanitized["key_id"], "enc-v1")
+        self.assertNotIn("raw", str(sanitized))
+
+    def test_encrypt_and_store_require_explicit_raw_retention(self) -> None:
+        encrypted = PrivacySanitizer(
+            TaskPrivacyPolicy(output=PrivacyAction.ENCRYPT),
+            encryption_provider=DeterministicEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        stored = PrivacySanitizer(
+            TaskPrivacyPolicy(output=PrivacyAction.STORE),
+            raw_storage_allowed=True,
+        )
+        disabled = PrivacySanitizer(
+            TaskPrivacyPolicy(output=PrivacyAction.STORE, raw_retention_days=1)
+        )
+        missing_key = PrivacySanitizer(
+            TaskPrivacyPolicy(
+                output=PrivacyAction.ENCRYPT,
+                raw_retention_days=1,
+            ),
+            raw_storage_allowed=True,
+        )
+
+        for sanitizer in (encrypted, stored, disabled):
+            with self.subTest(sanitizer=sanitizer):
+                with self.assertRaises(PrivacySanitizationError):
+                    sanitizer.sanitize(PrivacyField.OUTPUT, "secret")
+        with self.assertRaises(PrivacySanitizationError) as error:
+            missing_key.sanitize(PrivacyField.OUTPUT, "secret")
+        self.assertEqual(
+            str(error.exception),
+            "privacy encryption key is unavailable",
+        )
+
+        retained = PrivacySanitizer(
+            TaskPrivacyPolicy(
+                output=PrivacyAction.STORE,
+                raw_retention_days=1,
+            ),
+            raw_storage_allowed=True,
+        )
+        self.assertEqual(
+            retained.sanitize(PrivacyField.OUTPUT, {"safe": True}),
+            {"privacy": STORED_MARKER, "value": {"safe": True}},
+        )
+
+    def test_store_serializes_json_scalars_and_binary_values(self) -> None:
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(
+                output=PrivacyAction.STORE, raw_retention_days=1
+            ),
+            raw_storage_allowed=True,
+        )
+
+        sanitized = sanitizer.sanitize(
+            PrivacyField.OUTPUT,
+            [1, 1.5, b"raw", bytearray(b"bytes")],
+        )
+
+        self.assertEqual(
+            sanitized,
+            {
+                "privacy": STORED_MARKER,
+                "value": [
+                    1,
+                    1.5,
+                    {"encoding": "base64", "value": "cmF3"},
+                    {"encoding": "base64", "value": "Ynl0ZXM="},
+                ],
+            },
+        )
+        with self.assertRaises(PrivacySanitizationError) as error:
+            sanitizer.sanitize(PrivacyField.OUTPUT, {1: "raw"})
+        self.assertEqual(
+            str(error.exception),
+            "privacy value contains a non-string key",
+        )
+
+    def test_raw_storage_rejects_adversarial_values_without_repr(
+        self,
+    ) -> None:
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(
+                output=PrivacyAction.STORE, raw_retention_days=1
+            ),
+            raw_storage_allowed=True,
+        )
+
+        with self.assertRaises(PrivacySanitizationError) as nan_error:
+            sanitizer.sanitize(PrivacyField.OUTPUT, float("nan"))
+        with self.assertRaises(PrivacySanitizationError) as object_error:
+            sanitizer.sanitize(PrivacyField.OUTPUT, SecretObject())
+
+        rendered = f"{nan_error.exception} {object_error.exception}"
+        self.assertNotIn("private prompt", rendered)
+        self.assertNotIn("/Users/person/secret.pdf", rendered)
+        self.assertNotIn("raw model output", rendered)
+
+    def test_event_hashing_uses_the_configured_event_action(self) -> None:
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(events=PrivacyAction.HASH),
+            hmac_provider=DeterministicHmacProvider(),
+        )
+
+        event = sanitizer.sanitize_event(
+            "token",
+            {"token_text": "private token"},
+        )
+
+        self.assertEqual(event["privacy"], HASHED_MARKER)
+        self.assertNotIn("private token", str(event))
+
+    def test_recursive_event_sanitization_drops_unknown_fields(self) -> None:
+        sanitizer = PrivacySanitizer(
+            event_allowlists={"tool": ("count", "status")}
+        )
+        event = sanitizer.sanitize_event(
+            "tool",
+            {
+                "arguments": {"secret": "raw argument"},
+                "count": 2,
+                "nested": {"secret": "raw result"},
+                "status": "ok",
+                "timestamp": "2026-05-30T00:00:00Z",
+            },
+        )
+        unknown = sanitizer.sanitize_event(
+            "new-provider-event",
+            {
+                "prompt": "private prompt",
+                "status": "ok",
+                "token_text": "secret token",
+            },
+        )
+
+        self.assertEqual(
+            event,
+            {
+                "count": 2,
+                "event_type": "tool",
+                "status": "ok",
+                "timestamp": "2026-05-30T00:00:00Z",
+            },
+        )
+        self.assertEqual(
+            unknown,
+            {
+                "event_type": "new-provider-event",
+                "status": "ok",
+            },
+        )
+        self.assertNotIn("private prompt", str(unknown))
+        self.assertNotIn("secret token", str(unknown))
+
+    def test_safe_metadata_redaction_is_recursive_and_bounded(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        redacted = sanitizer.sanitize(
+            PrivacyField.PROMPT,
+            {
+                "category": SecretObject(),
+                "count": 1,
+                "counts": {"count": 2},
+                "duration_ms": 1.5,
+                "elapsed_ms": inf,
+                "status": ["ok", SecretObject()],
+                "timestamp": None,
+                "type": {"secret": "raw"},
+            },
+        )
+
+        self.assertEqual(
+            redacted,
+            {
+                "category": REDACTED_MARKER,
+                "count": 1,
+                "counts": {"count": 2},
+                "duration_ms": 1.5,
+                "elapsed_ms": REDACTED_MARKER,
+                "status": ["ok", REDACTED_MARKER],
+                "timestamp": None,
+                "type": REDACTED_MARKER,
+            },
+        )
+
+    def test_unknown_objects_are_never_stringified_or_represented(
+        self,
+    ) -> None:
+        secret = SecretObject()
+        sanitizer = PrivacySanitizer(hmac_provider=DeterministicHmacProvider())
+
+        redacted = sanitizer.sanitize(PrivacyField.PROMPT, secret)
+        with self.assertRaises(PrivacySanitizationError):
+            sanitizer.sanitize(PrivacyField.INPUT, secret)
+
+        rendered = f"{redacted}"
+        self.assertEqual(redacted, {"privacy": REDACTED_MARKER})
+        self.assertNotIn("private prompt", rendered)
+        self.assertNotIn("/Users/person/secret.pdf", rendered)
+        self.assertNotIn("raw model output", rendered)
+
+    def test_value_objects_validate_metadata_without_secret_bytes(
+        self,
+    ) -> None:
+        key = TaskKeyMaterial(
+            key_id="kid",
+            algorithm="hmac-sha256",
+            secret=b"secret",
+        )
+        encrypted = EncryptedPrivacyValue(
+            ciphertext=b"ciphertext",
+            key_id="enc",
+            algorithm="aead",
+            metadata={"purpose": "test"},
+        )
+
+        self.assertEqual(
+            key.metadata(),
+            {"algorithm": "hmac-sha256", "key_id": "kid"},
+        )
+        self.assertEqual(
+            encrypted.as_dict(),
+            {
+                "algorithm": "aead",
+                "ciphertext": "Y2lwaGVydGV4dA==",
+                "key_id": "enc",
+                "metadata": {"purpose": "test"},
+                "privacy": ENCRYPTED_MARKER,
+            },
+        )
+        with self.assertRaises(AssertionError):
+            TaskKeyMaterial(key_id="", algorithm="hmac-sha256", secret=b"x")
+        with self.assertRaises(AssertionError):
+            EncryptedPrivacyValue(
+                ciphertext=b"",
+                key_id="enc",
+                algorithm="aead",
+            )
+
+
+if __name__ == "__main__":
+    main()

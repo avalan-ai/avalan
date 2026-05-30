@@ -293,6 +293,45 @@ class OrchestratorLoader:
     def participant_id(self) -> UUID:
         return self._participant_id
 
+    @classmethod
+    def validate_agent_file(cls, path: str) -> dict[str, Any]:
+        if not exists(path):
+            raise FileNotFoundError(path)
+        if not access(path, R_OK):
+            raise PermissionError(path)
+
+        with open(path, "rb") as file:
+            config = load(file)
+
+        cls.validate_agent_config(config)
+        return config
+
+    @classmethod
+    def validate_agent_config(cls, config: object) -> None:
+        assert isinstance(
+            config, dict
+        ), "Agent configuration must be a mapping"
+        assert "agent" in config, "No agent section in configuration"
+        assert "engine" in config, "No engine section defined in configuration"
+        assert isinstance(
+            config["agent"], dict
+        ), "Agent section must be a mapping"
+        assert isinstance(
+            config["engine"], dict
+        ), "Engine section must be a mapping"
+        assert (
+            "uri" in config["engine"]
+        ), "No uri defined in engine section of configuration"
+        agent_config = config["agent"]
+        assert not (
+            "user" in agent_config and "user_template" in agent_config
+        ), "user and user_template are mutually exclusive"
+        orchestrator_type = agent_config.get("type")
+        assert orchestrator_type is None or orchestrator_type in ["json"], (
+            f"Unknown type {agent_config['type']} in agent section "
+            + "of configuration"
+        )
+
     async def from_file(
         self,
         path: str,

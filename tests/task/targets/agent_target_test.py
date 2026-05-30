@@ -1,0 +1,1074 @@
+from asyncio import run as asyncio_run
+from collections.abc import Awaitable, Callable
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any, cast
+from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
+from uuid import UUID, uuid4
+
+from avalan.entities import Message, MessageContentText, MessageRole
+from avalan.event import Event, EventType
+from avalan.task import (
+    DirectTaskRunner,
+    TaskArtifactRef,
+    TaskAttemptState,
+    TaskDefinition,
+    TaskExecutionTarget,
+    TaskFileDescriptor,
+    TaskInputContract,
+    TaskInputFile,
+    TaskKeyMaterial,
+    TaskKeyPurpose,
+    TaskMetadata,
+    TaskOutputContract,
+    TaskRunState,
+    TaskTargetContext,
+    TaskValidationContext,
+    TaskValidationError,
+    TaskValidationIssue,
+)
+from avalan.task.artifacts import LocalArtifactStore
+from avalan.task.store import TaskExecutionContext
+from avalan.task.stores import InMemoryTaskStore
+from avalan.task.targets import AgentTaskTargetRunner
+
+
+class FakeResponse:
+    def __init__(
+        self,
+        text: str,
+        *,
+        input_token_count: int | None = None,
+        output_token_count: int | None = None,
+    ) -> None:
+        self.text = text
+        self.input_token_count = input_token_count
+        self.output_token_count = output_token_count
+
+    async def to_str(self) -> str:
+        return self.text
+
+    async def to_json(self) -> str:
+        return self.text
+
+
+class TextOnlyResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def to_str(self) -> str:
+        return self.text
+
+
+class BareResponse:
+    pass
+
+
+class FakeEventManager:
+    def __init__(self) -> None:
+        self.listeners: list[Callable[[Event], Awaitable[None] | None]] = []
+
+    def add_listener(
+        self,
+        listener: Callable[[Event], Awaitable[None] | None],
+    ) -> None:
+        self.listeners.append(listener)
+
+    def remove_listener(
+        self,
+        listener: Callable[[Event], Awaitable[None] | None],
+    ) -> None:
+        self.listeners.remove(listener)
+
+    async def trigger(self, event: Event) -> None:
+        for listener in list(self.listeners):
+            result = listener(event)
+            if result is not None:
+                await result
+
+
+class FakeOrchestrator:
+    def __init__(self, loader: "FakeLoader") -> None:
+        self._loader = loader
+        self.event_manager = loader.event_manager
+
+    async def __aenter__(self) -> "FakeOrchestrator":
+        self._loader.entered += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        self._loader.exited += 1
+        return None
+
+    async def __call__(self, input: object) -> FakeResponse:
+        self._loader.inputs.append(input)
+        trigger = getattr(self.event_manager, "trigger", None)
+        if self._loader.emit_event and callable(trigger):
+            await trigger(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={
+                        "token": "secret-token",
+                        "token_id": 7,
+                        "model_id": "private-model",
+                    },
+                )
+            )
+        response = self._loader.response
+        if response is not None:
+            return response
+        return FakeResponse(self._loader.response_text)
+
+
+class FakeLoader:
+    def __init__(
+        self,
+        *,
+        response_text: str = "summary",
+        response: object | None = None,
+        emit_event: bool = False,
+    ) -> None:
+        self.response_text = response_text
+        self.response = response
+        self.emit_event = emit_event
+        self.event_manager: object = FakeEventManager()
+        self.paths: list[str] = []
+        self.agent_ids: list[UUID | None] = []
+        self.disable_memory_values: list[bool] = []
+        self.uris: list[str | None] = []
+        self.inputs: list[object] = []
+        self.entered = 0
+        self.exited = 0
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: UUID | None,
+        disable_memory: bool = False,
+        uri: str | None = None,
+        tool_settings: object | None = None,
+    ) -> FakeOrchestrator:
+        self.paths.append(path)
+        self.agent_ids.append(agent_id)
+        self.disable_memory_values.append(disable_memory)
+        self.uris.append(uri)
+        return FakeOrchestrator(self)
+
+
+class FakeArtifactStore:
+    async def open(self, ref: TaskArtifactRef) -> BytesIO:
+        return BytesIO(b"private bytes")
+
+
+class StaticHmacProvider:
+    def hmac_key(
+        self,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+    ) -> TaskKeyMaterial:
+        return TaskKeyMaterial(
+            key_id=key_id or purpose.value,
+            algorithm="hmac-sha256",
+            secret=b"test-secret",
+        )
+
+
+class AgentTaskTargetRunnerValidationTest(TestCase):
+    def test_valid_agent_reference_loads_through_loader_boundary(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(
+                FakeLoader(),
+                ref_base=root,
+            )
+            issues = self._run_validate(runner, self._definition())
+            rooted_issues = asyncio_run(
+                runner.validate_definition(
+                    self._definition(),
+                    TaskValidationContext(execution_roots=(root,)),
+                )
+            )
+
+        self.assertEqual(issues, ())
+        self.assertEqual(rooted_issues, ())
+
+    def test_invalid_agent_reference_returns_safe_diagnostic(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "secret-agent.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text("[agent]\n", encoding="utf-8")
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(runner, self._definition())
+
+        self.assertEqual(
+            [issue.code for issue in issues],
+            [
+                "execution.unknown_target",
+            ],
+        )
+        self.assertEqual(issues[0].path, "execution.ref")
+        rendered = " ".join(
+            value for issue in issues for value in issue.as_dict().values()
+        )
+        self.assertNotIn("secret-agent", rendered)
+        self.assertNotIn("[agent]", rendered)
+
+    def test_non_agent_target_returns_unsupported_issue(self) -> None:
+        runner = AgentTaskTargetRunner(FakeLoader())
+
+        issues = self._run_validate(
+            runner,
+            self._definition(
+                execution=TaskExecutionTarget.model(
+                    "ai://env:KEY@openai/gpt-4o-mini"
+                )
+            ),
+        )
+
+        self.assertEqual(
+            [issue.code for issue in issues],
+            [
+                "execution.unknown_target",
+            ],
+        )
+        self.assertEqual(issues[0].path, "execution.type")
+
+    def test_file_input_rejects_agent_without_file_support(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(
+                runner,
+                self._definition(input_contract=TaskInputContract.file()),
+            )
+
+        self.assertEqual(
+            [issue.code for issue in issues], ["input.invalid_file"]
+        )
+        self.assertEqual(issues[0].path, "input.type")
+        rendered = " ".join(issues[0].as_dict().values())
+        self.assertNotIn("local/model", rendered)
+
+    def test_file_input_requires_conversion_for_text_only_target(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://env:KEY@bedrock/anthropic.claude"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",),
+                    )
+                ),
+            )
+            converted_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("markdown",),
+                        mime_types=("application/pdf",),
+                    )
+                ),
+            )
+
+        self.assertEqual(
+            [issue.code for issue in issues], ["input.invalid_file"]
+        )
+        self.assertEqual(issues[0].path, "input.file_conversions")
+        self.assertEqual(converted_issues, ())
+
+    def test_google_file_target_accepts_native_file_contract(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://env:KEY@google/gemini-2.0-flash"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(
+                runner,
+                self._definition(input_contract=TaskInputContract.file()),
+            )
+
+        self.assertEqual(issues, ())
+
+    def test_agent_uri_without_engine_returns_no_file_capability(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                '[agent]\nname = "Valid"\n', encoding="utf-8"
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            uri = runner._agent_uri(self._definition())
+
+        self.assertIsNone(uri)
+
+    def _run_validate(
+        self,
+        runner: AgentTaskTargetRunner,
+        definition: TaskDefinition,
+    ) -> tuple[TaskValidationIssue, ...]:
+        return asyncio_run(
+            runner.validate_definition(
+                definition,
+                TaskValidationContext(),
+            )
+        )
+
+    def _definition(
+        self,
+        *,
+        input_contract: TaskInputContract | None = None,
+        execution: TaskExecutionTarget | None = None,
+    ) -> TaskDefinition:
+        return TaskDefinition(
+            task=TaskMetadata(name="agent", version="1"),
+            input=input_contract or TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=execution
+            or TaskExecutionTarget.agent("agents/valid.toml"),
+        )
+
+
+class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
+    async def test_run_uses_fresh_orchestrator_and_consumes_text(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                '[agent]\nname = "Valid"\n\n[engine]\nuri = "ai://x"\n',
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response_text="short summary")
+            agent_id = uuid4()
+            runner = AgentTaskTargetRunner(
+                loader,
+                agent_id=agent_id,
+                disable_memory=True,
+                ref_base=root,
+                uri="ai://override",
+            )
+
+            output = await runner.run(
+                self._context(
+                    self._definition(
+                        output=TaskOutputContract.text(),
+                    ),
+                    "private prompt",
+                )
+            )
+            second_output = await runner.run(
+                self._context(
+                    self._definition(
+                        output=TaskOutputContract.text(),
+                    ),
+                    "second prompt",
+                )
+            )
+
+        self.assertEqual(output, "short summary")
+        self.assertEqual(second_output, "short summary")
+        self.assertEqual(loader.entered, 2)
+        self.assertEqual(loader.exited, 2)
+        self.assertEqual(loader.agent_ids, [agent_id, agent_id])
+        self.assertEqual(loader.disable_memory_values, [True, True])
+        self.assertEqual(loader.uris, ["ai://override", "ai://override"])
+        self.assertEqual(loader.inputs, ["private prompt", "second prompt"])
+        self.assertTrue(loader.paths[0].endswith("agents/valid.toml"))
+
+    async def test_run_maps_json_input_and_structured_output(self) -> None:
+        loader = FakeLoader(response_text='{"answer":"ok"}')
+        runner = AgentTaskTargetRunner(loader)
+
+        output = await runner.run(
+            self._context(
+                self._definition(
+                    input_contract=TaskInputContract.object(
+                        schema={"type": "object"}
+                    ),
+                    output=TaskOutputContract.object(
+                        schema={"type": "object"}
+                    ),
+                ),
+                {"question": "status"},
+            )
+        )
+
+        self.assertEqual(output, {"answer": "ok"})
+        self.assertEqual(loader.inputs, ['{"question":"status"}'])
+
+    async def test_run_maps_agent_input_shapes(self) -> None:
+        message = Message(role=MessageRole.USER, content="hello")
+        loader = FakeLoader()
+        runner = AgentTaskTargetRunner(loader)
+
+        await runner.run(self._context(self._definition(), ["a", "b"]))
+        await runner.run(self._context(self._definition(), [message]))
+        await runner.run(self._context(self._definition(), (1, 2)))
+        await runner.run(self._context(self._definition(), object()))
+
+        self.assertEqual(loader.inputs[0], ["a", "b"])
+        self.assertEqual(loader.inputs[1], [message])
+        self.assertEqual(loader.inputs[2], "[1,2]")
+        self.assertEqual(loader.inputs[3], "object")
+
+    async def test_structured_output_can_fall_back_to_text_response(
+        self,
+    ) -> None:
+        loader = FakeLoader(response=TextOnlyResponse('{"items":[1]}'))
+        runner = AgentTaskTargetRunner(loader)
+
+        output = await runner.run(
+            self._context(
+                self._definition(
+                    output=TaskOutputContract.array(schema={"type": "array"})
+                ),
+                "private prompt",
+            )
+        )
+
+        self.assertEqual(output, {"items": [1]})
+
+    async def test_plain_output_without_text_method_returns_type_name(
+        self,
+    ) -> None:
+        loader = FakeLoader(response=BareResponse())
+        runner = AgentTaskTargetRunner(loader)
+
+        output = await runner.run(
+            self._context(
+                self._definition(output=TaskOutputContract.text()),
+                "private prompt",
+            )
+        )
+
+        self.assertEqual(output, "BareResponse")
+
+    async def test_plain_string_response_is_returned(self) -> None:
+        loader = FakeLoader(response="plain response")
+        runner = AgentTaskTargetRunner(loader)
+
+        output = await runner.run(
+            self._context(
+                self._definition(output=TaskOutputContract.text()),
+                "private prompt",
+            )
+        )
+
+        self.assertEqual(output, "plain response")
+
+    async def test_run_maps_provider_file_reference_at_execution_time(
+        self,
+    ) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(
+            loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+
+        output = await runner.run(
+            TaskTargetContext(
+                definition=self._definition(),
+                execution=TaskExecutionContext(
+                    run_id="run-1",
+                    attempt_id="attempt-1",
+                    attempt_number=1,
+                ),
+                input_value="summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:file",
+                        media_type="application/pdf",
+                        metadata={"provider_file_id": "file-test"},
+                    ),
+                ),
+            )
+        )
+
+        self.assertEqual(output, "accepted")
+        message = loader.inputs[0]
+        self.assertIsInstance(message, Message)
+        content = cast(Message, message).content
+        self.assertIsInstance(content, list)
+        blocks = cast(list[Any], content)
+        self.assertEqual(blocks[0].type, "text")
+        self.assertEqual(blocks[1].type, "file")
+        file_block = blocks[1]
+        self.assertEqual(file_block.file["file_id"], "file-test")
+        self.assertEqual(file_block.file["mime_type"], "application/pdf")
+
+    async def test_run_maps_provider_urls_at_execution_time(self) -> None:
+        url_loader = FakeLoader(response="accepted")
+        uri_loader = FakeLoader(response="accepted")
+
+        await AgentTaskTargetRunner(
+            url_loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        ).run(
+            self._context(
+                self._definition(),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:url",
+                        media_type="application/pdf",
+                        metadata={
+                            "provider_file_url": "https://example.test/file"
+                        },
+                    ),
+                ),
+            )
+        )
+        await AgentTaskTargetRunner(
+            uri_loader,
+            uri="ai://env:KEY@google/gemini-2.0-flash",
+        ).run(
+            self._context(
+                self._definition(),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:uri",
+                        media_type="application/pdf",
+                        metadata={"provider_uri": "gs://bucket/object"},
+                    ),
+                ),
+            )
+        )
+
+        url_file = cast(Message, url_loader.inputs[0]).content
+        uri_file = cast(Message, uri_loader.inputs[0]).content
+        self.assertEqual(
+            cast(list[Any], url_file)[1].file["file_url"],
+            "https://example.test/file",
+        )
+        self.assertEqual(
+            cast(list[Any], uri_file)[1].file["file_url"],
+            "gs://bucket/object",
+        )
+
+    async def test_run_appends_files_to_message_inputs(self) -> None:
+        message_loader = FakeLoader(response="accepted")
+        empty_message_loader = FakeLoader(response="accepted")
+        list_content_loader = FakeLoader(response="accepted")
+        content_block_loader = FakeLoader(response="accepted")
+        messages_loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(
+            message_loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+        empty_runner = AgentTaskTargetRunner(
+            empty_message_loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+        list_content_runner = AgentTaskTargetRunner(
+            list_content_loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+        content_block_runner = AgentTaskTargetRunner(
+            content_block_loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+        list_runner = AgentTaskTargetRunner(
+            messages_loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+        file = TaskInputFile(
+            logical_path="provider:file",
+            metadata={"provider_file_id": "file-test"},
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                Message(role=MessageRole.USER, content="summarize"),
+                files=(file,),
+            )
+        )
+        await empty_runner.run(
+            self._context(
+                self._definition(),
+                Message(role=MessageRole.USER, content=None),
+                files=(file,),
+            )
+        )
+        await list_content_runner.run(
+            self._context(
+                self._definition(),
+                Message(
+                    role=MessageRole.USER,
+                    content=[MessageContentText(type="text", text="one")],
+                ),
+                files=(file,),
+            )
+        )
+        await content_block_runner.run(
+            self._context(
+                self._definition(),
+                Message(
+                    role=MessageRole.USER,
+                    content=MessageContentText(type="text", text="one"),
+                ),
+                files=(file,),
+            )
+        )
+        await list_runner.run(
+            self._context(
+                self._definition(),
+                [Message(role=MessageRole.USER, content=None)],
+                files=(file,),
+            )
+        )
+
+        message = cast(Message, message_loader.inputs[0])
+        empty_message = cast(Message, empty_message_loader.inputs[0])
+        list_content_message = cast(Message, list_content_loader.inputs[0])
+        content_block_message = cast(Message, content_block_loader.inputs[0])
+        messages = cast(list[Message], messages_loader.inputs[0])
+        self.assertEqual(cast(list[Any], message.content)[0].text, "summarize")
+        self.assertEqual(
+            cast(list[Any], message.content)[1].file["file_id"], "file-test"
+        )
+        self.assertEqual(
+            cast(list[Any], empty_message.content)[0].type, "file"
+        )
+        self.assertEqual(
+            cast(list[Any], list_content_message.content)[0].text,
+            "one",
+        )
+        self.assertEqual(
+            cast(list[Any], content_block_message.content)[0].text,
+            "one",
+        )
+        self.assertEqual(messages[1].role, MessageRole.USER)
+        self.assertEqual(
+            cast(list[Any], messages[1].content)[0].file["file_id"],
+            "file-test",
+        )
+
+    async def test_run_uses_string_list_prompt_with_file_input(self) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(
+            loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                ["one", "two"],
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:file",
+                        metadata={"provider_file_id": "file-test"},
+                    ),
+                ),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[0].text, "one\ntwo")
+
+    async def test_run_rejects_unsupported_file_mapping_safely(self) -> None:
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+        local_runner = AgentTaskTargetRunner(
+            FakeLoader(), uri="ai://local/model"
+        )
+        bedrock_runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            uri="ai://env:KEY@bedrock/anthropic.claude",
+        )
+
+        with self.assertRaises(TaskValidationError) as local_error:
+            await local_runner.run(
+                self._context(
+                    self._definition(),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(),
+                )
+            )
+        with self.assertRaises(TaskValidationError) as bedrock_error:
+            await bedrock_runner.run(
+                self._context(
+                    self._definition(),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(),
+                )
+            )
+
+        self.assertEqual(
+            local_error.exception.issues[0].path, "input.files[0]"
+        )
+        self.assertEqual(
+            bedrock_error.exception.issues[0].code, "input.invalid_file"
+        )
+        self.assertIn(
+            "artifact",
+            TaskInputFile(
+                logical_path="artifact:artifact-1",
+                artifact_ref=artifact_ref,
+            ).summary(),
+        )
+
+    async def test_orchestrator_response_branches_are_consumed(self) -> None:
+        with patch(
+            "avalan.task.targets.agent.OrchestratorResponse",
+            FakeResponse,
+        ):
+            structured_loader = FakeLoader(response_text='{"answer":"ok"}')
+            text_loader = FakeLoader(response_text="plain")
+            structured_runner = AgentTaskTargetRunner(structured_loader)
+            text_runner = AgentTaskTargetRunner(text_loader)
+
+            structured = await structured_runner.run(
+                self._context(
+                    self._definition(
+                        output=TaskOutputContract.object(
+                            schema={"type": "object"}
+                        )
+                    ),
+                    "private prompt",
+                )
+            )
+            text = await text_runner.run(
+                self._context(
+                    self._definition(output=TaskOutputContract.text()),
+                    "private prompt",
+                )
+            )
+
+        self.assertEqual(structured, {"answer": "ok"})
+        self.assertEqual(text, "plain")
+
+    async def test_direct_runner_records_sanitized_events_and_usage(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore()
+            loader = FakeLoader(
+                response=FakeResponse(
+                    "short summary",
+                    input_token_count=3,
+                    output_token_count=2,
+                ),
+                emit_event=True,
+            )
+            runner = DirectTaskRunner(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-direct-hash",
+            )
+
+            result = await runner.run(
+                self._definition(output=TaskOutputContract.text()),
+                input_value="private prompt",
+            )
+            events = await store.list_events(result.run.run_id)
+            usage = await store.list_usage(result.run.run_id)
+            event_manager = cast(FakeEventManager, loader.event_manager)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.SUCCEEDED)
+        self.assertEqual(result.output, "short summary")
+        self.assertEqual(
+            [event.event_type for event in events], ["token_generated"]
+        )
+        self.assertNotIn("secret-token", str(events[0].payload))
+        self.assertNotIn("private-model", str(events[0].payload))
+        self.assertEqual(usage[0].totals.input_tokens, 3)
+        self.assertEqual(usage[0].totals.output_tokens, 2)
+        self.assertEqual(usage[0].totals.total_tokens, 5)
+        self.assertEqual(usage[0].attempt_id, result.attempt.attempt_id)
+        self.assertEqual(event_manager.listeners, [])
+
+    async def test_direct_runner_maps_materialized_file_to_agent_message(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as artifacts:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            input_path = root / "uploads" / "input.txt"
+            agent_path.parent.mkdir()
+            input_path.parent.mkdir()
+            input_path.write_bytes(b"private text")
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            task_store = InMemoryTaskStore()
+            artifact_store = LocalArtifactStore(
+                artifacts,
+                raw_storage_allowed=True,
+                id_factory=lambda: "artifact-1",
+            )
+            loader = FakeLoader(response=FakeResponse("short summary"))
+            runner = DirectTaskRunner(
+                task_store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-file-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("text/plain",),
+                    ),
+                    output=TaskOutputContract.text(),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "uploads/input.txt",
+                    mime_type="text/plain",
+                ),
+            )
+            records = await task_store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        message = cast(Message, loader.inputs[0])
+        self.assertEqual(message.role, MessageRole.USER)
+        content = cast(list[Any], message.content)
+        self.assertEqual(len(content), 1)
+        file_block = content[0]
+        self.assertEqual(file_block.type, "file")
+        self.assertEqual(file_block.file["file_data"], "cHJpdmF0ZSB0ZXh0")
+        self.assertEqual(file_block.file["mime_type"], "text/plain")
+        self.assertNotIn("input.txt", str(message))
+        self.assertEqual(records[0].artifact_id, "artifact-1")
+
+    async def test_direct_runner_rejects_file_without_artifact_backend(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            input_path = root / "uploads" / "input.txt"
+            agent_path.parent.mkdir()
+            input_path.parent.mkdir()
+            input_path.write_bytes(b"private text")
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader()
+            store = InMemoryTaskStore()
+            runner = DirectTaskRunner(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                execution_roots=(root,),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-file-no-backend-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("text/plain",),
+                    ),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "uploads/input.txt",
+                    mime_type="text/plain",
+                ),
+            )
+            attempts = await store.list_attempts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(attempts[0].state, TaskAttemptState.FAILED)
+        error_summary = cast(
+            dict[str, object],
+            result.run.result.error if result.run.result else {},
+        )
+        self.assertEqual(error_summary["code"], "input_contract.failed")
+        self.assertIn("artifact.bytes_unsupported", str(error_summary))
+        self.assertNotIn("uploads/input.txt", str(error_summary))
+        self.assertEqual(loader.inputs, [])
+
+    async def test_direct_runner_allows_missing_event_api_and_usage(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore()
+            loader = FakeLoader(response=FakeResponse("short summary"))
+            loader.event_manager = object()
+            runner = DirectTaskRunner(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-direct-no-usage-hash",
+            )
+
+            result = await runner.run(
+                self._definition(output=TaskOutputContract.text()),
+                input_value="private prompt",
+            )
+            usage = await store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "short summary")
+        self.assertEqual(usage, ())
+
+    def _context(
+        self,
+        definition: TaskDefinition,
+        input_value: object,
+        *,
+        files: tuple[TaskInputFile, ...] = (),
+        artifact_store: FakeArtifactStore | None = None,
+    ) -> TaskTargetContext:
+        return TaskTargetContext(
+            definition=definition,
+            execution=TaskExecutionContext(
+                run_id="run-1",
+                attempt_id="attempt-1",
+                attempt_number=1,
+            ),
+            input_value=input_value,
+            files=files,
+            artifact_store=artifact_store,
+        )
+
+    def _definition(
+        self,
+        *,
+        input_contract: TaskInputContract | None = None,
+        output: TaskOutputContract | None = None,
+    ) -> TaskDefinition:
+        return TaskDefinition(
+            task=TaskMetadata(name="agent", version="1"),
+            input=input_contract or TaskInputContract.string(),
+            output=output or TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/valid.toml"),
+        )
+
+
+if __name__ == "__main__":
+    main()

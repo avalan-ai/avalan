@@ -98,6 +98,25 @@ class CliParallelOptionTestCase(TestCase):
         self.assertEqual(args.parallel_count, 5)
 
 
+class CliTaskOptionTestCase(TestCase):
+    def test_task_validate_argument(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "task",
+                "validate",
+                "tasks/example.task.toml",
+            ]
+        )
+
+        self.assertEqual(args.command, "task")
+        self.assertEqual(args.task_command, "validate")
+        self.assertEqual(args.definition, "tasks/example.task.toml")
+
+
 class CliModelRunOptionTestCase(TestCase):
     def test_backend_help_includes_ds4_choice(self) -> None:
         logger = MagicMock()
@@ -773,6 +792,7 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.commands.model",
                 "model_uninstall",
             ),
+            ("task_validate", "avalan.cli.commands.task", "task_validate"),
         ]
         for wrapper_name, module_name, function_name in commands:
             command.reset_mock()
@@ -871,6 +891,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             deploy_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.deploy_run", AsyncMock())
             )
+            task_validate_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_validate")
+            )
             tokenize_mock = stack.enter_context(
                 patch("avalan.cli.__main__.tokenize", AsyncMock())
             )
@@ -892,6 +915,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "search", model_search),
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
+                ("task", "validate", task_validate_mock),
                 ("tokenizer", None, tokenize_mock),
             ]
             for cmd, subcmd, fn in scenarios:
@@ -915,6 +939,8 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                     args.model_command = subcmd
                 elif cmd == "deploy":
                     args.deploy_command = subcmd
+                elif cmd == "task":
+                    args.task_command = subcmd
                 await self.cli._main(args, theme, console, hub)
                 self.assertTrue(fn.called)
                 fn.reset_mock()
@@ -1197,6 +1223,11 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
             model="ai://local/../pyds4/.local/ds4/ds4flash.gguf",
             backend="ds4",
         )
+
+        self.assertTrue(CLI._can_use_anonymous_hub(args))
+
+    def test_can_use_anonymous_hub_for_task_command(self):
+        args = Namespace(command="task", task_command="validate")
 
         self.assertTrue(CLI._can_use_anonymous_hub(args))
 

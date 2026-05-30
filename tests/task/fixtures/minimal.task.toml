@@ -1,0 +1,14 @@
+[task]
+name = "person_explainer"
+version = "1"
+description = "Explain who the person named in the input is."
+
+[input]
+type = "string"
+
+[output]
+type = "text"
+
+[execution]
+type = "agent"
+ref = "agents/person_explainer.toml"

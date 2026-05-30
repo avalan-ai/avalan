@@ -1,0 +1,407 @@
+from json import loads
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase, main
+
+from avalan.task import (
+    IdempotencyMode,
+    PrivacyAction,
+    TaskCanonicalizationError,
+    TaskDefinition,
+    TaskExecutionTarget,
+    TaskInputContract,
+    TaskMetadata,
+    TaskOutputContract,
+    TaskRunPolicy,
+    canonical_definition,
+    canonical_json,
+    load_task_definition,
+    loads_task_definition,
+    spec_hash,
+)
+
+FIXTURE_ROOT = Path(__file__).parent / "fixtures"
+
+
+class TaskCanonicalizationTest(TestCase):
+    def test_sdk_and_toml_definitions_share_canonical_identity(self) -> None:
+        toml_definition = load_task_definition(
+            FIXTURE_ROOT / "minimal.task.toml"
+        )
+        sdk_definition = TaskDefinition(
+            task=TaskMetadata(
+                name="person_explainer",
+                version="1",
+                description="Explain who the person named in the input is.",
+            ),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent(
+                "agents/person_explainer.toml"
+            ),
+        )
+
+        self.assertEqual(
+            canonical_json(toml_definition),
+            canonical_json(sdk_definition),
+        )
+        self.assertEqual(spec_hash(toml_definition), spec_hash(sdk_definition))
+
+    def test_canonical_json_is_compact_sorted_and_contains_defaults(
+        self,
+    ) -> None:
+        definition = load_task_definition(FIXTURE_ROOT / "minimal.task.toml")
+        canonical = canonical_json(definition)
+        parsed = loads(canonical)
+
+        self.assertTrue(canonical.startswith('{"artifact":'))
+        self.assertNotIn(": ", canonical)
+        self.assertEqual(parsed["run"]["mode"], "direct")
+        self.assertEqual(parsed["run"]["timeout_seconds"], 300)
+        self.assertEqual(parsed["privacy"]["input"], "hash")
+        self.assertEqual(parsed["privacy"]["token_text"], "drop")
+        self.assertEqual(parsed["observability"]["sinks"], ["pgsql"])
+
+    def test_spec_hash_uses_canonical_definition_not_toml_text(self) -> None:
+        compact = loads_task_definition("""
+            [task]
+            name = "same"
+            version = "1"
+
+            [input]
+            type = "string"
+
+            [output]
+            type = "text"
+
+            [execution]
+            type = "agent"
+            ref = "agents/same.toml"
+            """)
+        reordered = loads_task_definition("""
+            [execution]
+            ref = "agents/same.toml"
+            type = "agent"
+
+            [output]
+            type = "text"
+
+            [input]
+            type = "string"
+
+            [task]
+            version = "1"
+            name = "same"
+            """)
+
+        self.assertEqual(spec_hash(compact), spec_hash(reordered))
+
+    def test_schema_ref_and_inline_schema_share_canonical_identity(
+        self,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "required": ["total", "vendor"],
+            "examples": ["one", "two"],
+            "properties": {
+                "vendor": {"type": "string"},
+                "total": {"type": "number"},
+            },
+        }
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schemas" / "invoice.schema.json"
+            schema_path.parent.mkdir()
+            schema_path.write_text(
+                """
+                {
+                  "properties": {
+                    "total": {"type": "number"},
+                    "vendor": {"type": "string"}
+                  },
+                  "examples": ["one", "two"],
+                  "required": ["vendor", "total"],
+                  "type": "object"
+                }
+                """,
+                encoding="utf-8",
+            )
+            referenced = loads_task_definition("""
+                [task]
+                name = "invoice"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "json"
+                schema_ref = "schemas/invoice.schema.json"
+
+                [execution]
+                type = "agent"
+                ref = "agents/invoice.toml"
+                """)
+            inline = TaskDefinition(
+                task=TaskMetadata(name="invoice", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.json(schema=schema),
+                execution=TaskExecutionTarget.agent("agents/invoice.toml"),
+            )
+
+            self.assertEqual(
+                canonical_json(referenced, schema_base_path=root),
+                canonical_json(inline),
+            )
+            self.assertEqual(
+                spec_hash(referenced, schema_base_path=root),
+                spec_hash(inline),
+            )
+
+    def test_machine_specific_values_do_not_enter_canonical_json(self) -> None:
+        first = TaskDefinition(
+            task=TaskMetadata(
+                name="private",
+                version="1",
+                annotations={
+                    "owner": "ops",
+                    "api_key": "sk-first",
+                    "home": "/Users/mariano/tasks/private.toml",
+                },
+            ),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.model(
+                "ai://env:OPENAI_API_KEY@openai/gpt-4o",
+                variables={
+                    "database_url": "postgresql://root:secret@localhost/db",
+                    "limit": 3,
+                    "password": "first",
+                },
+            ),
+            run=TaskRunPolicy(idempotency=IdempotencyMode.INPUT_HASH),
+        )
+        second = TaskDefinition(
+            task=TaskMetadata(
+                name="private",
+                version="1",
+                annotations={
+                    "owner": "ops",
+                    "api_key": "sk-second",
+                    "home": "/Users/other/tasks/private.toml",
+                },
+            ),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.model(
+                "ai://env:ANTHROPIC_API_KEY@openai/gpt-4o",
+                variables={
+                    "database_url": "postgresql://root:other@localhost/db",
+                    "limit": 3,
+                    "password": "second",
+                },
+            ),
+            run=TaskRunPolicy(idempotency=IdempotencyMode.INPUT_HASH),
+        )
+
+        canonical = canonical_json(first)
+
+        self.assertNotIn("OPENAI_API_KEY", canonical)
+        self.assertNotIn("sk-first", canonical)
+        self.assertNotIn("/Users/mariano", canonical)
+        self.assertNotIn("postgresql://", canonical)
+        self.assertNotIn("first", canonical)
+        self.assertEqual(spec_hash(first), spec_hash(second))
+
+    def test_secret_like_values_are_redacted_recursively(self) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(
+                name="secret_redaction",
+                version="1",
+                annotations={
+                    "Auth-Token": "token-value",
+                    "nested": {
+                        "private-key": "key-value",
+                        "safe": [
+                            "postgresql://root:secret@localhost/db",
+                            "/Users/person/private.txt",
+                            "public",
+                        ],
+                    },
+                },
+            ),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent(
+                "agents/a.toml",
+                variables={
+                    "password": "raw-password",
+                    "safe_list": [
+                        "mysql://root:secret@localhost/db",
+                        "/private/tmp/input.txt",
+                    ],
+                },
+            ),
+        )
+
+        canonical = canonical_json(definition)
+
+        self.assertIn('"Auth-Token":"<redacted>"', canonical)
+        self.assertIn('"private-key":"<redacted>"', canonical)
+        self.assertIn('"password":"<redacted>"', canonical)
+        self.assertIn('"safe":["<dsn>","<absolute-path>","public"]', canonical)
+        self.assertIn('"safe_list":["<dsn>","<absolute-path>"]', canonical)
+        self.assertNotIn("token-value", canonical)
+        self.assertNotIn("key-value", canonical)
+        self.assertNotIn("raw-password", canonical)
+        self.assertNotIn("postgresql://", canonical)
+        self.assertNotIn("/Users/person", canonical)
+
+    def test_missing_and_invalid_schema_refs_raise_safe_errors(self) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(name="missing_schema", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.json(schema_ref="schemas/missing.json"),
+            execution=TaskExecutionTarget.agent("agents/a.toml"),
+        )
+
+        with self.assertRaises(TaskCanonicalizationError) as error:
+            canonical_definition(definition)
+
+        self.assertIn("output.schema_ref", str(error.exception))
+        self.assertNotIn("missing.json", str(error.exception))
+
+        with TemporaryDirectory() as temporary_directory:
+            schema_path = Path(temporary_directory) / "schema.json"
+            schema_path.write_text("{", encoding="utf-8")
+            invalid_json = TaskDefinition(
+                task=TaskMetadata(name="invalid_schema", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.json(schema_ref=str(schema_path)),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+            )
+
+            with self.assertRaisesRegex(
+                TaskCanonicalizationError,
+                "JSON schema file",
+            ):
+                canonical_json(invalid_json)
+
+    def test_schema_refs_reject_remote_and_non_object_sources(self) -> None:
+        remote = TaskDefinition(
+            task=TaskMetadata(name="remote_schema", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.json(
+                schema_ref=(
+                    "https://example.test/private/schema.json?token=secret"
+                )
+            ),
+            execution=TaskExecutionTarget.agent("agents/a.toml"),
+        )
+
+        with self.assertRaises(TaskCanonicalizationError) as error:
+            canonical_json(remote)
+
+        self.assertIn(
+            "remote schema references are not supported",
+            str(error.exception),
+        )
+        self.assertNotIn("token=secret", str(error.exception))
+        self.assertNotIn("private/schema", str(error.exception))
+
+        with TemporaryDirectory() as temporary_directory:
+            schema_path = Path(temporary_directory) / "schema.json"
+            schema_path.write_text("[]", encoding="utf-8")
+            non_object = TaskDefinition(
+                task=TaskMetadata(name="array_schema", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.json(schema_ref="schema.json"),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+            )
+
+            with self.assertRaisesRegex(
+                TaskCanonicalizationError,
+                "JSON object schema",
+            ):
+                canonical_json(
+                    non_object,
+                    schema_base_path=schema_path,
+                )
+
+    def test_absolute_schema_refs_are_content_canonicalized(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            schema_path = Path(temporary_directory) / "schema.json"
+            schema_path.write_text(
+                '{"type": "object", "properties": {"id": {"type": "string"}}}',
+                encoding="utf-8",
+            )
+            definition = TaskDefinition(
+                task=TaskMetadata(name="absolute_schema", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.json(schema_ref=str(schema_path)),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+            )
+
+            canonical = canonical_json(definition)
+
+            self.assertNotIn(str(schema_path), canonical)
+            self.assertIn('"id":{"type":"string"}', canonical)
+
+    def test_metadata_values_are_normalized_or_rejected(self) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(
+                name="metadata",
+                version="1",
+                annotations={
+                    "connection": "postgresql://root:secret@localhost/db",
+                    "nested": {
+                        "ratio": 1.5,
+                        "values": [1, PrivacyAction.HASH],
+                    },
+                },
+            ),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/a.toml"),
+        )
+        canonical = canonical_json(definition)
+
+        self.assertIn('"connection":"<dsn>"', canonical)
+        self.assertIn('"ratio":1.5', canonical)
+        self.assertIn('"values":[1,"hash"]', canonical)
+
+        invalid_definition = TaskDefinition(
+            task=TaskMetadata(
+                name="bad_metadata",
+                version="1",
+                annotations={"unsupported": object()},
+            ),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/a.toml"),
+        )
+
+        with self.assertRaisesRegex(
+            TaskCanonicalizationError,
+            "definition contains a non-JSON value",
+        ):
+            canonical_json(invalid_definition)
+
+    def test_non_string_schema_keys_are_rejected(self) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(name="bad_schema_key", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.json(schema={"type": "object"}),
+            execution=TaskExecutionTarget.agent("agents/a.toml"),
+        )
+        object.__setattr__(definition.output, "schema", {1: "bad"})
+
+        with self.assertRaisesRegex(
+            TaskCanonicalizationError,
+            "schema keys must be strings",
+        ):
+            canonical_json(definition)
+
+
+if __name__ == "__main__":
+    main()

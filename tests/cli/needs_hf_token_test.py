@@ -105,6 +105,11 @@ class NeedsHfTokenTestCase(unittest.TestCase):
         args = Namespace(command="agent", agent_command="serve")
         self.assertTrue(CLI._needs_hf_token(args))
 
+    def test_task_command_does_not_need_token(self):
+        args = Namespace(command="task", task_command="validate")
+
+        self.assertFalse(CLI._needs_hf_token(args))
+
     def test_agent_proxy_remote_no_token(self):
         args = Namespace(
             command="agent", agent_command="proxy", engine_uri="e"

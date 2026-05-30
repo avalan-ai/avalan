@@ -411,6 +411,12 @@ async def deploy_run(*args: Any, **kwargs: Any) -> Any:
     return await command(*args, **kwargs)
 
 
+def task_validate(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_validate")(
+        *args, **kwargs
+    )
+
+
 async def tokenize(*args: Any, **kwargs: Any) -> Any:
     command = cast(
         Callable[..., Awaitable[Any]],
@@ -1318,6 +1324,24 @@ class CLI:
             "flow",
             type=str,
             help="Flow to run",
+        )
+
+        # Task command
+        task_parser = command_parsers.add_parser(
+            name="task",
+            description="Manage intelligence tasks",
+            parents=[global_parser],
+        )
+        task_command_parsers = task_parser.add_subparsers(dest="task_command")
+        task_validate_parser = task_command_parsers.add_parser(
+            name="validate",
+            description="Validate an intelligence task definition",
+            parents=[global_parser],
+        )
+        task_validate_parser.add_argument(
+            "definition",
+            type=str,
+            help="Task definition TOML file to validate",
         )
 
         # Memory command
@@ -2486,6 +2510,8 @@ class CLI:
     def _needs_hf_token(args: Namespace) -> bool:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
+        if command == "task":
+            return False
         if command == "model" and (args.model_command or "display") == "run":
             assert isinstance(args.model, str)
             engine_uri = ModelManager.parse_uri(args.model)
@@ -2524,6 +2550,8 @@ class CLI:
     @staticmethod
     def _can_use_anonymous_hub(args: Namespace) -> bool:
         command = args.command
+        if command == "task":
+            return True
         if command != "model" or (args.model_command or "display") != "run":
             return False
         assert isinstance(args.model, str)
@@ -2849,6 +2877,11 @@ class CLI:
                 match subcommand:
                     case "run":
                         await deploy_run(args, self._logger)
+            case "task":
+                subcommand = args.task_command or "validate"
+                match subcommand:
+                    case "validate":
+                        task_validate(args, console, theme)
 
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)

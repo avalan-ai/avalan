@@ -1,0 +1,116 @@
+from ..event import Event
+from .artifact import ArtifactStore, TaskArtifactRef
+from .definition import TaskDefinition
+from .store import (
+    TaskExecutionContext,
+    freeze_snapshot_metadata,
+    freeze_snapshot_value,
+)
+
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
+
+TaskCancellationChecker = Callable[[], Awaitable[None]]
+TaskEventListener = Callable[[Event], Awaitable[None] | None]
+TaskUsageObserver = Callable[[object], Awaitable[None] | None]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskInputFile:
+    logical_path: str
+    artifact_ref: TaskArtifactRef | None = None
+    media_type: str | None = None
+    size_bytes: int | None = None
+    metadata: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.logical_path, "logical_path")
+        if self.artifact_ref is not None:
+            assert isinstance(self.artifact_ref, TaskArtifactRef)
+        if self.media_type is not None:
+            _assert_non_empty_string(self.media_type, "media_type")
+        if self.size_bytes is not None:
+            assert isinstance(self.size_bytes, int)
+            assert not isinstance(self.size_bytes, bool)
+            assert self.size_bytes >= 0
+        object.__setattr__(
+            self,
+            "metadata",
+            freeze_snapshot_metadata(self.metadata),
+        )
+
+    def summary(self) -> Mapping[str, object]:
+        value: dict[str, object] = {"logical_path": self.logical_path}
+        if self.artifact_ref is not None:
+            value["artifact"] = self.artifact_ref.summary()
+        if self.media_type is not None:
+            value["media_type"] = self.media_type
+        if self.size_bytes is not None:
+            value["size_bytes"] = self.size_bytes
+        if self.metadata:
+            value["metadata"] = self.metadata
+        return MappingProxyType(value)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskTargetContext:
+    definition: TaskDefinition
+    execution: TaskExecutionContext
+    input_value: object = None
+    files: tuple[TaskInputFile, ...] = ()
+    metadata: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    cancellation_checker: TaskCancellationChecker | None = None
+    event_listener: TaskEventListener | None = None
+    usage_observer: TaskUsageObserver | None = None
+    artifact_store: ArtifactStore | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.definition, TaskDefinition)
+        assert isinstance(self.execution, TaskExecutionContext)
+        assert isinstance(self.files, tuple)
+        for file in self.files:
+            assert isinstance(file, TaskInputFile)
+        object.__setattr__(
+            self,
+            "metadata",
+            freeze_snapshot_metadata(self.metadata),
+        )
+        if self.cancellation_checker is not None:
+            assert callable(self.cancellation_checker)
+        if self.event_listener is not None:
+            assert callable(self.event_listener)
+        if self.usage_observer is not None:
+            assert callable(self.usage_observer)
+        if self.artifact_store is not None:
+            assert callable(getattr(self.artifact_store, "open", None))
+
+    async def check_cancelled(self) -> None:
+        if self.cancellation_checker is not None:
+            await self.cancellation_checker()
+
+    async def observe_usage(self, response: object) -> None:
+        if self.usage_observer is None:
+            return
+        result = self.usage_observer(response)
+        if result is not None:
+            await result
+
+
+def safe_target_metadata(
+    value: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    return freeze_snapshot_metadata(value)
+
+
+def safe_target_value(value: object) -> object:
+    return freeze_snapshot_value(value)
+
+
+def _assert_non_empty_string(value: str | None, field_name: str) -> None:
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert value.strip(), f"{field_name} must not be empty"

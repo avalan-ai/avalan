@@ -91,6 +91,14 @@ def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     }
 
 
+def test_task_extra_declares_jsonschema_dependency() -> None:
+    requirements = _requirements_by_name("task", "jsonschema")
+
+    assert len(requirements) == 1
+    assert requirements[0].specifier == SpecifierSet(">=4.26.0,<5.0.0")
+    assert requirements[0].marker is None
+
+
 def test_vllm_extras_remain_scoped_below_python_314() -> None:
     optional_deps = _optional_dependencies()
 
