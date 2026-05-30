@@ -19,6 +19,7 @@ from avalan.task import (
     TaskArtifactRef,
     TaskArtifactRetention,
     TaskArtifactState,
+    TaskAttempt,
     TaskAttemptDecision,
     TaskAttemptDecisionType,
     TaskAttemptState,
@@ -26,16 +27,20 @@ from avalan.task import (
     TaskDirectTarget,
     TaskErrorCode,
     TaskExecutionTarget,
+    TaskFileConversionError,
     TaskFileConversionRequest,
+    TaskFileConversionResult,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
     TaskKeyMaterial,
     TaskKeyPurpose,
+    TaskMaterializedFile,
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
     TaskRetryPolicy,
+    TaskRun,
     TaskRunFinalizer,
     TaskRunnerError,
     TaskRunPolicy,
@@ -53,6 +58,7 @@ from avalan.task import (
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.runner import (
+    TaskRunExpiredError,
     _error_summary_with_attempt_policy,
     _input_summary_value,
 )
@@ -143,6 +149,11 @@ class SlowTarget:
         return "too late"
 
 
+class ExpiringTarget:
+    async def __call__(self, context: TaskTargetContext) -> object:
+        raise TaskRunExpiredError()
+
+
 class CancelledTarget:
     async def __call__(self, context: TaskTargetContext) -> object:
         raise asyncio.CancelledError("raw cancellation reason")
@@ -195,6 +206,34 @@ class SystemExitRunner(DirectTaskRunner):
         **kwargs: object,
     ) -> TaskRunResult:
         raise SystemExit("stop")
+
+
+class MaterializationFailureRunner(DirectTaskRunner):
+    error: BaseException
+
+    async def _input_files_from_materialized(
+        self,
+        definition: TaskDefinition,
+        materialized_files: tuple[TaskMaterializedFile, ...],
+        *,
+        run: TaskRun,
+        attempt: TaskAttempt,
+    ) -> tuple[TaskInputFile, ...]:
+        raise self.error
+
+
+class FailingTextConverter:
+    name = "text"
+    version = "failure"
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        raise TaskFileConversionError("private conversion failure")
 
 
 class RejectingTarget(TaskTargetRunner):
@@ -538,6 +577,70 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(error_summary["category"], "timeout")
         self.assertEqual(error_summary["code"], "timeout.exceeded")
 
+    async def test_target_run_expiry_marks_run_expired(self) -> None:
+        runner = DirectTaskRunner(
+            self.store,
+            target=ExpiringTarget(),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-target-expired",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.EXPIRED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        error_summary = cast(
+            Mapping[str, object],
+            result.run.result.error if result.run.result else {},
+        )
+        self.assertEqual(error_summary["category"], "timeout")
+        self.assertEqual(error_summary["code"], "timeout.exceeded")
+
+    async def test_materialization_cancellation_finalizes_cancelled_run(
+        self,
+    ) -> None:
+        runner = MaterializationFailureRunner(
+            self.store,
+            target=RecordingTarget("unused"),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-materialization-cancel",
+        )
+        runner.error = asyncio.CancelledError("private cancel")
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.CANCELLED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        error_summary = cast(
+            Mapping[str, object],
+            result.run.result.error if result.run.result else {},
+        )
+        self.assertNotIn("private cancel", str(error_summary))
+
+    async def test_materialization_system_exit_propagates(self) -> None:
+        runner = MaterializationFailureRunner(
+            self.store,
+            target=RecordingTarget("unused"),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-materialization-system-exit",
+        )
+        runner.error = SystemExit("private stop")
+
+        with self.assertRaises(SystemExit):
+            await runner.run(definition(), input_value="private prompt")
+
+    async def test_materialization_store_conflict_propagates(self) -> None:
+        runner = MaterializationFailureRunner(
+            self.store,
+            target=RecordingTarget("unused"),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-materialization-conflict",
+        )
+        runner.error = TaskStoreConflictError("private conflict")
+
+        with self.assertRaises(TaskStoreConflictError):
+            await runner.run(definition(), input_value="private prompt")
+
     async def test_system_exit_from_target_propagates(self) -> None:
         runner = SystemExitRunner(
             self.store,
@@ -703,6 +806,95 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
                 artifacts[0].attempt_id, result.attempt.attempt_id
             )
             self.assertNotIn("input.txt", str(artifacts[0].summary()))
+
+    async def test_native_file_conversion_uses_materialized_input(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "input.txt").write_bytes(b"private text")
+            target = RecordingTarget("short summary")
+            runner = DirectTaskRunner(
+                self.store,
+                target=cast(TaskDirectTarget, target),
+                hmac_provider=self.hmac_provider,
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "artifact-1",
+                ),
+                definition_hash=lambda task: "hash-native-file-input",
+                execution_roots=(root,),
+            )
+
+            result = await runner.run(
+                definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("native", "none"),
+                    )
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                    conversions=(
+                        TaskFileConversionRequest(name="native"),
+                        TaskFileConversionRequest(name="none"),
+                    ),
+                ),
+            )
+
+            self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+            self.assertEqual(
+                target.contexts[0].files[0].logical_path,
+                "artifact:artifact-1",
+            )
+            artifacts = await self.store.list_artifacts(result.run.run_id)
+            self.assertEqual(
+                [artifact.purpose for artifact in artifacts],
+                [TaskArtifactPurpose.INPUT],
+            )
+
+    async def test_file_conversion_failure_finalizes_run_safely(self) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "input.txt").write_bytes(b"private text")
+            target = RecordingTarget("unused")
+            runner = DirectTaskRunner(
+                self.store,
+                target=cast(TaskDirectTarget, target),
+                hmac_provider=self.hmac_provider,
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "artifact-1",
+                ),
+                file_converters={"text": FailingTextConverter()},
+                definition_hash=lambda task: "hash-file-conversion-failure",
+                execution_roots=(root,),
+            )
+
+            result = await runner.run(
+                definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("text",),
+                    )
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                    conversions=(TaskFileConversionRequest(name="text"),),
+                ),
+            )
+
+            self.assertEqual(result.run.state, TaskRunState.FAILED)
+            self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+            self.assertEqual(target.contexts, [])
+            error_summary = cast(
+                Mapping[str, object],
+                result.run.result.error if result.run.result else {},
+            )
+            self.assertEqual(error_summary["category"], "input_contract")
+            self.assertEqual(error_summary["code"], "input_contract.failed")
+            self.assertNotIn("private conversion failure", str(error_summary))
+            self.assertNotIn("input.txt", str(error_summary))
 
     async def test_file_materialization_failure_finalizes_run(
         self,

@@ -12,10 +12,13 @@ from avalan.entities import Message, MessageContentText, MessageRole
 from avalan.event import Event, EventType
 from avalan.task import (
     DirectTaskRunner,
+    TaskArtifactPolicy,
+    TaskArtifactPurpose,
     TaskArtifactRef,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionTarget,
+    TaskFileConversionRequest,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
@@ -943,6 +946,169 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertNotIn("input.txt", str(message))
         self.assertEqual(records[0].artifact_id, "artifact-1")
 
+    async def test_direct_file_task_runs_with_conversion_and_inspection(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as artifacts:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            input_path = root / "uploads" / "private.html"
+            agent_path.parent.mkdir()
+            input_path.parent.mkdir()
+            input_path.write_text("<h1>Private</h1>", encoding="utf-8")
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            artifact_ids = iter(("input-artifact", "converted-artifact"))
+            task_store = InMemoryTaskStore()
+            artifact_store = LocalArtifactStore(
+                artifacts,
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            loader = FakeLoader(
+                response=FakeResponse(
+                    "short summary",
+                    input_token_count=5,
+                    output_token_count=4,
+                ),
+                emit_event=True,
+            )
+            runner = DirectTaskRunner(
+                task_store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-file-converted-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("text",),
+                        mime_types=("text/html",),
+                    ),
+                    output=TaskOutputContract.text(),
+                    artifact=TaskArtifactPolicy.references_only(
+                        retention_days=7,
+                    ),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "uploads/private.html",
+                    mime_type="text/html",
+                    conversions=(TaskFileConversionRequest(name="text"),),
+                    metadata={"display_name": "private.html"},
+                ),
+            )
+            records = await task_store.list_artifacts(result.run.run_id)
+            events = await task_store.list_events(result.run.run_id)
+            usage = await task_store.list_usage(result.run.run_id)
+            run = await task_store.get_run(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.SUCCEEDED)
+        self.assertEqual(result.output, "short summary")
+        self.assertEqual(
+            [record.purpose for record in records],
+            [TaskArtifactPurpose.INPUT, TaskArtifactPurpose.CONVERTED],
+        )
+        self.assertEqual(
+            [record.retention.delete_after_days for record in records],
+            [7, 7],
+        )
+        self.assertEqual(
+            records[1].provenance.source_artifact_id,
+            "input-artifact",
+        )
+        self.assertEqual(records[1].provenance.converter, "text")
+        self.assertNotIn("private.html", str(run.request.input_summary))
+        artifact_summaries = " ".join(
+            str(record.summary()) for record in records
+        )
+        self.assertNotIn("private.html", artifact_summaries)
+        self.assertNotIn("<h1>Private</h1>", str(run))
+        self.assertNotIn("secret-token", str(events[0].payload))
+        self.assertEqual(usage[0].totals.input_tokens, 5)
+        self.assertEqual(usage[0].totals.output_tokens, 4)
+        message = cast(Message, loader.inputs[0])
+        content = cast(list[Any], message.content)
+        self.assertEqual(content[0].type, "file")
+        self.assertEqual(content[0].file["mime_type"], "text/plain")
+
+    async def test_direct_file_task_rejects_unknown_conversion_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as artifacts:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            input_path = root / "uploads" / "private.bin"
+            agent_path.parent.mkdir()
+            input_path.parent.mkdir()
+            input_path.write_bytes(b"private bytes")
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            task_store = InMemoryTaskStore()
+            loader = FakeLoader()
+            runner = DirectTaskRunner(
+                task_store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "input-artifact",
+                ),
+                execution_roots=(root,),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-file-bad-conversion-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("image",),
+                    ),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "uploads/private.bin",
+                    conversions=(TaskFileConversionRequest(name="image"),),
+                ),
+            )
+            records = await task_store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(
+            [record.purpose for record in records],
+            [TaskArtifactPurpose.INPUT],
+        )
+        error_summary = cast(
+            dict[str, object],
+            result.run.result.error if result.run.result else {},
+        )
+        self.assertEqual(error_summary["code"], "input_contract.failed")
+        self.assertIn("input.conversions[0]", str(error_summary))
+        self.assertNotIn("private.bin", str(error_summary))
+        self.assertNotIn("private bytes", str(error_summary))
+
     async def test_direct_runner_rejects_file_without_artifact_backend(
         self,
     ) -> None:
@@ -1061,12 +1227,14 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         *,
         input_contract: TaskInputContract | None = None,
         output: TaskOutputContract | None = None,
+        artifact: TaskArtifactPolicy | None = None,
     ) -> TaskDefinition:
         return TaskDefinition(
             task=TaskMetadata(name="agent", version="1"),
             input=input_contract or TaskInputContract.string(),
             output=output or TaskOutputContract.text(),
             execution=TaskExecutionTarget.agent("agents/valid.toml"),
+            artifact=artifact or TaskArtifactPolicy(),
         )
 
 

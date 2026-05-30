@@ -8,11 +8,18 @@ from .artifact import (
 from .attempt import TaskAttemptDecision, TaskAttemptPolicy
 from .canonical import spec_hash
 from .context import TaskInputFile, TaskTargetContext
-from .definition import RunMode, TaskDefinition, TaskOutputType
+from .converters import (
+    FileConverter,
+    TaskFileConversionError,
+    convert_task_artifact,
+)
+from .converters.text import TextFileConverter
+from .definition import RunMode, TaskDefinition, TaskInputType, TaskOutputType
 from .error import TaskError, TaskErrorValue, classify_task_error
 from .event import RawTaskEventListener
 from .input import TaskFileDescriptor
 from .materialization import (
+    TaskMaterializedFile,
     materialize_task_input_files,
     task_file_descriptors_from_input,
 )
@@ -43,6 +50,7 @@ from .target import (
 )
 from .usage import UsageSource, usage_totals_from_response
 from .validation import (
+    TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
     validate_task_definition,
@@ -225,6 +233,7 @@ class DirectTaskRunner:
         encryption_provider: EncryptionProvider | None = None,
         raw_storage_allowed: bool = False,
         artifact_store: ArtifactStore | None = None,
+        file_converters: Mapping[str, FileConverter] | None = None,
         finalizer: TaskRunFinalizer | None = None,
         definition_hash: Callable[[TaskDefinition], str] | None = None,
         execution_roots: Iterable[str | Path] = (),
@@ -237,6 +246,7 @@ class DirectTaskRunner:
         self._encryption_provider = encryption_provider
         self._raw_storage_allowed = raw_storage_allowed
         self._artifact_store = artifact_store
+        self._file_converters = _file_converters(file_converters)
         self._finalizer = finalizer or TaskRunFinalizer()
         self._definition_hash = definition_hash or spec_hash
         self._execution_roots = tuple(execution_roots)
@@ -316,6 +326,12 @@ class DirectTaskRunner:
                 run_id=run.run_id,
                 attempt_id=attempt.attempt_id,
             )
+            input_files = await self._input_files_from_materialized(
+                definition,
+                materialized_files,
+                run=run,
+                attempt=attempt,
+            )
         except (KeyboardInterrupt, SystemExit):
             raise
         except TaskStoreConflictError:
@@ -355,7 +371,7 @@ class DirectTaskRunner:
             )
         files = (
             *files,
-            *(file.as_input_file() for file in materialized_files),
+            *input_files,
         )
         attempt_policy = TaskAttemptPolicy.from_retry_policy(
             definition.retry,
@@ -718,6 +734,98 @@ class DirectTaskRunner:
                 metadata=artifact.metadata,
             )
 
+    async def _input_files_from_materialized(
+        self,
+        definition: TaskDefinition,
+        materialized_files: tuple[TaskMaterializedFile, ...],
+        *,
+        run: TaskRun,
+        attempt: TaskAttempt,
+    ) -> tuple[TaskInputFile, ...]:
+        input_files: list[TaskInputFile] = []
+        for index, file in enumerate(materialized_files):
+            input_files.append(
+                (
+                    await self._converted_input_file(
+                        definition,
+                        file,
+                        index=index,
+                        run=run,
+                        attempt=attempt,
+                    )
+                )
+                or file.as_input_file()
+            )
+        return tuple(input_files)
+
+    async def _converted_input_file(
+        self,
+        definition: TaskDefinition,
+        file: TaskMaterializedFile,
+        *,
+        index: int,
+        run: TaskRun,
+        attempt: TaskAttempt,
+    ) -> TaskInputFile | None:
+        source_ref = file.ref
+        converted = False
+        for conversion_index, request in enumerate(
+            file.descriptor.conversions
+        ):
+            if request.name in {"native", "none"}:
+                continue
+            converter = self._file_converters.get(request.name)
+            if converter is None:
+                raise TaskValidationError(
+                    (
+                        _conversion_issue(
+                            index=index,
+                            conversion_index=conversion_index,
+                            is_array=(
+                                definition.input.type
+                                == TaskInputType.FILE_ARRAY
+                            ),
+                        ),
+                    )
+                )
+            try:
+                converted_artifact = await convert_task_artifact(
+                    source_ref,
+                    request,
+                    converter=converter,
+                    artifact_store=cast(ArtifactStore, self._artifact_store),
+                    task_store=self._store,
+                    run_id=run.run_id,
+                    attempt_id=attempt.attempt_id,
+                    retention=TaskArtifactRetention(
+                        delete_after_days=definition.artifact.retention_days,
+                    ),
+                )
+            except TaskFileConversionError as error:
+                raise TaskValidationError(
+                    (
+                        _conversion_issue(
+                            index=index,
+                            conversion_index=conversion_index,
+                            is_array=(
+                                definition.input.type
+                                == TaskInputType.FILE_ARRAY
+                            ),
+                        ),
+                    )
+                ) from error
+            source_ref = converted_artifact.ref
+            converted = True
+        if not converted:
+            return None
+        return TaskInputFile(
+            logical_path=f"artifact:{source_ref.artifact_id}",
+            artifact_ref=source_ref,
+            media_type=source_ref.media_type,
+            size_bytes=source_ref.size_bytes,
+            metadata=file.identity,
+        )
+
 
 def _snapshot_value(value: PrivacySafeValue) -> TaskSnapshotValue:
     return freeze_snapshot_value(value)
@@ -794,6 +902,34 @@ def _target_runner(
     if callable(run) and callable(validate_definition):
         return cast(TaskTargetRunner, target)
     return CallableTaskTargetRunner(cast(TaskDirectTarget, target))
+
+
+def _file_converters(
+    converters: Mapping[str, FileConverter] | None,
+) -> Mapping[str, FileConverter]:
+    values: dict[str, FileConverter] = {"text": TextFileConverter()}
+    values.update(converters or {})
+    return values
+
+
+def _conversion_issue(
+    *,
+    index: int,
+    conversion_index: int,
+    is_array: bool,
+) -> TaskValidationIssue:
+    path = (
+        f"input[{index}].conversions[{conversion_index}]"
+        if is_array
+        else f"input.conversions[{conversion_index}]"
+    )
+    return TaskValidationIssue(
+        code="input.invalid_file",
+        path=path,
+        message="Task file conversion could not be completed.",
+        hint="Use a supported conversion with valid options.",
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
 
 
 def _input_summary_value(
