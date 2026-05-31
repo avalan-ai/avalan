@@ -26,6 +26,11 @@ if TYPE_CHECKING:
         TaskArtifactRetention,
         TaskArtifactState,
     )
+    from .idempotency import (
+        TaskIdempotencyIdentity,
+        TaskIdempotencyReservation,
+        TaskIdempotencyReservationResult,
+    )
 
 TaskSnapshotValue: TypeAlias = (
     None
@@ -487,6 +492,20 @@ class TaskStore(Protocol):
         reason: str,
         metadata: Mapping[str, object] | None = None,
     ) -> "TaskArtifactRecord": ...
+
+    async def reserve_idempotency_key(
+        self,
+        identity: "TaskIdempotencyIdentity",
+        *,
+        run_id: str,
+        expires_at: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> "TaskIdempotencyReservationResult": ...
+
+    async def lookup_idempotency_key(
+        self,
+        identity: "TaskIdempotencyIdentity",
+    ) -> "TaskIdempotencyReservation | None": ...
 
 
 def validate_run_transition_request(

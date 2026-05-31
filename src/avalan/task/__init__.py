@@ -101,6 +101,18 @@ from .feature_gate import feature_spec as feature_spec
 from .feature_gate import gate_check_locations as gate_check_locations
 from .feature_gate import require_feature as require_feature
 from .feature_gate import require_features as require_features
+from .idempotency import TaskIdempotencyDigest as TaskIdempotencyDigest
+from .idempotency import TaskIdempotencyError as TaskIdempotencyError
+from .idempotency import TaskIdempotencyIdentity as TaskIdempotencyIdentity
+from .idempotency import (
+    TaskIdempotencyReservation as TaskIdempotencyReservation,
+)
+from .idempotency import (
+    TaskIdempotencyReservationResult as TaskIdempotencyReservationResult,
+)
+from .idempotency import (
+    task_idempotency_identity as task_idempotency_identity,
+)
 from .input import TaskFileConversionRequest as TaskFileConversionRequest
 from .input import TaskFileDescriptor as TaskFileDescriptor
 from .input import TaskFileSourceKind as TaskFileSourceKind

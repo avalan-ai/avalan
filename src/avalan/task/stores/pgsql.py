@@ -353,6 +353,66 @@ CREATE TRIGGER "tr_task_runs_terminal_state"
 """,
         ),
     ),
+    PgsqlTaskMigration(
+        version=2,
+        name="task_idempotency",
+        statements=(
+            """
+CREATE TABLE IF NOT EXISTS "task_idempotency_keys" (
+    "identity_key" TEXT NOT NULL,
+    "task_name" TEXT NOT NULL,
+    "task_version" TEXT NOT NULL,
+    "spec_hash" TEXT NOT NULL,
+    "owner_scope_hash" JSONB NOT NULL,
+    "strategy" TEXT NOT NULL,
+    "window_hash" JSONB DEFAULT NULL,
+    "input_hash" JSONB DEFAULT NULL,
+    "file_hash" JSONB DEFAULT NULL,
+    "custom_hash" JSONB DEFAULT NULL,
+    "run_id" TEXT NOT NULL,
+    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
+    "expires_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("identity_key"),
+    CONSTRAINT "fk_task_idempotency_keys__task_runs"
+        FOREIGN KEY ("run_id")
+        REFERENCES "task_runs" ("run_id"),
+    CONSTRAINT "ck_task_idempotency_keys_identity_key_non_empty"
+        CHECK (LENGTH(BTRIM("identity_key")) > 0),
+    CONSTRAINT "ck_task_idempotency_keys_task_name_non_empty"
+        CHECK (LENGTH(BTRIM("task_name")) > 0),
+    CONSTRAINT "ck_task_idempotency_keys_task_version_non_empty"
+        CHECK (LENGTH(BTRIM("task_version")) > 0),
+    CONSTRAINT "ck_task_idempotency_keys_spec_hash_non_empty"
+        CHECK (LENGTH(BTRIM("spec_hash")) > 0),
+    CONSTRAINT "ck_task_idempotency_keys_strategy"
+        CHECK (
+            "strategy" IN (
+                'input_hash',
+                'input_and_files_hash',
+                'custom'
+            )
+        ),
+    CONSTRAINT "ck_task_idempotency_keys_expires_after_created"
+        CHECK ("expires_at" IS NULL OR "expires_at" > "created_at")
+);
+""",
+            """
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_task_idempotency_keys_identity"
+    ON "task_idempotency_keys" ("identity_key");
+""",
+            """
+CREATE INDEX IF NOT EXISTS "ix_task_idempotency_keys_by_run"
+    ON "task_idempotency_keys" ("run_id");
+""",
+            """
+CREATE INDEX IF NOT EXISTS "ix_task_idempotency_keys_by_task_window"
+    ON "task_idempotency_keys"
+    ("task_name", "task_version", "spec_hash", "strategy", "expires_at");
+""",
+        ),
+    ),
 )
 
 _CREATE_MIGRATIONS_TABLE_SQL = """

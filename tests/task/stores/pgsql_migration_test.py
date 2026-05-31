@@ -110,12 +110,14 @@ class PgsqlMigrationSchemaTest(TestCase):
             "task_attempts",
             "task_attempt_transitions",
             "task_artifacts",
+            "task_idempotency_keys",
         ):
             self.assertIn(f'"{table_name}"', schema)
 
         self.assertIn('"uq_task_definitions_identity"', schema)
         self.assertIn('"uq_task_attempts_run_order"', schema)
         self.assertIn('"uq_task_attempts_one_active_per_run"', schema)
+        self.assertIn('"uq_task_idempotency_keys_identity"', schema)
         self.assertIn(
             "WHERE \"state\" NOT IN ('succeeded', 'failed', 'abandoned')",
             schema,
@@ -138,10 +140,30 @@ class PgsqlMigrationSchemaTest(TestCase):
     def test_migration_metadata_is_stable(self) -> None:
         self.assertEqual(
             [migration.version for migration in TASK_PGSQL_MIGRATIONS],
-            [1],
+            [1, 2],
         )
         self.assertEqual(TASK_PGSQL_MIGRATIONS[0].name, "task_lifecycle")
+        self.assertEqual(TASK_PGSQL_MIGRATIONS[1].name, "task_idempotency")
         self.assertEqual(len(TASK_PGSQL_MIGRATIONS[0].checksum), 64)
+        self.assertEqual(len(TASK_PGSQL_MIGRATIONS[1].checksum), 64)
+
+    def test_idempotency_schema_hashes_user_controlled_dimensions(
+        self,
+    ) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        for column_name in (
+            "owner_scope_hash",
+            "window_hash",
+            "input_hash",
+            "file_hash",
+            "custom_hash",
+        ):
+            self.assertIn(f'"{column_name}"', schema)
+        self.assertIn('"fk_task_idempotency_keys__task_runs"', schema)
+        self.assertIn("'input_hash'", schema)
+        self.assertIn("'input_and_files_hash'", schema)
+        self.assertIn("'custom'", schema)
 
 
 class PgsqlMigrationRunnerTest(IsolatedAsyncioTestCase):
@@ -156,7 +178,8 @@ class PgsqlMigrationRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(applied, TASK_PGSQL_MIGRATIONS)
         self.assertEqual(applied_again, ())
         self.assertEqual(database.migrations[1]["name"], "task_lifecycle")
-        self.assertEqual(len(database.executed), first_execute_count + 2)
+        self.assertEqual(database.migrations[2]["name"], "task_idempotency")
+        self.assertEqual(len(database.executed), first_execute_count + 3)
 
     async def test_rejects_changed_applied_migration(self) -> None:
         migration = PgsqlTaskMigration(
@@ -213,7 +236,7 @@ class PgsqlMigrationRunnerTest(IsolatedAsyncioTestCase):
                 )
                 count = await row.fetchone()
             self.assertIsNotNone(count)
-            self.assertGreaterEqual(count["table_count"], 7)
+            self.assertGreaterEqual(count["table_count"], 8)
         finally:
             async with pool.connection() as connection:
                 await connection.execute(

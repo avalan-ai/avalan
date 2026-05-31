@@ -2,12 +2,15 @@ from datetime import UTC, datetime, timedelta
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.task import (
+    IdempotencyMode,
     TaskArtifactPurpose,
     TaskArtifactRef,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionRequest,
     TaskExecutionTarget,
+    TaskIdempotencyDigest,
+    TaskIdempotencyIdentity,
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
@@ -29,7 +32,8 @@ class FixedClock:
 
 class InMemoryTaskStoreTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.store = InMemoryTaskStore(clock=FixedClock())
+        self.clock = FixedClock()
+        self.store = InMemoryTaskStore(clock=self.clock)
         self.definition = TaskDefinition(
             task=TaskMetadata(name="classify", version="1"),
             input=TaskInputContract.string(),
@@ -182,6 +186,96 @@ class InMemoryTaskStoreTest(IsolatedAsyncioTestCase):
                 reason="stale",
             )
 
+    async def test_idempotency_reservation_returns_existing_run(
+        self,
+    ) -> None:
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        duplicate = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        identity = _identity("identity-1")
+
+        first = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=run.run_id,
+            metadata={"source": "sdk"},
+        )
+        second = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=duplicate.run_id,
+        )
+        found = await self.store.lookup_idempotency_key(identity)
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertEqual(second.reservation.run_id, run.run_id)
+        self.assertEqual(found, first.reservation)
+        self.assertEqual(first.reservation.metadata["source"], "sdk")
+
+    async def test_expired_idempotency_reservation_can_be_replaced(
+        self,
+    ) -> None:
+        first_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        second_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        identity = _identity("identity-expiring")
+
+        first = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=first_run.run_id,
+            expires_at=datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC),
+        )
+        self.clock.value = datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
+        self.assertIsNone(await self.store.lookup_idempotency_key(identity))
+        second = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=second_run.run_id,
+        )
+
+        self.assertTrue(first.created)
+        self.assertTrue(second.created)
+        self.assertEqual(second.reservation.run_id, second_run.run_id)
+
+    async def test_idempotency_reservation_requires_existing_run(self) -> None:
+        with self.assertRaises(TaskStoreNotFoundError):
+            await self.store.reserve_idempotency_key(
+                _identity("identity-missing-run"),
+                run_id="missing",
+            )
+
+    async def test_claim_token_rejected_for_unclaimed_run(self) -> None:
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.create_attempt(
+                run.run_id,
+                claim_token="unexpected",
+            )
+
 
 if __name__ == "__main__":
     main()
+
+
+def _identity(identity_key: str) -> TaskIdempotencyIdentity:
+    digest = TaskIdempotencyDigest(
+        algorithm="hmac-sha256",
+        digest="a" * 64,
+        key_id="idempotency",
+    )
+    return TaskIdempotencyIdentity(
+        identity_key=identity_key,
+        task_name="classify",
+        task_version="1",
+        spec_hash="hash-classify",
+        owner_scope=digest,
+        strategy=IdempotencyMode.INPUT_HASH,
+        input=digest,
+    )

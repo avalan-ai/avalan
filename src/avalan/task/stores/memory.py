@@ -11,6 +11,11 @@ from ..artifact import (
 )
 from ..definition import TaskDefinition
 from ..event import SanitizedTaskEvent, TaskEventCategory, TaskEventValue
+from ..idempotency import (
+    TaskIdempotencyIdentity,
+    TaskIdempotencyReservation,
+    TaskIdempotencyReservationResult,
+)
 from ..state import TaskAttemptState, TaskRunState
 from ..store import (
     TaskAttempt,
@@ -63,6 +68,7 @@ class InMemoryTaskStore:
         self._usage_by_run_id: dict[str, list[UsageRecord]] = {}
         self._artifacts: dict[str, TaskArtifactRecord] = {}
         self._artifact_ids_by_run_id: dict[str, list[str]] = {}
+        self._idempotency_by_key: dict[str, TaskIdempotencyReservation] = {}
         self._lock = Lock()
 
     async def register_definition(
@@ -611,6 +617,48 @@ class InMemoryTaskStore:
             self._artifacts[artifact_id] = updated
             return updated
 
+    async def reserve_idempotency_key(
+        self,
+        identity: TaskIdempotencyIdentity,
+        *,
+        run_id: str,
+        expires_at: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskIdempotencyReservationResult:
+        assert isinstance(identity, TaskIdempotencyIdentity)
+        _assert_non_empty_string(run_id, "run_id")
+        if expires_at is not None:
+            assert isinstance(expires_at, datetime)
+        async with self._lock:
+            self._run_or_raise(run_id)
+            existing = self._active_idempotency_reservation(identity)
+            if existing is not None:
+                return TaskIdempotencyReservationResult(
+                    reservation=existing,
+                    created=False,
+                )
+            now = self._now()
+            reservation = TaskIdempotencyReservation(
+                identity=identity,
+                run_id=run_id,
+                created_at=now,
+                expires_at=expires_at,
+                metadata=freeze_snapshot_metadata(metadata),
+            )
+            self._idempotency_by_key[identity.identity_key] = reservation
+            return TaskIdempotencyReservationResult(
+                reservation=reservation,
+                created=True,
+            )
+
+    async def lookup_idempotency_key(
+        self,
+        identity: TaskIdempotencyIdentity,
+    ) -> TaskIdempotencyReservation | None:
+        assert isinstance(identity, TaskIdempotencyIdentity)
+        async with self._lock:
+            return self._active_idempotency_reservation(identity)
+
     def _definition_or_raise(self, definition_id: str) -> TaskDefinitionRecord:
         try:
             return self._definitions[definition_id]
@@ -640,6 +688,18 @@ class InMemoryTaskStore:
             raise TaskStoreNotFoundError(
                 "task artifact was not found"
             ) from error
+
+    def _active_idempotency_reservation(
+        self,
+        identity: TaskIdempotencyIdentity,
+    ) -> TaskIdempotencyReservation | None:
+        reservation = self._idempotency_by_key.get(identity.identity_key)
+        if reservation is None:
+            return None
+        expires_at = reservation.expires_at
+        if expires_at is not None and expires_at <= self._now():
+            return None
+        return reservation
 
     def _ensure_no_active_attempt(self, run_id: str) -> None:
         for attempt_id in self._attempt_ids_by_run_id[run_id]:
