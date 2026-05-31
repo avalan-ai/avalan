@@ -19,8 +19,9 @@ state, but they do not own DDL constants or apply migrations automatically.
 ## Revision Layout
 
 Task revisions live in a task-owned Alembic script location. Memory
-PostgreSQL revisions live in a separate script location and separate revision
-history. Task migrations must not import memory modules or require pgvector.
+PostgreSQL revisions live in `src/avalan/memory/permanent/pgsql_migrations/`
+with a separate revision history. Task migrations must not import memory
+modules or require pgvector.
 
 The task migration version table is named `avalan_task_alembic_version` by
 default. Deployments that use multiple PostgreSQL schemas may configure the

@@ -131,6 +131,27 @@ def test_task_pgsql_extra_omits_migration_dependencies() -> None:
     assert "sqlalchemy" not in task_pgsql_dependencies
 
 
+def test_task_pgsql_extra_omits_memory_vector_dependencies() -> None:
+    optional_deps = _optional_dependencies()
+    task_pgsql_dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in optional_deps["task-pgsql"]
+    }
+
+    assert "pgvector" not in task_pgsql_dependencies
+
+
+def test_memory_extra_omits_migration_dependencies() -> None:
+    optional_deps = _optional_dependencies()
+    memory_dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in optional_deps["memory"]
+    }
+
+    assert "alembic" not in memory_dependencies
+    assert "sqlalchemy" not in memory_dependencies
+
+
 def test_vllm_extras_remain_scoped_below_python_314() -> None:
     optional_deps = _optional_dependencies()
 
