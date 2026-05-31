@@ -5,10 +5,29 @@ from ...task import (
     TaskValidationIssue,
     validate_task_definition,
 )
+from ...task.stores import (
+    TASK_PGSQL_ALEMBIC_VERSION_TABLE,
+    TASK_PGSQL_HEAD_REVISION,
+    PgsqlTaskMigrationError,
+    PgsqlTaskMigrationSettings,
+    task_pgsql_script_location,
+)
+from ...task.stores import (
+    task_pgsql_check as run_task_pgsql_check,
+)
+from ...task.stores import (
+    task_pgsql_current as run_task_pgsql_current,
+)
+from ...task.stores import (
+    task_pgsql_stamp as run_task_pgsql_stamp,
+)
+from ...task.stores import (
+    task_pgsql_upgrade as run_task_pgsql_upgrade,
+)
 
 from argparse import Namespace
 from collections.abc import Iterable
-from os import strerror
+from os import environ, strerror
 from pathlib import Path
 
 from rich.console import Console
@@ -56,6 +75,110 @@ def task_validate(
     return True
 
 
+def task_pgsql_status(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print the current PostgreSQL task schema revision."""
+    settings = _task_pgsql_settings(args)
+    if settings is None:
+        _print_pgsql_missing_dsn(console)
+        return False
+    try:
+        run_task_pgsql_current(settings, verbose=bool(args.verbose))
+    except PgsqlTaskMigrationError as exc:
+        _print_pgsql_error(console, exc)
+        return False
+    console.print("Task PostgreSQL migration status checked.", markup=False)
+    return True
+
+
+def task_pgsql_migrate(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Apply PostgreSQL task schema migrations."""
+    settings = _task_pgsql_settings(args)
+    if settings is None:
+        _print_pgsql_missing_dsn(console)
+        return False
+    revision = _task_pgsql_revision(args)
+    try:
+        run_task_pgsql_upgrade(settings, revision=revision)
+    except (AssertionError, PgsqlTaskMigrationError) as exc:
+        _print_pgsql_error(console, exc)
+        return False
+    console.print(
+        f"Task PostgreSQL migrations applied to {revision}.",
+        markup=False,
+    )
+    return True
+
+
+def task_pgsql_check(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Check whether PostgreSQL task migrations are current."""
+    settings = _task_pgsql_settings(args)
+    if settings is None:
+        _print_pgsql_missing_dsn(console)
+        return False
+    try:
+        run_task_pgsql_check(settings)
+    except PgsqlTaskMigrationError as exc:
+        _print_pgsql_error(console, exc)
+        return False
+    console.print("Task PostgreSQL migrations are current.", markup=False)
+    return True
+
+
+def task_pgsql_stamp(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Stamp the PostgreSQL task schema revision."""
+    settings = _task_pgsql_settings(args)
+    if settings is None:
+        _print_pgsql_missing_dsn(console)
+        return False
+    revision = _task_pgsql_revision(args)
+    try:
+        run_task_pgsql_stamp(settings, revision=revision)
+    except (AssertionError, PgsqlTaskMigrationError) as exc:
+        _print_pgsql_error(console, exc)
+        return False
+    console.print(
+        f"Task PostgreSQL schema stamped at {revision}.",
+        markup=False,
+    )
+    return True
+
+
+def task_pgsql_diagnose(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print safe PostgreSQL task migration diagnostics."""
+    settings = _task_pgsql_settings(args)
+    table = Table(show_header=True)
+    table.add_column("Setting")
+    table.add_column("Value")
+    table.add_row("dsn", "configured" if settings is not None else "missing")
+    table.add_row("schema", settings.schema if settings else "default")
+    table.add_row("head_revision", TASK_PGSQL_HEAD_REVISION)
+    table.add_row("version_table", TASK_PGSQL_ALEMBIC_VERSION_TABLE)
+    table.add_row("script_location", task_pgsql_script_location())
+    console.print("Task PostgreSQL diagnostics.", markup=False)
+    console.print(table)
+    return settings is not None
+
+
 def _print_issues(
     console: Console,
     title: str,
@@ -82,3 +205,39 @@ def _print_issues(
             escape(row["hint"]),
         )
     console.print(table)
+
+
+def _task_pgsql_settings(
+    args: Namespace,
+) -> PgsqlTaskMigrationSettings | None:
+    dsn = args.dsn or environ.get("AVALAN_TASK_PGSQL_DSN")
+    if not dsn:
+        return None
+    schema = args.schema or environ.get("AVALAN_TASK_PGSQL_SCHEMA")
+    return PgsqlTaskMigrationSettings(url=dsn, schema=schema)
+
+
+def _task_pgsql_revision(args: Namespace) -> str:
+    revision = args.migration_revision
+    assert isinstance(revision, str)
+    return revision
+
+
+def _print_pgsql_missing_dsn(console: Console) -> None:
+    console.print("Task PostgreSQL DSN is not configured.", markup=False)
+    console.print(
+        "Set AVALAN_TASK_PGSQL_DSN or pass --dsn.",
+        markup=False,
+    )
+
+
+def _print_pgsql_error(
+    console: Console,
+    error: AssertionError | PgsqlTaskMigrationError,
+) -> None:
+    if isinstance(error, PgsqlTaskMigrationError):
+        message = str(error)
+    else:
+        message = "Invalid PostgreSQL migration argument."
+    console.print("Task PostgreSQL migration command failed.", markup=False)
+    console.print(message, markup=False)

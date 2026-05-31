@@ -116,6 +116,28 @@ class CliTaskOptionTestCase(TestCase):
         self.assertEqual(args.task_command, "validate")
         self.assertEqual(args.definition, "tasks/example.task.toml")
 
+    def test_task_pgsql_migrate_argument(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "task",
+                "pgsql",
+                "migrate",
+                "--dsn",
+                "postgresql://localhost/tasks",
+                "head",
+            ]
+        )
+
+        self.assertEqual(args.command, "task")
+        self.assertEqual(args.task_command, "pgsql")
+        self.assertEqual(args.task_pgsql_command, "migrate")
+        self.assertEqual(args.dsn, "postgresql://localhost/tasks")
+        self.assertEqual(args.migration_revision, "head")
+
 
 class CliModelRunOptionTestCase(TestCase):
     def test_backend_help_includes_ds4_choice(self) -> None:

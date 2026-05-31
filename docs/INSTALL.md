@@ -66,3 +66,21 @@ python3 -m pip install -U "avalan[ds4]"
 
 Use `PYDS4_BACKEND=cuda` for Linux CUDA builds. Local CPU builds are possible
 with `PYDS4_BACKEND=cpu`, but keep them limited to diagnostics.
+
+## Task PostgreSQL migrations
+
+Durable task storage uses PostgreSQL through the `task-pgsql` extra:
+
+```bash
+python3 -m pip install -U "avalan[task-pgsql]"
+```
+
+Task schema migration commands additionally require Alembic and SQLAlchemy in
+the environment that runs them:
+
+```bash
+python3 -m pip install -U alembic "SQLAlchemy>=2.0.43,<3.0.0"
+```
+
+Set `AVALAN_TASK_PGSQL_DSN` before running migration diagnostics, and set
+`AVALAN_TASK_PGSQL_SCHEMA` when using an isolated schema.

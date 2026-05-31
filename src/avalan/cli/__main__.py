@@ -417,6 +417,36 @@ def task_validate(*args: Any, **kwargs: Any) -> Any:
     )
 
 
+def task_pgsql_check(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_check")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_diagnose(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_diagnose")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_migrate(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_migrate")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_stamp(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_stamp")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_status(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_status")(
+        *args, **kwargs
+    )
+
+
 async def tokenize(*args: Any, **kwargs: Any) -> Any:
     command = cast(
         Callable[..., Awaitable[Any]],
@@ -1342,6 +1372,72 @@ class CLI:
             "definition",
             type=str,
             help="Task definition TOML file to validate",
+        )
+        task_pgsql_parser = task_command_parsers.add_parser(
+            name="pgsql",
+            description="Manage task PostgreSQL schema migrations",
+            parents=[global_parser],
+        )
+        task_pgsql_command_parsers = task_pgsql_parser.add_subparsers(
+            dest="task_pgsql_command"
+        )
+        task_pgsql_common_parser = ArgumentParser(add_help=False)
+        task_pgsql_common_parser.add_argument(
+            "--dsn",
+            type=str,
+            default=None,
+            help=(
+                "PostgreSQL DSN. Defaults to AVALAN_TASK_PGSQL_DSN when "
+                "omitted."
+            ),
+        )
+        task_pgsql_common_parser.add_argument(
+            "--schema",
+            type=str,
+            default=None,
+            help=(
+                "PostgreSQL schema. Defaults to AVALAN_TASK_PGSQL_SCHEMA "
+                "when omitted."
+            ),
+        )
+        task_pgsql_command_parsers.add_parser(
+            name="status",
+            description="Show the current task PostgreSQL schema revision",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_migrate_parser = task_pgsql_command_parsers.add_parser(
+            name="migrate",
+            description="Apply task PostgreSQL schema migrations",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_migrate_parser.add_argument(
+            "migration_revision",
+            nargs="?",
+            type=str,
+            default="head",
+            help="Migration revision to apply.",
+        )
+        task_pgsql_command_parsers.add_parser(
+            name="check",
+            description="Check task PostgreSQL schema migration status",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_stamp_parser = task_pgsql_command_parsers.add_parser(
+            name="stamp",
+            description="Stamp the task PostgreSQL schema revision",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_stamp_parser.add_argument(
+            "migration_revision",
+            nargs="?",
+            type=str,
+            default="head",
+            help="Migration revision to stamp.",
+        )
+        task_pgsql_command_parsers.add_parser(
+            name="diagnose",
+            description="Print safe task PostgreSQL migration diagnostics",
+            parents=[global_parser, task_pgsql_common_parser],
         )
 
         # Memory command
@@ -2882,6 +2978,19 @@ class CLI:
                 match subcommand:
                     case "validate":
                         task_validate(args, console, theme)
+                    case "pgsql":
+                        pgsql_subcommand = args.task_pgsql_command or "status"
+                        match pgsql_subcommand:
+                            case "check":
+                                task_pgsql_check(args, console, theme)
+                            case "diagnose":
+                                task_pgsql_diagnose(args, console, theme)
+                            case "migrate":
+                                task_pgsql_migrate(args, console, theme)
+                            case "stamp":
+                                task_pgsql_stamp(args, console, theme)
+                            case "status":
+                                task_pgsql_status(args, console, theme)
 
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)

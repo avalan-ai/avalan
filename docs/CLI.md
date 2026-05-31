@@ -18,6 +18,9 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan deploy run](#avalan-deploy-run)
 * [avalan flow](#avalan-flow)
   * [avalan flow run](#avalan-flow-run)
+* [avalan task](#avalan-task)
+  * [avalan task validate](#avalan-task-validate)
+  * [avalan task pgsql](#avalan-task-pgsql)
 * [avalan memory](#avalan-memory)
   * [avalan memory embeddings](#avalan-memory-embeddings)
   * [avalan memory search](#avalan-memory-search)
@@ -1605,6 +1608,51 @@ plicate}
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
+
+## avalan task
+
+`avalan task` validates task definition TOML files and manages durable task
+storage diagnostics.
+
+```bash
+avalan task validate tasks/example.task.toml
+```
+
+### avalan task validate
+
+Validate a task definition without executing it:
+
+```bash
+avalan task validate tasks/example.task.toml
+```
+
+Validation output aggregates load and contract issues and avoids printing raw
+prompts, outputs, file paths, or sensitive execution references.
+
+### avalan task pgsql
+
+Manage PostgreSQL task schema migrations. The command accepts `--dsn` and
+`--schema`, or reads `AVALAN_TASK_PGSQL_DSN` and
+`AVALAN_TASK_PGSQL_SCHEMA` when the options are omitted.
+
+```bash
+avalan task pgsql status
+avalan task pgsql check
+avalan task pgsql migrate head
+avalan task pgsql stamp head
+avalan task pgsql diagnose
+```
+
+The migration commands require Alembic and SQLAlchemy in the environment that
+runs them:
+
+```bash
+python3 -m pip install -U alembic "SQLAlchemy>=2.0.43,<3.0.0"
+```
+
+Diagnostics report whether a DSN is configured, the schema, the migration
+head revision, the version table, and the script location without printing
+raw DSNs or credentials.
 
 ## avalan memory
 

@@ -2,7 +2,7 @@ from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from rich.console import Console
 
@@ -98,6 +98,301 @@ class CliTaskValidateTestCase(TestCase):
         self.assertIn("Task definition could not be read.", output)
         self.assertIn("file.read", output)
         self.assertNotIn("/tmp/private/missing.task.toml", output)
+
+
+class CliTaskPgsqlTestCase(TestCase):
+    def setUp(self) -> None:
+        self.theme = MagicMock()
+
+    def test_pgsql_status_dispatches_current_with_safe_success(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(task_cmds, "run_task_pgsql_current") as current:
+            result = task_cmds.task_pgsql_status(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema="tenant_tasks",
+                    verbose=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        current.assert_called_once()
+        settings = current.call_args.args[0]
+        self.assertEqual(
+            settings.url, "postgresql://user:secret@db.example.com/tasks"
+        )
+        self.assertEqual(settings.schema, "tenant_tasks")
+        self.assertEqual(current.call_args.kwargs["verbose"], True)
+        self.assertIn("migration status checked", output)
+        self.assertNotIn("secret", output)
+        self.assertNotIn("db.example.com", output)
+
+    def test_pgsql_migrate_dispatches_upgrade_revision(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(task_cmds, "run_task_pgsql_upgrade") as upgrade:
+            result = task_cmds.task_pgsql_migrate(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                    migration_revision="head",
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertTrue(result)
+        upgrade.assert_called_once()
+        self.assertEqual(upgrade.call_args.kwargs["revision"], "head")
+        self.assertNotIn("secret", console.export_text())
+
+    def test_pgsql_check_dispatches_check(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(task_cmds, "run_task_pgsql_check") as check:
+            result = task_cmds.task_pgsql_check(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertTrue(result)
+        check.assert_called_once()
+        self.assertIn("migrations are current", console.export_text())
+
+    def test_pgsql_stamp_dispatches_stamp_revision(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(task_cmds, "run_task_pgsql_stamp") as stamp:
+            result = task_cmds.task_pgsql_stamp(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                    migration_revision="20260530_0001",
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertTrue(result)
+        stamp.assert_called_once()
+        self.assertEqual(stamp.call_args.kwargs["revision"], "20260530_0001")
+        self.assertIn("20260530_0001", console.export_text())
+        self.assertNotIn("secret", console.export_text())
+
+    def test_pgsql_diagnose_uses_env_without_printing_dsn(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.dict(
+            task_cmds.environ,
+            {
+                "AVALAN_TASK_PGSQL_DSN": (
+                    "postgresql://user:secret@db.example.com/tasks"
+                ),
+                "AVALAN_TASK_PGSQL_SCHEMA": "tenant_tasks",
+            },
+        ):
+            result = task_cmds.task_pgsql_diagnose(
+                Namespace(dsn=None, schema=None),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("configured", output)
+        self.assertIn("tenant_tasks", output)
+        self.assertIn("20260530_0001", output)
+        self.assertNotIn("secret", output)
+        self.assertNotIn("db.example.com", output)
+
+    def test_pgsql_commands_require_configured_dsn(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            result = task_cmds.task_pgsql_check(
+                Namespace(dsn=None, schema=None),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("DSN is not configured", output)
+        self.assertIn("AVALAN_TASK_PGSQL_DSN", output)
+
+    def test_pgsql_status_requires_configured_dsn(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            result = task_cmds.task_pgsql_status(
+                Namespace(dsn=None, schema=None, verbose=False),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("DSN is not configured", console.export_text())
+
+    def test_pgsql_migrate_requires_configured_dsn(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            result = task_cmds.task_pgsql_migrate(
+                Namespace(
+                    dsn=None,
+                    schema=None,
+                    migration_revision="head",
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("DSN is not configured", console.export_text())
+
+    def test_pgsql_stamp_requires_configured_dsn(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            result = task_cmds.task_pgsql_stamp(
+                Namespace(
+                    dsn=None,
+                    schema=None,
+                    migration_revision="head",
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("DSN is not configured", console.export_text())
+
+    def test_pgsql_status_errors_are_sanitized(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "run_task_pgsql_current",
+            side_effect=task_cmds.PgsqlTaskMigrationError(
+                "dependency.task_pgsql_migrations_missing: install extras"
+            ),
+        ):
+            result = task_cmds.task_pgsql_status(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                    verbose=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.task_pgsql_migrations_missing", output)
+        self.assertNotIn("secret", output)
+
+    def test_pgsql_check_errors_are_sanitized(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "run_task_pgsql_check",
+            side_effect=task_cmds.PgsqlTaskMigrationError(
+                "dependency.task_pgsql_migrations_missing: install extras"
+            ),
+        ):
+            result = task_cmds.task_pgsql_check(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.task_pgsql_migrations_missing", output)
+        self.assertNotIn("secret", output)
+
+    def test_pgsql_errors_are_sanitized(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "run_task_pgsql_upgrade",
+            side_effect=task_cmds.PgsqlTaskMigrationError(
+                "dependency.task_pgsql_migrations_missing: install extras"
+            ),
+        ):
+            result = task_cmds.task_pgsql_migrate(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                    migration_revision="head",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.task_pgsql_migrations_missing", output)
+        self.assertNotIn("secret", output)
+        self.assertNotIn("db.example.com", output)
+
+    def test_pgsql_stamp_errors_are_sanitized(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "run_task_pgsql_stamp",
+            side_effect=task_cmds.PgsqlTaskMigrationError(
+                "dependency.task_pgsql_migrations_missing: install extras"
+            ),
+        ):
+            result = task_cmds.task_pgsql_stamp(
+                Namespace(
+                    dsn="postgresql://user:secret@db.example.com/tasks",
+                    schema=None,
+                    migration_revision="head",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.task_pgsql_migrations_missing", output)
+        self.assertNotIn("secret", output)
+
+    def test_invalid_revision_prints_safe_diagnostic(self) -> None:
+        console = Console(record=True, width=160)
+
+        result = task_cmds.task_pgsql_migrate(
+            Namespace(
+                dsn="postgresql://user:secret@db.example.com/tasks",
+                schema=None,
+                migration_revision="head;drop",
+            ),
+            console,
+            self.theme,
+        )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Invalid PostgreSQL migration argument", output)
+        self.assertNotIn("head;drop", output)
+        self.assertNotIn("secret", output)
 
 
 if __name__ == "__main__":
