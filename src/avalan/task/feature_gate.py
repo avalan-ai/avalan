@@ -32,6 +32,7 @@ class TaskFeature(StrEnum):
     JSON_SCHEMA = "json_schema"
     OPENTELEMETRY = "opentelemetry"
     POSTGRESQL = "postgresql"
+    POSTGRESQL_MIGRATIONS = "postgresql_migrations"
     PROMETHEUS = "prometheus"
     RAW_STORAGE = "raw_storage"
     REMOTE_URL_FILE_INPUTS = "remote_url_file_inputs"
@@ -124,6 +125,22 @@ _FEATURE_GATE_SPECS = {
         message="PostgreSQL task storage requires the task-pgsql extra.",
         hint="Install avalan[task-pgsql] and configure a durable task store.",
         modules=("psycopg",),
+    ),
+    TaskFeature.POSTGRESQL_MIGRATIONS: FeatureGateSpec(
+        feature=TaskFeature.POSTGRESQL_MIGRATIONS,
+        code="dependency.task_pgsql_migrations_missing",
+        path="store.postgresql.migrations",
+        category=FeatureGateCategory.DEPENDENCY,
+        message="PostgreSQL task migrations require Alembic and SQLAlchemy.",
+        hint=(
+            "Install the task migration dependencies before running "
+            "PostgreSQL schema migrations."
+        ),
+        modules=("alembic", "sqlalchemy"),
+        check_locations=(
+            FeatureGateCheckLocation.CLI,
+            FeatureGateCheckLocation.SDK,
+        ),
     ),
     TaskFeature.PROMETHEUS: FeatureGateSpec(
         feature=TaskFeature.PROMETHEUS,

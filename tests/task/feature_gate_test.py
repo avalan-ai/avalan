@@ -92,6 +92,50 @@ class FeatureGateTest(TestCase):
         self.assertNotIn("/Users/person/private", rendered)
         self.assertNotIn("raw secret", rendered)
 
+    def test_migration_dependency_gate_requires_alembic_and_sqlalchemy(
+        self,
+    ) -> None:
+        diagnostics = require_feature(
+            TaskFeature.POSTGRESQL_MIGRATIONS,
+            module_finder=self._missing_module,
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].as_dict(),
+            {
+                "code": "dependency.task_pgsql_migrations_missing",
+                "path": "store.postgresql.migrations",
+                "category": "dependency",
+                "severity": "error",
+                "message": (
+                    "PostgreSQL task migrations require Alembic and "
+                    "SQLAlchemy."
+                ),
+                "hint": (
+                    "Install the task migration dependencies before running "
+                    "PostgreSQL schema migrations."
+                ),
+            },
+        )
+
+        seen_modules: list[str] = []
+
+        def one_missing_module(module: str) -> object | None:
+            seen_modules.append(module)
+            if module == "sqlalchemy":
+                return None
+            return object()
+
+        self.assertEqual(
+            require_feature(
+                TaskFeature.POSTGRESQL_MIGRATIONS,
+                module_finder=one_missing_module,
+            )[0].code,
+            "dependency.task_pgsql_migrations_missing",
+        )
+        self.assertEqual(seen_modules, ["alembic", "sqlalchemy"])
+
     def test_configuration_gate_requires_explicit_enablement(self) -> None:
         self.assertFalse(feature_available(TaskFeature.RAW_STORAGE))
         self.assertEqual(
@@ -150,6 +194,9 @@ class FeatureGateTest(TestCase):
             TaskFeature.JSON_SCHEMA: "dependency.jsonschema_missing",
             TaskFeature.OPENTELEMETRY: "dependency.task_otel_missing",
             TaskFeature.POSTGRESQL: "dependency.task_pgsql_missing",
+            TaskFeature.POSTGRESQL_MIGRATIONS: (
+                "dependency.task_pgsql_migrations_missing"
+            ),
             TaskFeature.PROMETHEUS: "dependency.task_prometheus_missing",
             TaskFeature.RAW_STORAGE: "feature.raw_storage_disabled",
             TaskFeature.REMOTE_URL_FILE_INPUTS: (
@@ -183,6 +230,13 @@ class FeatureGateTest(TestCase):
         self.assertEqual(
             gate_check_locations(TaskFeature.JSON_SCHEMA),
             (FeatureGateCheckLocation.SDK,),
+        )
+        self.assertEqual(
+            gate_check_locations(TaskFeature.POSTGRESQL_MIGRATIONS),
+            (
+                FeatureGateCheckLocation.CLI,
+                FeatureGateCheckLocation.SDK,
+            ),
         )
         self.assertEqual(
             FeatureGateCheckLocation.CLI.value,

@@ -15,6 +15,8 @@ tailored specifically to each use case.
 - [DS4 native backend](DS4.md) - Run DS4-supported DeepSeek V4 Flash GGUF
   files with `--backend ds4`, including CLI examples, URI configuration,
   limitations, and integration-test environment variables.
+- [Task PostgreSQL storage](TASK_POSTGRESQL.md) - Configure task PostgreSQL
+  storage and schema migration dependencies.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
 

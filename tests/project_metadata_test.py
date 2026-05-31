@@ -120,6 +120,17 @@ def test_task_pgsql_extra_declares_postgresql_dependencies() -> None:
     assert not binary_marker.evaluate({"python_version": "3.14"})
 
 
+def test_task_pgsql_extra_omits_migration_dependencies() -> None:
+    optional_deps = _optional_dependencies()
+    task_pgsql_dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in optional_deps["task-pgsql"]
+    }
+
+    assert "alembic" not in task_pgsql_dependencies
+    assert "sqlalchemy" not in task_pgsql_dependencies
+
+
 def test_vllm_extras_remain_scoped_below_python_314() -> None:
     optional_deps = _optional_dependencies()
 
