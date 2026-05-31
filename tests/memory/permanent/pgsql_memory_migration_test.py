@@ -9,6 +9,7 @@ from uuid import uuid4
 from pytest import importorskip
 
 from avalan.memory.permanent.pgsql_migrations import (
+    MEMORY_PGSQL_ADVISORY_LOCK_ID,
     MEMORY_PGSQL_ALEMBIC_VERSION_TABLE,
     MEMORY_PGSQL_HEAD_REVISION,
     PgsqlMemoryMigrationError,
@@ -395,6 +396,26 @@ class PgsqlMemoryMigrationEnvironmentTest(TestCase):
                 (
                     "SELECT pg_advisory_xact_lock(:lock_id)",
                     {"lock_id": 43},
+                ),
+            ],
+        )
+
+    def test_online_environment_uses_default_lock(self) -> None:
+        connection = FakeSqlalchemyConnection()
+        context = FakeAlembicEnvironmentContext(
+            offline=False,
+            config=FakeAlembicEnvironmentConfig(),
+        )
+
+        self._import_env(context=context, connection=connection)
+
+        self.assertTrue(context.ran_migrations)
+        self.assertEqual(
+            connection.executed,
+            [
+                (
+                    "SELECT pg_advisory_xact_lock(:lock_id)",
+                    {"lock_id": MEMORY_PGSQL_ADVISORY_LOCK_ID},
                 ),
             ],
         )

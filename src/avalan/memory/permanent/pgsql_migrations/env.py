@@ -1,3 +1,5 @@
+from . import MEMORY_PGSQL_ADVISORY_LOCK_ID, MEMORY_PGSQL_ALEMBIC_VERSION_TABLE
+
 from importlib import import_module
 from typing import Any, cast
 
@@ -51,7 +53,7 @@ def run_migrations_online() -> None:
 def _prepare_connection(connection: Any) -> None:
     lock_id = int(
         config.get_main_option("memory_advisory_lock_id")
-        or "8172673911930301928"
+        or str(MEMORY_PGSQL_ADVISORY_LOCK_ID)
     )
     schema = _memory_schema()
     if schema is not None:
@@ -72,7 +74,7 @@ def _memory_schema() -> str | None:
 
 def _version_table() -> str:
     version_table = config.get_main_option("version_table")
-    return version_table or "avalan_memory_alembic_version"
+    return version_table or MEMORY_PGSQL_ALEMBIC_VERSION_TABLE
 
 
 if context.is_offline_mode():
