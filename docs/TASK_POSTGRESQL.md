@@ -71,6 +71,48 @@ the stable feature-gate diagnostic
 `dependency.task_pgsql_migrations_missing` without leaking import exceptions,
 paths, DSNs, usernames, passwords, tokens, or stack traces.
 
+## Operational Requirements
+
+Task PostgreSQL storage targets PostgreSQL 14 or newer. Deployments need a role
+that can create the task tables, indexes, triggers, and functions in the target
+database or configured schema. No PostgreSQL extensions are required for task
+storage. Memory storage has separate extension requirements and a separate
+migration history.
+
+Managed providers such as AWS RDS/Aurora, Azure Database for PostgreSQL, Cloud
+SQL, Supabase, and Neon can use provider-specific DSN query parameters such as
+`sslmode`, `target_session_attrs`, `channel_binding`, and pooler endpoints. The
+runtime pool helper preserves DSN query parameters and adds configured
+connection timeout and application name values without printing raw DSNs in CLI
+diagnostics.
+
+Pool settings should be explicit in production. Configure minimum and maximum
+pool size, pool acquisition timeout, connection timeout, statement timeout, lock
+timeout, idle transaction timeout, application name, and optional schema/search
+path for the worker profile being deployed. Borrowed pools remain owned by the
+caller; DSN-created pools are opened and closed by the Avalan PostgreSQL helper.
+
+PostgreSQL failures are reported with low-cardinality categories only:
+timeout, connection, serialization, deadlock, unique conflict, insufficient
+privilege, migration, or unknown. Diagnostics must not include raw SQL
+parameters, prompts, inputs, outputs, stack traces, file bytes, passwords, or
+provider tokens.
+
+## Verification
+
+Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL migration
+verification tests. These tests create isolated schemas, run upgrade/current/
+check/stamp helpers, exercise concurrent migration runners through the advisory
+lock, and keep schema state separate from the default development schema.
+
+Set `AVALAN_TASK_BENCHMARK_POSTGRESQL_DSN` to run the opt-in EXPLAIN coverage.
+The benchmark profile records worker count, run count, queue count, pool size,
+PostgreSQL version, and thresholds. The covered paths are run creation,
+idempotency reservation, enqueue, claim, heartbeat, event append, inspection
+fetch, and retention sweeps. Plan checks are designed to flag missing indexes,
+unbounded scans, duplicate-claim risk, and inspection fetch regressions without
+executing user workloads.
+
 ## Existing Databases
 
 Existing embedded task migration metadata and development databases do not

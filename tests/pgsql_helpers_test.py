@@ -2,6 +2,7 @@ from asyncio import CancelledError
 from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from urllib.parse import parse_qsl, urlsplit
 
 from avalan.pgsql import (
     PgsqlDatabaseClosedError,
@@ -263,6 +264,54 @@ class PgsqlHelpersTest(TestCase):
             "connect_timeout=3&application_name=avalan-task",
         )
 
+    def test_hosted_dsn_fixtures_preserve_pool_options(self) -> None:
+        cases = (
+            (
+                (
+                    "postgresql://user:pass@rds.amazonaws.com/tasks?"
+                    "sslmode=require"
+                ),
+                {"target_session_attrs": "read-write"},
+            ),
+            (
+                (
+                    "postgresql://user:pass@server.postgres.database.azure.com/"
+                    "tasks?sslmode=require"
+                ),
+                {"channel_binding": "require"},
+            ),
+            (
+                (
+                    "postgresql://user:pass@aws-0-us-east-1.pooler.supabase.com/"
+                    "postgres?sslmode=require"
+                ),
+                {"options": "-c statement_timeout=5000"},
+            ),
+            (
+                (
+                    "postgresql://user:pass@ep-example.neon.tech/tasks?"
+                    "sslmode=require"
+                ),
+                {"target_session_attrs": "read-write"},
+            ),
+        )
+
+        for dsn, parameters in cases:
+            with self.subTest(dsn=dsn):
+                normalized = normalize_pgsql_dsn(
+                    dsn,
+                    connect_timeout_seconds=3,
+                    application_name="avalan-task",
+                    connection_parameters=parameters,
+                )
+                query = dict(parse_qsl(urlsplit(normalized).query))
+
+                self.assertEqual(query["sslmode"], "require")
+                self.assertEqual(query["connect_timeout"], "3")
+                self.assertEqual(query["application_name"], "avalan-task")
+                for key, value in parameters.items():
+                    self.assertEqual(query[key], value)
+
     def test_quotes_only_safe_identifiers(self) -> None:
         self.assertEqual(quote_pgsql_identifier("tenant_1"), '"tenant_1"')
         with self.assertRaises(AssertionError):
@@ -315,6 +364,7 @@ class PgsqlHelpersTest(TestCase):
                 "connection",
                 True,
             ),
+            (_named_error("PoolTimeout", "private pool"), "timeout", True),
             (TimeoutError("private timeout"), "timeout", True),
             (_migration_error("private revision"), "migration", False),
             (_invalid_sqlstate_error("private code"), "unknown", False),
@@ -436,6 +486,29 @@ class PsycopgAsyncDatabaseTest(IsolatedAsyncioTestCase):
             database.connection_value.cursor_context.exit_type.__name__,
             "SqlstateError",
         )
+
+    async def test_transaction_helper_returns_successful_callback_value(
+        self,
+    ) -> None:
+        database = FakeTransactionDatabase()
+
+        async def callback(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute("SELECT 1")
+            return {"ok": True}
+
+        result = await run_pgsql_transaction(
+            database,
+            operation="inspect",
+            callback=callback,
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertIs(
+            database.connection_value.transaction_context.exit_type,
+            None,
+        )
+        assert database.connection_value.cursor_context is not None
+        self.assertIs(database.connection_value.cursor_context.exit_type, None)
 
     async def test_transaction_helper_preserves_cancellation(self) -> None:
         database = FakeTransactionDatabase()

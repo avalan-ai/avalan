@@ -1,11 +1,22 @@
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
-from os import environ
 from sys import modules
 from types import SimpleNamespace
 from typing import cast
 from unittest import TestCase, main
-from uuid import uuid4
 
+from pgsql_harness import (
+    FakeAlembicConfig,
+    FakeAlembicEnvironmentConfig,
+    FakeAlembicEnvironmentContext,
+    FakeAlembicModules,
+    FakeRevisionOp,
+    FakeSqlalchemyConnectable,
+    FakeSqlalchemyConnection,
+    isolated_task_pgsql_schema,
+    real_task_pgsql_dsn,
+    unexpected_import,
+)
 from pytest import importorskip
 
 from avalan.task import TaskArtifactPurpose, TaskAttemptState, TaskRunState
@@ -24,172 +35,6 @@ from avalan.task.stores import (
     task_pgsql_state_predicate,
     task_pgsql_upgrade,
 )
-
-
-class FakeAlembicConfig:
-    def __init__(self) -> None:
-        self.options: dict[str, str] = {}
-        self.attributes: dict[str, object] = {}
-
-    def set_main_option(self, name: str, value: str) -> None:
-        self.options[name] = value
-
-
-class FakeAlembicConfigModule:
-    def __init__(self) -> None:
-        self.configs: list[FakeAlembicConfig] = []
-
-    def Config(self) -> FakeAlembicConfig:
-        config = FakeAlembicConfig()
-        self.configs.append(config)
-        return config
-
-
-class FakeAlembicCommandModule:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = (
-            []
-        )
-
-    def upgrade(self, config: object, revision: str) -> None:
-        self.calls.append(("upgrade", (config, revision), {}))
-
-    def current(self, config: object, **kwargs: object) -> None:
-        self.calls.append(("current", (config,), kwargs))
-
-    def stamp(self, config: object, revision: str) -> None:
-        self.calls.append(("stamp", (config, revision), {}))
-
-
-class FakeAlembicModules:
-    def __init__(self) -> None:
-        self.config = FakeAlembicConfigModule()
-        self.command = FakeAlembicCommandModule()
-
-    def module_finder(self, module: str) -> object | None:
-        if module in {"alembic", "sqlalchemy"}:
-            return object()
-        return None
-
-    def module_importer(self, module: str) -> object:
-        if module == "alembic.config":
-            return self.config
-        if module == "alembic.command":
-            return self.command
-        raise AssertionError(f"unexpected module import: {module}")
-
-
-class FakeAlembicEnvironmentConfig:
-    config_ini_section = "alembic"
-
-    def __init__(
-        self,
-        *,
-        options: dict[str, str] | None = None,
-        attributes: dict[str, object] | None = None,
-    ) -> None:
-        self.options = options or {}
-        self.attributes = attributes or {}
-
-    def get_main_option(self, name: str) -> str | None:
-        return self.options.get(name)
-
-    def get_section(
-        self,
-        name: str,
-        default: dict[str, object],
-    ) -> dict[str, object]:
-        return {"sqlalchemy.url": "postgresql://localhost/avalan"}
-
-
-class FakeTransaction:
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: object | None,
-    ) -> bool:
-        return False
-
-
-class FakeAlembicEnvironmentContext:
-    def __init__(
-        self,
-        *,
-        offline: bool,
-        config: FakeAlembicEnvironmentConfig,
-    ) -> None:
-        self.config = config
-        self.offline = offline
-        self.configure_kwargs: dict[str, object] | None = None
-        self.ran_migrations = False
-
-    def is_offline_mode(self) -> bool:
-        return self.offline
-
-    def configure(self, **kwargs: object) -> None:
-        self.configure_kwargs = kwargs
-
-    def begin_transaction(self) -> FakeTransaction:
-        return FakeTransaction()
-
-    def run_migrations(self) -> None:
-        self.ran_migrations = True
-
-
-class FakeConnectionContext:
-    def __init__(self, connection: "FakeSqlalchemyConnection") -> None:
-        self.connection = connection
-
-    def __enter__(self) -> "FakeSqlalchemyConnection":
-        return self.connection
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: object | None,
-    ) -> bool:
-        return False
-
-
-class FakeSqlalchemyConnection:
-    def __init__(self) -> None:
-        self.executed: list[tuple[object, object | None]] = []
-
-    def execute(
-        self,
-        statement: object,
-        parameters: object | None = None,
-    ) -> None:
-        self.executed.append((statement, parameters))
-
-
-class FakeSqlalchemyConnectable:
-    def __init__(self, connection: FakeSqlalchemyConnection) -> None:
-        self.connection = connection
-
-    def connect(self) -> FakeConnectionContext:
-        return FakeConnectionContext(self.connection)
-
-
-class FakeAlembicBind:
-    def __init__(self) -> None:
-        self.statements: list[str] = []
-
-    def exec_driver_sql(self, statement: str) -> None:
-        self.statements.append(statement)
-
-
-class FakeRevisionOp:
-    def __init__(self) -> None:
-        self.bind = FakeAlembicBind()
-
-    def get_bind(self) -> FakeAlembicBind:
-        return self.bind
 
 
 class PgsqlMigrationSchemaTest(TestCase):
@@ -398,7 +243,7 @@ class PgsqlMigrationHelperTest(TestCase):
         settings = PgsqlTaskMigrationSettings(
             url="postgresql+psycopg://localhost/avalan",
             module_finder=lambda module: None,
-            module_importer=_unexpected_import,
+            module_importer=unexpected_import,
         )
 
         with self.assertRaisesRegex(
@@ -458,19 +303,63 @@ class PgsqlMigrationHelperTest(TestCase):
         with self.assertRaises(AssertionError):
             task_pgsql_upgrade(settings, revision="head;drop")
 
-    def test_upgrade_real_postgresql_when_configured(self) -> None:
-        dsn = environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN")
+    def test_real_postgresql_migration_lifecycle_when_configured(
+        self,
+    ) -> None:
+        dsn = real_task_pgsql_dsn()
         if not dsn:
             self.skipTest("AVALAN_TASK_TEST_POSTGRESQL_DSN is not set")
         importorskip("alembic")
         importorskip("sqlalchemy")
-        schema = f"avalan_task_test_{uuid4().hex}"
+        schema = isolated_task_pgsql_schema()
 
         settings = PgsqlTaskMigrationSettings(
             url=dsn,
             schema=schema,
         )
         task_pgsql_upgrade(settings)
+        task_pgsql_current(settings, verbose=True)
+        task_pgsql_check(settings)
+        task_pgsql_stamp(settings, revision=TASK_PGSQL_HEAD_REVISION)
+        task_pgsql_check(settings)
+
+    def test_real_postgresql_schema_isolation_when_configured(self) -> None:
+        dsn = real_task_pgsql_dsn()
+        if not dsn:
+            self.skipTest("AVALAN_TASK_TEST_POSTGRESQL_DSN is not set")
+        importorskip("alembic")
+        importorskip("sqlalchemy")
+        schemas = (
+            isolated_task_pgsql_schema(),
+            isolated_task_pgsql_schema(),
+        )
+
+        for schema in schemas:
+            with self.subTest(schema=schema):
+                settings = PgsqlTaskMigrationSettings(url=dsn, schema=schema)
+                task_pgsql_upgrade(settings)
+                task_pgsql_check(settings)
+
+    def test_real_postgresql_concurrent_migrations_when_configured(
+        self,
+    ) -> None:
+        dsn = real_task_pgsql_dsn()
+        if not dsn:
+            self.skipTest("AVALAN_TASK_TEST_POSTGRESQL_DSN is not set")
+        importorskip("alembic")
+        importorskip("sqlalchemy")
+        settings = PgsqlTaskMigrationSettings(
+            url=dsn,
+            schema=isolated_task_pgsql_schema(),
+        )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = tuple(
+                executor.submit(task_pgsql_upgrade, settings) for _ in range(2)
+            )
+            for future in futures:
+                future.result()
+
         task_pgsql_check(settings)
 
 
@@ -594,10 +483,6 @@ class PgsqlMigrationRevisionTest(TestCase):
 
         with self.assertRaises(NotImplementedError):
             revision_module.downgrade()
-
-
-def _unexpected_import(module: str) -> object:
-    raise AssertionError(f"unexpected module import: {module}")
 
 
 if __name__ == "__main__":

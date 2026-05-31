@@ -16,3 +16,24 @@ from .pgsql import task_pgsql_script_location as task_pgsql_script_location
 from .pgsql import task_pgsql_stamp as task_pgsql_stamp
 from .pgsql import task_pgsql_state_predicate as task_pgsql_state_predicate
 from .pgsql import task_pgsql_upgrade as task_pgsql_upgrade
+from .pgsql_benchmark import (
+    TaskPgsqlBenchmarkCase as TaskPgsqlBenchmarkCase,
+)
+from .pgsql_benchmark import (
+    TaskPgsqlBenchmarkOperation as TaskPgsqlBenchmarkOperation,
+)
+from .pgsql_benchmark import (
+    TaskPgsqlBenchmarkSettings as TaskPgsqlBenchmarkSettings,
+)
+from .pgsql_benchmark import (
+    task_pgsql_benchmark_cases as task_pgsql_benchmark_cases,
+)
+from .pgsql_benchmark import (
+    task_pgsql_benchmark_metadata as task_pgsql_benchmark_metadata,
+)
+from .pgsql_benchmark import (
+    task_pgsql_explain_statement as task_pgsql_explain_statement,
+)
+from .pgsql_benchmark import (
+    task_pgsql_plan_issues as task_pgsql_plan_issues,
+)

@@ -84,3 +84,7 @@ python3 -m pip install -U alembic "SQLAlchemy>=2.0.43,<3.0.0"
 
 Set `AVALAN_TASK_PGSQL_DSN` before running migration diagnostics, and set
 `AVALAN_TASK_PGSQL_SCHEMA` when using an isolated schema.
+
+Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL migration
+verification tests. Set `AVALAN_TASK_BENCHMARK_POSTGRESQL_DSN` only when
+running the opt-in EXPLAIN benchmark checks.
