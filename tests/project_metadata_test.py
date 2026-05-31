@@ -99,6 +99,27 @@ def test_task_extra_declares_jsonschema_dependency() -> None:
     assert requirements[0].marker is None
 
 
+def test_task_pgsql_extra_declares_postgresql_dependencies() -> None:
+    psycopg_requirements = _requirements_by_name("task-pgsql", "psycopg")
+    binary_requirements = _requirements_by_name(
+        "task-pgsql",
+        "psycopg-binary",
+    )
+
+    assert len(psycopg_requirements) == 1
+    assert len(binary_requirements) == 1
+    assert psycopg_requirements[0].specifier == SpecifierSet(">=3.2.9,<4.0.0")
+    assert psycopg_requirements[0].extras == {"pool"}
+    assert psycopg_requirements[0].marker is None
+    assert binary_requirements[0].specifier == SpecifierSet(">=3.2.9,<4.0.0")
+
+    binary_marker = binary_requirements[0].marker
+
+    assert binary_marker is not None
+    assert binary_marker.evaluate({"python_version": "3.13"})
+    assert not binary_marker.evaluate({"python_version": "3.14"})
+
+
 def test_vllm_extras_remain_scoped_below_python_314() -> None:
     optional_deps = _optional_dependencies()
 

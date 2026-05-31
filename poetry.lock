@@ -6334,7 +6334,7 @@ description = "PostgreSQL database adapter for Python"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"memory\""
+markers = "extra == \"memory\" or extra == \"task-pgsql\""
 files = [
     {file = "psycopg-3.2.9-py3-none-any.whl", hash = "sha256:01a8dadccdaac2123c916208c96e06631641c0566b22005493f09663c7a8d3b6"},
     {file = "psycopg-3.2.9.tar.gz", hash = "sha256:2fbb46fcd17bc81f993f28c47f1ebea38d66ae97cc2dbc3cad73b37cefbff700"},
@@ -6362,7 +6362,7 @@ description = "PostgreSQL database adapter for Python -- C optimisation distribu
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "python_version < \"3.14\" and extra == \"memory\" and implementation_name != \"pypy\""
+markers = "python_version < \"3.14\" and (extra == \"memory\" or extra == \"task-pgsql\") and implementation_name != \"pypy\""
 files = [
     {file = "psycopg_binary-3.2.9-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:528239bbf55728ba0eacbd20632342867590273a9bacedac7538ebff890f1093"},
     {file = "psycopg_binary-3.2.9-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e4978c01ca4c208c9d6376bd585e2c0771986b76ff7ea518f6d2b51faece75e8"},
@@ -6438,7 +6438,7 @@ description = "Connection Pool for Psycopg"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"memory\""
+markers = "extra == \"memory\" or extra == \"task-pgsql\""
 files = [
     {file = "psycopg_pool-3.2.6-py3-none-any.whl", hash = "sha256:5887318a9f6af906d041a0b1dc1c60f8f0dda8340c2572b74e10907b51ed5da7"},
     {file = "psycopg_pool-3.2.6.tar.gz", hash = "sha256:0f92a7817719517212fbfe2fd58b8c35c1850cdd2a80d36b581ba2085d9148e5"},
@@ -10376,6 +10376,7 @@ quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
 task = ["jsonschema"]
+task-pgsql = ["psycopg", "psycopg-binary"]
 tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy"]
 translation = ["protobuf", "sentencepiece"]
 vendors = ["aioboto3", "anthropic", "diffusers", "google-genai", "openai", "pillow", "safetensors"]
@@ -10386,4 +10387,4 @@ youtube = ["youtube-transcript-api"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "ff723493db3e9599d7c26a18530fdc3c7c70db44eac4d20f675c083262c7b853"
+content-hash = "42f761a977eb57e4e878fef54994e948c31c201ee4f3239cc82e8fff8a19dcb8"
