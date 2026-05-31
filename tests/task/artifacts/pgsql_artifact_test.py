@@ -74,9 +74,33 @@ class FakeDatabase:
         self.rows: dict[str, dict[str, object]] = {}
         self.invalid_row = False
         self.last_parameters: tuple[object, ...] | None = None
+        self.open_count = 0
+        self.close_count = 0
 
     def connection(self) -> "FakeConnectionContext":
         return FakeConnectionContext(self)
+
+    async def open(self) -> None:
+        self.open_count += 1
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class FakeCloseOnlyDatabase:
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    def connection(self) -> "FakeConnectionContext":
+        raise AssertionError("connection should not be used")
+
+    async def close(self) -> None:
+        self.close_count += 1
+
+
+class FakeConnectionOnlyDatabase:
+    def connection(self) -> "FakeConnectionContext":
+        raise AssertionError("connection should not be used")
 
 
 class FakeConnectionContext:
@@ -175,6 +199,38 @@ class FakeCursor:
 
 
 class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
+    async def test_context_manager_opens_and_closes_database(self) -> None:
+        database = FakeDatabase()
+        store = PgsqlArtifactStore(
+            database,
+            cipher=ReversibleCipher(),
+            policy=self._enabled_policy(),
+        )
+
+        async with store as opened:
+            self.assertIs(opened, store)
+
+        self.assertEqual(database.open_count, 1)
+        self.assertEqual(database.close_count, 1)
+
+    async def test_lifecycle_methods_tolerate_minimal_databases(self) -> None:
+        connection_only_store = PgsqlArtifactStore(
+            FakeConnectionOnlyDatabase(),
+            cipher=ReversibleCipher(),
+            policy=self._enabled_policy(),
+        )
+        close_only_database = FakeCloseOnlyDatabase()
+        close_only_store = PgsqlArtifactStore(
+            close_only_database,
+            cipher=ReversibleCipher(),
+            policy=self._enabled_policy(),
+        )
+
+        await connection_only_store.open_store()
+        await close_only_store.aclose()
+
+        self.assertEqual(close_only_database.close_count, 1)
+
     async def test_put_open_stat_and_delete_encrypted_bytes(self) -> None:
         database = FakeDatabase()
         cipher = ReversibleCipher()

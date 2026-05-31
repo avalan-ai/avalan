@@ -16,6 +16,7 @@ from ....pgsql import (
 )
 
 from importlib import import_module
+from inspect import isawaitable
 from logging import Logger
 from time import perf_counter
 from typing import Any, Literal, TypeVar, cast, overload
@@ -39,6 +40,29 @@ class BasePgsqlMemory(MemoryStore[T]):
 
     async def open(self) -> None:
         await self._database.open()
+
+    async def aclose(self) -> None:
+        aclose = getattr(self._database, "aclose", None)
+        if aclose is not None:
+            result = aclose()
+        else:
+            close = getattr(self._database, "close", None)
+            result = close() if close is not None else None
+        if isawaitable(result):
+            await result
+
+    async def __aenter__(self) -> "BasePgsqlMemory[T]":
+        await self.open()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        await self.aclose()
+        return None
 
     async def search(self, query: str) -> list[T] | None:
         raise NotImplementedError()

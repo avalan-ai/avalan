@@ -71,6 +71,16 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(NotImplementedError):
             await memory.search("q")
 
+    async def test_close_and_context_manager(self):
+        pool = AsyncMock(spec=AsyncConnectionPool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
+
+        async with memory as opened:
+            self.assertIs(opened, memory)
+
+        pool.open.assert_awaited_once()
+        pool.close.assert_awaited_once()
+
     async def test_fetch_one_found(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
         memory = DummyBaseMemory(pool, logger=MagicMock())
@@ -219,6 +229,16 @@ class PgsqlMemoryTestCase(IsolatedAsyncioTestCase):
         vector_module.register_vector_async.assert_awaited_once_with(
             connection
         )
+
+    async def test_borrowed_pool_is_not_closed(self):
+        pool = AsyncMock(spec=AsyncConnectionPool)
+        memory = DummyPgsqlMemory(dsn=None, pool=pool, logger=MagicMock())
+
+        await memory.open()
+        await memory.aclose()
+
+        pool.open.assert_not_called()
+        pool.close.assert_not_called()
 
     async def test_ensure_vector_extension_missing_extension(self):
         pool, connection, cursor = BasePgsqlMemoryTestCase.mock_query(

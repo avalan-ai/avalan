@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from importlib.util import find_spec
+from inspect import isawaitable
 from io import BytesIO
 from json import dumps, loads
 from re import fullmatch
@@ -80,6 +81,37 @@ class PgsqlArtifactStore:
         self._policy = policy
         self._store_name = store_name
         self._id_factory = id_factory or _uuid_id
+
+    async def open_store(self) -> None:
+        open_database = getattr(self._database, "open", None)
+        if open_database is None:
+            return
+        result = open_database()
+        if isawaitable(result):
+            await result
+
+    async def aclose(self) -> None:
+        aclose = getattr(self._database, "aclose", None)
+        if aclose is not None:
+            result = aclose()
+        else:
+            close = getattr(self._database, "close", None)
+            result = close() if close is not None else None
+        if isawaitable(result):
+            await result
+
+    async def __aenter__(self) -> "PgsqlArtifactStore":
+        await self.open_store()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        await self.aclose()
+        return None
 
     async def put(
         self,
