@@ -18,8 +18,6 @@ from logging import Logger
 from typing import Any
 from uuid import UUID, uuid4
 
-from pgvector.psycopg import Vector
-
 
 class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
     @classmethod
@@ -137,7 +135,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                                 str(mp.memory_id),
                                 mp.partition,
                                 mp.data,
-                                Vector(mp.embedding),
+                                self._vector(mp.embedding),
                                 mp.created_at,
                             )
                             for mp in partition_rows
@@ -224,7 +222,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
     ) -> list[PermanentMemoryPartition]:
         assert participant_id and namespace and search_partitions
         search_function = str(function)
-        search_vector = Vector(search_partitions[0].embeddings)
+        search_vector = self._vector(search_partitions[0].embeddings)
         limit_value = limit or 10
         partitions = await self._fetch_all(
             PermanentMemoryPartition,
@@ -292,7 +290,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             str(hyperedge.id),
                             hyperedge.relation,
                             hyperedge.surface_text,
-                            Vector(hyperedge.embedding),
+                            self._vector(hyperedge.embedding),
                             (
                                 dumps(hyperedge.symbols)
                                 if hyperedge.symbols is not None
@@ -362,7 +360,7 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                             str(entity.id),
                             entity.name,
                             entity.type,
-                            Vector(entity.embedding),
+                            self._vector(entity.embedding),
                             (
                                 dumps(entity.symbols)
                                 if entity.symbols is not None
@@ -403,4 +401,6 @@ class PgsqlRawMemory(PgsqlMemory[Memory], PermanentMemory):
                     )
                     await cursor.close()
         assert entity_id is not None
-        return entity_id if isinstance(entity_id, UUID) else UUID(entity_id)
+        return (
+            entity_id if isinstance(entity_id, UUID) else UUID(str(entity_id))
+        )

@@ -1,3 +1,4 @@
+from ...pgsql import PgsqlDatabase
 from ..artifact import (
     ArtifactStoreConflictError,
     ArtifactStoreError,
@@ -17,7 +18,7 @@ from importlib.util import find_spec
 from io import BytesIO
 from json import dumps, loads
 from re import fullmatch
-from typing import AsyncContextManager, BinaryIO, Protocol, cast
+from typing import BinaryIO, Protocol, cast
 from uuid import uuid4
 
 
@@ -38,24 +39,6 @@ class PgsqlArtifactCipher(Protocol):
         purpose: TaskKeyPurpose,
         context: Mapping[str, str] | None = None,
     ) -> bytes: ...
-
-
-class PgsqlArtifactCursor(Protocol):
-    async def execute(
-        self,
-        query: str,
-        parameters: tuple[object, ...] | None = None,
-    ) -> None: ...
-
-    async def fetchone(self) -> Mapping[str, object] | None: ...
-
-
-class PgsqlArtifactConnection(Protocol):
-    def cursor(self) -> AsyncContextManager[PgsqlArtifactCursor]: ...
-
-
-class PgsqlArtifactDatabase(Protocol):
-    def connection(self) -> AsyncContextManager[PgsqlArtifactConnection]: ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -80,7 +63,7 @@ class PgsqlArtifactByteStoragePolicy:
 class PgsqlArtifactStore:
     def __init__(
         self,
-        database: PgsqlArtifactDatabase,
+        database: PgsqlDatabase,
         *,
         cipher: PgsqlArtifactCipher,
         policy: PgsqlArtifactByteStoragePolicy,

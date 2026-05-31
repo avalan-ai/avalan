@@ -1,3 +1,4 @@
+from ...pgsql import assert_pgsql_identifier
 from ..feature_gate import ModuleFinder, TaskFeature, require_features
 from ..store import TaskStoreError
 
@@ -45,8 +46,8 @@ class PgsqlTaskMigrationSettings:
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.url, "url")
         if self.schema is not None:
-            _assert_pgsql_identifier(self.schema, "schema")
-        _assert_pgsql_identifier(self.version_table, "version_table")
+            assert_pgsql_identifier(self.schema, "schema")
+        assert_pgsql_identifier(self.version_table, "version_table")
         assert isinstance(self.advisory_lock_id, int)
         assert not isinstance(self.advisory_lock_id, bool)
         assert isinstance(self.enabled_features, tuple)
@@ -146,14 +147,6 @@ def _run_alembic_command(
 def _assert_non_empty_string(value: object, field_name: str) -> None:
     assert isinstance(value, str), f"{field_name} must be a string"
     assert value.strip(), f"{field_name} must not be empty"
-
-
-def _assert_pgsql_identifier(value: str, field_name: str) -> None:
-    _assert_non_empty_string(value, field_name)
-    assert fullmatch(
-        r"[A-Za-z_][A-Za-z0-9_]{0,62}",
-        value,
-    ), f"{field_name} must be a PostgreSQL identifier"
 
 
 def _assert_revision(value: str) -> None:

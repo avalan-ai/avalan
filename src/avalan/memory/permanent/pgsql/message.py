@@ -12,8 +12,6 @@ from logging import Logger
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from pgvector.psycopg import Vector
-
 
 class PgsqlMessageMemory(PgsqlMemory[EngineMessage], PermanentMessageMemory):
     """PostgreSQL-backed implementation of :class:`PermanentMessageMemory`."""
@@ -183,7 +181,7 @@ class PgsqlMessageMemory(PgsqlMemory[EngineMessage], PermanentMessageMemory):
                                 str(mp.message_id),
                                 mp.partition,
                                 mp.data,
-                                Vector(mp.embedding),
+                                self._vector(mp.embedding),
                                 mp.created_at,
                             )
                             for mp in message_partitions
@@ -241,7 +239,7 @@ class PgsqlMessageMemory(PgsqlMemory[EngineMessage], PermanentMessageMemory):
         """Search messages using a similarity function."""
         assert agent_id and participant_id and search_partitions
         search_function = str(function)
-        search_vector = Vector(search_partitions[0].embeddings)
+        search_vector = self._vector(search_partitions[0].embeddings)
         limit_value = limit or 10
         messages = await self._fetch_all(
             PermanentMessageScored,
