@@ -92,20 +92,23 @@ def task_pgsql_state_predicate(
 
 
 def task_pgsql_claim_token_predicate(
-    claim_column_name: str,
+    claim_token_column_name: str,
     claim_token: str | None,
     *,
     table_alias: str | None = None,
 ) -> tuple[str, tuple[object, ...]]:
-    assert_pgsql_identifier(claim_column_name, "claim_column_name")
+    assert_pgsql_identifier(
+        claim_token_column_name,
+        "claim_token_column_name",
+    )
     qualified = _qualified_pgsql_column(
-        claim_column_name,
+        claim_token_column_name,
         table_alias=table_alias,
     )
     if claim_token is None:
         return f"{qualified} IS NULL", ()
     _assert_non_empty_string(claim_token, "claim_token")
-    return f"{qualified} ->> 'claim_token' = %s", (claim_token,)
+    return f"{qualified} = %s", (claim_token,)
 
 
 def task_pgsql_upgrade(

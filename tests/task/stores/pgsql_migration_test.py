@@ -251,6 +251,7 @@ class PgsqlMigrationSchemaTest(TestCase):
             "ciphertext",
             "encryption_key_id",
             "retention_days",
+            "retention_deadline_at",
         ):
             self.assertIn(f'"{column_name}"', schema)
         self.assertIn('"fk_task_idempotency_keys__task_runs"', schema)
@@ -258,6 +259,65 @@ class PgsqlMigrationSchemaTest(TestCase):
         self.assertIn("'input_and_files_hash'", schema)
         self.assertIn("'custom'", schema)
         self.assertIn('"ck_task_artifact_bytes_retention_positive"', schema)
+        self.assertIn(
+            '"ck_task_artifact_bytes_retention_deadline_after_created"',
+            schema,
+        )
+        self.assertIn(
+            '"ck_task_artifact_bytes_encryption_metadata_shape"',
+            schema,
+        )
+        self.assertIn('"ix_task_artifact_bytes_retention_deadline"', schema)
+        self.assertIn('"ix_task_artifact_bytes_active_artifact"', schema)
+
+    def test_schema_constrains_jsonb_snapshot_shapes(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        for constraint_name in (
+            "ck_task_definitions_definition_shape",
+            "ck_task_runs_request_shape",
+            "ck_task_runs_claim_shape",
+            "ck_task_runs_result_shape",
+            "ck_task_attempts_context_shape",
+            "ck_task_attempts_result_shape",
+            "ck_task_artifacts_ref_shape",
+            "ck_task_artifacts_retention_shape",
+            "ck_task_idempotency_keys_owner_scope_shape",
+            "ck_task_queue_items_metadata_shape",
+            "ck_task_usage_records_metadata_shape",
+            "ck_task_run_rollups_metadata_shape",
+        ):
+            self.assertIn(f'"{constraint_name}"', schema)
+
+        self.assertNotIn("raw_payload", schema)
+
+    def test_schema_keeps_queue_and_lease_hot_fields_typed(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        for column_name in (
+            "queue_name",
+            "worker_id",
+            "claim_token",
+            "heartbeat_at",
+            "lease_expires_at",
+        ):
+            self.assertIn(f'"{column_name}"', schema)
+        for constraint_name in (
+            "ck_task_queue_items_claimed_fields",
+            "ck_task_queue_items_lease_expires_after_claim",
+            "ck_task_queue_items_heartbeat_after_claim",
+            "uq_task_queue_items_one_active_per_run",
+        ):
+            self.assertIn(f'"{constraint_name}"', schema)
+        for index_name in (
+            "ix_task_runs_by_queue_state_updated",
+            "ix_task_queue_items_claimable",
+            "ix_task_queue_items_lease_expiry",
+            "ix_task_queue_items_retry_sweep",
+        ):
+            self.assertIn(f'"{index_name}"', schema)
+        self.assertIn('"queue_name",\n        "state"', schema)
+        self.assertIn('"queue_name",\n        "lease_expires_at"', schema)
 
     def test_state_and_claim_predicates_are_parameterized(self) -> None:
         state_sql, state_params = task_pgsql_state_predicate(
@@ -266,20 +326,20 @@ class PgsqlMigrationSchemaTest(TestCase):
             table_alias="r",
         )
         no_claim_sql, no_claim_params = task_pgsql_claim_token_predicate(
-            "claim",
+            "claim_token",
             None,
             table_alias="r",
         )
         claim_sql, claim_params = task_pgsql_claim_token_predicate(
-            "claim",
+            "claim_token",
             "claim-secret",
         )
 
         self.assertEqual(state_sql, '"r"."state" IN (%s, %s)')
         self.assertEqual(set(state_params), {"queued", "claimed"})
-        self.assertEqual(no_claim_sql, '"r"."claim" IS NULL')
+        self.assertEqual(no_claim_sql, '"r"."claim_token" IS NULL')
         self.assertEqual(no_claim_params, ())
-        self.assertEqual(claim_sql, "\"claim\" ->> 'claim_token' = %s")
+        self.assertEqual(claim_sql, '"claim_token" = %s')
         self.assertEqual(claim_params, ("claim-secret",))
         self.assertNotIn("claim-secret", claim_sql)
 

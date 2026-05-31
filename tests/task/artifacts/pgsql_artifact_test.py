@@ -1,8 +1,18 @@
 from collections.abc import Mapping
+from datetime import datetime
 from json import loads
+from os import environ
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
+from uuid import uuid4
 
+from pytest import importorskip
+
+from avalan.pgsql import (
+    PsycopgAsyncDatabase,
+    PsycopgPoolSettings,
+    quote_pgsql_identifier,
+)
 from avalan.task import (
     ENCRYPTED_MARKER,
     ArtifactStoreConflictError,
@@ -18,6 +28,7 @@ from avalan.task.artifacts import (
     PgsqlArtifactByteStoragePolicy,
     PgsqlArtifactStore,
 )
+from avalan.task.stores import PgsqlTaskMigrationSettings, task_pgsql_upgrade
 
 
 class ReversibleCipher:
@@ -218,7 +229,8 @@ class FakeCursor:
             "encryption_algorithm": parameters[7],
             "encryption_metadata": loads(cast(str, parameters[8])),
             "retention_days": parameters[9],
-            "metadata": loads(cast(str, parameters[10])),
+            "retention_deadline_at": parameters[10],
+            "metadata": loads(cast(str, parameters[11])),
         }
         self.database.rows[storage_key] = row
         if self.database.fail_after_insert:
@@ -296,6 +308,7 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(stat.size_bytes, 13)
         self.assertEqual(ref.sha256, stat.sha256)
         self.assertEqual(ref.metadata["retention_days"], 7)
+        self.assertIsInstance(row["retention_deadline_at"], datetime)
         encryption = cast(Mapping[str, object], ref.metadata["encryption"])
         self.assertEqual(encryption["privacy"], ENCRYPTED_MARKER)
         self.assertEqual(encryption["key_id"], "enc-v1")
@@ -317,6 +330,49 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
                 "store": "pgsql",
             },
         )
+
+    async def test_real_postgresql_byte_backend_when_configured(
+        self,
+    ) -> None:
+        dsn = environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN")
+        if not dsn:
+            self.skipTest("AVALAN_TASK_TEST_POSTGRESQL_DSN is not set")
+        importorskip("alembic")
+        importorskip("psycopg")
+        importorskip("psycopg_pool")
+        importorskip("sqlalchemy")
+        schema = f"avalan_task_artifact_test_{uuid4().hex}"
+        task_pgsql_upgrade(PgsqlTaskMigrationSettings(url=dsn, schema=schema))
+        database = PsycopgAsyncDatabase(
+            PsycopgPoolSettings(dsn=dsn, schema=schema)
+        )
+        store = PgsqlArtifactStore(
+            database,
+            cipher=ReversibleCipher(),
+            policy=self._enabled_policy(),
+            id_factory=lambda: "artifact-real-1",
+        )
+
+        try:
+            async with store:
+                ref = await store.put(
+                    b"private bytes",
+                    media_type="text/plain",
+                )
+                reader = await store.open(ref)
+                try:
+                    content = reader.read()
+                finally:
+                    reader.close()
+                stat = await store.stat(ref)
+                await store.delete(ref)
+
+                self.assertEqual(content, b"private bytes")
+                self.assertEqual(stat.size_bytes, len(content))
+                with self.assertRaises(ArtifactStoreNotFoundError):
+                    await store.open(ref)
+        finally:
+            await _drop_schema(dsn, schema)
 
     async def test_raw_storage_requires_dependency_gate_and_enablement(
         self,
@@ -531,6 +587,17 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
     @staticmethod
     def _missing_module(module: str) -> object | None:
         return None
+
+
+async def _drop_schema(dsn: str, schema: str) -> None:
+    database = PsycopgAsyncDatabase(PsycopgPoolSettings(dsn=dsn))
+    async with database:
+        async with database.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    "DROP SCHEMA IF EXISTS "
+                    f"{quote_pgsql_identifier(schema)} CASCADE"
+                )
 
 
 if __name__ == "__main__":

@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS "task_definitions" (
         CHECK (LENGTH(BTRIM("version")) > 0),
     CONSTRAINT "ck_task_definitions_spec_hash_non_empty"
         CHECK (LENGTH(BTRIM("spec_hash")) > 0),
+    CONSTRAINT "ck_task_definitions_definition_shape"
+        CHECK (JSONB_TYPEOF("definition") = 'object'),
+    CONSTRAINT "ck_task_definitions_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object'),
     CONSTRAINT "uq_task_definitions_identity"
         UNIQUE ("name", "version", "spec_hash")
 );
@@ -36,6 +40,7 @@ CREATE TABLE IF NOT EXISTS "task_runs" (
     "run_id" TEXT NOT NULL,
     "definition_id" TEXT NOT NULL,
     "state" TEXT NOT NULL,
+    "queue_name" TEXT DEFAULT NULL,
     "request" JSONB NOT NULL,
     "claim" JSONB DEFAULT NULL,
     "last_attempt_id" TEXT DEFAULT NULL,
@@ -66,7 +71,17 @@ CREATE TABLE IF NOT EXISTS "task_runs" (
             )
         ),
     CONSTRAINT "ck_task_runs_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
+        CHECK ("updated_at" >= "created_at"),
+    CONSTRAINT "ck_task_runs_queue_name_non_empty"
+        CHECK ("queue_name" IS NULL OR LENGTH(BTRIM("queue_name")) > 0),
+    CONSTRAINT "ck_task_runs_request_shape"
+        CHECK (JSONB_TYPEOF("request") = 'object'),
+    CONSTRAINT "ck_task_runs_claim_shape"
+        CHECK ("claim" IS NULL OR JSONB_TYPEOF("claim") = 'object'),
+    CONSTRAINT "ck_task_runs_result_shape"
+        CHECK ("result" IS NULL OR JSONB_TYPEOF("result") = 'object'),
+    CONSTRAINT "ck_task_runs_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -84,7 +99,9 @@ CREATE TABLE IF NOT EXISTS "task_run_transitions" (
         FOREIGN KEY ("run_id")
         REFERENCES "task_runs" ("run_id"),
     CONSTRAINT "ck_task_run_transitions_reason_non_empty"
-        CHECK (LENGTH(BTRIM("reason")) > 0)
+        CHECK (LENGTH(BTRIM("reason")) > 0),
+    CONSTRAINT "ck_task_run_transitions_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -118,7 +135,13 @@ CREATE TABLE IF NOT EXISTS "task_attempts" (
             )
         ),
     CONSTRAINT "ck_task_attempts_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
+        CHECK ("updated_at" >= "created_at"),
+    CONSTRAINT "ck_task_attempts_context_shape"
+        CHECK (JSONB_TYPEOF("context") = 'object'),
+    CONSTRAINT "ck_task_attempts_result_shape"
+        CHECK ("result" IS NULL OR JSONB_TYPEOF("result") = 'object'),
+    CONSTRAINT "ck_task_attempts_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -140,7 +163,9 @@ CREATE TABLE IF NOT EXISTS "task_attempt_transitions" (
         FOREIGN KEY ("run_id")
         REFERENCES "task_runs" ("run_id"),
     CONSTRAINT "ck_task_attempt_transitions_reason_non_empty"
-        CHECK (LENGTH(BTRIM("reason")) > 0)
+        CHECK (LENGTH(BTRIM("reason")) > 0),
+    CONSTRAINT "ck_task_attempt_transitions_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -182,7 +207,15 @@ CREATE TABLE IF NOT EXISTS "task_artifacts" (
             )
         ),
     CONSTRAINT "ck_task_artifacts_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
+        CHECK ("updated_at" >= "created_at"),
+    CONSTRAINT "ck_task_artifacts_ref_shape"
+        CHECK (JSONB_TYPEOF("ref") = 'object'),
+    CONSTRAINT "ck_task_artifacts_provenance_shape"
+        CHECK (JSONB_TYPEOF("provenance") = 'object'),
+    CONSTRAINT "ck_task_artifacts_retention_shape"
+        CHECK (JSONB_TYPEOF("retention") = 'object'),
+    CONSTRAINT "ck_task_artifacts_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -197,6 +230,7 @@ CREATE TABLE IF NOT EXISTS "task_artifact_bytes" (
     "encryption_algorithm" TEXT NOT NULL,
     "encryption_metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "retention_days" INTEGER NOT NULL,
+    "retention_deadline_at" TIMESTAMP WITH TIME ZONE NOT NULL,
     "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "deleted_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
@@ -217,7 +251,15 @@ CREATE TABLE IF NOT EXISTS "task_artifact_bytes" (
     CONSTRAINT "ck_task_artifact_bytes_encryption_algorithm_non_empty"
         CHECK (LENGTH(BTRIM("encryption_algorithm")) > 0),
     CONSTRAINT "ck_task_artifact_bytes_retention_positive"
-        CHECK ("retention_days" > 0)
+        CHECK ("retention_days" > 0),
+    CONSTRAINT "ck_task_artifact_bytes_retention_deadline_after_created"
+        CHECK ("retention_deadline_at" > "created_at"),
+    CONSTRAINT "ck_task_artifact_bytes_deleted_at_not_before_created_at"
+        CHECK ("deleted_at" IS NULL OR "deleted_at" >= "created_at"),
+    CONSTRAINT "ck_task_artifact_bytes_encryption_metadata_shape"
+        CHECK (JSONB_TYPEOF("encryption_metadata") = 'object'),
+    CONSTRAINT "ck_task_artifact_bytes_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -258,19 +300,40 @@ CREATE TABLE IF NOT EXISTS "task_idempotency_keys" (
             )
         ),
     CONSTRAINT "ck_task_idempotency_keys_expires_after_created"
-        CHECK ("expires_at" IS NULL OR "expires_at" > "created_at")
+        CHECK ("expires_at" IS NULL OR "expires_at" > "created_at"),
+    CONSTRAINT "ck_task_idempotency_keys_owner_scope_shape"
+        CHECK (JSONB_TYPEOF("owner_scope_hash") = 'object'),
+    CONSTRAINT "ck_task_idempotency_keys_window_shape"
+        CHECK (
+            "window_hash" IS NULL
+            OR JSONB_TYPEOF("window_hash") = 'object'
+        ),
+    CONSTRAINT "ck_task_idempotency_keys_input_shape"
+        CHECK ("input_hash" IS NULL OR JSONB_TYPEOF("input_hash") = 'object'),
+    CONSTRAINT "ck_task_idempotency_keys_file_shape"
+        CHECK ("file_hash" IS NULL OR JSONB_TYPEOF("file_hash") = 'object'),
+    CONSTRAINT "ck_task_idempotency_keys_custom_shape"
+        CHECK (
+            "custom_hash" IS NULL
+            OR JSONB_TYPEOF("custom_hash") = 'object'
+        ),
+    CONSTRAINT "ck_task_idempotency_keys_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
 CREATE TABLE IF NOT EXISTS "task_queue_items" (
     "queue_item_id" TEXT NOT NULL,
     "run_id" TEXT NOT NULL,
+    "queue_name" TEXT NOT NULL,
     "state" TEXT NOT NULL,
     "priority" INTEGER NOT NULL DEFAULT 0,
     "available_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "claimed_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
     "lease_expires_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    "worker_id" TEXT DEFAULT NULL,
     "claim_token" TEXT DEFAULT NULL,
+    "heartbeat_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
     "attempts" INTEGER NOT NULL DEFAULT 0,
     "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -282,15 +345,46 @@ CREATE TABLE IF NOT EXISTS "task_queue_items" (
         REFERENCES "task_runs" ("run_id"),
     CONSTRAINT "ck_task_queue_items_state"
         CHECK ("state" IN ('available', 'claimed', 'done', 'dead')),
+    CONSTRAINT "ck_task_queue_items_queue_name_non_empty"
+        CHECK (LENGTH(BTRIM("queue_name")) > 0),
     CONSTRAINT "ck_task_queue_items_attempts_non_negative"
         CHECK ("attempts" >= 0),
+    CONSTRAINT "ck_task_queue_items_worker_id_non_empty"
+        CHECK ("worker_id" IS NULL OR LENGTH(BTRIM("worker_id")) > 0),
+    CONSTRAINT "ck_task_queue_items_claim_token_non_empty"
+        CHECK ("claim_token" IS NULL OR LENGTH(BTRIM("claim_token")) > 0),
     CONSTRAINT "ck_task_queue_items_lease_after_claim"
         CHECK (
             "lease_expires_at" IS NULL
             OR "claimed_at" IS NOT NULL
         ),
+    CONSTRAINT "ck_task_queue_items_lease_expires_after_claim"
+        CHECK (
+            "lease_expires_at" IS NULL
+            OR "lease_expires_at" > "claimed_at"
+        ),
+    CONSTRAINT "ck_task_queue_items_heartbeat_after_claim"
+        CHECK (
+            "heartbeat_at" IS NULL
+            OR (
+                "claimed_at" IS NOT NULL
+                AND "heartbeat_at" >= "claimed_at"
+            )
+        ),
+    CONSTRAINT "ck_task_queue_items_claimed_fields"
+        CHECK (
+            "state" <> 'claimed'
+            OR (
+                "claimed_at" IS NOT NULL
+                AND "lease_expires_at" IS NOT NULL
+                AND "worker_id" IS NOT NULL
+                AND "claim_token" IS NOT NULL
+            )
+        ),
     CONSTRAINT "ck_task_queue_items_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
+        CHECK ("updated_at" >= "created_at"),
+    CONSTRAINT "ck_task_queue_items_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -317,7 +411,9 @@ CREATE TABLE IF NOT EXISTS "task_events" (
     CONSTRAINT "ck_task_events_sequence_non_negative"
         CHECK ("sequence" >= 0),
     CONSTRAINT "ck_task_events_event_type_non_empty"
-        CHECK (LENGTH(BTRIM("event_type")) > 0)
+        CHECK (LENGTH(BTRIM("event_type")) > 0),
+    CONSTRAINT "ck_task_events_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -349,7 +445,15 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
     CONSTRAINT "ck_task_usage_records_total_tokens_non_negative"
         CHECK ("total_tokens" IS NULL OR "total_tokens" >= 0),
     CONSTRAINT "ck_task_usage_records_cached_tokens_non_negative"
-        CHECK ("cached_tokens" IS NULL OR "cached_tokens" >= 0)
+        CHECK ("cached_tokens" IS NULL OR "cached_tokens" >= 0),
+    CONSTRAINT "ck_task_usage_records_cached_not_above_prompt"
+        CHECK (
+            "cached_tokens" IS NULL
+            OR "prompt_tokens" IS NULL
+            OR "cached_tokens" <= "prompt_tokens"
+        ),
+    CONSTRAINT "ck_task_usage_records_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -376,7 +480,15 @@ CREATE TABLE IF NOT EXISTS "task_run_rollups" (
     CONSTRAINT "ck_task_run_rollups_total_tokens_non_negative"
         CHECK ("total_tokens" IS NULL OR "total_tokens" >= 0),
     CONSTRAINT "ck_task_run_rollups_cached_tokens_non_negative"
-        CHECK ("cached_tokens" IS NULL OR "cached_tokens" >= 0)
+        CHECK ("cached_tokens" IS NULL OR "cached_tokens" >= 0),
+    CONSTRAINT "ck_task_run_rollups_cached_not_above_prompt"
+        CHECK (
+            "cached_tokens" IS NULL
+            OR "prompt_tokens" IS NULL
+            OR "cached_tokens" <= "prompt_tokens"
+        ),
+    CONSTRAINT "ck_task_run_rollups_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
 """,
     """
@@ -390,6 +502,11 @@ CREATE INDEX IF NOT EXISTS "ix_task_runs_by_definition_state_created"
     """
 CREATE INDEX IF NOT EXISTS "ix_task_runs_by_state_updated"
     ON "task_runs" ("state", "updated_at" DESC);
+""",
+    """
+CREATE INDEX IF NOT EXISTS "ix_task_runs_by_queue_state_updated"
+    ON "task_runs" ("queue_name", "state", "updated_at" DESC)
+    WHERE "queue_name" IS NOT NULL;
 """,
     """
 CREATE INDEX IF NOT EXISTS "ix_task_run_transitions_by_run_created"
@@ -419,12 +536,39 @@ CREATE INDEX IF NOT EXISTS "ix_task_artifacts_by_attempt"
     WHERE "attempt_id" IS NOT NULL;
 """,
     """
+CREATE INDEX IF NOT EXISTS "ix_task_artifacts_retention_deadline"
+    ON "task_artifacts" (
+        "run_id",
+        (("retention" ->> 'expires_at')),
+        "artifact_id"
+    )
+    WHERE
+        "state" = 'ready'
+        AND ("retention" ? 'expires_at');
+""",
+    """
+CREATE INDEX IF NOT EXISTS "ix_task_artifacts_delete_after_days"
+    ON "task_artifacts" (
+        "run_id",
+        (("retention" ->> 'delete_after_days')),
+        "created_at"
+    )
+    WHERE
+        "state" = 'ready'
+        AND ("retention" ? 'delete_after_days');
+""",
+    """
 CREATE INDEX IF NOT EXISTS "ix_task_artifact_bytes_by_artifact"
     ON "task_artifact_bytes" ("artifact_id");
 """,
     """
-CREATE INDEX IF NOT EXISTS "ix_task_artifact_bytes_retention"
-    ON "task_artifact_bytes" ("created_at", "retention_days")
+CREATE INDEX IF NOT EXISTS "ix_task_artifact_bytes_retention_deadline"
+    ON "task_artifact_bytes" ("retention_deadline_at", "storage_key")
+    WHERE "deleted_at" IS NULL;
+""",
+    """
+CREATE INDEX IF NOT EXISTS "ix_task_artifact_bytes_active_artifact"
+    ON "task_artifact_bytes" ("artifact_id", "storage_key")
     WHERE "deleted_at" IS NULL;
 """,
     """
@@ -441,14 +585,34 @@ CREATE INDEX IF NOT EXISTS "ix_task_idempotency_keys_by_task_window"
     ("task_name", "task_version", "spec_hash", "strategy", "expires_at");
 """,
     """
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_task_queue_items_one_active_per_run"
+    ON "task_queue_items" ("run_id")
+    WHERE "state" IN ('available', 'claimed');
+""",
+    """
 CREATE INDEX IF NOT EXISTS "ix_task_queue_items_claimable"
-    ON "task_queue_items" ("state", "available_at", "priority" DESC)
+    ON "task_queue_items" (
+        "queue_name",
+        "state",
+        "available_at",
+        "priority" DESC,
+        "queue_item_id"
+    )
     WHERE "state" = 'available';
 """,
     """
 CREATE INDEX IF NOT EXISTS "ix_task_queue_items_lease_expiry"
-    ON "task_queue_items" ("lease_expires_at")
+    ON "task_queue_items" (
+        "queue_name",
+        "lease_expires_at",
+        "queue_item_id"
+    )
     WHERE "state" = 'claimed';
+""",
+    """
+CREATE INDEX IF NOT EXISTS "ix_task_queue_items_retry_sweep"
+    ON "task_queue_items" ("queue_name", "attempts", "available_at")
+    WHERE "state" IN ('available', 'dead');
 """,
     """
 CREATE INDEX IF NOT EXISTS "ix_task_events_by_run_sequence"

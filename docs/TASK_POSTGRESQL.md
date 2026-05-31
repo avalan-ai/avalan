@@ -40,6 +40,25 @@ lock key is stable for task migrations and independent from memory migration
 locks. Helpers should expose `upgrade`, `current`, `check`, and `stamp` so
 operators can apply, inspect, validate, or intentionally mark schema state.
 
+## Schema Shape
+
+Task rows keep privacy-sanitized snapshots in JSONB only where the structure is
+not part of hot operational lookup. Definition snapshots, run requests, claims,
+results, contexts, artifact references, idempotency digests, metadata, and
+retention records are constrained to object-shaped JSONB so malformed scalar or
+array payloads fail at the database boundary.
+
+Hot lifecycle fields stay in typed columns. Run state, queue name, queue item
+state, priority, availability, worker id, claim token, heartbeat time, lease
+expiry, attempt counts, artifact byte retention deadlines, and usage counters
+are indexed as columns rather than extracted from JSONB during queue, worker,
+retention, or inspection paths.
+
+Artifact byte rows store encrypted bytes only with explicit key id, algorithm,
+encryption metadata, retention days, and a concrete retention deadline. Cleanup
+and orphan detection use partial indexes over active byte rows; sanitized
+artifact metadata remains in task artifact records after raw bytes are deleted.
+
 ## Optional Dependencies
 
 Runtime PostgreSQL task storage uses the `task-pgsql` extra. Migration tooling

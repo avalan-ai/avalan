@@ -18,6 +18,7 @@ from ..store import freeze_snapshot_metadata
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from importlib.util import find_spec
 from inspect import isawaitable
@@ -143,6 +144,9 @@ class PgsqlArtifactStore:
             purpose=TaskKeyPurpose.ARTIFACT_CONTENT,
             context=context,
         )
+        retention_deadline_at = _retention_deadline_at(
+            self._policy.retention_days
+        )
         ref_metadata = freeze_snapshot_metadata(
             {
                 **dict(metadata or {}),
@@ -176,6 +180,7 @@ class PgsqlArtifactStore:
                 encrypted.algorithm,
                 dumps(dict(encrypted.metadata or {}), sort_keys=True),
                 self._policy.retention_days,
+                retention_deadline_at,
                 dumps(dict(metadata or {}), sort_keys=True),
             ),
         )
@@ -418,6 +423,11 @@ def _encryption_context(
     }
 
 
+def _retention_deadline_at(retention_days: int | None) -> datetime:
+    assert retention_days is not None
+    return datetime.now(UTC) + timedelta(days=retention_days)
+
+
 def _uuid_id() -> str:
     return uuid4().hex
 
@@ -434,9 +444,10 @@ INSERT INTO "task_artifact_bytes"(
     "encryption_algorithm",
     "encryption_metadata",
     "retention_days",
+    "retention_deadline_at",
     "metadata"
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb
+    %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb
 )
 ON CONFLICT ("storage_key") DO NOTHING
 RETURNING "storage_key"
@@ -455,6 +466,7 @@ SELECT
     "encryption_metadata"
 FROM "task_artifact_bytes"
 WHERE "storage_key" = %s
+    AND "deleted_at" IS NULL
 """
 
 _DELETE_ARTIFACT_BYTES_SQL = """
