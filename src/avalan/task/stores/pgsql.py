@@ -1,455 +1,161 @@
-from ..store import TaskStoreConflictError, TaskStoreError
+from ..feature_gate import ModuleFinder, TaskFeature, require_features
+from ..store import TaskStoreError
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from hashlib import sha256
-from typing import AsyncContextManager, Protocol
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from importlib import import_module
+from importlib.util import find_spec
+from pathlib import Path
+from re import fullmatch
+from typing import Any, Protocol, cast
 
+TASK_PGSQL_ALEMBIC_VERSION_TABLE = "avalan_task_alembic_version"
+TASK_PGSQL_HEAD_REVISION = "20260530_0001"
+TASK_PGSQL_ADVISORY_LOCK_ID = 8_172_673_911_930_301_927
+_TASK_PGSQL_REVISION_MODULE = (
+    "avalan.task.stores.pgsql_migrations.versions.v20260530_0001_task_schema"
+)
 
-class PgsqlTaskMigrationCursor(Protocol):
-    async def execute(
-        self,
-        query: str,
-        parameters: tuple[object, ...] | None = None,
-    ) -> None: ...
-
-    async def fetchone(self) -> Mapping[str, object] | None: ...
-
-
-class PgsqlTaskMigrationConnection(Protocol):
-    def cursor(self) -> AsyncContextManager[PgsqlTaskMigrationCursor]: ...
-
-
-class PgsqlTaskMigrationDatabase(Protocol):
-    def connection(
-        self,
-    ) -> AsyncContextManager[PgsqlTaskMigrationConnection]: ...
+ModuleImporter = Callable[[str], object]
 
 
 class PgsqlTaskMigrationError(TaskStoreError):
     pass
 
 
-def _assert_non_empty_string(value: str, field_name: str) -> None:
+class _AlembicConfig(Protocol):
+    attributes: dict[str, object]
+
+    def set_main_option(self, name: str, value: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PgsqlTaskMigrationSettings:
+    url: str
+    schema: str | None = None
+    version_table: str = TASK_PGSQL_ALEMBIC_VERSION_TABLE
+    advisory_lock_id: int = TASK_PGSQL_ADVISORY_LOCK_ID
+    enabled_features: tuple[TaskFeature, ...] = (
+        TaskFeature.POSTGRESQL_MIGRATIONS,
+    )
+    module_finder: ModuleFinder = find_spec
+    module_importer: ModuleImporter = import_module
+    attributes: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.url, "url")
+        if self.schema is not None:
+            _assert_pgsql_identifier(self.schema, "schema")
+        _assert_pgsql_identifier(self.version_table, "version_table")
+        assert isinstance(self.advisory_lock_id, int)
+        assert not isinstance(self.advisory_lock_id, bool)
+        assert isinstance(self.enabled_features, tuple)
+        for feature in self.enabled_features:
+            assert isinstance(feature, TaskFeature)
+        assert callable(self.module_finder)
+        assert callable(self.module_importer)
+        assert isinstance(self.attributes, Mapping)
+
+
+def task_pgsql_script_location() -> str:
+    return str(Path(__file__).with_name("pgsql_migrations"))
+
+
+def task_pgsql_schema_statements() -> tuple[str, ...]:
+    revision = cast(Any, import_module(_TASK_PGSQL_REVISION_MODULE))
+    statements = revision.TASK_SCHEMA_STATEMENTS
+    assert isinstance(statements, tuple)
+    for statement in statements:
+        _assert_non_empty_string(statement, "statement")
+    return statements
+
+
+def task_pgsql_upgrade(
+    settings: PgsqlTaskMigrationSettings,
+    *,
+    revision: str = "head",
+) -> None:
+    _assert_revision(revision)
+    _run_alembic_command(settings, "upgrade", revision)
+
+
+def task_pgsql_current(
+    settings: PgsqlTaskMigrationSettings,
+    *,
+    verbose: bool = False,
+) -> None:
+    assert isinstance(verbose, bool)
+    _run_alembic_command(settings, "current", verbose=verbose)
+
+
+def task_pgsql_check(settings: PgsqlTaskMigrationSettings) -> None:
+    _run_alembic_command(settings, "current", check_heads=True)
+
+
+def task_pgsql_stamp(
+    settings: PgsqlTaskMigrationSettings,
+    *,
+    revision: str = "head",
+) -> None:
+    _assert_revision(revision)
+    _run_alembic_command(settings, "stamp", revision)
+
+
+def task_pgsql_alembic_config(
+    settings: PgsqlTaskMigrationSettings,
+) -> _AlembicConfig:
+    diagnostics = require_features(
+        (TaskFeature.POSTGRESQL_MIGRATIONS,),
+        enabled_features=settings.enabled_features,
+        module_finder=settings.module_finder,
+    )
+    if diagnostics:
+        diagnostic = diagnostics[0]
+        raise PgsqlTaskMigrationError(
+            f"{diagnostic.code}: {diagnostic.message}"
+        )
+
+    config_module = cast(Any, settings.module_importer("alembic.config"))
+    config = cast(_AlembicConfig, config_module.Config())
+    config.set_main_option("script_location", task_pgsql_script_location())
+    config.set_main_option("sqlalchemy.url", settings.url)
+    config.set_main_option("version_table", settings.version_table)
+    config.set_main_option(
+        "task_advisory_lock_id",
+        str(settings.advisory_lock_id),
+    )
+    if settings.schema is not None:
+        config.set_main_option("task_schema", settings.schema)
+        config.set_main_option("version_table_schema", settings.schema)
+    config.attributes.update(dict(settings.attributes))
+    return config
+
+
+def _run_alembic_command(
+    settings: PgsqlTaskMigrationSettings,
+    command_name: str,
+    *args: object,
+    **kwargs: object,
+) -> None:
+    config = task_pgsql_alembic_config(settings)
+    command_module = cast(Any, settings.module_importer("alembic.command"))
+    command = getattr(command_module, command_name)
+    command(config, *args, **kwargs)
+
+
+def _assert_non_empty_string(value: object, field_name: str) -> None:
     assert isinstance(value, str), f"{field_name} must be a string"
     assert value.strip(), f"{field_name} must not be empty"
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class PgsqlTaskMigration:
-    version: int
-    name: str
-    statements: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        assert isinstance(self.version, int)
-        assert not isinstance(self.version, bool)
-        assert self.version > 0
-        _assert_non_empty_string(self.name, "name")
-        assert isinstance(self.statements, tuple)
-        assert self.statements
-        for statement in self.statements:
-            _assert_non_empty_string(statement, "statement")
-
-    @property
-    def checksum(self) -> str:
-        return sha256("\n\n".join(self.statements).encode("utf-8")).hexdigest()
+def _assert_pgsql_identifier(value: str, field_name: str) -> None:
+    _assert_non_empty_string(value, field_name)
+    assert fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]{0,62}",
+        value,
+    ), f"{field_name} must be a PostgreSQL identifier"
 
 
-class PgsqlTaskMigrationRunner:
-    def __init__(
-        self,
-        database: PgsqlTaskMigrationDatabase,
-        *,
-        migrations: tuple[PgsqlTaskMigration, ...] = (),
-    ) -> None:
-        assert hasattr(database, "connection")
-        self._database = database
-        self._migrations = migrations or TASK_PGSQL_MIGRATIONS
-        assert self._migrations
-        versions = [migration.version for migration in self._migrations]
-        assert versions == sorted(versions)
-        assert len(set(versions)) == len(versions)
-
-    async def apply(self) -> tuple[PgsqlTaskMigration, ...]:
-        applied: list[PgsqlTaskMigration] = []
-        async with self._database.connection() as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(_CREATE_MIGRATIONS_TABLE_SQL)
-                for migration in self._migrations:
-                    if await self._already_applied(cursor, migration):
-                        continue
-                    for statement in migration.statements:
-                        await cursor.execute(statement)
-                    await cursor.execute(
-                        _INSERT_MIGRATION_SQL,
-                        (
-                            migration.version,
-                            migration.name,
-                            migration.checksum,
-                        ),
-                    )
-                    applied.append(migration)
-        return tuple(applied)
-
-    async def _already_applied(
-        self,
-        cursor: PgsqlTaskMigrationCursor,
-        migration: PgsqlTaskMigration,
-    ) -> bool:
-        await cursor.execute(_SELECT_MIGRATION_SQL, (migration.version,))
-        row = await cursor.fetchone()
-        if row is None:
-            return False
-        if row.get("checksum") != migration.checksum:
-            raise TaskStoreConflictError(
-                "task store migration checksum mismatch"
-            )
-        return True
-
-
-TASK_PGSQL_MIGRATIONS: tuple[PgsqlTaskMigration, ...] = (
-    PgsqlTaskMigration(
-        version=1,
-        name="task_lifecycle",
-        statements=(
-            """
-CREATE TABLE IF NOT EXISTS "task_definitions" (
-    "definition_id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "version" TEXT NOT NULL,
-    "spec_hash" TEXT NOT NULL,
-    "definition" JSONB NOT NULL,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("definition_id"),
-    CONSTRAINT "ck_task_definitions_definition_id_non_empty"
-        CHECK (LENGTH(BTRIM("definition_id")) > 0),
-    CONSTRAINT "ck_task_definitions_name_non_empty"
-        CHECK (LENGTH(BTRIM("name")) > 0),
-    CONSTRAINT "ck_task_definitions_version_non_empty"
-        CHECK (LENGTH(BTRIM("version")) > 0),
-    CONSTRAINT "ck_task_definitions_spec_hash_non_empty"
-        CHECK (LENGTH(BTRIM("spec_hash")) > 0),
-    CONSTRAINT "uq_task_definitions_identity"
-        UNIQUE ("name", "version", "spec_hash")
-);
-""",
-            """
-CREATE TABLE IF NOT EXISTS "task_runs" (
-    "run_id" TEXT NOT NULL,
-    "definition_id" TEXT NOT NULL,
-    "state" TEXT NOT NULL,
-    "request" JSONB NOT NULL,
-    "claim" JSONB DEFAULT NULL,
-    "last_attempt_id" TEXT DEFAULT NULL,
-    "result" JSONB DEFAULT NULL,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("run_id"),
-    CONSTRAINT "fk_task_runs__task_definitions"
-        FOREIGN KEY ("definition_id")
-        REFERENCES "task_definitions" ("definition_id"),
-    CONSTRAINT "ck_task_runs_run_id_non_empty"
-        CHECK (LENGTH(BTRIM("run_id")) > 0),
-    CONSTRAINT "ck_task_runs_state"
-        CHECK (
-            "state" IN (
-                'created',
-                'validated',
-                'queued',
-                'claimed',
-                'running',
-                'succeeded',
-                'failed',
-                'cancel_requested',
-                'cancelled',
-                'expired'
-            )
-        ),
-    CONSTRAINT "ck_task_runs_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
-);
-""",
-            """
-CREATE TABLE IF NOT EXISTS "task_run_transitions" (
-    "transition_id" TEXT NOT NULL,
-    "run_id" TEXT NOT NULL,
-    "from_state" TEXT NOT NULL,
-    "to_state" TEXT NOT NULL,
-    "reason" TEXT NOT NULL,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("transition_id"),
-    CONSTRAINT "fk_task_run_transitions__task_runs"
-        FOREIGN KEY ("run_id")
-        REFERENCES "task_runs" ("run_id"),
-    CONSTRAINT "ck_task_run_transitions_reason_non_empty"
-        CHECK (LENGTH(BTRIM("reason")) > 0)
-);
-""",
-            """
-CREATE TABLE IF NOT EXISTS "task_attempts" (
-    "attempt_id" TEXT NOT NULL,
-    "run_id" TEXT NOT NULL,
-    "attempt_number" INTEGER NOT NULL,
-    "state" TEXT NOT NULL,
-    "context" JSONB NOT NULL,
-    "result" JSONB DEFAULT NULL,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("attempt_id"),
-    CONSTRAINT "fk_task_attempts__task_runs"
-        FOREIGN KEY ("run_id")
-        REFERENCES "task_runs" ("run_id"),
-    CONSTRAINT "uq_task_attempts_run_order"
-        UNIQUE ("run_id", "attempt_number"),
-    CONSTRAINT "ck_task_attempts_attempt_number_positive"
-        CHECK ("attempt_number" > 0),
-    CONSTRAINT "ck_task_attempts_state"
-        CHECK (
-            "state" IN (
-                'created',
-                'running',
-                'succeeded',
-                'failed',
-                'abandoned'
-            )
-        ),
-    CONSTRAINT "ck_task_attempts_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
-);
-""",
-            """
-CREATE TABLE IF NOT EXISTS "task_attempt_transitions" (
-    "transition_id" TEXT NOT NULL,
-    "attempt_id" TEXT NOT NULL,
-    "run_id" TEXT NOT NULL,
-    "from_state" TEXT NOT NULL,
-    "to_state" TEXT NOT NULL,
-    "reason" TEXT NOT NULL,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("transition_id"),
-    CONSTRAINT "fk_task_attempt_transitions__task_attempts"
-        FOREIGN KEY ("attempt_id")
-        REFERENCES "task_attempts" ("attempt_id"),
-    CONSTRAINT "fk_task_attempt_transitions__task_runs"
-        FOREIGN KEY ("run_id")
-        REFERENCES "task_runs" ("run_id"),
-    CONSTRAINT "ck_task_attempt_transitions_reason_non_empty"
-        CHECK (LENGTH(BTRIM("reason")) > 0)
-);
-""",
-            """
-CREATE TABLE IF NOT EXISTS "task_artifacts" (
-    "artifact_id" TEXT NOT NULL,
-    "run_id" TEXT NOT NULL,
-    "attempt_id" TEXT DEFAULT NULL,
-    "purpose" TEXT NOT NULL,
-    "state" TEXT NOT NULL,
-    "ref" JSONB NOT NULL,
-    "provenance" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "retention" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("artifact_id"),
-    CONSTRAINT "fk_task_artifacts__task_runs"
-        FOREIGN KEY ("run_id")
-        REFERENCES "task_runs" ("run_id"),
-    CONSTRAINT "fk_task_artifacts__task_attempts"
-        FOREIGN KEY ("attempt_id")
-        REFERENCES "task_attempts" ("attempt_id"),
-    CONSTRAINT "ck_task_artifacts_purpose"
-        CHECK (
-            "purpose" IN (
-                'input',
-                'converted',
-                'output',
-                'intermediate'
-            )
-        ),
-    CONSTRAINT "ck_task_artifacts_state"
-        CHECK (
-            "state" IN (
-                'ready',
-                'deleted',
-                'lost'
-            )
-        ),
-    CONSTRAINT "ck_task_artifacts_updated_at_not_before_created_at"
-        CHECK ("updated_at" >= "created_at")
-);
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_definitions_by_name_version"
-    ON "task_definitions" ("name", "version");
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_runs_by_definition_state_created"
-    ON "task_runs" ("definition_id", "state", "created_at" DESC);
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_runs_by_state_updated"
-    ON "task_runs" ("state", "updated_at" DESC);
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_run_transitions_by_run_created"
-    ON "task_run_transitions" ("run_id", "created_at", "transition_id");
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_attempts_by_run_order"
-    ON "task_attempts" ("run_id", "attempt_number");
-""",
-            """
-CREATE UNIQUE INDEX IF NOT EXISTS "uq_task_attempts_one_active_per_run"
-    ON "task_attempts" ("run_id")
-    WHERE "state" NOT IN ('succeeded', 'failed', 'abandoned');
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_attempt_transitions_by_attempt_created"
-    ON "task_attempt_transitions"
-    ("attempt_id", "created_at", "transition_id");
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_artifacts_by_run_purpose_state"
-    ON "task_artifacts" ("run_id", "purpose", "state");
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_artifacts_by_attempt"
-    ON "task_artifacts" ("attempt_id")
-    WHERE "attempt_id" IS NOT NULL;
-""",
-            """
-CREATE OR REPLACE FUNCTION "task_reject_terminal_run_state_change"()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF OLD."state" IN ('succeeded', 'failed', 'cancelled', 'expired')
-        AND NEW."state" IS DISTINCT FROM OLD."state" THEN
-        RAISE EXCEPTION 'terminal task run state cannot be changed'
-            USING ERRCODE = '23514';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-""",
-            """
-DROP TRIGGER IF EXISTS "tr_task_runs_terminal_state" ON "task_runs";
-""",
-            """
-CREATE TRIGGER "tr_task_runs_terminal_state"
-    BEFORE UPDATE ON "task_runs"
-    FOR EACH ROW
-    EXECUTE FUNCTION "task_reject_terminal_run_state_change"();
-""",
-        ),
-    ),
-    PgsqlTaskMigration(
-        version=2,
-        name="task_idempotency",
-        statements=(
-            """
-CREATE TABLE IF NOT EXISTS "task_idempotency_keys" (
-    "identity_key" TEXT NOT NULL,
-    "task_name" TEXT NOT NULL,
-    "task_version" TEXT NOT NULL,
-    "spec_hash" TEXT NOT NULL,
-    "owner_scope_hash" JSONB NOT NULL,
-    "strategy" TEXT NOT NULL,
-    "window_hash" JSONB DEFAULT NULL,
-    "input_hash" JSONB DEFAULT NULL,
-    "file_hash" JSONB DEFAULT NULL,
-    "custom_hash" JSONB DEFAULT NULL,
-    "run_id" TEXT NOT NULL,
-    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "expires_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
-    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("identity_key"),
-    CONSTRAINT "fk_task_idempotency_keys__task_runs"
-        FOREIGN KEY ("run_id")
-        REFERENCES "task_runs" ("run_id"),
-    CONSTRAINT "ck_task_idempotency_keys_identity_key_non_empty"
-        CHECK (LENGTH(BTRIM("identity_key")) > 0),
-    CONSTRAINT "ck_task_idempotency_keys_task_name_non_empty"
-        CHECK (LENGTH(BTRIM("task_name")) > 0),
-    CONSTRAINT "ck_task_idempotency_keys_task_version_non_empty"
-        CHECK (LENGTH(BTRIM("task_version")) > 0),
-    CONSTRAINT "ck_task_idempotency_keys_spec_hash_non_empty"
-        CHECK (LENGTH(BTRIM("spec_hash")) > 0),
-    CONSTRAINT "ck_task_idempotency_keys_strategy"
-        CHECK (
-            "strategy" IN (
-                'input_hash',
-                'input_and_files_hash',
-                'custom'
-            )
-        ),
-    CONSTRAINT "ck_task_idempotency_keys_expires_after_created"
-        CHECK ("expires_at" IS NULL OR "expires_at" > "created_at")
-);
-""",
-            """
-CREATE UNIQUE INDEX IF NOT EXISTS "uq_task_idempotency_keys_identity"
-    ON "task_idempotency_keys" ("identity_key");
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_idempotency_keys_by_run"
-    ON "task_idempotency_keys" ("run_id");
-""",
-            """
-CREATE INDEX IF NOT EXISTS "ix_task_idempotency_keys_by_task_window"
-    ON "task_idempotency_keys"
-    ("task_name", "task_version", "spec_hash", "strategy", "expires_at");
-""",
-        ),
-    ),
-)
-
-_CREATE_MIGRATIONS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS "task_schema_migrations" (
-    "version" INTEGER NOT NULL,
-    "name" TEXT NOT NULL,
-    "checksum" TEXT NOT NULL,
-    "applied_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY ("version"),
-    CONSTRAINT "ck_task_schema_migrations_version_positive"
-        CHECK ("version" > 0),
-    CONSTRAINT "ck_task_schema_migrations_name_non_empty"
-        CHECK (LENGTH(BTRIM("name")) > 0),
-    CONSTRAINT "ck_task_schema_migrations_checksum_non_empty"
-        CHECK (LENGTH(BTRIM("checksum")) > 0)
-);
-"""
-
-_SELECT_MIGRATION_SQL = """
-SELECT "version", "name", "checksum"
-FROM "task_schema_migrations"
-WHERE "version" = %s;
-"""
-
-_INSERT_MIGRATION_SQL = """
-INSERT INTO "task_schema_migrations" ("version", "name", "checksum")
-VALUES (%s, %s, %s);
-"""
-
-
-def task_pgsql_schema_statements() -> tuple[str, ...]:
-    return (
-        _CREATE_MIGRATIONS_TABLE_SQL,
-        *(
-            statement
-            for migration in TASK_PGSQL_MIGRATIONS
-            for statement in migration.statements
-        ),
-    )
+def _assert_revision(value: str) -> None:
+    _assert_non_empty_string(value, "revision")
+    assert fullmatch(r"[A-Za-z0-9_.@+-]+", value)
