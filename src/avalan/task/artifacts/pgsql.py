@@ -1,4 +1,9 @@
-from ...pgsql import PgsqlDatabase
+from ...pgsql import (
+    PgsqlDatabase,
+    PgsqlOperationError,
+    PgsqlUnitOfWork,
+    run_pgsql_transaction,
+)
 from ..artifact import (
     ArtifactStoreConflictError,
     ArtifactStoreError,
@@ -233,10 +238,18 @@ class PgsqlArtifactStore:
         query: str,
         parameters: tuple[object, ...],
     ) -> Mapping[str, object] | None:
-        async with self._database.connection() as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(query, parameters)
-                row = await cursor.fetchone()
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute(query, parameters)
+            return await unit.cursor.fetchone()
+
+        try:
+            row = await run_pgsql_transaction(
+                self._database,
+                operation="task_artifact_bytes",
+                callback=execute,
+            )
+        except PgsqlOperationError as error:
+            raise ArtifactStoreError(str(error)) from None
         if row is not None and not isinstance(row, Mapping):
             raise ArtifactStoreError("artifact query returned invalid row")
         return row

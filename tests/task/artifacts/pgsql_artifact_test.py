@@ -73,6 +73,7 @@ class FakeDatabase:
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, object]] = {}
         self.invalid_row = False
+        self.fail_after_insert = False
         self.last_parameters: tuple[object, ...] | None = None
         self.open_count = 0
         self.close_count = 0
@@ -125,6 +126,31 @@ class FakeConnection:
 
     def cursor(self) -> "FakeCursorContext":
         return FakeCursorContext(self.database)
+
+    def transaction(self) -> "FakeTransactionContext":
+        return FakeTransactionContext(self.database)
+
+
+class FakeTransactionContext:
+    def __init__(self, database: FakeDatabase) -> None:
+        self.database = database
+        self.snapshot: dict[str, dict[str, object]] = {}
+
+    async def __aenter__(self) -> "FakeTransactionContext":
+        self.snapshot = {
+            key: dict(value) for key, value in self.database.rows.items()
+        }
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        if exc_type is not None:
+            self.database.rows = self.snapshot
+        return False
 
 
 class FakeCursorContext:
@@ -195,6 +221,8 @@ class FakeCursor:
             "metadata": loads(cast(str, parameters[10])),
         }
         self.database.rows[storage_key] = row
+        if self.database.fail_after_insert:
+            raise RuntimeError("raw database payload with secret")
         self.row = {"storage_key": storage_key}
 
 
@@ -369,6 +397,25 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
             self.assertEqual(reader.read(), b"first")
         finally:
             reader.close()
+
+    async def test_failed_write_rolls_back_and_reports_safe_error(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        database.fail_after_insert = True
+        store = PgsqlArtifactStore(
+            database,
+            cipher=ReversibleCipher(),
+            policy=self._enabled_policy(),
+            id_factory=lambda: "artifact-1",
+        )
+
+        with self.assertRaises(ArtifactStoreError) as caught:
+            await store.put(b"private bytes")
+
+        self.assertEqual(database.rows, {})
+        self.assertNotIn("raw database payload", str(caught.exception))
+        self.assertNotIn("private bytes", str(caught.exception))
 
     async def test_references_cannot_cross_store_or_escape(self) -> None:
         store = PgsqlArtifactStore(

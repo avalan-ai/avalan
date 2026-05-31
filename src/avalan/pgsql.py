@@ -1,7 +1,9 @@
 """Provide shared async PostgreSQL protocol helpers."""
 
+from asyncio import CancelledError
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from importlib import import_module
 from inspect import isawaitable
 from re import fullmatch
@@ -66,7 +68,55 @@ class PgsqlDatabaseClosedError(RuntimeError):
     pass
 
 
+class PgsqlFailureCategory(StrEnum):
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    SERIALIZATION = "serialization"
+    DEADLOCK = "deadlock"
+    UNIQUE_CONFLICT = "unique_conflict"
+    INSUFFICIENT_PRIVILEGE = "insufficient_privilege"
+    MIGRATION = "migration"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PgsqlFailure:
+    category: PgsqlFailureCategory
+    code: str
+    retryable: bool
+    operation: str | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.category, PgsqlFailureCategory)
+        _assert_non_empty_string(self.code, "code")
+        assert isinstance(self.retryable, bool)
+        if self.operation is not None:
+            _assert_non_empty_string(self.operation, "operation")
+
+
+class PgsqlOperationError(RuntimeError):
+    def __init__(self, failure: PgsqlFailure) -> None:
+        assert isinstance(failure, PgsqlFailure)
+        self.failure = failure
+        super().__init__(
+            "PostgreSQL operation failed: "
+            f"category={failure.category.value}, "
+            f"code={failure.code}, retryable={failure.retryable}"
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PgsqlUnitOfWork:
+    connection: PgsqlConnection
+    cursor: PgsqlCursor
+
+    def __post_init__(self) -> None:
+        assert hasattr(self.connection, "cursor")
+        assert hasattr(self.cursor, "execute")
+
+
 PgsqlConnectionConfigurer = Callable[[PgsqlConnection], Awaitable[None]]
+PgsqlUnitOfWorkCallback = Callable[[PgsqlUnitOfWork], Awaitable[object]]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -254,6 +304,113 @@ class PsycopgAsyncDatabase:
         await self.aclose()
 
 
+async def run_pgsql_transaction(
+    database: PgsqlDatabase,
+    *,
+    operation: str,
+    callback: PgsqlUnitOfWorkCallback,
+) -> object:
+    assert hasattr(database, "connection")
+    _assert_non_empty_string(operation, "operation")
+    assert callable(callback)
+    try:
+        async with database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    return await callback(
+                        PgsqlUnitOfWork(
+                            connection=connection,
+                            cursor=cursor,
+                        )
+                    )
+    except (KeyboardInterrupt, SystemExit, CancelledError):
+        raise
+    except BaseException as error:
+        failure = classify_pgsql_error(error, operation=operation)
+        raise PgsqlOperationError(failure) from None
+
+
+def classify_pgsql_error(
+    error: BaseException,
+    *,
+    operation: str | None = None,
+) -> PgsqlFailure:
+    assert isinstance(error, BaseException)
+    if operation is not None:
+        _assert_non_empty_string(operation, "operation")
+    sqlstate = _error_sqlstate(error)
+    name = error.__class__.__name__
+    module = error.__class__.__module__
+    lower_name = name.lower()
+    if sqlstate in {"57014", "55P03", "53300"} or "timeout" in lower_name:
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.TIMEOUT,
+            code=sqlstate or "pgsql.timeout",
+            retryable=True,
+            operation=operation,
+        )
+    if sqlstate is not None and sqlstate.startswith("08"):
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.CONNECTION,
+            code=sqlstate,
+            retryable=True,
+            operation=operation,
+        )
+    if "operationalerror" == lower_name or "pooltimeout" in lower_name:
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.CONNECTION,
+            code=sqlstate or "pgsql.connection",
+            retryable=True,
+            operation=operation,
+        )
+    if sqlstate == "40001":
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.SERIALIZATION,
+            code=sqlstate,
+            retryable=True,
+            operation=operation,
+        )
+    if sqlstate == "40P01":
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.DEADLOCK,
+            code=sqlstate,
+            retryable=True,
+            operation=operation,
+        )
+    if sqlstate == "23505":
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.UNIQUE_CONFLICT,
+            code=sqlstate,
+            retryable=False,
+            operation=operation,
+        )
+    if sqlstate == "42501":
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.INSUFFICIENT_PRIVILEGE,
+            code=sqlstate,
+            retryable=False,
+            operation=operation,
+        )
+    if (
+        module.startswith("alembic")
+        or "migration" in lower_name
+        or "revision" in lower_name
+        or lower_name == "commanderror"
+    ):
+        return PgsqlFailure(
+            category=PgsqlFailureCategory.MIGRATION,
+            code=sqlstate or "pgsql.migration",
+            retryable=False,
+            operation=operation,
+        )
+    return PgsqlFailure(
+        category=PgsqlFailureCategory.UNKNOWN,
+        code=sqlstate or "pgsql.unknown",
+        retryable=False,
+        operation=operation,
+    )
+
+
 def normalize_pgsql_dsn(
     dsn: str,
     *,
@@ -343,6 +500,17 @@ def _connection_setting_statements(
             )
         )
     return tuple(statements)
+
+
+def _error_sqlstate(error: BaseException) -> str | None:
+    value = getattr(error, "sqlstate", None)
+    if value is None:
+        value = getattr(error, "pgcode", None)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
 
 
 def _assert_optional_positive_int(

@@ -16,10 +16,12 @@ from avalan.task.stores import (
     PgsqlTaskMigrationSettings,
     task_pgsql_alembic_config,
     task_pgsql_check,
+    task_pgsql_claim_token_predicate,
     task_pgsql_current,
     task_pgsql_schema_statements,
     task_pgsql_script_location,
     task_pgsql_stamp,
+    task_pgsql_state_predicate,
     task_pgsql_upgrade,
 )
 
@@ -256,6 +258,49 @@ class PgsqlMigrationSchemaTest(TestCase):
         self.assertIn("'input_and_files_hash'", schema)
         self.assertIn("'custom'", schema)
         self.assertIn('"ck_task_artifact_bytes_retention_positive"', schema)
+
+    def test_state_and_claim_predicates_are_parameterized(self) -> None:
+        state_sql, state_params = task_pgsql_state_predicate(
+            "state",
+            {TaskRunState.QUEUED, TaskRunState.CLAIMED},
+            table_alias="r",
+        )
+        no_claim_sql, no_claim_params = task_pgsql_claim_token_predicate(
+            "claim",
+            None,
+            table_alias="r",
+        )
+        claim_sql, claim_params = task_pgsql_claim_token_predicate(
+            "claim",
+            "claim-secret",
+        )
+
+        self.assertEqual(state_sql, '"r"."state" IN (%s, %s)')
+        self.assertEqual(set(state_params), {"queued", "claimed"})
+        self.assertEqual(no_claim_sql, '"r"."claim" IS NULL')
+        self.assertEqual(no_claim_params, ())
+        self.assertEqual(claim_sql, "\"claim\" ->> 'claim_token' = %s")
+        self.assertEqual(claim_params, ("claim-secret",))
+        self.assertNotIn("claim-secret", claim_sql)
+
+    def test_state_and_claim_predicates_reject_unsafe_inputs(self) -> None:
+        with self.assertRaises(AssertionError):
+            task_pgsql_state_predicate("state;drop", {TaskRunState.QUEUED})
+        with self.assertRaises(AssertionError):
+            task_pgsql_state_predicate("state", set())
+        with self.assertRaises(AssertionError):
+            task_pgsql_state_predicate(
+                "state",
+                cast(set[TaskRunState], {"queued"}),
+            )
+        with self.assertRaises(AssertionError):
+            task_pgsql_claim_token_predicate("claim", "")
+        with self.assertRaises(AssertionError):
+            task_pgsql_claim_token_predicate(
+                "claim",
+                "token",
+                table_alias="bad-alias",
+            )
 
 
 class PgsqlMigrationHelperTest(TestCase):

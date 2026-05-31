@@ -7,8 +7,12 @@ from .pgsql import PgsqlTaskMigrationError as PgsqlTaskMigrationError
 from .pgsql import PgsqlTaskMigrationSettings as PgsqlTaskMigrationSettings
 from .pgsql import task_pgsql_alembic_config as task_pgsql_alembic_config
 from .pgsql import task_pgsql_check as task_pgsql_check
+from .pgsql import (
+    task_pgsql_claim_token_predicate as task_pgsql_claim_token_predicate,
+)
 from .pgsql import task_pgsql_current as task_pgsql_current
 from .pgsql import task_pgsql_schema_statements as task_pgsql_schema_statements
 from .pgsql import task_pgsql_script_location as task_pgsql_script_location
 from .pgsql import task_pgsql_stamp as task_pgsql_stamp
+from .pgsql import task_pgsql_state_predicate as task_pgsql_state_predicate
 from .pgsql import task_pgsql_upgrade as task_pgsql_upgrade

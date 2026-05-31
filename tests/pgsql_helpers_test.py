@@ -5,10 +5,15 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.pgsql import (
     PgsqlDatabaseClosedError,
+    PgsqlFailureCategory,
+    PgsqlOperationError,
+    PgsqlUnitOfWork,
     PsycopgAsyncDatabase,
     PsycopgPoolSettings,
+    classify_pgsql_error,
     normalize_pgsql_dsn,
     quote_pgsql_identifier,
+    run_pgsql_transaction,
 )
 
 
@@ -107,6 +112,119 @@ class FakeConfigureConnection:
         self.autocommit_values.append(value)
 
 
+class FakeTransactionCursorContext:
+    def __init__(self, cursor: "FakeTransactionCursor") -> None:
+        self.cursor = cursor
+        self.exit_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> "FakeTransactionCursor":
+        return self.cursor
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        self.exit_type = exc_type
+        return False
+
+
+class FakeTransactionCursor:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, object | None]] = []
+
+    async def execute(
+        self,
+        query: str,
+        parameters: object | None = None,
+    ) -> None:
+        self.executed.append((query, parameters))
+
+    async def executemany(
+        self,
+        query: str,
+        parameters_seq: object,
+    ) -> None:
+        self.executed.append((query, parameters_seq))
+
+    async def fetchone(self) -> dict[str, object] | None:
+        return {"ok": True}
+
+    async def fetchall(self) -> tuple[dict[str, object], ...]:
+        return ({"ok": True},)
+
+    async def close(self) -> None:
+        return None
+
+
+class FakeTransactionContext:
+    def __init__(self) -> None:
+        self.exit_type: type[BaseException] | None = None
+        self.entered = False
+
+    async def __aenter__(self) -> object:
+        self.entered = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        self.exit_type = exc_type
+        return False
+
+
+class FakeTransactionConnection:
+    def __init__(self) -> None:
+        self.cursor_value = FakeTransactionCursor()
+        self.cursor_context: FakeTransactionCursorContext | None = None
+        self.transaction_context = FakeTransactionContext()
+        self.row_factory: object | None = None
+
+    def cursor(self) -> FakeTransactionCursorContext:
+        self.cursor_context = FakeTransactionCursorContext(self.cursor_value)
+        return self.cursor_context
+
+    def transaction(self) -> FakeTransactionContext:
+        return self.transaction_context
+
+    async def set_autocommit(self, value: bool) -> None:
+        return None
+
+
+class FakeTransactionConnectionContext:
+    def __init__(self, connection: FakeTransactionConnection) -> None:
+        self.connection = connection
+        self.exit_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> FakeTransactionConnection:
+        return self.connection
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        self.exit_type = exc_type
+        return False
+
+
+class FakeTransactionDatabase:
+    def __init__(self) -> None:
+        self.connection_value = FakeTransactionConnection()
+        self.connection_context: FakeTransactionConnectionContext | None = None
+
+    def connection(self) -> FakeTransactionConnectionContext:
+        self.connection_context = FakeTransactionConnectionContext(
+            self.connection_value
+        )
+        return self.connection_context
+
+
 class CancelledConfigureCursor(FakeConfigureCursor):
     async def execute(
         self,
@@ -176,6 +294,40 @@ class PgsqlHelpersTest(TestCase):
                     {"sslmode": 1},
                 ),
             )
+
+    def test_classifies_postgresql_failures_without_raw_payloads(self) -> None:
+        cases = (
+            (_sqlstate_error("40001", "private input"), "serialization", True),
+            (_sqlstate_error("40P01", "private lock"), "deadlock", True),
+            (
+                _sqlstate_error("23505", "private key"),
+                "unique_conflict",
+                False,
+            ),
+            (
+                _sqlstate_error("42501", "private role"),
+                "insufficient_privilege",
+                False,
+            ),
+            (_sqlstate_error("08006", "private host"), "connection", True),
+            (
+                _named_error("OperationalError", "private host"),
+                "connection",
+                True,
+            ),
+            (TimeoutError("private timeout"), "timeout", True),
+            (_migration_error("private revision"), "migration", False),
+            (_invalid_sqlstate_error("private code"), "unknown", False),
+        )
+
+        for error, category, retryable in cases:
+            with self.subTest(category=category):
+                failure = classify_pgsql_error(error, operation="append")
+
+                self.assertEqual(failure.category.value, category)
+                self.assertEqual(failure.retryable, retryable)
+                self.assertEqual(failure.operation, "append")
+                self.assertNotIn("private", str(failure))
 
 
 class PsycopgAsyncDatabaseTest(IsolatedAsyncioTestCase):
@@ -253,6 +405,55 @@ class PsycopgAsyncDatabaseTest(IsolatedAsyncioTestCase):
 
         self.assertIs(connection.cursor_context, None)
         self.assertIs(connection.row_factory, dict_row)
+
+    async def test_transaction_helper_wraps_failures_safely(self) -> None:
+        database = FakeTransactionDatabase()
+
+        async def callback(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute("INSERT", ("secret",))
+            raise _sqlstate_error("23505", "duplicate private payload")
+
+        with self.assertRaises(PgsqlOperationError) as caught:
+            await run_pgsql_transaction(
+                database,
+                operation="register_definition",
+                callback=callback,
+            )
+
+        failure = caught.exception.failure
+        self.assertEqual(
+            failure.category,
+            PgsqlFailureCategory.UNIQUE_CONFLICT,
+        )
+        self.assertFalse(failure.retryable)
+        self.assertNotIn("duplicate private payload", str(caught.exception))
+        self.assertEqual(
+            database.connection_value.transaction_context.exit_type.__name__,
+            "SqlstateError",
+        )
+        assert database.connection_value.cursor_context is not None
+        self.assertEqual(
+            database.connection_value.cursor_context.exit_type.__name__,
+            "SqlstateError",
+        )
+
+    async def test_transaction_helper_preserves_cancellation(self) -> None:
+        database = FakeTransactionDatabase()
+
+        async def callback(unit: PgsqlUnitOfWork) -> object:
+            raise CancelledError("private cancellation")
+
+        with self.assertRaises(CancelledError):
+            await run_pgsql_transaction(
+                database,
+                operation="claim",
+                callback=callback,
+            )
+
+        self.assertIs(
+            database.connection_value.transaction_context.exit_type,
+            CancelledError,
+        )
 
     async def test_close_before_pool_creation_is_noop(self) -> None:
         database = PsycopgAsyncDatabase(
@@ -398,6 +599,34 @@ class PsycopgAsyncDatabaseTest(IsolatedAsyncioTestCase):
     @staticmethod
     def _unexpected_import(module: str) -> object:
         raise AssertionError(f"unexpected import: {module}")
+
+
+def _sqlstate_error(sqlstate: str, message: str) -> BaseException:
+    class SqlstateError(RuntimeError):
+        pass
+
+    error = SqlstateError(message)
+    error.sqlstate = sqlstate  # type: ignore[attr-defined]
+    return error
+
+
+def _migration_error(message: str) -> BaseException:
+    class CommandError(RuntimeError):
+        pass
+
+    CommandError.__module__ = "alembic.util.exc"
+    return CommandError(message)
+
+
+def _named_error(name: str, message: str) -> BaseException:
+    error_type = type(name, (RuntimeError,), {})
+    return error_type(message)
+
+
+def _invalid_sqlstate_error(message: str) -> BaseException:
+    error = RuntimeError(message)
+    error.sqlstate = object()  # type: ignore[attr-defined]
+    return error
 
 
 if __name__ == "__main__":

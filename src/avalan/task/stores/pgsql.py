@@ -1,8 +1,9 @@
 from ...pgsql import assert_pgsql_identifier
 from ..feature_gate import ModuleFinder, TaskFeature, require_features
+from ..state import TaskAttemptState, TaskRunState
 from ..store import TaskStoreError
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from importlib import import_module
 from importlib.util import find_spec
@@ -18,6 +19,7 @@ _TASK_PGSQL_REVISION_MODULE = (
 )
 
 ModuleImporter = Callable[[str], object]
+TaskPgsqlState = TaskRunState | TaskAttemptState
 
 
 class PgsqlTaskMigrationError(TaskStoreError):
@@ -69,6 +71,41 @@ def task_pgsql_schema_statements() -> tuple[str, ...]:
     for statement in statements:
         _assert_non_empty_string(statement, "statement")
     return statements
+
+
+def task_pgsql_state_predicate(
+    column_name: str,
+    states: Collection[TaskPgsqlState],
+    *,
+    table_alias: str | None = None,
+) -> tuple[str, tuple[object, ...]]:
+    assert_pgsql_identifier(column_name, "column_name")
+    assert isinstance(states, Collection)
+    assert states, "states must not be empty"
+    state_values: list[str] = []
+    for state in states:
+        assert isinstance(state, TaskRunState | TaskAttemptState)
+        state_values.append(state.value)
+    qualified = _qualified_pgsql_column(column_name, table_alias=table_alias)
+    placeholders = ", ".join("%s" for _ in state_values)
+    return f"{qualified} IN ({placeholders})", tuple(state_values)
+
+
+def task_pgsql_claim_token_predicate(
+    claim_column_name: str,
+    claim_token: str | None,
+    *,
+    table_alias: str | None = None,
+) -> tuple[str, tuple[object, ...]]:
+    assert_pgsql_identifier(claim_column_name, "claim_column_name")
+    qualified = _qualified_pgsql_column(
+        claim_column_name,
+        table_alias=table_alias,
+    )
+    if claim_token is None:
+        return f"{qualified} IS NULL", ()
+    _assert_non_empty_string(claim_token, "claim_token")
+    return f"{qualified} ->> 'claim_token' = %s", (claim_token,)
 
 
 def task_pgsql_upgrade(
@@ -152,3 +189,15 @@ def _assert_non_empty_string(value: object, field_name: str) -> None:
 def _assert_revision(value: str) -> None:
     _assert_non_empty_string(value, "revision")
     assert fullmatch(r"[A-Za-z0-9_.@+-]+", value)
+
+
+def _qualified_pgsql_column(
+    column_name: str,
+    *,
+    table_alias: str | None,
+) -> str:
+    column = f'"{column_name}"'
+    if table_alias is None:
+        return column
+    assert_pgsql_identifier(table_alias, "table_alias")
+    return f'"{table_alias}".{column}'
