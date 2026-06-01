@@ -1508,6 +1508,23 @@ class CLI:
             type=str,
             help="Task definition TOML file to run",
         )
+        task_run_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_run_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_run_parser.add_argument(
+            "--ephemeral",
+            action="store_true",
+            help="Use a non-durable in-memory store for this direct run.",
+        )
         task_enqueue_parser = task_command_parsers.add_parser(
             name="enqueue",
             description="Enqueue an intelligence task run",
@@ -1517,6 +1534,40 @@ class CLI:
             "definition",
             type=str,
             help="Task definition TOML file to enqueue",
+        )
+        task_enqueue_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_enqueue_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_enqueue_parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Wait for the enqueued task to finish.",
+        )
+        task_enqueue_parser.add_argument(
+            "--wait-timeout",
+            type=float,
+            default=None,
+            help="Maximum seconds to wait for completion.",
+        )
+        task_enqueue_parser.add_argument(
+            "--poll-interval",
+            type=float,
+            default=1.0,
+            help="Seconds between wait polling attempts.",
+        )
+        task_enqueue_parser.add_argument(
+            "--ephemeral",
+            action="store_true",
+            help="Reject non-durable storage for queued task runs.",
         )
         task_inspect_parser = task_command_parsers.add_parser(
             name="inspect",
@@ -1568,6 +1619,46 @@ class CLI:
             type=str,
             default="default",
             help="Task queue name to claim from.",
+        )
+        task_worker_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_worker_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_worker_parser.add_argument(
+            "--worker-id",
+            type=str,
+            default=None,
+            help="Stable worker id for queue claims.",
+        )
+        task_worker_parser.add_argument(
+            "--once",
+            action="store_true",
+            help="Process at most one available task.",
+        )
+        task_worker_parser.add_argument(
+            "--limit",
+            type=int,
+            default=1,
+            help="Maximum task runs to process.",
+        )
+        task_worker_parser.add_argument(
+            "--lease-seconds",
+            type=int,
+            default=300,
+            help="Claim lease duration in seconds.",
+        )
+        task_worker_parser.add_argument(
+            "--ephemeral",
+            action="store_true",
+            help="Reject non-durable storage for task workers.",
         )
         task_pgsql_parser = task_command_parsers.add_parser(
             name="pgsql",
@@ -3175,7 +3266,7 @@ class CLI:
                     case "artifacts":
                         task_artifacts(args, console, theme)
                     case "enqueue":
-                        task_enqueue(args, console, theme)
+                        task_enqueue(args, console, theme, hub, self._logger)
                     case "events":
                         task_events(args, console, theme)
                     case "inspect":
@@ -3198,9 +3289,9 @@ class CLI:
                             case "status":
                                 task_pgsql_status(args, console, theme)
                     case "run":
-                        task_run(args, console, theme)
+                        task_run(args, console, theme, hub, self._logger)
                     case "worker":
-                        task_worker(args, console, theme)
+                        task_worker(args, console, theme, hub, self._logger)
 
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)

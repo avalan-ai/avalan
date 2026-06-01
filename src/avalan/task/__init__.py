@@ -292,3 +292,7 @@ from .validation import validate_task_definition as validate_task_definition
 from .validation import validate_task_input as validate_task_input
 from .validation import validate_task_output as validate_task_output
 from .validation import validate_task_sections as validate_task_sections
+from .worker import TaskQueuedTarget as TaskQueuedTarget
+from .worker import TaskWorker as TaskWorker
+from .worker import TaskWorkerError as TaskWorkerError
+from .worker import TaskWorkerProcessResult as TaskWorkerProcessResult

@@ -575,7 +575,9 @@ class CliTaskInputTestCase(TestCase):
             "Task input is invalid.", validation_console.export_text()
         )
 
-    def test_run_reports_input_validation_before_unavailable(self) -> None:
+    def test_run_reports_input_validation_before_store_resolution(
+        self,
+    ) -> None:
         console = Console(record=True, width=160)
         with TemporaryDirectory() as tmpdir:
             definition = Path(tmpdir) / "integer.task.toml"
@@ -615,7 +617,7 @@ class CliTaskInputTestCase(TestCase):
         self.assertIn("Task input could not be parsed.", output)
         self.assertNotIn("not-an-integer", output)
 
-    def test_run_accepts_valid_input_before_unavailable(self) -> None:
+    def test_run_accepts_valid_input_before_store_resolution(self) -> None:
         console = Console(record=True, width=160)
         with TemporaryDirectory() as tmpdir:
             definition = self._write_definition(
@@ -631,6 +633,9 @@ class CliTaskInputTestCase(TestCase):
                     task_input_json=None,
                     task_input_fields=(),
                     task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=False,
                 ),
                 console,
                 object(),
@@ -638,13 +643,12 @@ class CliTaskInputTestCase(TestCase):
 
         output = console.export_text()
         self.assertFalse(result)
-        self.assertIn("Task input is valid.", output)
-        self.assertIn(
-            "Task run command is not available in this build.",
-            output,
-        )
+        self.assertIn("Task store is not configured.", output)
+        self.assertIn("store.missing", output)
 
-    def test_enqueue_reports_invalid_input_before_unavailable(self) -> None:
+    def test_enqueue_reports_invalid_input_before_store_resolution(
+        self,
+    ) -> None:
         console = Console(record=True, width=160)
         with TemporaryDirectory() as tmpdir:
             definition = self._write_definition(

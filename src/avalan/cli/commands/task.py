@@ -1,22 +1,35 @@
+from ...agent.loader import OrchestratorLoader
 from ...cli.theme import Theme
+from ...pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from ...task import (
     REDACTED_MARKER,
     PrivacyField,
     PrivacySanitizationError,
     PrivacySanitizer,
+    RunMode,
+    TaskClient,
+    TaskClientUnsupportedOperationError,
+    TaskClientWaitTimeoutError,
     TaskDefinition,
     TaskDefinitionLoader,
     TaskInputType,
     TaskLoadIssue,
+    TaskRunState,
+    TaskValidationError,
     TaskValidationIssue,
+    TaskWorker,
     validate_task_definition,
     validate_task_input,
 )
+from ...task.artifacts import LocalArtifactStore
+from ...task.queues import PgsqlTaskQueue
 from ...task.stores import (
     TASK_PGSQL_ALEMBIC_VERSION_TABLE,
     TASK_PGSQL_HEAD_REVISION,
+    InMemoryTaskStore,
     PgsqlTaskMigrationError,
     PgsqlTaskMigrationSettings,
+    PgsqlTaskStore,
     task_pgsql_script_location,
 )
 from ...task.stores import (
@@ -31,17 +44,28 @@ from ...task.stores import (
 from ...task.stores import (
     task_pgsql_upgrade as run_task_pgsql_upgrade,
 )
+from ...task.targets.agent import (
+    AgentOrchestratorLoader,
+    AgentTaskTargetRunner,
+)
 
 from argparse import Namespace
-from collections.abc import Iterable, Mapping
+from asyncio import run as asyncio_run
+from collections.abc import Coroutine, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from json import JSONDecodeError
 from json import dumps as json_dumps
 from json import loads as json_loads
+from logging import Logger, getLogger
 from math import isfinite
 from os import environ, strerror
 from pathlib import Path
 from re import fullmatch
+from types import TracebackType
+from typing import Any, cast
+from uuid import uuid4
 
 from rich.console import Console
 from rich.markup import escape
@@ -64,6 +88,32 @@ class TaskCliInputError(ValueError):
         self.message = message
         self.hint = hint
         super().__init__(message)
+
+
+@dataclass(slots=True)
+class _TaskCliClientContext:
+    client: TaskClient
+    database: PsycopgAsyncDatabase | None = None
+    stack: AsyncExitStack | None = None
+
+    async def __aenter__(self) -> TaskClient:
+        if self.stack is not None:
+            await self.stack.__aenter__()
+        if self.database is not None:
+            await self.database.open()
+        return self.client
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        if self.database is not None:
+            await self.database.aclose()
+        if self.stack is not None:
+            await self.stack.__aexit__(exc_type, exc, traceback)
+        return None
 
 
 def task_validate(
@@ -132,22 +182,22 @@ def task_run(
     args: Namespace,
     console: Console,
     theme: Theme,
+    hub: object | None = None,
+    logger: Logger | None = None,
 ) -> bool:
-    """Print a diagnostic for task run execution."""
-    if not _validate_task_cli_input_for_command(args, console):
-        return False
-    return _print_command_unavailable(console, "run")
+    """Run a task definition directly."""
+    return _run_awaitable(_task_run(args, console, hub=hub, logger=logger))
 
 
 def task_enqueue(
     args: Namespace,
     console: Console,
     theme: Theme,
+    hub: object | None = None,
+    logger: Logger | None = None,
 ) -> bool:
-    """Print a diagnostic for task enqueue execution."""
-    if not _validate_task_cli_input_for_command(args, console):
-        return False
-    return _print_command_unavailable(console, "enqueue")
+    """Enqueue a task definition."""
+    return _run_awaitable(_task_enqueue(args, console, hub=hub, logger=logger))
 
 
 def task_inspect(
@@ -190,9 +240,11 @@ def task_worker(
     args: Namespace,
     console: Console,
     theme: Theme,
+    hub: object | None = None,
+    logger: Logger | None = None,
 ) -> bool:
-    """Print a diagnostic for task worker startup."""
-    return _print_command_unavailable(console, "worker")
+    """Run a bounded task queue worker."""
+    return _run_awaitable(_task_worker(args, console, hub=hub, logger=logger))
 
 
 def task_pgsql_status(
@@ -299,12 +351,464 @@ def task_pgsql_diagnose(
     return settings is not None
 
 
+async def _task_run(
+    args: Namespace,
+    console: Console,
+    *,
+    hub: object | None,
+    logger: Logger | None,
+) -> bool:
+    loaded = _load_definition_for_execution(args, console)
+    if loaded is None:
+        return False
+    definition_path, definition, task_input = loaded
+    if definition.run.mode != RunMode.DIRECT:
+        _print_task_command_error(
+            console,
+            "Task run requires a direct-mode definition.",
+            "run.mode",
+            "Use task enqueue for queued definitions.",
+        )
+        return False
+    dsn = _task_store_dsn(args)
+    ephemeral = bool(getattr(args, "ephemeral", False))
+    if dsn is None and not ephemeral:
+        _print_missing_store(console)
+        return False
+    client_context = _task_cli_client_context(
+        definition_path,
+        dsn=dsn,
+        schema=_task_store_schema(args),
+        queue=False,
+        ephemeral=ephemeral,
+        hub=hub,
+        logger=logger,
+    )
+    try:
+        async with client_context as client:
+            result = await client.run(
+                definition,
+                input_value=task_input.value,
+                metadata=_task_command_metadata(ephemeral=ephemeral),
+            )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskClientUnsupportedOperationError,
+        TaskValidationError,
+    ) as exc:
+        _print_task_execution_error(console, exc)
+        return False
+    console.print(
+        (
+            "Task run completed (non-durable): "
+            if ephemeral
+            else "Task run completed: "
+        )
+        + result.run.run_id,
+        markup=False,
+    )
+    console.print(f"state {result.run.state.value}", markup=False)
+    if result.run.result is not None:
+        _print_task_result(console, result.run.result.output_summary)
+    return result.run.state == TaskRunState.SUCCEEDED
+
+
+async def _task_enqueue(
+    args: Namespace,
+    console: Console,
+    *,
+    hub: object | None,
+    logger: Logger | None,
+) -> bool:
+    loaded = _load_definition_for_execution(args, console)
+    if loaded is None:
+        return False
+    definition_path, definition, task_input = loaded
+    if bool(getattr(args, "ephemeral", False)):
+        _print_task_command_error(
+            console,
+            "Ephemeral storage is not supported for queued tasks.",
+            "store.ephemeral_unsupported",
+            "Configure a durable task store for enqueue.",
+        )
+        return False
+    if definition.run.mode != RunMode.QUEUE:
+        _print_task_command_error(
+            console,
+            "Task enqueue requires a queued-mode definition.",
+            "run.mode",
+            "Use task run for direct definitions.",
+        )
+        return False
+    dsn = _task_store_dsn(args)
+    if dsn is None:
+        _print_missing_store(console)
+        return False
+    client_context = _task_cli_client_context(
+        definition_path,
+        dsn=dsn,
+        schema=_task_store_schema(args),
+        queue=True,
+        ephemeral=False,
+        hub=hub,
+        logger=logger,
+    )
+    try:
+        async with client_context as client:
+            submission = await client.enqueue(
+                definition,
+                input_value=task_input.value,
+                queue_metadata=_safe_queue_metadata(args),
+            )
+            console.print(
+                f"Task enqueued: {submission.run.run_id}",
+                markup=False,
+            )
+            console.print(f"state {submission.run.state.value}", markup=False)
+            if bool(getattr(args, "wait", False)):
+                output = await client.wait(
+                    submission.run.run_id,
+                    timeout_seconds=getattr(args, "wait_timeout", None),
+                    poll_interval_seconds=getattr(
+                        args,
+                        "poll_interval",
+                        1.0,
+                    ),
+                )
+                console.print(
+                    f"Task finished: {output.run_id}",
+                    markup=False,
+                )
+                console.print(f"state {output.state.value}", markup=False)
+                _print_task_result(console, output.output_summary)
+                return output.ready
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskClientUnsupportedOperationError,
+        TaskClientWaitTimeoutError,
+        TaskValidationError,
+    ) as exc:
+        _print_task_execution_error(console, exc)
+        return False
+    return True
+
+
+async def _task_worker(
+    args: Namespace,
+    console: Console,
+    *,
+    hub: object | None,
+    logger: Logger | None,
+) -> bool:
+    if bool(getattr(args, "ephemeral", False)):
+        _print_task_command_error(
+            console,
+            "Ephemeral storage is not supported for task workers.",
+            "store.ephemeral_unsupported",
+            "Configure a durable task store for workers.",
+        )
+        return False
+    dsn = _task_store_dsn(args)
+    if dsn is None:
+        _print_missing_store(console)
+        return False
+    database = _task_pgsql_database(dsn, _task_store_schema(args))
+    store = PgsqlTaskStore(database)
+    queue = PgsqlTaskQueue(database)
+    processed = 0
+    limit = (
+        1
+        if bool(getattr(args, "once", False))
+        else getattr(
+            args,
+            "limit",
+            1,
+        )
+    )
+    try:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(database)
+            worker = TaskWorker(
+                store,
+                queue,
+                target=_agent_task_target(
+                    Path.cwd(),
+                    hub=hub,
+                    logger=logger,
+                    stack=stack,
+                ),
+                worker_id=getattr(args, "worker_id", None),
+                queue_name=getattr(args, "queue", None) or "default",
+                lease_seconds=getattr(args, "lease_seconds", 300),
+                artifact_store=_task_artifact_store(),
+            )
+            for _index in range(limit):
+                result = await worker.process_once()
+                if not result.processed:
+                    break
+                processed += 1
+                run = (
+                    result.completion.run
+                    if result.completion is not None
+                    else result.retry.run if result.retry is not None else None
+                )
+                if run is not None:
+                    console.print(
+                        f"Task processed: {run.run_id} {run.state.value}",
+                        markup=False,
+                    )
+    except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
+        _print_task_execution_error(console, exc)
+        return False
+    console.print(
+        f"Task worker processed {processed} run"
+        f"{'s' if processed != 1 else ''}.",
+        markup=False,
+    )
+    return True
+
+
 def _print_command_unavailable(console: Console, command: str) -> bool:
     console.print(
         f"Task {command} command is not available in this build.",
         markup=False,
     )
     return False
+
+
+def _load_definition_for_execution(
+    args: Namespace,
+    console: Console,
+) -> tuple[Path, TaskDefinition, TaskCliInput] | None:
+    definition_path = Path(args.definition)
+    try:
+        load_result = TaskDefinitionLoader().load_result(definition_path)
+    except OSError as exc:
+        message = strerror(exc.errno) if exc.errno else "Unable to read file."
+        console.print("Task definition could not be read.", markup=False)
+        console.print(f"error file.read {message}", markup=False)
+        return None
+    if load_result.definition is None:
+        _print_issues(
+            console,
+            "Task definition could not be loaded.",
+            load_result.issues,
+        )
+        return None
+    definition = load_result.definition
+    try:
+        task_input = task_cli_input(args, definition)
+    except TaskCliInputError as exc:
+        _print_task_cli_input_error(console, exc)
+        return None
+    input_issues = validate_task_input(definition, task_input.value)
+    if input_issues:
+        _print_issues(console, "Task input is invalid.", input_issues)
+        return None
+    return definition_path, definition, task_input
+
+
+def _task_cli_client_context(
+    definition_path: Path,
+    *,
+    dsn: str | None,
+    schema: str | None,
+    queue: bool,
+    ephemeral: bool,
+    hub: object | None,
+    logger: Logger | None,
+) -> _TaskCliClientContext:
+    stack = AsyncExitStack()
+    target = _agent_task_target(
+        definition_path.parent,
+        hub=hub,
+        logger=logger,
+        stack=stack,
+    )
+    artifact_store = _task_artifact_store()
+    if ephemeral:
+        return _TaskCliClientContext(
+            TaskClient(
+                InMemoryTaskStore(),
+                target=target,
+                artifact_store=artifact_store,
+                execution_roots=(definition_path.parent,),
+            ),
+            stack=stack,
+        )
+    assert dsn is not None
+    database = _task_pgsql_database(dsn, schema)
+    store = PgsqlTaskStore(database)
+    task_queue = PgsqlTaskQueue(database) if queue else None
+    return _TaskCliClientContext(
+        TaskClient(
+            store,
+            target=target,
+            queue=task_queue,
+            artifact_store=artifact_store,
+            execution_roots=(definition_path.parent,),
+        ),
+        database=database,
+        stack=stack,
+    )
+
+
+def _agent_task_target(
+    ref_base: Path,
+    *,
+    hub: object | None,
+    logger: Logger | None,
+    stack: AsyncExitStack,
+) -> AgentTaskTargetRunner:
+    return AgentTaskTargetRunner(
+        cast(
+            AgentOrchestratorLoader,
+            OrchestratorLoader(
+                hub=cast(Any, hub),
+                logger=logger or getLogger("avalan.task"),
+                participant_id=uuid4(),
+                stack=stack,
+            ),
+        ),
+        ref_base=ref_base,
+    )
+
+
+def _task_pgsql_database(
+    dsn: str,
+    schema: str | None,
+) -> PsycopgAsyncDatabase:
+    return PsycopgAsyncDatabase(
+        PsycopgPoolSettings(
+            dsn=dsn,
+            schema=schema,
+            application_name="avalan-task",
+        )
+    )
+
+
+def _task_artifact_store() -> LocalArtifactStore | None:
+    root = environ.get("AVALAN_TASK_ARTIFACT_ROOT")
+    if not root:
+        return None
+    return LocalArtifactStore(root, raw_storage_allowed=True)
+
+
+def _task_store_dsn(args: Namespace) -> str | None:
+    value = (
+        getattr(args, "store_dsn", None)
+        or getattr(args, "dsn", None)
+        or environ.get("AVALAN_TASK_STORE_DSN")
+        or environ.get("AVALAN_TASK_PGSQL_DSN")
+    )
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _task_store_schema(args: Namespace) -> str | None:
+    value = (
+        getattr(args, "store_schema", None)
+        or getattr(args, "schema", None)
+        or environ.get("AVALAN_TASK_STORE_SCHEMA")
+        or environ.get("AVALAN_TASK_PGSQL_SCHEMA")
+    )
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _safe_queue_metadata(args: Namespace) -> Mapping[str, object]:
+    queue_name = getattr(args, "queue", None)
+    if isinstance(queue_name, str) and queue_name.strip():
+        return {"cli_queue": queue_name}
+    return {}
+
+
+def _task_command_metadata(*, ephemeral: bool) -> Mapping[str, object]:
+    return {"store_mode": "ephemeral-memory" if ephemeral else "durable"}
+
+
+def _print_missing_store(console: Console) -> None:
+    console.print("Task store is not configured.", markup=False)
+    console.print(
+        "error store.missing task command requires a configured durable task"
+        " store.",
+        markup=False,
+    )
+    console.print(
+        "Set AVALAN_TASK_STORE_DSN, pass --store-dsn, or pass --ephemeral for"
+        " a direct local run.",
+        markup=False,
+    )
+
+
+def _print_task_command_error(
+    console: Console,
+    message: str,
+    code: str,
+    hint: str,
+) -> None:
+    console.print(message, markup=False)
+    console.print(f"error {code}", markup=False)
+    console.print(hint, markup=False)
+
+
+def _print_task_execution_error(
+    console: Console,
+    error: BaseException,
+) -> None:
+    console.print("Task command failed.", markup=False)
+    if isinstance(error, TaskValidationError):
+        _print_issues(
+            console, "Task definition or input is invalid.", error.issues
+        )
+        return
+    if isinstance(error, TaskClientWaitTimeoutError):
+        console.print("error task.wait_timeout", markup=False)
+        return
+    if isinstance(error, TaskClientUnsupportedOperationError):
+        console.print(f"error {error.code}", markup=False)
+        return
+    if isinstance(error, ImportError):
+        console.print("error dependency.missing", markup=False)
+        return
+    if isinstance(error, OSError):
+        console.print("error io.failure", markup=False)
+        return
+    console.print("error task.execution", markup=False)
+
+
+def _print_task_result(
+    console: Console,
+    value: object,
+) -> None:
+    if value is None:
+        return
+    console.print(f"output {_format_task_cli_value(value)}", markup=False)
+
+
+def _run_awaitable(awaitable: Coroutine[object, object, bool]) -> bool:
+    result: bool | BaseException | None = None
+
+    def target() -> None:
+        nonlocal result
+        try:
+            result = asyncio_run(awaitable)
+        except BaseException as exc:
+            result = exc
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(target)
+        future.result()
+    if isinstance(result, BaseException):
+        raise result
+    assert isinstance(result, bool)
+    return result
 
 
 def task_cli_input(
