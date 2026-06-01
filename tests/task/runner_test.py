@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,6 +26,7 @@ from avalan.task import (
     TaskDefinition,
     TaskDirectTarget,
     TaskErrorCode,
+    TaskExecutionResult,
     TaskExecutionTarget,
     TaskFileConversionError,
     TaskFileConversionRequest,
@@ -197,6 +198,31 @@ class ConflictFinalizer(TaskRunFinalizer):
         **kwargs: object,
     ) -> TaskRunResult:
         raise TaskStoreConflictError("commit conflict")
+
+
+class ConflictOnAttemptSuccessStore(InMemoryTaskStore):
+    async def transition_attempt(
+        self,
+        attempt_id: str,
+        *,
+        from_states: Collection[TaskAttemptState],
+        to_state: TaskAttemptState,
+        reason: str,
+        result: TaskExecutionResult | None = None,
+        claim_token: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttempt:
+        if to_state == TaskAttemptState.SUCCEEDED:
+            raise TaskStoreConflictError("attempt commit conflict")
+        return await super().transition_attempt(
+            attempt_id,
+            from_states=from_states,
+            to_state=to_state,
+            reason=reason,
+            result=result,
+            claim_token=claim_token,
+            metadata=metadata,
+        )
 
 
 class SystemExitRunner(DirectTaskRunner):
@@ -700,6 +726,25 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
 
         with self.assertRaises(TaskStoreConflictError):
             await runner.run(definition(), input_value="private prompt")
+
+    async def test_success_attempt_conflict_leaves_run_mutable(self) -> None:
+        store = ConflictOnAttemptSuccessStore()
+        target = RecordingTarget("short summary")
+        runner = DirectTaskRunner(
+            store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-success-attempt-conflict",
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await runner.run(definition(), input_value="private prompt")
+
+        context = target.contexts[0]
+        run = await store.get_run(context.execution.run_id)
+        attempt = await store.get_attempt(context.execution.attempt_id)
+        self.assertEqual(run.state, TaskRunState.RUNNING)
+        self.assertEqual(attempt.state, TaskAttemptState.RUNNING)
 
     async def test_expired_run_age_uses_expired_state_not_timeout_failure(
         self,

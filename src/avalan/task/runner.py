@@ -112,17 +112,17 @@ class TaskRunFinalizer:
         result = TaskExecutionResult(
             output_summary=_snapshot_value(output_summary)
         )
-        run = await store.transition_run(
-            run.run_id,
-            from_states={TaskRunState.RUNNING},
-            to_state=TaskRunState.SUCCEEDED,
-            reason="finalized_success",
-            result=result,
-        )
         attempt = await store.transition_attempt(
             attempt.attempt_id,
             from_states={TaskAttemptState.RUNNING},
             to_state=TaskAttemptState.SUCCEEDED,
+            reason="finalized_success",
+            result=result,
+        )
+        run = await store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.RUNNING},
+            to_state=TaskRunState.SUCCEEDED,
             reason="finalized_success",
             result=result,
         )
