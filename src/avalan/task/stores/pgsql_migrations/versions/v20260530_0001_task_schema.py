@@ -122,6 +122,8 @@ CREATE TABLE IF NOT EXISTS "task_attempts" (
         REFERENCES "task_runs" ("run_id"),
     CONSTRAINT "uq_task_attempts_run_order"
         UNIQUE ("run_id", "attempt_number"),
+    CONSTRAINT "uq_task_attempts_run_attempt"
+        UNIQUE ("run_id", "attempt_id"),
     CONSTRAINT "ck_task_attempts_attempt_number_positive"
         CHECK ("attempt_number" > 0),
     CONSTRAINT "ck_task_attempts_state"
@@ -162,6 +164,9 @@ CREATE TABLE IF NOT EXISTS "task_attempt_transitions" (
     CONSTRAINT "fk_task_attempt_transitions__task_runs"
         FOREIGN KEY ("run_id")
         REFERENCES "task_runs" ("run_id"),
+    CONSTRAINT "fk_task_attempt_transitions__task_attempt_run"
+        FOREIGN KEY ("run_id", "attempt_id")
+        REFERENCES "task_attempts" ("run_id", "attempt_id"),
     CONSTRAINT "ck_task_attempt_transitions_reason_non_empty"
         CHECK (LENGTH(BTRIM("reason")) > 0),
     CONSTRAINT "ck_task_attempt_transitions_metadata_shape"
@@ -189,6 +194,9 @@ CREATE TABLE IF NOT EXISTS "task_artifacts" (
     CONSTRAINT "fk_task_artifacts__task_attempts"
         FOREIGN KEY ("attempt_id")
         REFERENCES "task_attempts" ("attempt_id"),
+    CONSTRAINT "fk_task_artifacts__task_attempt_run"
+        FOREIGN KEY ("run_id", "attempt_id")
+        REFERENCES "task_attempts" ("run_id", "attempt_id"),
     CONSTRAINT "ck_task_artifacts_purpose"
         CHECK (
             "purpose" IN (
@@ -406,10 +414,13 @@ CREATE TABLE IF NOT EXISTS "task_events" (
     CONSTRAINT "fk_task_events__task_attempts"
         FOREIGN KEY ("attempt_id")
         REFERENCES "task_attempts" ("attempt_id"),
+    CONSTRAINT "fk_task_events__task_attempt_run"
+        FOREIGN KEY ("run_id", "attempt_id")
+        REFERENCES "task_attempts" ("run_id", "attempt_id"),
     CONSTRAINT "uq_task_events_run_sequence"
         UNIQUE ("run_id", "sequence"),
-    CONSTRAINT "ck_task_events_sequence_non_negative"
-        CHECK ("sequence" >= 0),
+    CONSTRAINT "ck_task_events_sequence_positive"
+        CHECK ("sequence" > 0),
     CONSTRAINT "ck_task_events_event_type_non_empty"
         CHECK (LENGTH(BTRIM("event_type")) > 0),
     CONSTRAINT "ck_task_events_metadata_shape"
@@ -439,6 +450,9 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
     CONSTRAINT "fk_task_usage_records__task_attempts"
         FOREIGN KEY ("attempt_id")
         REFERENCES "task_attempts" ("attempt_id"),
+    CONSTRAINT "fk_task_usage_records__task_attempt_run"
+        FOREIGN KEY ("run_id", "attempt_id")
+        REFERENCES "task_attempts" ("run_id", "attempt_id"),
     CONSTRAINT "uq_task_usage_records_run_sequence"
         UNIQUE ("run_id", "sequence"),
     CONSTRAINT "ck_task_usage_records_sequence_positive"

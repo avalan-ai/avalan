@@ -60,11 +60,16 @@ class PgsqlMigrationSchemaTest(TestCase):
         self.assertNotIn("task_schema_migrations", schema)
         self.assertIn('"uq_task_definitions_identity"', schema)
         self.assertIn('"uq_task_attempts_run_order"', schema)
+        self.assertIn('"uq_task_attempts_run_attempt"', schema)
         self.assertIn('"uq_task_attempts_one_active_per_run"', schema)
         self.assertIn('"uq_task_idempotency_keys_identity"', schema)
         self.assertIn('"uq_task_events_run_sequence"', schema)
         self.assertIn('"uq_task_usage_records_run_sequence"', schema)
-        self.assertIn('"ck_task_usage_records_sequence_positive"', schema)
+        for constraint_name in (
+            "ck_task_events_sequence_positive",
+            "ck_task_usage_records_sequence_positive",
+        ):
+            self.assertIn(f'"{constraint_name}"', schema)
         self.assertIn(
             "WHERE \"state\" NOT IN ('succeeded', 'failed', 'abandoned')",
             schema,
@@ -137,6 +142,25 @@ class PgsqlMigrationSchemaTest(TestCase):
             self.assertIn(f'"{constraint_name}"', schema)
 
         self.assertNotIn("raw_payload", schema)
+
+    def test_schema_enforces_attempts_belong_to_event_runs(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        for constraint_name in (
+            "fk_task_attempt_transitions__task_attempt_run",
+            "fk_task_artifacts__task_attempt_run",
+            "fk_task_events__task_attempt_run",
+            "fk_task_usage_records__task_attempt_run",
+        ):
+            self.assertIn(f'"{constraint_name}"', schema)
+        self.assertIn(
+            'FOREIGN KEY ("run_id", "attempt_id")',
+            schema,
+        )
+        self.assertIn(
+            'REFERENCES "task_attempts" ("run_id", "attempt_id")',
+            schema,
+        )
 
     def test_schema_orders_usage_records_by_typed_sequence(self) -> None:
         schema = "\n".join(task_pgsql_schema_statements())
