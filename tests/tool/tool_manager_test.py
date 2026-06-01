@@ -275,6 +275,79 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(CancelledError):
             await manager(call, context=ToolCallContext())
 
+    async def test_context_cancellation_checker_runs_before_filters(self):
+        called: list[str] = []
+
+        async def adder(a: int) -> int:
+            called.append("tool")
+            return a + 1
+
+        def filter_call(call: ToolCall, context: ToolCallContext):
+            called.append("filter")
+            return call, context
+
+        async def cancel() -> None:
+            called.append("cancel")
+            raise CancelledError()
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(filters=[filter_call]),
+        )
+        call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1})
+
+        with self.assertRaises(CancelledError):
+            await manager(
+                call,
+                context=ToolCallContext(cancellation_checker=cancel),
+            )
+
+        self.assertEqual(called, ["cancel"])
+
+    async def test_context_cancellation_checker_runs_after_filters(self):
+        called: list[str] = []
+
+        async def adder(a: int) -> int:
+            called.append("tool")
+            return a + 1
+
+        async def first_check() -> None:
+            called.append("first")
+
+        async def second_check() -> None:
+            called.append("second")
+            raise CancelledError()
+
+        def filter_call(call: ToolCall, context: ToolCallContext):
+            called.append("filter")
+            return (
+                call,
+                ToolCallContext(
+                    input=context.input,
+                    agent_id=context.agent_id,
+                    participant_id=context.participant_id,
+                    session_id=context.session_id,
+                    calls=context.calls,
+                    cancellation_checker=second_check,
+                ),
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(filters=[filter_call]),
+        )
+        call = ToolCall(id=_uuid4(), name="adder", arguments={"a": 1})
+
+        with self.assertRaises(CancelledError):
+            await manager(
+                call,
+                context=ToolCallContext(cancellation_checker=first_check),
+            )
+
+        self.assertEqual(called, ["first", "filter", "second"])
+
 
 class ToolManagerPotentialCallTestCase(TestCase):
     def setUp(self):

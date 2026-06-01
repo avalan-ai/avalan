@@ -57,6 +57,23 @@ class FakeResponse:
         return self.text
 
 
+class CancellableResponse(FakeResponse):
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.cancellation_checker: Callable[[], Awaitable[None]] | None = None
+
+    def set_cancellation_checker(
+        self,
+        checker: Callable[[], Awaitable[None]] | None,
+    ) -> None:
+        self.cancellation_checker = checker
+
+    async def to_str(self) -> str:
+        if self.cancellation_checker is not None:
+            await self.cancellation_checker()
+        return await super().to_str()
+
+
 class TextOnlyResponse:
     def __init__(self, text: str) -> None:
         self.text = text
@@ -465,6 +482,31 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(output, {"answer": "ok"})
         self.assertEqual(loader.inputs, ['{"question":"status"}'])
+
+    async def test_run_attaches_cancellation_checker_to_response(
+        self,
+    ) -> None:
+        checks = 0
+
+        async def check_cancelled() -> None:
+            nonlocal checks
+            checks += 1
+
+        response = CancellableResponse("short summary")
+        loader = FakeLoader(response=response)
+        runner = AgentTaskTargetRunner(loader)
+
+        output = await runner.run(
+            self._context(
+                self._definition(output=TaskOutputContract.text()),
+                "private prompt",
+                cancellation_checker=check_cancelled,
+            )
+        )
+
+        self.assertEqual(output, "short summary")
+        self.assertIsNotNone(response.cancellation_checker)
+        self.assertEqual(checks, 3)
 
     async def test_run_maps_agent_input_shapes(self) -> None:
         message = Message(role=MessageRole.USER, content="hello")
@@ -1209,6 +1251,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         *,
         files: tuple[TaskInputFile, ...] = (),
         artifact_store: FakeArtifactStore | None = None,
+        cancellation_checker: Callable[[], Awaitable[None]] | None = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
             definition=definition,
@@ -1220,6 +1263,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             input_value=input_value,
             files=files,
             artifact_store=artifact_store,
+            cancellation_checker=cancellation_checker,
         )
 
     def _definition(

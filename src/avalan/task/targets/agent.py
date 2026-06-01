@@ -26,7 +26,7 @@ from ..validation import (
 )
 
 from base64 import b64encode
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from json import dumps, loads
@@ -133,6 +133,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
                         ),
                     )
                 )
+                _attach_cancellation_checker(response, context.check_cancelled)
                 try:
                     output = await _agent_output(context.definition, response)
                 finally:
@@ -159,6 +160,15 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             return None
         uri = engine.get("uri")
         return uri if isinstance(uri, str) else None
+
+
+def _attach_cancellation_checker(
+    response: object,
+    checker: Callable[[], Awaitable[None]],
+) -> None:
+    set_checker = getattr(response, "set_cancellation_checker", None)
+    if callable(set_checker):
+        set_checker(checker)
 
 
 @asynccontextmanager

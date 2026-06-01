@@ -1118,6 +1118,22 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.database.idempotency, {})
         self.assertEqual(self.database.queue_items, {})
 
+    async def test_enqueue_run_rolls_back_store_outage_before_mutation(
+        self,
+    ) -> None:
+        self.database.fail_on_query = 'SELECT * FROM "task_definitions"'
+        previous = self.database.snapshot()
+
+        with self.assertRaises(TaskQueueError) as error:
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=self._identity(),
+            )
+
+        self.assertNotIn("raw details", str(error.exception))
+        self.assertEqual(self.database.snapshot(), previous)
+
     async def test_enqueue_run_rolls_back_racing_idempotency_conflict(
         self,
     ) -> None:
@@ -1805,6 +1821,47 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             self.database.runs["run-queued"]["state"],
             TaskRunState.CLAIMED.value,
         )
+
+    async def test_complete_rejects_late_success_after_lease_expiry(
+        self,
+    ) -> None:
+        claim = await self._claim_ready_running_attempt()
+        previous = self.database.snapshot()
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                now=self.now + timedelta(minutes=10),
+            )
+
+        self.assertEqual(self.database.snapshot(), previous)
+
+    async def test_complete_rolls_back_store_outage_during_final_commit(
+        self,
+    ) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.fail_on_query = (
+            'UPDATE "task_queue_items"\nSET "state" = %s'
+        )
+        previous = self.database.snapshot()
+
+        with self.assertRaises(TaskQueueError) as error:
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                result=TaskExecutionResult(
+                    output_summary={"privacy": "<redacted>"},
+                ),
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertNotIn("raw details", str(error.exception))
+        self.assertEqual(self.database.snapshot(), previous)
 
     async def test_retry_reschedules_with_bounded_attempts(self) -> None:
         claim = await self._claim_ready_running_attempt()

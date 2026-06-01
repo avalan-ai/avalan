@@ -27,7 +27,7 @@ from inspect import iscoroutine
 from json import dumps, loads
 from queue import Queue
 from time import perf_counter
-from typing import Any, AsyncIterator, Callable, cast
+from typing import Any, AsyncIterator, Awaitable, Callable, cast
 from uuid import UUID
 
 
@@ -54,6 +54,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _session_id: UUID | None
     _parser_queue: Queue[Token | TokenDetail | Event] | None
     _tool_parser: ToolCallResponseParser | None
+    _cancellation_checker: Callable[[], Awaitable[None]] | None
 
     def __init__(
         self,
@@ -91,6 +92,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._tool_confirm = tool_confirm
         self._tool_confirm_all = False
         self._parser_queue = Queue()
+        self._cancellation_checker = None
         self._tool_parser = (
             ToolCallResponseParser(self._tool_manager, self._event_manager)
             if enable_tool_parsing and self._tool_manager
@@ -108,6 +110,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     @property
     def can_think(self) -> bool:
         return self._response.can_think
+
+    def set_cancellation_checker(
+        self,
+        checker: Callable[[], Awaitable[None]] | None,
+    ) -> None:
+        self._cancellation_checker = checker
 
     @property
     def is_thinking(self) -> bool:
@@ -140,6 +148,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             participant_id=self._participant_id,
             session_id=self._session_id,
             calls=list(self._call_history),
+            cancellation_checker=self._cancellation_checker,
         )
         self._tool_call_events = Queue()
         self._tool_process_events = Queue()
@@ -198,6 +207,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 participant_id=self._participant_id,
                 session_id=self._session_id,
                 calls=list(self._call_history),
+                cancellation_checker=self._cancellation_checker,
             )
 
             result = (
@@ -309,6 +319,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 participant_id=self._participant_id,
                 session_id=self._session_id,
                 calls=list(self._call_history),
+                cancellation_checker=self._cancellation_checker,
             )
 
             event_tool_model_run = Event(
@@ -397,6 +408,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 participant_id=self._participant_id,
                 session_id=self._session_id,
                 calls=list(self._call_history),
+                cancellation_checker=self._cancellation_checker,
             )
 
         if not self._tool_manager:
@@ -441,6 +453,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     participant_id=self._participant_id,
                     session_id=self._session_id,
                     calls=list(self._call_history),
+                    cancellation_checker=self._cancellation_checker,
                 )
 
                 result = (
@@ -579,6 +592,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             participant_id=self._participant_id,
             session_id=self._session_id,
             calls=list(self._call_history),
+            cancellation_checker=self._cancellation_checker,
         )
 
         event_tool_model_run = Event(

@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -875,6 +875,7 @@ class ToolCallContext:
     participant_id: UUID | None = None
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
+    cancellation_checker: Callable[[], Awaitable[None]] | None = None
 
 
 @final

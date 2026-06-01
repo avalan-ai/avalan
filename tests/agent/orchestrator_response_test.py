@@ -796,12 +796,18 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
             participant_id=pid,
             session_id=sid,
         )
+
+        async def cancel() -> None:
+            return None
+
+        resp.set_cancellation_checker(cancel)
         resp.__aiter__()
 
         self.assertEqual(resp._tool_context.agent_id, aid)
         self.assertEqual(resp._tool_context.participant_id, pid)
         self.assertEqual(resp._tool_context.session_id, sid)
         self.assertEqual(resp._tool_context.calls, [])
+        self.assertIs(resp._tool_context.cancellation_checker, cancel)
 
         self.assertEqual(resp._context.agent_id, aid)
         self.assertEqual(resp._context.participant_id, pid)
