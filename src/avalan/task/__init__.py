@@ -44,6 +44,7 @@ from .client import (
     TaskClientUnsupportedOperationError as TaskClientUnsupportedOperationError,
 )
 from .client import TaskClientValidationResult as TaskClientValidationResult
+from .client import TaskClientWaitTimeoutError as TaskClientWaitTimeoutError
 from .context import TaskCancellationChecker as TaskCancellationChecker
 from .context import TaskEventListener as TaskEventListener
 from .context import TaskInputFile as TaskInputFile

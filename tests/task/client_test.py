@@ -1,25 +1,39 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.event import Event, EventType
 from avalan.task import (
+    IdempotencyMode,
     TaskArtifactPurpose,
     TaskArtifactRef,
+    TaskArtifactRetention,
+    TaskArtifactStat,
     TaskClient,
     TaskClientUnsupportedOperationError,
     TaskClientValidationResult,
+    TaskClientWaitTimeoutError,
     TaskDefinition,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
+    TaskFileDescriptor,
+    TaskIdempotencyIdentity,
     TaskInputContract,
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
+    TaskQueue,
+    TaskQueueArtifact,
+    TaskQueueItem,
+    TaskQueueItemState,
+    TaskQueueSubmission,
     TaskRun,
     TaskRunPolicy,
     TaskRunState,
@@ -157,6 +171,126 @@ class RejectingTarget(TaskTargetRunner):
         return "unused"
 
 
+class RecordingArtifactStore:
+    def __init__(self) -> None:
+        self.puts: list[tuple[bytes, str | None, object]] = []
+
+    async def put(
+        self,
+        content: bytes,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskArtifactRef:
+        self.puts.append((content, media_type, metadata))
+        artifact_number = len(self.puts)
+        artifact_name = artifact_id or f"artifact-{artifact_number}"
+        return TaskArtifactRef(
+            artifact_id=artifact_name,
+            store="memory",
+            storage_key=f"artifacts/{artifact_name}",
+            media_type=media_type,
+            size_bytes=len(content),
+            sha256=sha256(content).hexdigest(),
+        )
+
+    async def open(self, ref: TaskArtifactRef) -> BinaryIO:
+        _ = ref
+        raise NotImplementedError
+
+    async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
+        return TaskArtifactStat(
+            ref=ref,
+            size_bytes=ref.size_bytes or 0,
+            sha256=ref.sha256 or ("0" * 64),
+        )
+
+    async def delete(self, ref: TaskArtifactRef) -> None:
+        _ = ref
+
+
+class RecordingQueue:
+    def __init__(self, store: InMemoryTaskStore) -> None:
+        self.store = store
+        self.requests: list[TaskExecutionRequest] = []
+        self.artifacts: tuple[TaskQueueArtifact, ...] = ()
+        self.idempotency: object = None
+        self.queue_metadata: object = None
+        self.priority = 0
+        self.available_at: datetime | None = None
+        self.now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def enqueue_run(
+        self,
+        request: TaskExecutionRequest,
+        *,
+        queue_name: str,
+        priority: int = 0,
+        available_at: datetime | None = None,
+        idempotency: TaskIdempotencyIdentity | None = None,
+        idempotency_expires_at: datetime | None = None,
+        artifacts: tuple[TaskQueueArtifact, ...] = (),
+        run_metadata: Mapping[str, object] | None = None,
+        queue_metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSubmission:
+        _ = idempotency_expires_at
+        self.requests.append(request)
+        self.artifacts = artifacts
+        self.idempotency = idempotency
+        self.queue_metadata = queue_metadata
+        self.priority = priority
+        self.available_at = available_at
+        run = await self.store.create_run(
+            request,
+            metadata=run_metadata,
+        )
+        records = []
+        for artifact in artifacts:
+            records.append(
+                await self.store.append_artifact(
+                    run.run_id,
+                    ref=artifact.ref,
+                    purpose=artifact.purpose,
+                    state=artifact.state,
+                    provenance=artifact.provenance,
+                    retention=artifact.retention,
+                    metadata=artifact.metadata,
+                )
+            )
+        validated = await self.store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.VALIDATED,
+            reason="validated",
+        )
+        queued = await self.store.transition_run(
+            validated.run_id,
+            from_states={TaskRunState.VALIDATED},
+            to_state=TaskRunState.QUEUED,
+            reason="queued",
+        )
+        item = TaskQueueItem(
+            queue_item_id="queue-item-1",
+            run_id=queued.run_id,
+            queue_name=queue_name,
+            state=TaskQueueItemState.AVAILABLE,
+            priority=priority,
+            available_at=available_at or self.now,
+            attempts=0,
+            created_at=self.now,
+            updated_at=self.now,
+            run_state=queued.state,
+            metadata=queue_metadata or {},
+        )
+        return TaskQueueSubmission(
+            run=queued,
+            created=True,
+            queue_item=item,
+            artifacts=tuple(records),
+        )
+
+
 class TaskClientTest(IsolatedAsyncioTestCase):
     async def test_agent_backed_direct_run_is_inspectable(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -291,11 +425,256 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             await client.run(definition, input_value="private prompt")
         with self.assertRaises(TaskClientUnsupportedOperationError) as enqueue:
             await client.enqueue(definition, input_value="private prompt")
+        direct_client = TaskClient(
+            store,
+            target=RejectingTarget(),
+            queue=cast(TaskQueue, RecordingQueue(store)),
+            hmac_provider=StaticHmacProvider(),
+        )
+        with self.assertRaises(TaskClientUnsupportedOperationError) as direct:
+            await direct_client.enqueue(
+                _definition(),
+                input_value="private prompt",
+            )
 
         self.assertEqual(run.exception.code, "task.queue_unsupported")
         self.assertEqual(run.exception.operation, "run")
         self.assertEqual(enqueue.exception.operation, "enqueue")
+        self.assertEqual(direct.exception.operation, "enqueue")
         self.assertNotIn("private-queue", str(run.exception))
+
+    async def test_enqueue_uses_default_definition_hash(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        submission = await client.enqueue(
+            _definition(
+                run=TaskRunPolicy.queued(
+                    "documents",
+                    idempotency=IdempotencyMode.NONE,
+                )
+            ),
+            input_value="private prompt",
+        )
+
+        self.assertEqual(len(submission.run.definition_id), 64)
+        self.assertIsNone(queue.requests[0].idempotency_key)
+
+    async def test_enqueue_materializes_files_and_waits_for_terminal_output(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "private.txt"
+            input_path.write_text("private file body", encoding="utf-8")
+            store = InMemoryTaskStore()
+            queue = RecordingQueue(store)
+            artifact_store = RecordingArtifactStore()
+            client = TaskClient(
+                store,
+                target=_noop_target,
+                queue=cast(TaskQueue, queue),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                definition_hash=lambda task: "client-queue-hash",
+                execution_roots=(root,),
+                sleep=_no_sleep,
+            )
+            available_at = datetime(2026, 1, 1, 12, tzinfo=UTC)
+            definition = _definition(
+                input_contract=TaskInputContract.file(
+                    mime_types=("text/plain",)
+                ),
+                run=TaskRunPolicy.queued("documents", priority=7),
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value=TaskFileDescriptor.local_path(
+                    "private.txt",
+                    mime_type="text/plain",
+                    metadata={"filename": "private.txt"},
+                ),
+                available_at=available_at,
+                idempotency_key="private-idempotency-key",
+                idempotency_expires_at=available_at + timedelta(days=1),
+                owner_scope="customer-123",
+                queue_metadata={"tenant": "safe"},
+            )
+            await store.transition_run(
+                submission.run.run_id,
+                from_states={TaskRunState.QUEUED},
+                to_state=TaskRunState.FAILED,
+                reason="worker_failed",
+                result=TaskExecutionResult(error={"code": "runnable.failed"}),
+            )
+            output = await client.wait(
+                submission.run.run_id,
+                timeout_seconds=1,
+                poll_interval_seconds=0.01,
+            )
+
+        self.assertTrue(submission.created)
+        self.assertEqual(submission.run.state, TaskRunState.QUEUED)
+        queue_item = submission.queue_item
+        self.assertIsNotNone(queue_item)
+        assert queue_item is not None
+        self.assertEqual(queue_item.priority, 7)
+        self.assertEqual(queue_item.available_at, available_at)
+        self.assertEqual(queue.priority, 7)
+        self.assertEqual(queue.queue_metadata, {"tenant": "safe"})
+        self.assertIsNotNone(queue.idempotency)
+        self.assertEqual(len(queue.requests), 1)
+        request = queue.requests[0]
+        rendered_request = str(request)
+        self.assertEqual(request.queue, "documents")
+        self.assertNotIn("private file body", rendered_request)
+        self.assertNotIn("private.txt", rendered_request)
+        self.assertNotIn("customer-123", str(queue.idempotency))
+        self.assertNotIn("private-idempotency-key", rendered_request)
+        self.assertEqual(len(artifact_store.puts), 1)
+        self.assertEqual(artifact_store.puts[0][0], b"private file body")
+        self.assertEqual(len(queue.artifacts), 1)
+        self.assertEqual(queue.artifacts[0].purpose, TaskArtifactPurpose.INPUT)
+        self.assertEqual(
+            queue.artifacts[0].retention,
+            TaskArtifactRetention(
+                delete_after_days=definition.artifact.retention_days
+            ),
+        )
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.error, {"code": "runnable.failed"})
+
+    async def test_cancel_requests_queued_run_cancellation(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-cancel-hash",
+        )
+        submission = await client.enqueue(
+            _definition(run=TaskRunPolicy.queued("documents")),
+            input_value="private prompt",
+        )
+
+        cancelled = await client.cancel(submission.run.run_id)
+        repeated = await client.cancel(submission.run.run_id)
+
+        self.assertEqual(cancelled.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertEqual(repeated.state, TaskRunState.CANCEL_REQUESTED)
+        pending = await store.create_run(
+            TaskExecutionRequest(definition_id="client-cancel-hash")
+        )
+        with self.assertRaises(TaskClientUnsupportedOperationError) as error:
+            await client.cancel(pending.run_id)
+        self.assertEqual(error.exception.operation, "cancel")
+
+        await store.transition_run(
+            pending.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.FAILED,
+            reason="failed",
+        )
+        terminal = await client.cancel(pending.run_id)
+        self.assertEqual(terminal.state, TaskRunState.FAILED)
+
+    async def test_wait_timeout_uses_stable_diagnostic(self) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition()
+        await store.register_definition(
+            definition,
+            definition_hash="hash-wait",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-wait")
+        )
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        with self.assertRaises(TaskClientWaitTimeoutError) as error:
+            await client.wait(
+                run.run_id,
+                timeout_seconds=0,
+                poll_interval_seconds=0.01,
+            )
+
+        self.assertEqual(error.exception.code, "task.wait_timeout")
+        self.assertEqual(error.exception.operation, "wait")
+        self.assertEqual(error.exception.run_id, run.run_id)
+        self.assertNotIn(run.run_id, str(error.exception))
+
+    async def test_wait_polls_until_terminal_state(self) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition()
+        await store.register_definition(
+            definition,
+            definition_hash="hash-poll",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-poll")
+        )
+
+        async def finish_without_deadline(delay: float) -> None:
+            _ = delay
+            await store.transition_run(
+                run.run_id,
+                from_states={TaskRunState.CREATED},
+                to_state=TaskRunState.FAILED,
+                reason="failed",
+            )
+
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+            sleep=finish_without_deadline,
+        )
+        output = await client.wait(run.run_id, poll_interval_seconds=0.01)
+
+        await store.register_definition(
+            definition,
+            definition_hash="hash-deadline",
+        )
+        deadline_run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-deadline")
+        )
+
+        async def finish_with_deadline(delay: float) -> None:
+            _ = delay
+            await store.transition_run(
+                deadline_run.run_id,
+                from_states={TaskRunState.CREATED},
+                to_state=TaskRunState.FAILED,
+                reason="failed",
+            )
+
+        deadline_client = TaskClient(
+            store,
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+            sleep=finish_with_deadline,
+        )
+        deadline_output = await deadline_client.wait(
+            deadline_run.run_id,
+            timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(deadline_output.state, TaskRunState.FAILED)
 
     async def test_output_and_artifacts_reflect_store_records(self) -> None:
         store = InMemoryTaskStore()
@@ -371,17 +750,27 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 
 def _definition(
     *,
+    input_contract: TaskInputContract | None = None,
     privacy: TaskPrivacyPolicy | None = None,
     run: TaskRunPolicy | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="agent", version="1"),
-        input=TaskInputContract.string(),
+        input=input_contract or TaskInputContract.string(),
         output=TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agents/valid.toml"),
         privacy=privacy or TaskPrivacyPolicy(),
         run=run or TaskRunPolicy.direct(),
     )
+
+
+async def _noop_target(context: TaskTargetContext) -> object:
+    _ = context
+    return "unused"
+
+
+async def _no_sleep(delay: float) -> None:
+    _ = delay
 
 
 async def _fail_run(
