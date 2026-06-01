@@ -17,9 +17,11 @@ from avalan.task import (
     TaskArtifactRetention,
     TaskAttemptState,
     TaskExecutionRequest,
+    TaskExecutionResult,
     TaskIdempotencyDigest,
     TaskIdempotencyIdentity,
     TaskQueueArtifact,
+    TaskQueueClaim,
     TaskQueueConflictError,
     TaskQueueError,
     TaskQueueItemState,
@@ -55,6 +57,7 @@ class FakePgsqlQueueDatabase:
         self.definitions: dict[str, dict[str, object]] = {}
         self.runs: dict[str, dict[str, object]] = {}
         self.attempts: dict[str, dict[str, object]] = {}
+        self.attempt_transitions: dict[str, dict[str, object]] = {}
         self.run_transitions: dict[str, dict[str, object]] = {}
         self.artifacts: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
@@ -70,6 +73,8 @@ class FakePgsqlQueueDatabase:
         self.stale_claim_assignment = False
         self.stale_heartbeat_run = False
         self.stale_last_attempt_update = False
+        self.stale_complete_queue_item = False
+        self.stale_retry_queue_item = False
         self.open_count = 0
         self.close_count = 0
 
@@ -87,6 +92,7 @@ class FakePgsqlQueueDatabase:
             "definitions": deepcopy(self.definitions),
             "runs": deepcopy(self.runs),
             "attempts": deepcopy(self.attempts),
+            "attempt_transitions": deepcopy(self.attempt_transitions),
             "run_transitions": deepcopy(self.run_transitions),
             "artifacts": deepcopy(self.artifacts),
             "idempotency": deepcopy(self.idempotency),
@@ -100,6 +106,10 @@ class FakePgsqlQueueDatabase:
         self.runs = cast(dict[str, dict[str, object]], snapshot["runs"])
         self.attempts = cast(
             dict[str, dict[str, object]], snapshot["attempts"]
+        )
+        self.attempt_transitions = cast(
+            dict[str, dict[str, object]],
+            snapshot["attempt_transitions"],
         )
         self.run_transitions = cast(
             dict[str, dict[str, object]],
@@ -223,6 +233,10 @@ class FakeCursor:
             self.row = self._transition_run(params)
         elif 'INSERT INTO "task_run_transitions"' in query:
             self.row = self._insert_run_transition(params)
+        elif 'UPDATE "task_attempts" a' in query:
+            self.row = self._transition_claimed_attempt(params)
+        elif 'INSERT INTO "task_attempt_transitions"' in query:
+            self.row = self._insert_attempt_transition(params)
         elif 'FROM "task_attempts"' in query:
             self.rows = self._attempts_for_run(cast(str, params[0]))
         elif 'INSERT INTO "task_attempts"' in query:
@@ -237,10 +251,28 @@ class FakeCursor:
             self.row = self.database.runs.get(cast(str, params[0]))
         elif 'INSERT INTO "task_queue_items"' in query:
             self.row = self._insert_queue_item(params)
+        elif (
+            'SELECT q.*, r."state" AS "run_state", r."last_attempt_id"'
+            in query
+            and 'lease_expires_at" <= %s' in query
+        ):
+            self.rows = self._expired_claims(params)
+        elif (
+            'SELECT q.*, r."state" AS "run_state", r."last_attempt_id"'
+            in query
+        ):
+            self.row = self._fenced_queue_item(params)
         elif 'UPDATE "task_queue_items" q' in query and "candidate" in query:
             self.row = self._claim_queue_item(params)
         elif 'UPDATE "task_queue_items" q' in query:
             self.row = self._heartbeat_queue_item(params)
+        elif 'UPDATE "task_queue_items"' in query and '"state" = %s' in query:
+            self.row = self._complete_queue_item(params)
+        elif (
+            'UPDATE "task_queue_items"' in query
+            and "\"state\" = 'available'" in query
+        ):
+            self.row = self._retry_queue_item(params)
         elif 'MIN(q."available_at")' in query:
             self.row = self._health(params)
         elif "COUNT(*) FILTER" in query:
@@ -288,10 +320,20 @@ class FakeCursor:
     ) -> dict[str, object] | None:
         run_id = cast(str, params[3])
         row = self.database.runs.get(run_id)
+        claim = cast(
+            dict[str, object] | None, row.get("claim") if row else None
+        )
         if self.database.stale_transition:
             self.database.stale_transition = False
             return None
-        if row is None or row["state"] != params[4]:
+        if (
+            row is None
+            or row["state"] != params[4]
+            or (
+                params[5] is not None
+                and (claim is None or claim.get("claim_token") != params[6])
+            )
+        ):
             return None
         row.update(
             {
@@ -408,6 +450,51 @@ class FakeCursor:
             "updated_at": params[7],
         }
         self.database.attempts[attempt_id] = row
+        return row
+
+    def _transition_claimed_attempt(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        attempt = self.database.attempts.get(cast(str, params[0]))
+        if attempt is None or attempt["state"] not in cast(
+            list[str], params[1]
+        ):
+            return None
+        run = self.database.runs[cast(str, attempt["run_id"])]
+        claim = cast(dict[str, object] | None, run.get("claim"))
+        if (
+            run["state"] != TaskRunState.CLAIMED.value
+            or run.get("last_attempt_id") != attempt["attempt_id"]
+            or claim is None
+            or claim.get("claim_token") != params[2]
+        ):
+            return None
+        from_state = attempt["state"]
+        attempt["state"] = params[3]
+        if params[4] is not None:
+            attempt["result"] = loads(cast(str, params[4]))
+        attempt["updated_at"] = params[5]
+        return {**attempt, "from_state": from_state}
+
+    def _insert_attempt_transition(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        transition_id = cast(str, params[0])
+        if transition_id in self.database.attempt_transitions:
+            return None
+        row = {
+            "transition_id": transition_id,
+            "attempt_id": params[1],
+            "run_id": params[2],
+            "from_state": params[3],
+            "to_state": params[4],
+            "reason": params[5],
+            "metadata": loads(cast(str, params[6])),
+            "created_at": params[7],
+        }
+        self.database.attempt_transitions[transition_id] = row
         return row
 
     def _insert_idempotency(
@@ -586,6 +673,111 @@ class FakeCursor:
         row["lease_expires_at"] = params[1]
         row["updated_at"] = params[2]
         return self._with_run_state(row)
+
+    def _fenced_queue_item(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        row = self.database.queue_items.get(cast(str, params[0]))
+        if row is None:
+            return None
+        run = self.database.runs[cast(str, row["run_id"])]
+        claim = cast(dict[str, object] | None, run.get("claim"))
+        if (
+            row["state"] != TaskQueueItemState.CLAIMED.value
+            or row["claim_token"] != params[1]
+            or cast(datetime, row["lease_expires_at"])
+            <= cast(datetime, params[2])
+            or run["state"] != TaskRunState.CLAIMED.value
+            or claim is None
+            or claim.get("claim_token") != params[3]
+        ):
+            return None
+        return {
+            **self._with_run_state(row),
+            "last_attempt_id": run["last_attempt_id"],
+        }
+
+    def _complete_queue_item(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        row = self.database.queue_items.get(cast(str, params[2]))
+        if self.database.stale_complete_queue_item:
+            self.database.stale_complete_queue_item = False
+            return None
+        if (
+            row is None
+            or row["state"] != TaskQueueItemState.CLAIMED.value
+            or row["claim_token"] != params[3]
+        ):
+            return None
+        row["state"] = params[0]
+        row["updated_at"] = params[1]
+        return self._with_run_state(row)
+
+    def _retry_queue_item(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        row = self.database.queue_items.get(cast(str, params[2]))
+        if self.database.stale_retry_queue_item:
+            self.database.stale_retry_queue_item = False
+            return None
+        if (
+            row is None
+            or row["state"] != TaskQueueItemState.CLAIMED.value
+            or row["claim_token"] != params[3]
+        ):
+            return None
+        row.update(
+            {
+                "state": TaskQueueItemState.AVAILABLE.value,
+                "available_at": params[0],
+                "claimed_at": None,
+                "lease_expires_at": None,
+                "worker_id": None,
+                "claim_token": None,
+                "heartbeat_at": None,
+                "updated_at": params[1],
+            }
+        )
+        return self._with_run_state(row)
+
+    def _expired_claims(
+        self,
+        params: tuple[object, ...],
+    ) -> tuple[dict[str, object], ...]:
+        queue_name = cast(str, params[0])
+        checked_at = cast(datetime, params[1])
+        limit = cast(int, params[2])
+        rows = []
+        for row in self.database.queue_items.values():
+            run = self.database.runs[cast(str, row["run_id"])]
+            claim = cast(dict[str, object] | None, run.get("claim"))
+            if (
+                row["queue_name"] == queue_name
+                and row["state"] == TaskQueueItemState.CLAIMED.value
+                and cast(datetime, row["lease_expires_at"]) <= checked_at
+                and run["state"] == TaskRunState.CLAIMED.value
+                and claim is not None
+                and claim.get("claim_token") == row["claim_token"]
+            ):
+                rows.append(
+                    {
+                        **self._with_run_state(row),
+                        "last_attempt_id": run["last_attempt_id"],
+                    }
+                )
+        return tuple(
+            sorted(
+                rows,
+                key=lambda row: (
+                    cast(datetime, row["lease_expires_at"]),
+                    cast(str, row["queue_item_id"]),
+                ),
+            )[:limit]
+        )
 
     def _drain(
         self,
@@ -1464,6 +1656,284 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             previous_run_claim,
         )
 
+    async def test_complete_is_fenced_by_claim_token(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        result = TaskExecutionResult(
+            output_summary={"privacy": "<redacted>"},
+        )
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token="stale",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                result=result,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        completed = await self.queue.complete(
+            "manual-ready",
+            claim_token=claim.queue_item.claim_token or "",
+            run_state=TaskRunState.SUCCEEDED,
+            attempt_state=TaskAttemptState.SUCCEEDED,
+            result=result,
+            now=self.now + timedelta(seconds=1),
+            metadata={"source": "worker"},
+        )
+
+        self.assertEqual(completed.queue_item.state, TaskQueueItemState.DONE)
+        self.assertEqual(completed.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(completed.attempt.state, TaskAttemptState.SUCCEEDED)
+        self.assertEqual(completed.run.result, result)
+        self.assertEqual(completed.attempt.result, result)
+        self.assertEqual(
+            [
+                row["to_state"]
+                for row in self.database.attempt_transitions.values()
+            ],
+            [TaskAttemptState.SUCCEEDED.value],
+        )
+        self.assertEqual(
+            self.database.attempt_transitions["id-4"]["from_state"],
+            TaskAttemptState.RUNNING.value,
+        )
+        self.assertEqual(
+            self.database.run_transitions["id-5"]["metadata"]["source"],
+            "worker",
+        )
+
+    async def test_complete_rolls_back_stale_attempt_update(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.attempts[claim.attempt.attempt_id][
+            "state"
+        ] = TaskAttemptState.CREATED.value
+        previous = self.database.snapshot()
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                result=TaskExecutionResult(
+                    output_summary={"privacy": "<redacted>"},
+                ),
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(self.database.snapshot(), previous)
+
+    async def test_complete_rolls_back_attempt_transition_conflict(
+        self,
+    ) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.attempt_transitions["id-4"] = {"transition_id": "id-4"}
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(
+            self.database.attempts[claim.attempt.attempt_id]["state"],
+            TaskAttemptState.RUNNING.value,
+        )
+        self.assertEqual(
+            self.database.runs["run-queued"]["state"],
+            TaskRunState.CLAIMED.value,
+        )
+
+    async def test_complete_rolls_back_run_claim_mismatch(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.stale_transition = True
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(
+            self.database.attempts[claim.attempt.attempt_id]["state"],
+            TaskAttemptState.RUNNING.value,
+        )
+
+    async def test_complete_rolls_back_run_transition_conflict(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.run_transitions["id-5"] = {"transition_id": "id-5"}
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(
+            self.database.runs["run-queued"]["state"],
+            TaskRunState.CLAIMED.value,
+        )
+        self.assertEqual(
+            self.database.queue_items["manual-ready"]["state"],
+            TaskQueueItemState.CLAIMED.value,
+        )
+
+    async def test_complete_rolls_back_stale_queue_update(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.stale_complete_queue_item = True
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.complete(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                run_state=TaskRunState.SUCCEEDED,
+                attempt_state=TaskAttemptState.SUCCEEDED,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(
+            self.database.runs["run-queued"]["state"],
+            TaskRunState.CLAIMED.value,
+        )
+
+    async def test_retry_reschedules_with_bounded_attempts(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        result = TaskExecutionResult(
+            error={"code": "runnable.failed", "retryable": True},
+        )
+        retry_at = self.now + timedelta(minutes=2)
+
+        retry = await self.queue.retry(
+            "manual-ready",
+            claim_token=claim.queue_item.claim_token or "",
+            result=result,
+            available_at=retry_at,
+            max_attempts=2,
+            now=self.now + timedelta(seconds=1),
+        )
+
+        self.assertEqual(retry.queue_item.state, TaskQueueItemState.AVAILABLE)
+        self.assertEqual(retry.queue_item.available_at, retry_at)
+        self.assertIsNone(retry.queue_item.claim_token)
+        self.assertEqual(retry.queue_item.attempts, 1)
+        self.assertEqual(retry.run.state, TaskRunState.QUEUED)
+        self.assertIsNone(retry.run.result)
+        self.assertEqual(retry.attempt.state, TaskAttemptState.FAILED)
+        self.assertEqual(retry.attempt.result, result)
+
+    async def test_retry_rejects_exhausted_claim_without_mutation(
+        self,
+    ) -> None:
+        claim = await self._claim_ready_running_attempt()
+        previous = self.database.snapshot()
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.retry(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                result=TaskExecutionResult(error={"code": "infra.failure"}),
+                available_at=self.now + timedelta(minutes=1),
+                max_attempts=1,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(self.database.snapshot(), previous)
+
+    async def test_retry_rolls_back_stale_queue_update(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.stale_retry_queue_item = True
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.retry(
+                "manual-ready",
+                claim_token=claim.queue_item.claim_token or "",
+                result=TaskExecutionResult(error={"code": "infra.failure"}),
+                available_at=self.now + timedelta(minutes=1),
+                max_attempts=2,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(
+            self.database.runs["run-queued"]["state"],
+            TaskRunState.CLAIMED.value,
+        )
+        self.assertEqual(
+            self.database.attempts[claim.attempt.attempt_id]["state"],
+            TaskAttemptState.RUNNING.value,
+        )
+
+    async def test_abandon_expired_claims_counts_toward_limit(self) -> None:
+        self._add_queue_item(
+            "manual-ready",
+            run_id="run-queued",
+            available_at=self.now,
+        )
+        claim = await self.queue.claim(
+            "default",
+            worker_id="worker-1",
+            lease_expires_at=self.now + timedelta(minutes=1),
+            now=self.now,
+        )
+        assert claim is not None
+        self.database.queue_items["manual-ready"]["lease_expires_at"] = (
+            self.now - timedelta(seconds=1)
+        )
+        self._add_claimed_row(
+            queue_item_id="manual-exhausted",
+            run_id="run-exhausted",
+            attempt_id="attempt-exhausted",
+            attempts=2,
+            lease_expires_at=self.now - timedelta(seconds=1),
+        )
+
+        abandoned = await self.queue.abandon_expired(
+            "default",
+            max_attempts=2,
+            limit=10,
+            now=self.now,
+            metadata={"source": "reaper"},
+        )
+
+        by_queue_id = {
+            item.queue_item.queue_item_id: item for item in abandoned
+        }
+        self.assertEqual(
+            set(by_queue_id),
+            {"manual-ready", "manual-exhausted"},
+        )
+        ready = by_queue_id["manual-ready"]
+        exhausted = by_queue_id["manual-exhausted"]
+        self.assertTrue(ready.retryable)
+        self.assertFalse(exhausted.retryable)
+        self.assertEqual(
+            ready.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertEqual(ready.run.state, TaskRunState.QUEUED)
+        self.assertEqual(
+            exhausted.queue_item.state,
+            TaskQueueItemState.DEAD,
+        )
+        self.assertEqual(exhausted.run.state, TaskRunState.FAILED)
+        self.assertEqual(
+            ready.attempt.state,
+            TaskAttemptState.ABANDONED,
+        )
+        self.assertEqual(
+            self.database.attempt_transitions["id-4"]["metadata"]["source"],
+            "reaper",
+        )
+
     async def test_drain_orders_ready_items_and_surfaces_cancellation(
         self,
     ) -> None:
@@ -1661,6 +2131,96 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             "updated_at": self.now,
             **claimed_fields,
         }
+
+    def _add_claimed_row(
+        self,
+        *,
+        queue_item_id: str,
+        run_id: str,
+        attempt_id: str,
+        attempts: int,
+        lease_expires_at: datetime,
+    ) -> None:
+        claim = {
+            "worker_id": "worker-1",
+            "claim_token": f"{queue_item_id}-token",
+            "claimed_at": (self.now - timedelta(minutes=2)).isoformat(),
+            "lease_expires_at": lease_expires_at.isoformat(),
+            "heartbeat_at": (self.now - timedelta(minutes=2)).isoformat(),
+            "metadata": {},
+        }
+        self.database.runs[run_id] = {
+            "run_id": run_id,
+            "definition_id": "hash-a",
+            "state": TaskRunState.CLAIMED.value,
+            "queue_name": "default",
+            "request": {
+                "definition_id": "hash-a",
+                "file_summaries": [],
+                "idempotency_key": None,
+                "input_summary": None,
+                "metadata": {},
+                "queue": "default",
+            },
+            "metadata": {},
+            "claim": claim,
+            "last_attempt_id": attempt_id,
+            "result": None,
+            "created_at": self.now,
+            "updated_at": self.now,
+        }
+        self.database.attempts[attempt_id] = {
+            "attempt_id": attempt_id,
+            "run_id": run_id,
+            "attempt_number": attempts,
+            "state": TaskAttemptState.CREATED.value,
+            "context": {
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "attempt_number": attempts,
+                "claim": claim,
+                "metadata": {},
+            },
+            "result": None,
+            "metadata": {},
+            "created_at": self.now,
+            "updated_at": self.now,
+        }
+        self.database.queue_items[queue_item_id] = {
+            "queue_item_id": queue_item_id,
+            "run_id": run_id,
+            "queue_name": "default",
+            "state": TaskQueueItemState.CLAIMED.value,
+            "priority": 0,
+            "available_at": self.now,
+            "claimed_at": self.now - timedelta(minutes=2),
+            "lease_expires_at": lease_expires_at,
+            "worker_id": "worker-1",
+            "claim_token": f"{queue_item_id}-token",
+            "heartbeat_at": self.now - timedelta(minutes=2),
+            "attempts": attempts,
+            "metadata": {},
+            "created_at": self.now,
+            "updated_at": self.now,
+        }
+
+    async def _claim_ready_running_attempt(self) -> TaskQueueClaim:
+        self._add_queue_item(
+            "manual-ready",
+            run_id="run-queued",
+            available_at=self.now,
+        )
+        claim = await self.queue.claim(
+            "default",
+            worker_id="worker-1",
+            lease_expires_at=self.now + timedelta(minutes=5),
+            now=self.now,
+        )
+        assert claim is not None
+        self.database.attempts[claim.attempt.attempt_id][
+            "state"
+        ] = TaskAttemptState.RUNNING.value
+        return claim
 
     def _identity(self) -> TaskIdempotencyIdentity:
         digest = TaskIdempotencyDigest(

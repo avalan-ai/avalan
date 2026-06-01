@@ -13,8 +13,10 @@ from ..idempotency import (
     TaskIdempotencyReservationResult,
 )
 from ..queue import (
+    TaskQueueAbandonment,
     TaskQueueArtifact,
     TaskQueueClaim,
+    TaskQueueCompletion,
     TaskQueueConflictError,
     TaskQueueDepth,
     TaskQueueError,
@@ -22,6 +24,7 @@ from ..queue import (
     TaskQueueItem,
     TaskQueueItemState,
     TaskQueueNotFoundError,
+    TaskQueueRetry,
     TaskQueueSubmission,
 )
 from ..state import TaskAttemptState, TaskRunState
@@ -30,6 +33,7 @@ from ..store import (
     TaskClaim,
     TaskExecutionContext,
     TaskExecutionRequest,
+    TaskExecutionResult,
     TaskRun,
     TaskSnapshotMetadata,
     freeze_snapshot_metadata,
@@ -38,6 +42,7 @@ from ..stores.pgsql import (
     _ASSIGN_RUN_CLAIM_SQL,
     _INSERT_ARTIFACT_SQL,
     _INSERT_ATTEMPT_SQL,
+    _INSERT_ATTEMPT_TRANSITION_SQL,
     _INSERT_IDEMPOTENCY_SQL,
     _INSERT_RUN_SQL,
     _INSERT_RUN_TRANSITION_SQL,
@@ -55,6 +60,7 @@ from ..stores.pgsql import (
     _fetch_run_row,
     _idempotency_from_row,
     _request_to_payload,
+    _result_to_payload,
     _run_from_row,
 )
 
@@ -452,6 +458,258 @@ class PgsqlTaskQueue:
             ),
         )
 
+    async def complete(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        run_state: TaskRunState,
+        attempt_state: TaskAttemptState,
+        result: TaskExecutionResult | None = None,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueCompletion:
+        _assert_non_empty_string(queue_item_id, "queue_item_id")
+        _assert_non_empty_string(claim_token, "claim_token")
+        assert run_state in {
+            TaskRunState.SUCCEEDED,
+            TaskRunState.FAILED,
+            TaskRunState.CANCELLED,
+            TaskRunState.EXPIRED,
+        }
+        assert attempt_state in {
+            TaskAttemptState.SUCCEEDED,
+            TaskAttemptState.FAILED,
+        }
+        assert (
+            run_state == TaskRunState.SUCCEEDED
+            and attempt_state == TaskAttemptState.SUCCEEDED
+        ) or (
+            run_state != TaskRunState.SUCCEEDED
+            and attempt_state == TaskAttemptState.FAILED
+        )
+        if result is not None:
+            assert isinstance(result, TaskExecutionResult)
+        checked_at = _ensure_aware_utc(now or self._now())
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            queue_row = await _fenced_queue_item_row(
+                unit,
+                queue_item_id=queue_item_id,
+                claim_token=claim_token,
+                now=checked_at,
+            )
+            attempt = await _transition_claimed_attempt(
+                unit,
+                attempt_id=_row_str(queue_row, "last_attempt_id"),
+                claim_token=claim_token,
+                to_state=attempt_state,
+                result=result,
+                reason="completed",
+                transition_id=self._new_id(),
+                now=checked_at,
+                metadata=safe_metadata,
+            )
+            run = await _transition_claimed_run(
+                unit,
+                run_id=_row_str(queue_row, "run_id"),
+                claim_token=claim_token,
+                to_state=run_state,
+                result=result,
+                reason="completed",
+                transition_id=self._new_id(),
+                now=checked_at,
+                metadata=safe_metadata,
+            )
+            queue_state = (
+                TaskQueueItemState.DONE
+                if run_state == TaskRunState.SUCCEEDED
+                else TaskQueueItemState.DEAD
+            )
+            updated_queue = await _complete_queue_item(
+                unit,
+                queue_item_id=queue_item_id,
+                claim_token=claim_token,
+                to_state=queue_state,
+                now=checked_at,
+            )
+            return TaskQueueCompletion(
+                queue_item=_queue_item_from_row(
+                    updated_queue,
+                    run_state=run.state,
+                ),
+                run=run,
+                attempt=attempt,
+            )
+
+        return cast(
+            TaskQueueCompletion,
+            await self._transaction(
+                operation="task_queue_complete",
+                callback=execute,
+            ),
+        )
+
+    async def retry(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        result: TaskExecutionResult,
+        available_at: datetime,
+        max_attempts: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueRetry:
+        _assert_non_empty_string(queue_item_id, "queue_item_id")
+        _assert_non_empty_string(claim_token, "claim_token")
+        assert isinstance(result, TaskExecutionResult)
+        assert isinstance(available_at, datetime)
+        _assert_positive_int(max_attempts, "max_attempts")
+        checked_at = _ensure_aware_utc(now or self._now())
+        available_at = _ensure_aware_utc(available_at)
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            queue_row = await _fenced_queue_item_row(
+                unit,
+                queue_item_id=queue_item_id,
+                claim_token=claim_token,
+                now=checked_at,
+            )
+            if _row_int(queue_row, "attempts", 0) >= max_attempts:
+                raise TaskQueueConflictError("task queue retry limit reached")
+            attempt = await _transition_claimed_attempt(
+                unit,
+                attempt_id=_row_str(queue_row, "last_attempt_id"),
+                claim_token=claim_token,
+                to_state=TaskAttemptState.FAILED,
+                result=result,
+                reason="attempt_retry",
+                transition_id=self._new_id(),
+                now=checked_at,
+                metadata=safe_metadata,
+            )
+            run = await _transition_claimed_run(
+                unit,
+                run_id=_row_str(queue_row, "run_id"),
+                claim_token=claim_token,
+                to_state=TaskRunState.QUEUED,
+                result=None,
+                reason="attempt_retry",
+                transition_id=self._new_id(),
+                now=checked_at,
+                metadata=safe_metadata,
+            )
+            updated_queue = await _retry_queue_item(
+                unit,
+                queue_item_id=queue_item_id,
+                claim_token=claim_token,
+                available_at=available_at,
+                now=checked_at,
+            )
+            return TaskQueueRetry(
+                queue_item=_queue_item_from_row(
+                    updated_queue,
+                    run_state=run.state,
+                ),
+                run=run,
+                attempt=attempt,
+            )
+
+        return cast(
+            TaskQueueRetry,
+            await self._transaction(
+                operation="task_queue_retry",
+                callback=execute,
+            ),
+        )
+
+    async def abandon_expired(
+        self,
+        queue_name: str,
+        *,
+        max_attempts: int,
+        limit: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> tuple[TaskQueueAbandonment, ...]:
+        _assert_non_empty_string(queue_name, "queue_name")
+        _assert_positive_int(max_attempts, "max_attempts")
+        _assert_positive_int(limit, "limit")
+        checked_at = _ensure_aware_utc(now or self._now())
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute(
+                _SELECT_EXPIRED_CLAIMS_SQL,
+                (queue_name, checked_at, limit),
+            )
+            expired_rows = tuple(await unit.cursor.fetchall())
+            abandonments = []
+            for queue_row in expired_rows:
+                claim_token = _row_str(queue_row, "claim_token")
+                attempts = _row_int(queue_row, "attempts", 0)
+                retryable = attempts < max_attempts
+                attempt = await _transition_claimed_attempt(
+                    unit,
+                    attempt_id=_row_str(queue_row, "last_attempt_id"),
+                    claim_token=claim_token,
+                    to_state=TaskAttemptState.ABANDONED,
+                    result=None,
+                    reason="abandoned",
+                    transition_id=self._new_id(),
+                    now=checked_at,
+                    metadata=safe_metadata,
+                )
+                run = await _transition_claimed_run(
+                    unit,
+                    run_id=_row_str(queue_row, "run_id"),
+                    claim_token=claim_token,
+                    to_state=(
+                        TaskRunState.QUEUED
+                        if retryable
+                        else TaskRunState.FAILED
+                    ),
+                    result=None,
+                    reason="abandoned",
+                    transition_id=self._new_id(),
+                    now=checked_at,
+                    metadata=safe_metadata,
+                )
+                updated_queue = await _abandon_queue_item(
+                    unit,
+                    queue_item_id=_row_str(queue_row, "queue_item_id"),
+                    claim_token=claim_token,
+                    to_state=(
+                        TaskQueueItemState.AVAILABLE
+                        if retryable
+                        else TaskQueueItemState.DEAD
+                    ),
+                    available_at=checked_at,
+                    now=checked_at,
+                )
+                abandonments.append(
+                    TaskQueueAbandonment(
+                        queue_item=_queue_item_from_row(
+                            updated_queue,
+                            run_state=run.state,
+                        ),
+                        run=run,
+                        attempt=attempt,
+                    )
+                )
+            return tuple(abandonments)
+
+        return cast(
+            tuple[TaskQueueAbandonment, ...],
+            await self._transaction(
+                operation="task_queue_abandon_expired",
+                callback=execute,
+            ),
+        )
+
     async def drain(
         self,
         queue_name: str,
@@ -696,6 +954,40 @@ WHERE "run_id" = %s
 RETURNING *
 """
 
+_SELECT_FENCED_QUEUE_ITEM_SQL = """
+SELECT q.*, r."state" AS "run_state", r."last_attempt_id"
+FROM "task_queue_items" q
+JOIN "task_runs" r ON r."run_id" = q."run_id"
+WHERE q."queue_item_id" = %s
+  AND q."state" = 'claimed'
+  AND q."claim_token" = %s
+  AND q."lease_expires_at" > %s
+  AND r."state" = 'claimed'
+  AND (r."claim"->>'claim_token') = %s
+FOR UPDATE OF q, r
+"""
+
+_UPDATE_CLAIMED_ATTEMPT_SQL = """
+WITH "candidate" AS (
+    SELECT a."attempt_id", a."state" AS "from_state"
+    FROM "task_attempts" a
+    JOIN "task_runs" r ON r."run_id" = a."run_id"
+    WHERE a."attempt_id" = %s
+      AND a."state" = ANY(%s)
+      AND r."state" = 'claimed'
+      AND r."last_attempt_id" = a."attempt_id"
+      AND (r."claim"->>'claim_token') = %s
+    FOR UPDATE OF a, r
+)
+UPDATE "task_attempts" a
+SET "state" = %s,
+    "result" = COALESCE(%s::jsonb, a."result"),
+    "updated_at" = %s
+FROM "candidate" c
+WHERE a."attempt_id" = c."attempt_id"
+RETURNING a.*, c."from_state"
+"""
+
 _UPDATE_RUN_LAST_ATTEMPT_WITH_CLAIM_SQL = """
 UPDATE "task_runs"
 SET "last_attempt_id" = %s, "updated_at" = %s
@@ -703,6 +995,46 @@ WHERE "run_id" = %s
   AND "state" = 'claimed'
   AND ("claim"->>'claim_token') = %s
 RETURNING *
+"""
+
+_COMPLETE_QUEUE_ITEM_SQL = """
+UPDATE "task_queue_items"
+SET "state" = %s,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = 'claimed'
+  AND "claim_token" = %s
+RETURNING *
+"""
+
+_RETRY_QUEUE_ITEM_SQL = """
+UPDATE "task_queue_items"
+SET "state" = 'available',
+    "available_at" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = 'claimed'
+  AND "claim_token" = %s
+RETURNING *
+"""
+
+_SELECT_EXPIRED_CLAIMS_SQL = """
+SELECT q.*, r."state" AS "run_state", r."last_attempt_id"
+FROM "task_queue_items" q
+JOIN "task_runs" r ON r."run_id" = q."run_id"
+WHERE q."queue_name" = %s
+  AND q."state" = 'claimed'
+  AND q."lease_expires_at" <= %s
+  AND r."state" = 'claimed'
+  AND (r."claim"->>'claim_token') = q."claim_token"
+ORDER BY q."lease_expires_at", q."queue_item_id"
+LIMIT %s
+FOR UPDATE OF q, r SKIP LOCKED
 """
 
 _DRAIN_QUEUE_SQL = """
@@ -790,6 +1122,187 @@ async def _assign_claimed_run(
             "task run transition could not be recorded"
         )
     return _run_from_row(row)
+
+
+async def _fenced_queue_item_row(
+    unit: PgsqlUnitOfWork,
+    *,
+    queue_item_id: str,
+    claim_token: str,
+    now: datetime,
+) -> PgsqlRow:
+    await unit.cursor.execute(
+        _SELECT_FENCED_QUEUE_ITEM_SQL,
+        (queue_item_id, claim_token, now, claim_token),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError("task queue claim did not match")
+    return row
+
+
+async def _transition_claimed_attempt(
+    unit: PgsqlUnitOfWork,
+    *,
+    attempt_id: str,
+    claim_token: str,
+    to_state: TaskAttemptState,
+    result: TaskExecutionResult | None,
+    reason: str,
+    transition_id: str,
+    now: datetime,
+    metadata: TaskSnapshotMetadata,
+) -> TaskAttempt:
+    from_states = (
+        [
+            TaskAttemptState.CREATED.value,
+            TaskAttemptState.RUNNING.value,
+        ]
+        if to_state == TaskAttemptState.ABANDONED
+        else [TaskAttemptState.RUNNING.value]
+    )
+    await unit.cursor.execute(
+        _UPDATE_CLAIMED_ATTEMPT_SQL,
+        (
+            attempt_id,
+            from_states,
+            claim_token,
+            to_state.value,
+            _json(_result_to_payload(result)) if result else None,
+            now,
+        ),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError("task attempt claim did not match")
+    await unit.cursor.execute(
+        _INSERT_ATTEMPT_TRANSITION_SQL,
+        (
+            transition_id,
+            attempt_id,
+            _row_str(row, "run_id"),
+            _row_str(row, "from_state"),
+            to_state.value,
+            reason,
+            _json(metadata),
+            now,
+        ),
+    )
+    transition_row = await unit.cursor.fetchone()
+    if transition_row is None:
+        raise TaskQueueConflictError(
+            "task attempt transition could not be recorded"
+        )
+    return _attempt_from_row(row)
+
+
+async def _transition_claimed_run(
+    unit: PgsqlUnitOfWork,
+    *,
+    run_id: str,
+    claim_token: str,
+    to_state: TaskRunState,
+    result: TaskExecutionResult | None,
+    reason: str,
+    transition_id: str,
+    now: datetime,
+    metadata: TaskSnapshotMetadata,
+) -> TaskRun:
+    await unit.cursor.execute(
+        _UPDATE_RUN_STATE_SQL,
+        (
+            to_state.value,
+            _json(_result_to_payload(result)) if result else None,
+            now,
+            run_id,
+            TaskRunState.CLAIMED.value,
+            claim_token,
+            claim_token,
+        ),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError("task run claim did not match")
+    await unit.cursor.execute(
+        _INSERT_RUN_TRANSITION_SQL,
+        (
+            transition_id,
+            run_id,
+            TaskRunState.CLAIMED.value,
+            to_state.value,
+            reason,
+            _json(metadata),
+            now,
+        ),
+    )
+    transition_row = await unit.cursor.fetchone()
+    if transition_row is None:
+        raise TaskQueueConflictError(
+            "task run transition could not be recorded"
+        )
+    return _run_from_row(row)
+
+
+async def _complete_queue_item(
+    unit: PgsqlUnitOfWork,
+    *,
+    queue_item_id: str,
+    claim_token: str,
+    to_state: TaskQueueItemState,
+    now: datetime,
+) -> PgsqlRow:
+    await unit.cursor.execute(
+        _COMPLETE_QUEUE_ITEM_SQL,
+        (to_state.value, now, queue_item_id, claim_token),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError("task queue claim did not match")
+    return row
+
+
+async def _retry_queue_item(
+    unit: PgsqlUnitOfWork,
+    *,
+    queue_item_id: str,
+    claim_token: str,
+    available_at: datetime,
+    now: datetime,
+) -> PgsqlRow:
+    await unit.cursor.execute(
+        _RETRY_QUEUE_ITEM_SQL,
+        (available_at, now, queue_item_id, claim_token),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError("task queue claim did not match")
+    return row
+
+
+async def _abandon_queue_item(
+    unit: PgsqlUnitOfWork,
+    *,
+    queue_item_id: str,
+    claim_token: str,
+    to_state: TaskQueueItemState,
+    available_at: datetime,
+    now: datetime,
+) -> PgsqlRow:
+    if to_state == TaskQueueItemState.AVAILABLE:
+        return await _retry_queue_item(
+            unit,
+            queue_item_id=queue_item_id,
+            claim_token=claim_token,
+            available_at=available_at,
+            now=now,
+        )
+    return await _complete_queue_item(
+        unit,
+        queue_item_id=queue_item_id,
+        claim_token=claim_token,
+        to_state=to_state,
+        now=now,
+    )
 
 
 async def _create_claimed_attempt(

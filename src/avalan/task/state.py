@@ -97,7 +97,12 @@ VALID_TASK_ATTEMPT_TRANSITIONS: Mapping[
     TaskAttemptState, frozenset[TaskAttemptState]
 ] = MappingProxyType(
     {
-        TaskAttemptState.CREATED: frozenset({TaskAttemptState.RUNNING}),
+        TaskAttemptState.CREATED: frozenset(
+            {
+                TaskAttemptState.RUNNING,
+                TaskAttemptState.ABANDONED,
+            }
+        ),
         TaskAttemptState.RUNNING: frozenset(
             {
                 TaskAttemptState.SUCCEEDED,

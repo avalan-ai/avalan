@@ -107,7 +107,10 @@ class TaskStateTest(TestCase):
 
     def test_attempt_transition_table_matches_source_contract(self) -> None:
         expected = {
-            TaskAttemptState.CREATED: {TaskAttemptState.RUNNING},
+            TaskAttemptState.CREATED: {
+                TaskAttemptState.RUNNING,
+                TaskAttemptState.ABANDONED,
+            },
             TaskAttemptState.RUNNING: {
                 TaskAttemptState.SUCCEEDED,
                 TaskAttemptState.FAILED,

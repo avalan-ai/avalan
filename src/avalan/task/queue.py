@@ -15,6 +15,7 @@ from .store import (
     TaskAttempt,
     TaskClaim,
     TaskExecutionRequest,
+    TaskExecutionResult,
     TaskRun,
     TaskSnapshotMetadata,
     empty_snapshot_metadata,
@@ -240,6 +241,75 @@ class TaskQueueClaim:
         assert self.attempt.context.claim == self.run.claim
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueCompletion:
+    queue_item: TaskQueueItem
+    run: TaskRun
+    attempt: TaskAttempt
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.queue_item, TaskQueueItem)
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        assert self.queue_item.run_id == self.run.run_id
+        assert self.attempt.run_id == self.run.run_id
+        assert self.queue_item.state in {
+            TaskQueueItemState.DONE,
+            TaskQueueItemState.DEAD,
+        }
+        assert self.run.state in {
+            TaskRunState.SUCCEEDED,
+            TaskRunState.FAILED,
+            TaskRunState.CANCELLED,
+            TaskRunState.EXPIRED,
+        }
+        assert self.attempt.state in {
+            TaskAttemptState.SUCCEEDED,
+            TaskAttemptState.FAILED,
+        }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueRetry:
+    queue_item: TaskQueueItem
+    run: TaskRun
+    attempt: TaskAttempt
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.queue_item, TaskQueueItem)
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        assert self.queue_item.run_id == self.run.run_id
+        assert self.attempt.run_id == self.run.run_id
+        assert self.queue_item.state == TaskQueueItemState.AVAILABLE
+        assert self.run.state == TaskRunState.QUEUED
+        assert self.attempt.state == TaskAttemptState.FAILED
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueAbandonment:
+    queue_item: TaskQueueItem
+    run: TaskRun
+    attempt: TaskAttempt
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.queue_item, TaskQueueItem)
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        assert self.queue_item.run_id == self.run.run_id
+        assert self.attempt.run_id == self.run.run_id
+        assert self.queue_item.state in {
+            TaskQueueItemState.AVAILABLE,
+            TaskQueueItemState.DEAD,
+        }
+        assert self.run.state in {TaskRunState.QUEUED, TaskRunState.FAILED}
+        assert self.attempt.state == TaskAttemptState.ABANDONED
+
+    @property
+    def retryable(self) -> bool:
+        return self.queue_item.state == TaskQueueItemState.AVAILABLE
+
+
 class TaskQueue(Protocol):
     async def enqueue_run(
         self,
@@ -283,6 +353,40 @@ class TaskQueue(Protocol):
         lease_expires_at: datetime,
         now: datetime | None = None,
     ) -> TaskQueueItem: ...
+
+    async def complete(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        run_state: TaskRunState,
+        attempt_state: TaskAttemptState,
+        result: TaskExecutionResult | None = None,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueCompletion: ...
+
+    async def retry(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        result: TaskExecutionResult,
+        available_at: datetime,
+        max_attempts: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueRetry: ...
+
+    async def abandon_expired(
+        self,
+        queue_name: str,
+        *,
+        max_attempts: int,
+        limit: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> tuple[TaskQueueAbandonment, ...]: ...
 
     async def drain(
         self,
