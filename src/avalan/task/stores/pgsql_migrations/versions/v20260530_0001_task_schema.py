@@ -460,12 +460,6 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
         ),
     CONSTRAINT "ck_task_usage_records_reasoning_tokens_non_negative"
         CHECK ("reasoning_tokens" IS NULL OR "reasoning_tokens" >= 0),
-    CONSTRAINT "ck_task_usage_records_cached_not_above_prompt"
-        CHECK (
-            "cached_tokens" IS NULL
-            OR "prompt_tokens" IS NULL
-            OR "cached_tokens" <= "prompt_tokens"
-        ),
     CONSTRAINT "ck_task_usage_records_metadata_shape"
         CHECK (JSONB_TYPEOF("metadata") = 'object')
 );
@@ -504,12 +498,6 @@ CREATE TABLE IF NOT EXISTS "task_run_rollups" (
         ),
     CONSTRAINT "ck_task_run_rollups_reasoning_tokens_non_negative"
         CHECK ("reasoning_tokens" IS NULL OR "reasoning_tokens" >= 0),
-    CONSTRAINT "ck_task_run_rollups_cached_not_above_prompt"
-        CHECK (
-            "cached_tokens" IS NULL
-            OR "prompt_tokens" IS NULL
-            OR "cached_tokens" <= "prompt_tokens"
-        ),
     CONSTRAINT "ck_task_run_rollups_metadata_shape"
         CHECK (JSONB_TYPEOF("metadata") = 'object')
 );

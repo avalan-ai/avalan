@@ -168,6 +168,12 @@ class PgsqlMigrationSchemaTest(TestCase):
         ):
             self.assertIn(f'"{constraint_name}"', schema)
 
+    def test_schema_keeps_provider_usage_counters_independent(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        self.assertNotIn("cached_not_above_prompt", schema)
+        self.assertNotIn('"cached_tokens" <= "prompt_tokens"', schema)
+
     def test_schema_keeps_queue_and_lease_hot_fields_typed(self) -> None:
         schema = "\n".join(task_pgsql_schema_statements())
 

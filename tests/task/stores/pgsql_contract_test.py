@@ -741,6 +741,24 @@ class PgsqlStoreContractTest(
         self.assertFalse(repeated.created)
         self.assertEqual(repeated.reservation, reservation.reservation)
 
+    async def test_cached_usage_counters_are_independent(self) -> None:
+        run = await self._created_run()
+        attempt = await self.store.create_attempt(run.run_id)
+
+        usage = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1, cached_input_tokens=3),
+        )
+
+        self.assertEqual(usage.totals.input_tokens, 1)
+        self.assertEqual(usage.totals.cached_input_tokens, 3)
+        self.assertEqual(
+            await self.store.usage_totals(run.run_id),
+            UsageTotals(input_tokens=1, cached_input_tokens=3),
+        )
+
 
 if __name__ == "__main__":
     main()
