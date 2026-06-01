@@ -211,6 +211,9 @@ from .runner import TaskRunFinalizer as TaskRunFinalizer
 from .runner import TaskRunnerError as TaskRunnerError
 from .runner import TaskRunResult as TaskRunResult
 from .sinks import NoopObservabilitySink as NoopObservabilitySink
+from .sinks import (
+    OpenTelemetryObservabilitySink as OpenTelemetryObservabilitySink,
+)
 from .sinks import PgsqlInspectionSink as PgsqlInspectionSink
 from .sinks import PrometheusObservabilitySink as PrometheusObservabilitySink
 from .state import TASK_ATTEMPT_TERMINAL_STATES as TASK_ATTEMPT_TERMINAL_STATES

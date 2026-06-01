@@ -93,6 +93,9 @@ task-pgsql = [
 task-prometheus = [
   "prometheus-client>=0.23.0,<1.0.0",
 ]
+task-otel = [
+  "opentelemetry-sdk>=1.41.1,<2.0.0",
+]
 
 tool = [
   "aiomysql>=0.3.0,<0.4.0",

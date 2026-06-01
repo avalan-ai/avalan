@@ -1,7 +1,6 @@
 from ..event import (
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
-    TaskEventCategory,
 )
 from ..feature_gate import TaskFeature, feature_diagnostic
 from ..observability import (
@@ -10,6 +9,13 @@ from ..observability import (
     TaskObservedEvent,
 )
 from ..usage import UsageSource, UsageTotals, freeze_usage_metadata
+from ._shared import (
+    KNOWN_EVENT_TYPES,
+    assert_label_value,
+    assert_non_empty_string,
+    event_type_label,
+    usage_counter_values,
+)
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -23,32 +29,6 @@ _EVENT_METRIC = "observability_events"
 _USAGE_RECORD_METRIC = "observability_usage_records"
 _USAGE_TOKEN_METRIC = "observability_usage_tokens"
 _FAILURE_METRIC = "observability_sink_failures"
-_OTHER_EVENT_TYPE = "other"
-_UNKNOWN_EVENT_TYPE = "unknown"
-_KNOWN_EVENT_TYPES = (
-    "call_prepare_after",
-    "call_prepare_before",
-    "end",
-    "engine_error",
-    "engine_start",
-    "engine_stop",
-    "event_sanitization_failed",
-    "input_token_count_after",
-    "input_token_count_before",
-    "memory_lookup",
-    "memory_store",
-    "model_complete",
-    "model_end",
-    "model_error",
-    "model_start",
-    "start",
-    "stream_end",
-    "token_generated",
-    "tool_call",
-    "tool_error",
-    "tool_result",
-    "unknown",
-)
 
 
 class PrometheusCounterChild(Protocol):
@@ -77,7 +57,7 @@ class PrometheusObservabilitySink(ObservabilitySink):
     registry: object | None = None
     counter_factory: PrometheusCounterFactory | None = None
     module_importer: ModuleImporter = import_module
-    known_event_types: tuple[str, ...] = _KNOWN_EVENT_TYPES
+    known_event_types: tuple[str, ...] = KNOWN_EVENT_TYPES
     _event_count: int = field(default=0, init=False)
     _usage_count: int = field(default=0, init=False)
     _failure_count: int = field(default=0, init=False)
@@ -93,7 +73,7 @@ class PrometheusObservabilitySink(ObservabilitySink):
         assert callable(self.module_importer)
         assert isinstance(self.known_event_types, tuple)
         for event_type in self.known_event_types:
-            _assert_label_value(event_type, "known_event_types")
+            assert_label_value(event_type, "known_event_types")
 
         factory = self.counter_factory or _prometheus_counter_factory(
             self.module_importer
@@ -136,7 +116,7 @@ class PrometheusObservabilitySink(ObservabilitySink):
         try:
             self._event_counter.labels(
                 category=event.category.value,
-                event_type=_event_type_label(
+                event_type=event_type_label(
                     event.event_type,
                     event.category,
                     self.known_event_types,
@@ -156,9 +136,9 @@ class PrometheusObservabilitySink(ObservabilitySink):
         attempt_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
-        _assert_non_empty_string(run_id, "run_id")
+        assert_non_empty_string(run_id, "run_id")
         if attempt_id is not None:
-            _assert_non_empty_string(attempt_id, "attempt_id")
+            assert_non_empty_string(attempt_id, "attempt_id")
         assert isinstance(source, UsageSource)
         assert isinstance(totals, UsageTotals)
         freeze_usage_metadata(metadata)
@@ -166,7 +146,7 @@ class PrometheusObservabilitySink(ObservabilitySink):
         try:
             labels = {"source": source.value}
             self._usage_record_counter.labels(**labels).inc()
-            for counter_name, value in _usage_counter_values(totals):
+            for counter_name, value in usage_counter_values(totals):
                 self._usage_token_counter.labels(
                     source=source.value,
                     counter=counter_name,
@@ -231,55 +211,11 @@ def _counter(
     )
 
 
-def _event_type_label(
-    event_type: str,
-    category: TaskEventCategory,
-    known_event_types: tuple[str, ...],
-) -> str:
-    if event_type in known_event_types:
-        return event_type
-    if category == TaskEventCategory.UNKNOWN:
-        return _UNKNOWN_EVENT_TYPE
-    return _OTHER_EVENT_TYPE
-
-
-def _usage_counter_values(
-    totals: UsageTotals,
-) -> tuple[tuple[str, int], ...]:
-    values: list[tuple[str, int]] = []
-    for counter_name in (
-        "input_tokens",
-        "cached_input_tokens",
-        "cache_creation_input_tokens",
-        "output_tokens",
-        "reasoning_tokens",
-        "total_tokens",
-    ):
-        value = getattr(totals, counter_name)
-        if value is not None:
-            values.append((counter_name, value))
-    return tuple(values)
-
-
 def _assert_metric_component(value: str | None, field_name: str) -> None:
-    _assert_non_empty_string(value, field_name)
+    assert_non_empty_string(value, field_name)
     assert value is not None
     assert len(value) <= 64, f"{field_name} must be no longer than 64 chars"
     assert value[0].isalpha(), f"{field_name} must start with a letter"
     assert all(
         character.isalnum() or character == "_" for character in value
     ), f"{field_name} must be a Prometheus metric component"
-
-
-def _assert_label_value(value: str | None, field_name: str) -> None:
-    _assert_non_empty_string(value, field_name)
-    assert value is not None
-    assert len(value) <= 64, f"{field_name} must be no longer than 64 chars"
-    assert all(
-        character.isalnum() or character == "_" for character in value
-    ), f"{field_name} must be a safe label value"
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

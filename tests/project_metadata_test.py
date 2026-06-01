@@ -131,6 +131,17 @@ def test_task_prometheus_extra_declares_prometheus_dependency() -> None:
     assert requirements[0].marker is None
 
 
+def test_task_otel_extra_declares_opentelemetry_dependency() -> None:
+    requirements = _requirements_by_name(
+        "task-otel",
+        "opentelemetry-sdk",
+    )
+
+    assert len(requirements) == 1
+    assert requirements[0].specifier == SpecifierSet(">=1.41.1,<2.0.0")
+    assert requirements[0].marker is None
+
+
 def test_task_pgsql_extra_omits_migration_dependencies() -> None:
     optional_deps = _optional_dependencies()
     task_pgsql_dependencies = {

@@ -3366,7 +3366,7 @@ description = "Read metadata from Python packages"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
+markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or extra == \"task-otel\""
 files = [
     {file = "importlib_metadata-8.7.0-py3-none-any.whl", hash = "sha256:e5dd1551894c77868a30651cef00984d50e1002d06942a7101d34870c5f02afd"},
     {file = "importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000"},
@@ -5595,7 +5595,7 @@ description = "OpenTelemetry Python API"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-otel\""
 files = [
     {file = "opentelemetry_api-1.41.1-py3-none-any.whl", hash = "sha256:a22df900e75c76dc08440710e51f52f1aa6b451b429298896023e60db5b3139f"},
     {file = "opentelemetry_api-1.41.1.tar.gz", hash = "sha256:0ad1814d73b875f84494387dae86ce0b12c68556331ce6ce8fe789197c949621"},
@@ -5720,7 +5720,7 @@ description = "OpenTelemetry Python SDK"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-otel\""
 files = [
     {file = "opentelemetry_sdk-1.41.1-py3-none-any.whl", hash = "sha256:edee379c126c1bce952b0c812b48fe8ff35b30df0eecf17e98afa4d598b7d85d"},
     {file = "opentelemetry_sdk-1.41.1.tar.gz", hash = "sha256:724b615e1215b5aeacda0abb8a6a8922c9a1853068948bd0bd225a56d0c792e6"},
@@ -5742,7 +5742,7 @@ description = "OpenTelemetry Semantic Conventions"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-otel\""
 files = [
     {file = "opentelemetry_semantic_conventions-0.62b1-py3-none-any.whl", hash = "sha256:cf506938103d331fbb78eded0d9788095f7fd59016f2bda813c3324e5a74a93c"},
     {file = "opentelemetry_semantic_conventions-0.62b1.tar.gz", hash = "sha256:c5cc6e04a7f8c7cdd30be2ed81499fa4e75bfbd52c9cb70d40af1f9cd3619802"},
@@ -10345,7 +10345,7 @@ description = "Backport of pathlib-compatible object wrapper for zip files"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
+markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or extra == \"task-otel\""
 files = [
     {file = "zipp-3.23.0-py3-none-any.whl", hash = "sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e"},
     {file = "zipp-3.23.0.tar.gz", hash = "sha256:a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166"},
@@ -10376,6 +10376,7 @@ quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
 task = ["jsonschema"]
+task-otel = ["opentelemetry-sdk"]
 task-pgsql = ["psycopg", "psycopg-binary"]
 task-prometheus = ["prometheus-client"]
 tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy"]
@@ -10388,4 +10389,4 @@ youtube = ["youtube-transcript-api"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "309b857e9c1180f8d737fd37dc49eb532031235c9a3dc7b20920cb09a1e84600"
+content-hash = "af76cdf3588c7e0a185d344131385b0c335aa3a9756fa7d4b5408c3a42a186b6"
