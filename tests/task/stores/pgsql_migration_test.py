@@ -148,6 +148,26 @@ class PgsqlMigrationSchemaTest(TestCase):
             schema,
         )
 
+    def test_schema_keeps_all_usage_counters_typed(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        for column_name in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cached_tokens",
+            "cache_creation_input_tokens",
+            "reasoning_tokens",
+        ):
+            self.assertIn(f'"{column_name}"', schema)
+        for constraint_name in (
+            "ck_task_usage_records_cache_creation_tokens_non_negative",
+            "ck_task_usage_records_reasoning_tokens_non_negative",
+            "ck_task_run_rollups_cache_creation_tokens_non_negative",
+            "ck_task_run_rollups_reasoning_tokens_non_negative",
+        ):
+            self.assertIn(f'"{constraint_name}"', schema)
+
     def test_schema_keeps_queue_and_lease_hot_fields_typed(self) -> None:
         schema = "\n".join(task_pgsql_schema_statements())
 

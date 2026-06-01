@@ -442,8 +442,10 @@ class FakeCursor:
             "completion_tokens": params[6],
             "total_tokens": params[7],
             "cached_tokens": params[8],
-            "metadata": loads(cast(str, params[9])),
-            "created_at": params[10],
+            "cache_creation_input_tokens": params[9],
+            "reasoning_tokens": params[10],
+            "metadata": loads(cast(str, params[11])),
+            "created_at": params[12],
         }
         self.database.usage[usage_id] = row
         return row
@@ -706,6 +708,17 @@ class PgsqlStoreContractTest(
         self.assertEqual(len(locked_run_queries), 3)
         self.assertEqual(len(sequence_queries), 3)
         self.assertEqual(usage.metadata["provider"], "test")
+        usage_row = self.database.usage[usage.usage_id]
+        self.assertEqual(usage_row["cache_creation_input_tokens"], 2)
+        self.assertEqual(usage_row["reasoning_tokens"], 7)
+        self.assertNotIn(
+            "cache_creation_input_tokens",
+            cast(dict[str, object], usage_row["metadata"]),
+        )
+        self.assertNotIn(
+            "reasoning_tokens",
+            cast(dict[str, object], usage_row["metadata"]),
+        )
         self.assertEqual(
             await self.store.list_usage(
                 run.run_id,

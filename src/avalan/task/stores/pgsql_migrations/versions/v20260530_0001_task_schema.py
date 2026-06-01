@@ -427,6 +427,8 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
     "completion_tokens" INTEGER DEFAULT NULL,
     "total_tokens" INTEGER DEFAULT NULL,
     "cached_tokens" INTEGER DEFAULT NULL,
+    "cache_creation_input_tokens" INTEGER DEFAULT NULL,
+    "reasoning_tokens" INTEGER DEFAULT NULL,
     "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -451,6 +453,13 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
         CHECK ("total_tokens" IS NULL OR "total_tokens" >= 0),
     CONSTRAINT "ck_task_usage_records_cached_tokens_non_negative"
         CHECK ("cached_tokens" IS NULL OR "cached_tokens" >= 0),
+    CONSTRAINT "ck_task_usage_records_cache_creation_tokens_non_negative"
+        CHECK (
+            "cache_creation_input_tokens" IS NULL
+            OR "cache_creation_input_tokens" >= 0
+        ),
+    CONSTRAINT "ck_task_usage_records_reasoning_tokens_non_negative"
+        CHECK ("reasoning_tokens" IS NULL OR "reasoning_tokens" >= 0),
     CONSTRAINT "ck_task_usage_records_cached_not_above_prompt"
         CHECK (
             "cached_tokens" IS NULL
@@ -469,6 +478,8 @@ CREATE TABLE IF NOT EXISTS "task_run_rollups" (
     "completion_tokens" BIGINT DEFAULT NULL,
     "total_tokens" BIGINT DEFAULT NULL,
     "cached_tokens" BIGINT DEFAULT NULL,
+    "cache_creation_input_tokens" BIGINT DEFAULT NULL,
+    "reasoning_tokens" BIGINT DEFAULT NULL,
     "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -486,6 +497,13 @@ CREATE TABLE IF NOT EXISTS "task_run_rollups" (
         CHECK ("total_tokens" IS NULL OR "total_tokens" >= 0),
     CONSTRAINT "ck_task_run_rollups_cached_tokens_non_negative"
         CHECK ("cached_tokens" IS NULL OR "cached_tokens" >= 0),
+    CONSTRAINT "ck_task_run_rollups_cache_creation_tokens_non_negative"
+        CHECK (
+            "cache_creation_input_tokens" IS NULL
+            OR "cache_creation_input_tokens" >= 0
+        ),
+    CONSTRAINT "ck_task_run_rollups_reasoning_tokens_non_negative"
+        CHECK ("reasoning_tokens" IS NULL OR "reasoning_tokens" >= 0),
     CONSTRAINT "ck_task_run_rollups_cached_not_above_prompt"
         CHECK (
             "cached_tokens" IS NULL

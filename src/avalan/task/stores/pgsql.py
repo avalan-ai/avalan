@@ -805,15 +805,9 @@ class PgsqlTaskStore:
                     totals.output_tokens,
                     totals.total_tokens,
                     totals.cached_input_tokens,
-                    _json(
-                        {
-                            **dict(metadata or {}),
-                            "cache_creation_input_tokens": (
-                                totals.cache_creation_input_tokens
-                            ),
-                            "reasoning_tokens": totals.reasoning_tokens,
-                        }
-                    ),
+                    totals.cache_creation_input_tokens,
+                    totals.reasoning_tokens,
+                    _json(metadata or {}),
                     now,
                 ),
             )
@@ -1494,9 +1488,10 @@ WHERE "run_id" = %s
 _INSERT_USAGE_SQL = """
 INSERT INTO "task_usage_records" (
     "usage_id", "run_id", "attempt_id", "sequence", "source", "prompt_tokens",
-    "completion_tokens", "total_tokens", "cached_tokens", "metadata",
+    "completion_tokens", "total_tokens", "cached_tokens",
+    "cache_creation_input_tokens", "reasoning_tokens", "metadata",
     "created_at"
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
 ON CONFLICT ("usage_id") DO NOTHING
 RETURNING *
 """
@@ -1750,11 +1745,15 @@ def _usage_from_row(row: Mapping[str, object]) -> UsageRecord:
             cached_input_tokens=cast(int | None, row.get("cached_tokens")),
             cache_creation_input_tokens=cast(
                 int | None,
-                metadata.get("cache_creation_input_tokens"),
+                row.get(
+                    "cache_creation_input_tokens",
+                    metadata.get("cache_creation_input_tokens"),
+                ),
             ),
             output_tokens=cast(int | None, row.get("completion_tokens")),
             reasoning_tokens=cast(
-                int | None, metadata.get("reasoning_tokens")
+                int | None,
+                row.get("reasoning_tokens", metadata.get("reasoning_tokens")),
             ),
             total_tokens=cast(int | None, row.get("total_tokens")),
         ),
