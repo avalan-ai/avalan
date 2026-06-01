@@ -63,6 +63,16 @@ _COMMON_SAFE_FIELDS = frozenset(
         "type",
     }
 )
+_EVENT_COMMON_SAFE_FIELDS = frozenset(
+    _COMMON_SAFE_FIELDS
+    - {
+        "details",
+        "hint",
+        "issues",
+        "message",
+        "path",
+    }
+)
 _TOKEN_EVENT_TYPES = frozenset(
     {
         "input_token_count_after",
@@ -408,7 +418,7 @@ class PrivacySanitizer:
         redacted: dict[str, PrivacySafeValue] = {"event_type": event_type}
         for key, item in payload.items():
             if key in allowed_fields:
-                redacted[key] = _safe_metadata_value(item)
+                redacted[key] = _safe_event_metadata_value(item)
         return redacted
 
     def _store(self, value: object) -> dict[str, PrivacySafeValue]:
@@ -462,7 +472,7 @@ def _freeze_allowlists(
 
 
 def _default_event_allowed_fields(event_type: str) -> frozenset[str]:
-    allowed_fields = _COMMON_SAFE_FIELDS
+    allowed_fields = _EVENT_COMMON_SAFE_FIELDS
     if event_type in _TOKEN_EVENT_TYPES:
         return allowed_fields
     if event_type in _ENGINE_EVENT_TYPES:
@@ -532,4 +542,26 @@ def _safe_metadata_value(value: object) -> PrivacySafeValue:
         return REDACTED_MARKER
     if isinstance(value, list | tuple):
         return [_safe_metadata_value(item) for item in value]
+    return REDACTED_MARKER
+
+
+def _safe_event_metadata_value(value: object) -> PrivacySafeValue:
+    if value is None or isinstance(value, bool | str):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if isfinite(value):
+            return value
+        return REDACTED_MARKER
+    if isinstance(value, Mapping):
+        safe: dict[str, PrivacySafeValue] = {}
+        for key, item in value.items():
+            if isinstance(key, str) and key in _EVENT_COMMON_SAFE_FIELDS:
+                safe[key] = _safe_event_metadata_value(item)
+        if safe:
+            return safe
+        return REDACTED_MARKER
+    if isinstance(value, list | tuple):
+        return [_safe_event_metadata_value(item) for item in value]
     return REDACTED_MARKER

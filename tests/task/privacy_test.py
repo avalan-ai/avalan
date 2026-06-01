@@ -377,6 +377,60 @@ class PrivacyTest(TestCase):
         self.assertNotIn("private prompt", str(unknown))
         self.assertNotIn("secret token", str(unknown))
 
+    def test_event_redaction_drops_error_text_and_paths(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        event = sanitizer.sanitize_event(
+            "model_error",
+            {
+                "code": "provider_timeout",
+                "count": 1,
+                "details": {
+                    "code": "nested_timeout",
+                    "message": "private exception text",
+                    "path": "/Users/person/secret.pdf",
+                },
+                "duration_ms": 1.5,
+                "elapsed_ms": inf,
+                "message": "private exception text",
+                "path": "/Users/person/secret.pdf",
+                "retryable": True,
+                "stack": "private stack trace",
+                "status": [
+                    "failed",
+                    SecretObject(),
+                    {
+                        "code": "nested_status",
+                        "message": "private nested message",
+                    },
+                    {"secret": "private nested value"},
+                ],
+            },
+        )
+
+        self.assertEqual(
+            event,
+            {
+                "code": "provider_timeout",
+                "count": 1,
+                "duration_ms": 1.5,
+                "elapsed_ms": REDACTED_MARKER,
+                "event_type": "model_error",
+                "retryable": True,
+                "status": [
+                    "failed",
+                    REDACTED_MARKER,
+                    {"code": "nested_status"},
+                    REDACTED_MARKER,
+                ],
+            },
+        )
+        self.assertNotIn("private", str(event))
+        self.assertNotIn("/Users/person/secret.pdf", str(event))
+        self.assertNotIn("message", str(event))
+        self.assertNotIn("path", str(event))
+        self.assertNotIn("stack", str(event))
+
     def test_safe_metadata_redaction_is_recursive_and_bounded(self) -> None:
         sanitizer = PrivacySanitizer()
 
