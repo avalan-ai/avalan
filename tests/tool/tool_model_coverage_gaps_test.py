@@ -1,5 +1,6 @@
 import builtins
 import importlib
+from asyncio import run
 from unittest.mock import patch
 
 import pytest
@@ -67,15 +68,23 @@ def _reload_with_blocked_imports(
 
 
 def test_browser_module_import_fallbacks_are_initialized() -> None:
-    module = _reload_with_blocked_imports(
-        "avalan.tool.browser",
-        ("faiss", "markitdown", "numpy", "playwright.async_api"),
-    )
+    with patch.dict("sys.modules", {"markdownify": None}):
+        module = _reload_with_blocked_imports(
+            "avalan.tool.browser",
+            (
+                "faiss",
+                "markdownify",
+                "markitdown",
+                "numpy",
+                "playwright.async_api",
+            ),
+        )
 
     assert module.HAS_BROWSER_DEPENDENCIES is False
     assert module.IndexFlatL2 is None
     assert module.MarkItDown is None
     assert module.async_playwright is None
+    assert module.markdownify_html is None
 
     importlib.reload(module)
 
@@ -140,6 +149,36 @@ def test_browser_tools_raise_when_dependencies_are_unavailable(
 
     with pytest.raises(ImportError):
         browser.BrowserToolSet(BrowserToolSettings())
+
+
+def test_browser_tool_requires_document_converter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avalan.tool import browser
+
+    class FakePage:
+        async def goto(self, url: str) -> object:
+            return type(
+                "Response",
+                (),
+                {"headers": {"content-type": "text/html; charset=utf-8"}},
+            )()
+
+        async def content(self) -> str:
+            return "<html><body>private</body></html>"
+
+    tool = object.__new__(browser.BrowserTool)
+    tool._settings = BrowserToolSettings()
+    tool._client = object()
+    tool._browser = object()
+    tool._page = FakePage()
+    tool._md = None
+    tool._partitioner = None
+
+    monkeypatch.setattr(browser, "markdownify_html", None)
+
+    with pytest.raises(RuntimeError, match="document conversion"):
+        run(tool._read("https://example.com"))
 
 
 def test_tool_manager_ignores_nested_toolset_entries() -> None:

@@ -815,6 +815,31 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
                 "model_uninstall",
             ),
             ("task_validate", "avalan.cli.commands.task", "task_validate"),
+            (
+                "task_pgsql_check",
+                "avalan.cli.commands.task",
+                "task_pgsql_check",
+            ),
+            (
+                "task_pgsql_diagnose",
+                "avalan.cli.commands.task",
+                "task_pgsql_diagnose",
+            ),
+            (
+                "task_pgsql_migrate",
+                "avalan.cli.commands.task",
+                "task_pgsql_migrate",
+            ),
+            (
+                "task_pgsql_stamp",
+                "avalan.cli.commands.task",
+                "task_pgsql_stamp",
+            ),
+            (
+                "task_pgsql_status",
+                "avalan.cli.commands.task",
+                "task_pgsql_status",
+            ),
         ]
         for wrapper_name, module_name, function_name in commands:
             command.reset_mock()
@@ -916,6 +941,21 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             task_validate_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_validate")
             )
+            task_pgsql_check_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_check")
+            )
+            task_pgsql_diagnose_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_diagnose")
+            )
+            task_pgsql_migrate_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_migrate")
+            )
+            task_pgsql_stamp_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_stamp")
+            )
+            task_pgsql_status_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_status")
+            )
             tokenize_mock = stack.enter_context(
                 patch("avalan.cli.__main__.tokenize", AsyncMock())
             )
@@ -938,6 +978,11 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
                 ("task", "validate", task_validate_mock),
+                ("task", "pgsql:check", task_pgsql_check_mock),
+                ("task", "pgsql:diagnose", task_pgsql_diagnose_mock),
+                ("task", "pgsql:migrate", task_pgsql_migrate_mock),
+                ("task", "pgsql:stamp", task_pgsql_stamp_mock),
+                ("task", "pgsql:status", task_pgsql_status_mock),
                 ("tokenizer", None, tokenize_mock),
             ]
             for cmd, subcmd, fn in scenarios:
@@ -962,7 +1007,11 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 elif cmd == "deploy":
                     args.deploy_command = subcmd
                 elif cmd == "task":
-                    args.task_command = subcmd
+                    if subcmd and subcmd.startswith("pgsql:"):
+                        args.task_command = "pgsql"
+                        args.task_pgsql_command = subcmd.split(":", 1)[1]
+                    else:
+                        args.task_command = subcmd
                 await self.cli._main(args, theme, console, hub)
                 self.assertTrue(fn.called)
                 fn.reset_mock()

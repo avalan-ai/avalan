@@ -181,6 +181,15 @@ class DsmlToolsTestCase(TestCase):
             with self.assertRaises(RuntimeError):
                 DsmlTools.render_tool_result("content")
 
+    def test_nested_pyds4_import_error_is_preserved(self):
+        error = ModuleNotFoundError("nested")
+        error.name = "pyds4_nested"
+        with patch("avalan.tool.dsml.import_module", side_effect=error):
+            with self.assertRaises(ModuleNotFoundError) as raised:
+                DsmlTools.render_tool_result("content")
+
+        self.assertIs(raised.exception, error)
+
     def test_render_prompt_with_thinking_handles_intermediate_assistant(self):
         rendered = DsmlTools.render_prompt(
             None,

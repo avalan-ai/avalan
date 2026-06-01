@@ -86,6 +86,16 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 await loader.from_file(path, agent_id=uuid4())
         await stack.aclose()
 
+    def test_validate_agent_file_permission_error_when_access_denied(self):
+        with NamedTemporaryFile() as tmp:
+            path = tmp.name
+        with (
+            patch("avalan.agent.loader.exists", return_value=True),
+            patch("avalan.agent.loader.access", return_value=False),
+        ):
+            with self.assertRaises(PermissionError):
+                OrchestratorLoader.validate_agent_file(path)
+
     async def test_load_default_orchestrator(self):
         config = """
 [agent]

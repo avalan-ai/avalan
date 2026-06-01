@@ -113,6 +113,18 @@ def test_binding_metadata_uses_binding_backend_when_capability_empty() -> None:
     assert metadata.native_backend_name == "metal"
 
 
+def test_binding_metadata_allows_missing_backend_names() -> None:
+    metadata = binding_metadata(
+        _fake_binding(
+            __ds4_native_backend__=None,
+            capabilities=lambda: _fake_capabilities(backend=None),
+        ),
+        native_backend_name=None,
+    )
+
+    assert metadata.native_backend_name is None
+
+
 def test_import_compatible_binding_rejects_import_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

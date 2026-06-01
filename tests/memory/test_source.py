@@ -1,3 +1,5 @@
+import builtins
+import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +13,29 @@ from avalan.memory.source import MemorySource, MemorySourceDocument
 def require_markitdown_package() -> None:
     if memory_source_module.MarkItDown is None:
         pytest.skip("markitdown is unavailable")
+
+
+def test_memory_source_import_fallback_without_markitdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def guarded_import(
+        name: str,
+        globals=None,
+        locals=None,
+        fromlist=(),
+        level: int = 0,
+    ):
+        if name == "markitdown":
+            raise ImportError(name)
+        return original_import(name, globals, locals, fromlist, level)
+
+    with monkeypatch.context() as context:
+        context.setattr(builtins, "__import__", guarded_import)
+        module = importlib.reload(memory_source_module)
+        assert module.MarkItDown is None
+    importlib.reload(memory_source_module)
 
 
 class DummyResponse:

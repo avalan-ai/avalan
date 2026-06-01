@@ -4,9 +4,16 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 
+import avalan.model.nlp.text.vllm as vllm_module
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
-from avalan.model.nlp.text.vllm import VllmModel, VllmStream
+from avalan.model.nlp.text.vllm import (
+    VllmModel,
+    VllmStream,
+    _llm_class,
+    _sampling_params_class,
+    _vllm_attribute,
+)
 
 
 class VllmStreamTestCase(IsolatedAsyncioTestCase):
@@ -69,6 +76,29 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         with patch("avalan.model.nlp.text.vllm.LLM", None):
             with self.assertRaises(AssertionError):
                 model._load_model()
+
+    def test_vllm_attribute_returns_none_when_dependency_missing(self):
+        def fail_import(module_name: str) -> object:
+            self.assertEqual(module_name, "vllm")
+            raise ImportError(module_name)
+
+        with patch.object(vllm_module, "import_module", fail_import):
+            self.assertIsNone(_vllm_attribute("LLM"))
+
+    def test_lazy_vllm_classes_resolve_from_imported_module(self):
+        fake_module = SimpleNamespace(LLM="llm-class", SamplingParams="params")
+
+        def import_module(module_name: str) -> object:
+            self.assertEqual(module_name, "vllm")
+            return fake_module
+
+        with (
+            patch.object(vllm_module, "LLM", vllm_module._UNSET),
+            patch.object(vllm_module, "SamplingParams", vllm_module._UNSET),
+            patch.object(vllm_module, "import_module", import_module),
+        ):
+            self.assertEqual(_llm_class(), "llm-class")
+            self.assertEqual(_sampling_params_class(), "params")
 
     def test_load_model_with_vllm(self):
         model = self._make_model()
