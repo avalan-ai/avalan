@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import UTC, datetime
 from json import loads
 from pathlib import Path
 from sys import path as sys_path
@@ -16,6 +17,7 @@ from store_contract_test import (  # type: ignore[import-not-found]
 from avalan.task import (
     IdempotencyMode,
     TaskEventCategory,
+    TaskExecutionRequest,
     TaskIdempotencyDigest,
     TaskIdempotencyIdentity,
     UsageSource,
@@ -236,7 +238,7 @@ class FakeCursor:
         elif 'UPDATE "task_artifacts"' in query:
             self.row = self._transition_artifact(params)
         elif 'SELECT * FROM "task_idempotency_keys"' in query:
-            self.row = self.database.idempotency.get(cast(str, params[0]))
+            self.row = self._select_idempotency(params)
         elif 'INSERT INTO "task_idempotency_keys"' in query:
             self.row = self._insert_idempotency(params)
         else:
@@ -491,8 +493,12 @@ class FakeCursor:
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
         identity_key = cast(str, params[0])
-        if identity_key in self.database.idempotency:
-            return None
+        existing = self.database.idempotency.get(identity_key)
+        if existing is not None:
+            expires_at = cast(datetime | None, existing["expires_at"])
+            checked_at = cast(datetime, params[14])
+            if expires_at is None or expires_at > checked_at:
+                return None
         row = {
             "identity_key": identity_key,
             "task_name": params[1],
@@ -510,6 +516,19 @@ class FakeCursor:
             "created_at": params[13],
         }
         self.database.idempotency[identity_key] = row
+        return row
+
+    def _select_idempotency(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        row = self.database.idempotency.get(cast(str, params[0]))
+        if row is None:
+            return None
+        expires_at = cast(datetime | None, row["expires_at"])
+        checked_at = cast(datetime, params[1])
+        if expires_at is not None and expires_at <= checked_at:
+            return None
         return row
 
     def _attempts_for_run(
@@ -740,6 +759,53 @@ class PgsqlStoreContractTest(
         self.assertTrue(reservation.created)
         self.assertFalse(repeated.created)
         self.assertEqual(repeated.reservation, reservation.reservation)
+
+    async def test_expired_idempotency_reservation_can_be_replaced(
+        self,
+    ) -> None:
+        first_run = await self._created_run()
+        second_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id=first_run.definition_id)
+        )
+        expires_at = datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
+        identity = TaskIdempotencyIdentity(
+            identity_key="identity-expiring",
+            task_name="summarize",
+            task_version="1",
+            spec_hash="hash-a",
+            owner_scope=TaskIdempotencyDigest(
+                algorithm="hmac-sha256",
+                digest="a" * 64,
+                key_id="idempotency-v1",
+            ),
+            strategy=IdempotencyMode.INPUT_HASH,
+            input=TaskIdempotencyDigest(
+                algorithm="hmac-sha256",
+                digest="b" * 64,
+                key_id="idempotency-v1",
+            ),
+        )
+
+        first = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=first_run.run_id,
+            expires_at=expires_at,
+        )
+        self.clock._next = expires_at  # noqa: SLF001
+        second = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=second_run.run_id,
+            metadata={"source": "replacement"},
+        )
+
+        self.assertTrue(first.created)
+        self.assertTrue(second.created)
+        self.assertEqual(second.reservation.run_id, second_run.run_id)
+        self.assertEqual(second.reservation.metadata["source"], "replacement")
+        self.assertEqual(
+            self.database.idempotency[identity.identity_key]["run_id"],
+            second_run.run_id,
+        )
 
     async def test_cached_usage_counters_are_independent(self) -> None:
         run = await self._created_run()

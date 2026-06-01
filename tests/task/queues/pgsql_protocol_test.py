@@ -249,7 +249,7 @@ class FakeCursor:
         elif 'INSERT INTO "task_attempts"' in query:
             self.row = self._insert_attempt(params)
         elif 'SELECT * FROM "task_idempotency_keys"' in query:
-            self.row = self.database.idempotency.get(cast(str, params[0]))
+            self.row = self._select_idempotency(params)
         elif 'INSERT INTO "task_idempotency_keys"' in query:
             self.row = self._insert_idempotency(params)
         elif 'INSERT INTO "task_artifacts"' in query:
@@ -574,8 +574,12 @@ class FakeCursor:
         if self.database.drop_idempotency_insert:
             self.database.drop_idempotency_insert = False
             return None
-        if identity_key in self.database.idempotency:
-            return None
+        existing = self.database.idempotency.get(identity_key)
+        if existing is not None:
+            expires_at = cast(datetime | None, existing["expires_at"])
+            checked_at = cast(datetime, params[14])
+            if expires_at is None or expires_at > checked_at:
+                return None
         row = {
             "identity_key": identity_key,
             "task_name": params[1],
@@ -601,6 +605,19 @@ class FakeCursor:
             "created_at": params[13],
         }
         self.database.idempotency[identity_key] = row
+        return row
+
+    def _select_idempotency(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        row = self.database.idempotency.get(cast(str, params[0]))
+        if row is None:
+            return None
+        expires_at = cast(datetime | None, row["expires_at"])
+        checked_at = cast(datetime, params[1])
+        if expires_at is not None and expires_at <= checked_at:
+            return None
         return row
 
     def _insert_artifact(
@@ -1160,6 +1177,32 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             [existing.run.run_id],
         )
         self.assertEqual(len(self.database.queue_items), 1)
+
+    async def test_enqueue_run_replaces_expired_idempotency_key(self) -> None:
+        identity = self._identity()
+        expires_at = self.now + timedelta(seconds=10)
+        first = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+            idempotency_expires_at=expires_at,
+        )
+        self.clock._next = expires_at  # noqa: SLF001
+
+        second = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+        )
+
+        self.assertTrue(first.created)
+        self.assertTrue(second.created)
+        self.assertNotEqual(first.run.run_id, second.run.run_id)
+        self.assertEqual(
+            self.database.idempotency[identity.identity_key]["run_id"],
+            second.run.run_id,
+        )
+        self.assertEqual(len(self.database.queue_items), 2)
 
     async def test_enqueue_run_rolls_back_failed_submission(self) -> None:
         self.database.fail_on_query = 'INSERT INTO "task_queue_items"'

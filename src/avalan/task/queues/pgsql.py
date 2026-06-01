@@ -1514,6 +1514,7 @@ async def _reserve_idempotency(
             _json({}),
             expires_at,
             now,
+            now,
         ),
     )
     row = await unit.cursor.fetchone()

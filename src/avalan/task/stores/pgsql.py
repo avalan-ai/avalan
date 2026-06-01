@@ -1072,13 +1072,17 @@ class PgsqlTaskStore:
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
             await _run_or_raise(unit, run_id)
-            existing = await _active_idempotency_reservation(unit, identity)
+            now = self._now()
+            existing = await _active_idempotency_reservation(
+                unit,
+                identity,
+                now=now,
+            )
             if existing is not None:
                 return TaskIdempotencyReservationResult(
                     reservation=existing,
                     created=False,
                 )
-            now = self._now()
             await unit.cursor.execute(
                 _INSERT_IDEMPOTENCY_SQL,
                 (
@@ -1112,6 +1116,7 @@ class PgsqlTaskStore:
                     _json(metadata or {}),
                     expires_at,
                     now,
+                    now,
                 ),
             )
             row = await unit.cursor.fetchone()
@@ -1119,6 +1124,7 @@ class PgsqlTaskStore:
                 existing = await _active_idempotency_reservation(
                     unit,
                     identity,
+                    now=now,
                 )
                 if existing is not None:
                     return TaskIdempotencyReservationResult(
@@ -1148,7 +1154,11 @@ class PgsqlTaskStore:
         assert isinstance(identity, TaskIdempotencyIdentity)
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
-            return await _active_idempotency_reservation(unit, identity)
+            return await _active_idempotency_reservation(
+                unit,
+                identity,
+                now=self._now(),
+            )
 
         return cast(
             TaskIdempotencyReservation | None,
@@ -1539,7 +1549,22 @@ INSERT INTO "task_idempotency_keys" (
     "created_at"
 ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s::jsonb,
           %s::jsonb, %s, %s::jsonb, %s, %s)
-ON CONFLICT ("identity_key") DO NOTHING
+ON CONFLICT ("identity_key") DO UPDATE
+SET "task_name" = EXCLUDED."task_name",
+    "task_version" = EXCLUDED."task_version",
+    "spec_hash" = EXCLUDED."spec_hash",
+    "owner_scope_hash" = EXCLUDED."owner_scope_hash",
+    "strategy" = EXCLUDED."strategy",
+    "window_hash" = EXCLUDED."window_hash",
+    "input_hash" = EXCLUDED."input_hash",
+    "file_hash" = EXCLUDED."file_hash",
+    "custom_hash" = EXCLUDED."custom_hash",
+    "run_id" = EXCLUDED."run_id",
+    "metadata" = EXCLUDED."metadata",
+    "expires_at" = EXCLUDED."expires_at",
+    "created_at" = EXCLUDED."created_at"
+WHERE "task_idempotency_keys"."expires_at" IS NOT NULL
+  AND "task_idempotency_keys"."expires_at" <= %s
 RETURNING *
 """
 _SELECT_IDEMPOTENCY_SQL = """
@@ -1627,10 +1652,12 @@ async def _artifact_or_raise(
 async def _active_idempotency_reservation(
     unit: PgsqlUnitOfWork,
     identity: TaskIdempotencyIdentity,
+    *,
+    now: datetime,
 ) -> TaskIdempotencyReservation | None:
     await unit.cursor.execute(
         _SELECT_IDEMPOTENCY_SQL,
-        (identity.identity_key, datetime.now(UTC)),
+        (identity.identity_key, now),
     )
     row = await unit.cursor.fetchone()
     if row is None:
