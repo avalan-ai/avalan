@@ -63,6 +63,8 @@ class PgsqlMigrationSchemaTest(TestCase):
         self.assertIn('"uq_task_attempts_one_active_per_run"', schema)
         self.assertIn('"uq_task_idempotency_keys_identity"', schema)
         self.assertIn('"uq_task_events_run_sequence"', schema)
+        self.assertIn('"uq_task_usage_records_run_sequence"', schema)
+        self.assertIn('"ck_task_usage_records_sequence_positive"', schema)
         self.assertIn(
             "WHERE \"state\" NOT IN ('succeeded', 'failed', 'abandoned')",
             schema,
@@ -135,6 +137,16 @@ class PgsqlMigrationSchemaTest(TestCase):
             self.assertIn(f'"{constraint_name}"', schema)
 
         self.assertNotIn("raw_payload", schema)
+
+    def test_schema_orders_usage_records_by_typed_sequence(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        self.assertIn('"sequence" BIGINT NOT NULL', schema)
+        self.assertIn('"ix_task_usage_records_by_run_sequence"', schema)
+        self.assertIn(
+            'ON "task_usage_records" ("run_id", "sequence")',
+            schema,
+        )
 
     def test_schema_keeps_queue_and_lease_hot_fields_typed(self) -> None:
         schema = "\n".join(task_pgsql_schema_statements())

@@ -799,6 +799,7 @@ class PgsqlTaskStore:
                     self._new_id(),
                     run_id,
                     attempt_id,
+                    sequence,
                     source.value,
                     totals.input_tokens,
                     totals.output_tokens,
@@ -807,7 +808,6 @@ class PgsqlTaskStore:
                     _json(
                         {
                             **dict(metadata or {}),
-                            "sequence": sequence,
                             "cache_creation_input_tokens": (
                                 totals.cache_creation_input_tokens
                             ),
@@ -1484,16 +1484,16 @@ WHERE "run_id" = %s
 ORDER BY "sequence", "created_at", "event_id"
 """
 _SELECT_NEXT_USAGE_SEQUENCE_SQL = """
-SELECT COUNT(*) + 1 AS "sequence"
+SELECT COALESCE(MAX("sequence"), 0) + 1 AS "sequence"
 FROM "task_usage_records"
 WHERE "run_id" = %s
 """
 _INSERT_USAGE_SQL = """
 INSERT INTO "task_usage_records" (
-    "usage_id", "run_id", "attempt_id", "source", "prompt_tokens",
+    "usage_id", "run_id", "attempt_id", "sequence", "source", "prompt_tokens",
     "completion_tokens", "total_tokens", "cached_tokens", "metadata",
     "created_at"
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
 ON CONFLICT ("usage_id") DO NOTHING
 RETURNING *
 """
@@ -1732,7 +1732,7 @@ def _usage_from_row(row: Mapping[str, object]) -> UsageRecord:
         usage_id=cast(str, row["usage_id"]),
         run_id=cast(str, row["run_id"]),
         attempt_id=cast(str | None, row.get("attempt_id")),
-        sequence=cast(int, metadata.get("sequence", 1)),
+        sequence=cast(int, row["sequence"]),
         source=UsageSource(cast(str, row["source"])),
         totals=UsageTotals(
             input_tokens=cast(int | None, row.get("prompt_tokens")),
@@ -1756,7 +1756,6 @@ def _usage_from_row(row: Mapping[str, object]) -> UsageRecord:
                 not in {
                     "cache_creation_input_tokens",
                     "reasoning_tokens",
-                    "sequence",
                 }
             }
         ),

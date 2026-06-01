@@ -197,12 +197,12 @@ class FakeCursor:
             self.row = self._insert_attempt_transition(params)
         elif 'FROM "task_attempt_transitions"' in query:
             self.rows = self._attempt_transitions(cast(str, params[0]))
-        elif 'MAX("sequence")' in query:
+        elif 'MAX("sequence")' in query and 'FROM "task_events"' in query:
             run_id = cast(str, params[0])
             self.row = {
                 "sequence": self._next_sequence(self.database.events, run_id)
             }
-        elif "COUNT(*) + 1" in query:
+        elif 'MAX("sequence")' in query:
             run_id = cast(str, params[0])
             self.row = {
                 "sequence": self._next_sequence(self.database.usage, run_id)
@@ -223,7 +223,7 @@ class FakeCursor:
                 self.database.usage,
                 cast(str, params[0]),
                 cast(str | None, params[1]),
-                "created_at",
+                "sequence",
             )
         elif 'SELECT * FROM "task_artifacts" WHERE "artifact_id"' in query:
             self.row = self.database.artifacts.get(cast(str, params[0]))
@@ -434,13 +434,14 @@ class FakeCursor:
             "usage_id": usage_id,
             "run_id": params[1],
             "attempt_id": params[2],
-            "source": params[3],
-            "prompt_tokens": params[4],
-            "completion_tokens": params[5],
-            "total_tokens": params[6],
-            "cached_tokens": params[7],
-            "metadata": loads(cast(str, params[8])),
-            "created_at": params[9],
+            "sequence": params[3],
+            "source": params[4],
+            "prompt_tokens": params[5],
+            "completion_tokens": params[6],
+            "total_tokens": params[7],
+            "cached_tokens": params[8],
+            "metadata": loads(cast(str, params[9])),
+            "created_at": params[10],
         }
         self.database.usage[usage_id] = row
         return row
@@ -580,7 +581,14 @@ class FakeCursor:
         run_id: str,
     ) -> int:
         return (
-            len(tuple(row for row in rows.values() if row["run_id"] == run_id))
+            max(
+                (
+                    cast(int, row["sequence"])
+                    for row in rows.values()
+                    if row["run_id"] == run_id
+                ),
+                default=0,
+            )
             + 1
         )
 
@@ -635,6 +643,17 @@ class PgsqlStoreContractTest(
             ),
             metadata={"provider": "test"},
         )
+        second_usage = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(
+                input_tokens=4,
+                output_tokens=2,
+                total_tokens=6,
+            ),
+            metadata={"provider": "second"},
+        )
         identity = TaskIdempotencyIdentity(
             identity_key="identity-1",
             task_name="summarize",
@@ -671,23 +690,24 @@ class PgsqlStoreContractTest(
             (event,),
         )
         self.assertEqual(usage.sequence, 1)
+        self.assertEqual(second_usage.sequence, 2)
         self.assertEqual(usage.metadata["provider"], "test")
         self.assertEqual(
             await self.store.list_usage(
                 run.run_id,
                 attempt_id=attempt.attempt_id,
             ),
-            (usage,),
+            (usage, second_usage),
         )
         self.assertEqual(
             await self.store.usage_totals(run.run_id),
             UsageTotals(
-                input_tokens=3,
+                input_tokens=7,
                 cached_input_tokens=1,
                 cache_creation_input_tokens=2,
-                output_tokens=5,
+                output_tokens=7,
                 reasoning_tokens=7,
-                total_tokens=8,
+                total_tokens=14,
             ),
         )
         self.assertTrue(reservation.created)

@@ -421,6 +421,7 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
     "usage_id" TEXT NOT NULL,
     "run_id" TEXT NOT NULL,
     "attempt_id" TEXT DEFAULT NULL,
+    "sequence" BIGINT NOT NULL,
     "source" TEXT NOT NULL,
     "prompt_tokens" INTEGER DEFAULT NULL,
     "completion_tokens" INTEGER DEFAULT NULL,
@@ -436,6 +437,10 @@ CREATE TABLE IF NOT EXISTS "task_usage_records" (
     CONSTRAINT "fk_task_usage_records__task_attempts"
         FOREIGN KEY ("attempt_id")
         REFERENCES "task_attempts" ("attempt_id"),
+    CONSTRAINT "uq_task_usage_records_run_sequence"
+        UNIQUE ("run_id", "sequence"),
+    CONSTRAINT "ck_task_usage_records_sequence_positive"
+        CHECK ("sequence" > 0),
     CONSTRAINT "ck_task_usage_records_source_non_empty"
         CHECK (LENGTH(BTRIM("source")) > 0),
     CONSTRAINT "ck_task_usage_records_prompt_tokens_non_negative"
@@ -626,6 +631,10 @@ CREATE INDEX IF NOT EXISTS "ix_task_events_by_attempt"
     """
 CREATE INDEX IF NOT EXISTS "ix_task_usage_records_by_run"
     ON "task_usage_records" ("run_id", "created_at");
+""",
+    """
+CREATE INDEX IF NOT EXISTS "ix_task_usage_records_by_run_sequence"
+    ON "task_usage_records" ("run_id", "sequence");
 """,
     """
 CREATE OR REPLACE FUNCTION "task_reject_terminal_run_state_change"()
