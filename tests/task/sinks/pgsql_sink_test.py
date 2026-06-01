@@ -124,6 +124,28 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(sink.health().event_count, 1)
         self.assertEqual(sink.health().usage_count, 1)
 
+    async def test_usage_uses_configured_attempt_when_not_provided(
+        self,
+    ) -> None:
+        sink = PgsqlInspectionSink(
+            store=self.store,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+        )
+
+        await sink.record_usage(
+            run_id=self.run.run_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(total_tokens=8),
+        )
+
+        usage = await sink.usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+        )
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].attempt_id, self.attempt.attempt_id)
+
     async def test_recorded_events_are_not_duplicated_by_default(
         self,
     ) -> None:

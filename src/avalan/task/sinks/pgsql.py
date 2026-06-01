@@ -138,9 +138,10 @@ class PgsqlInspectionSink(ObservabilitySink):
         assert isinstance(source, UsageSource)
         assert isinstance(totals, UsageTotals)
         try:
+            effective_attempt_id = attempt_id or self.attempt_id
             await self.store.append_usage(
                 run_id,
-                attempt_id=attempt_id,
+                attempt_id=effective_attempt_id,
                 source=source,
                 totals=totals,
                 metadata=metadata,
