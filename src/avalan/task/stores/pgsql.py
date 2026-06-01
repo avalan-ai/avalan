@@ -46,7 +46,7 @@ from ..idempotency import (
     TaskIdempotencyReservation,
     TaskIdempotencyReservationResult,
 )
-from ..state import TaskAttemptState, TaskRunState
+from ..state import TaskAttemptState, TaskRunState, is_terminal_run_state
 from ..store import (
     TaskAttempt,
     TaskAttemptTransition,
@@ -345,6 +345,7 @@ class PgsqlTaskStore:
                 (
                     to_state.value,
                     _json(_result_to_payload(result)) if result else None,
+                    is_terminal_run_state(to_state),
                     now,
                     run_id,
                     run.state.value,
@@ -1386,6 +1387,7 @@ _UPDATE_RUN_STATE_SQL = """
 UPDATE "task_runs"
 SET "state" = %s,
     "result" = COALESCE(%s::jsonb, "result"),
+    "claim" = CASE WHEN %s::boolean THEN NULL ELSE "claim" END,
     "updated_at" = %s
 WHERE "run_id" = %s
   AND "state" = %s

@@ -294,18 +294,20 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
-        run = self.database.runs.get(cast(str, params[3]))
-        if run is None or run["state"] != params[4]:
+        run = self.database.runs.get(cast(str, params[4]))
+        if run is None or run["state"] != params[5]:
             return None
         claim = cast(dict[str, object] | None, run["claim"])
-        if (claim is None and params[5] is not None) or (
-            claim is not None and claim["claim_token"] != params[6]
+        if (claim is None and params[6] is not None) or (
+            claim is not None and claim["claim_token"] != params[7]
         ):
             return None
         run["state"] = params[0]
         if params[1] is not None:
             run["result"] = loads(cast(str, params[1]))
-        run["updated_at"] = params[2]
+        if params[2]:
+            run["claim"] = None
+        run["updated_at"] = params[3]
         return run
 
     def _assign_claim(

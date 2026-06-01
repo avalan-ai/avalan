@@ -16,7 +16,7 @@ from ..idempotency import (
     TaskIdempotencyReservation,
     TaskIdempotencyReservationResult,
 )
-from ..state import TaskAttemptState, TaskRunState
+from ..state import TaskAttemptState, TaskRunState, is_terminal_run_state
 from ..store import (
     TaskAttempt,
     TaskAttemptTransition,
@@ -179,6 +179,7 @@ class InMemoryTaskStore:
             updated = replace(
                 run,
                 state=to_state,
+                claim=None if is_terminal_run_state(to_state) else run.claim,
                 updated_at=now,
                 result=result if result is not None else run.result,
             )

@@ -326,6 +326,14 @@ class StoreContractAssertions:
             claim_token=claim_token,
         )
         self.assertEqual(running_attempt.state, TaskAttemptState.RUNNING)
+        succeeded = await self.store.transition_run(
+            running.run_id,
+            from_states={TaskRunState.RUNNING},
+            to_state=TaskRunState.SUCCEEDED,
+            reason="finished",
+            claim_token=claim_token,
+        )
+        self.assertIsNone(succeeded.claim)
 
     async def test_artifact_metadata_is_appended_and_filtered_by_store(
         self,

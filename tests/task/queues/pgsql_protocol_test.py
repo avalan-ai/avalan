@@ -225,7 +225,11 @@ class FakeCursor:
             self.row = self.database.runs.get(cast(str, params[0]))
         elif 'UPDATE "task_runs"' in query and '"claim" = %s::jsonb' in query:
             self.row = self._assign_run_claim(params)
-        elif 'UPDATE "task_runs"' in query and '"claim" = CASE' in query:
+        elif (
+            'UPDATE "task_runs"' in query
+            and '"claim" = CASE' in query
+            and "\"state\" = 'claimed'" in query
+        ):
             self.row = self._transition_claimed_run(params)
         elif 'UPDATE "task_runs"' in query and "jsonb_set" in query:
             self.row = self._heartbeat_run_claim(params)
@@ -320,7 +324,7 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
-        run_id = cast(str, params[3])
+        run_id = cast(str, params[4])
         row = self.database.runs.get(run_id)
         claim = cast(
             dict[str, object] | None, row.get("claim") if row else None
@@ -330,10 +334,10 @@ class FakeCursor:
             return None
         if (
             row is None
-            or row["state"] != params[4]
+            or row["state"] != params[5]
             or (
-                params[5] is not None
-                and (claim is None or claim.get("claim_token") != params[6])
+                params[6] is not None
+                and (claim is None or claim.get("claim_token") != params[7])
             )
         ):
             return None
@@ -345,7 +349,8 @@ class FakeCursor:
                     if params[1] is not None
                     else row.get("result")
                 ),
-                "updated_at": params[2],
+                "claim": None if params[2] else claim,
+                "updated_at": params[3],
             }
         )
         return row
@@ -748,6 +753,11 @@ class FakeCursor:
         ):
             return None
         row["state"] = params[0]
+        row["claimed_at"] = None
+        row["lease_expires_at"] = None
+        row["worker_id"] = None
+        row["claim_token"] = None
+        row["heartbeat_at"] = None
         row["updated_at"] = params[1]
         return self._with_run_state(row)
 
@@ -1735,9 +1745,19 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(completed.queue_item.state, TaskQueueItemState.DONE)
         self.assertEqual(completed.run.state, TaskRunState.SUCCEEDED)
+        self.assertIsNone(completed.run.claim)
         self.assertEqual(completed.attempt.state, TaskAttemptState.SUCCEEDED)
         self.assertEqual(completed.run.result, result)
         self.assertEqual(completed.attempt.result, result)
+        self.assertIsNone(completed.queue_item.claimed_at)
+        self.assertIsNone(completed.queue_item.lease_expires_at)
+        self.assertIsNone(completed.queue_item.worker_id)
+        self.assertIsNone(completed.queue_item.claim_token)
+        self.assertIsNone(completed.queue_item.heartbeat_at)
+        self.assertIsNone(self.database.runs["run-queued"]["claim"])
+        stored_queue = self.database.queue_items["manual-ready"]
+        self.assertIsNone(stored_queue["claim_token"])
+        self.assertIsNone(stored_queue["worker_id"])
         self.assertEqual(
             [
                 row["to_state"]
@@ -2032,6 +2052,8 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             TaskQueueItemState.DEAD,
         )
         self.assertEqual(exhausted.run.state, TaskRunState.FAILED)
+        self.assertIsNone(exhausted.run.claim)
+        self.assertIsNone(exhausted.queue_item.claim_token)
         self.assertEqual(
             ready.attempt.state,
             TaskAttemptState.ABANDONED,

@@ -27,7 +27,7 @@ from ..queue import (
     TaskQueueRetry,
     TaskQueueSubmission,
 )
-from ..state import TaskAttemptState, TaskRunState
+from ..state import TaskAttemptState, TaskRunState, is_terminal_run_state
 from ..store import (
     TaskAttempt,
     TaskClaim,
@@ -1012,6 +1012,11 @@ RETURNING *
 _COMPLETE_QUEUE_ITEM_SQL = """
 UPDATE "task_queue_items"
 SET "state" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
     "updated_at" = %s
 WHERE "queue_item_id" = %s
   AND "state" = 'claimed'
@@ -1225,7 +1230,10 @@ async def _transition_claimed_run(
         (
             to_state.value,
             _json(_result_to_payload(result)) if result else None,
-            to_state == TaskRunState.QUEUED,
+            (
+                to_state == TaskRunState.QUEUED
+                or is_terminal_run_state(to_state)
+            ),
             now,
             run_id,
             claim_token,
@@ -1506,6 +1514,7 @@ async def _transition_run(
         (
             to_state.value,
             None,
+            False,
             now,
             run_id,
             from_state.value,
