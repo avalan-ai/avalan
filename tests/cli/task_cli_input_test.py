@@ -1,0 +1,822 @@
+from argparse import Namespace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase, main
+
+from rich.console import Console
+
+from avalan.cli.__main__ import CLI, _consume_task_input_field_args
+from avalan.cli.commands import task as task_cmds
+from avalan.task import (
+    PrivacyAction,
+    TaskDefinition,
+    TaskExecutionTarget,
+    TaskInputContract,
+    TaskMetadata,
+    TaskOutputContract,
+    TaskPrivacyPolicy,
+    validate_task_input,
+)
+
+
+class CliTaskInputParserTestCase(TestCase):
+    def test_parser_accepts_task_input_options(self) -> None:
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+
+        args = parser.parse_args(
+            [
+                "task",
+                "enqueue",
+                "tasks/document.task.toml",
+                "--input-json",
+                "@input.json",
+                "--input-question",
+                "What are the risks?",
+                "--input-priority=2",
+                "--file",
+                "documents=report-a.pdf",
+                "--file",
+                "documents=report-b.pdf",
+            ]
+        )
+
+        self.assertEqual(args.command, "task")
+        self.assertEqual(args.task_command, "enqueue")
+        self.assertEqual(args.definition, "tasks/document.task.toml")
+        self.assertEqual(args.task_input_json, "@input.json")
+        self.assertEqual(
+            args.task_input_fields,
+            ("question=What are the risks?", "priority=2"),
+        )
+        self.assertEqual(
+            args.task_files,
+            ["documents=report-a.pdf", "documents=report-b.pdf"],
+        )
+
+    def test_parser_keeps_existing_model_input_file_behavior(self) -> None:
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+
+        args = parser.parse_args(
+            [
+                "model",
+                "run",
+                "model-id",
+                "--input-file",
+                "doc-1.pdf",
+                "--input-file",
+                "doc-2.pdf",
+            ]
+        )
+
+        self.assertEqual(args.input_file, ["doc-1.pdf", "doc-2.pdf"])
+
+    def test_parser_rejects_dynamic_input_outside_task_inputs(self) -> None:
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(
+                [
+                    "model",
+                    "run",
+                    "model-id",
+                    "--input-question",
+                    "raw",
+                ]
+            )
+
+    def test_dynamic_input_rejects_invalid_shapes(self) -> None:
+        cases = (
+            (
+                Namespace(command="model", task_command=None),
+                ["--input-question", "raw"],
+            ),
+            (
+                Namespace(command="task", task_command="inspect"),
+                ["--input-question", "raw"],
+            ),
+            (
+                Namespace(command="task", task_command="run"),
+                ["--not-input", "raw"],
+            ),
+            (
+                Namespace(command="task", task_command="run"),
+                ["--input-question"],
+            ),
+            (
+                Namespace(command="task", task_command="run"),
+                ["--input-question", "--file"],
+            ),
+            (
+                Namespace(command="task", task_command="run"),
+                ["--input-1bad", "raw"],
+            ),
+        )
+
+        for namespace, extras in cases:
+            with self.subTest(extras=extras):
+                self.assertFalse(
+                    _consume_task_input_field_args(namespace, extras)
+                )
+
+
+class CliTaskInputTestCase(TestCase):
+    def test_absent_input_returns_unprovided_value(self) -> None:
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+            ),
+            self._definition(TaskInputContract.string()),
+        )
+
+        self.assertFalse(parsed.provided)
+        self.assertIsNone(parsed.value)
+
+    def test_plain_input_matches_scalar_contract(self) -> None:
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input="Leo Messi",
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+            ),
+            self._definition(TaskInputContract.string()),
+        )
+
+        self.assertTrue(parsed.provided)
+        self.assertEqual(parsed.value, "Leo Messi")
+        self.assertEqual(
+            validate_task_input(
+                self._definition(TaskInputContract.string()),
+                parsed.value,
+            ),
+            (),
+        )
+
+    def test_json_file_input_matches_object_contract(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            input_path = Path(tmpdir) / "input.json"
+            input_path.write_text(
+                '{"question":"What changed?","priority":2}',
+                encoding="utf-8",
+            )
+
+            parsed = task_cmds.task_cli_input(
+                Namespace(
+                    task_input=None,
+                    task_input_json=f"@{input_path}",
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                self._definition(self._object_contract()),
+            )
+
+        self.assertEqual(
+            parsed.value,
+            {"question": "What changed?", "priority": 2},
+        )
+        self.assertEqual(
+            validate_task_input(
+                self._definition(self._object_contract()),
+                parsed.value,
+            ),
+            (),
+        )
+
+    def test_json_object_merges_field_and_file_inputs(self) -> None:
+        definition = self._definition(self._object_contract())
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json='{"nested":{"count":1},"documents":[]}',
+                task_input_fields=("nested.label=review",),
+                task_files=("documents=report.pdf",),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            {
+                "nested": {"count": 1, "label": "review"},
+                "documents": [
+                    {"source_kind": "local_path", "reference": "report.pdf"}
+                ],
+            },
+        )
+        self.assertEqual(validate_task_input(definition, parsed.value), ())
+
+    def test_field_and_file_input_builds_valid_object(self) -> None:
+        definition = self._definition(self._object_contract())
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=("question=What changed?", "priority=2"),
+                task_files=(
+                    "nested.document=brief.pdf",
+                    "documents=report-a.pdf",
+                    "documents=report-b.pdf",
+                ),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            {
+                "question": "What changed?",
+                "priority": 2,
+                "nested": {
+                    "document": {
+                        "source_kind": "local_path",
+                        "reference": "brief.pdf",
+                    },
+                },
+                "documents": [
+                    {
+                        "source_kind": "local_path",
+                        "reference": "report-a.pdf",
+                    },
+                    {
+                        "source_kind": "local_path",
+                        "reference": "report-b.pdf",
+                    },
+                ],
+            },
+        )
+        self.assertEqual(validate_task_input(definition, parsed.value), ())
+
+    def test_single_file_input_builds_valid_descriptor(self) -> None:
+        definition = self._definition(TaskInputContract.file())
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=("document=report.pdf",),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            {"source_kind": "local_path", "reference": "report.pdf"},
+        )
+        self.assertEqual(validate_task_input(definition, parsed.value), ())
+
+    def test_file_array_input_builds_valid_descriptor_list(self) -> None:
+        definition = self._definition(TaskInputContract.file_array())
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=("documents=report-a.pdf", "documents=b.pdf"),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            [
+                {"source_kind": "local_path", "reference": "report-a.pdf"},
+                {"source_kind": "local_path", "reference": "b.pdf"},
+            ],
+        )
+        self.assertEqual(validate_task_input(definition, parsed.value), ())
+
+    def test_scalar_input_coercion_variants(self) -> None:
+        cases = (
+            (TaskInputContract.integer(), "7", 7),
+            (TaskInputContract.number(), "7.5", 7.5),
+            (TaskInputContract.boolean(), "true", True),
+            (
+                self._object_contract(),
+                '{"question":"What changed?"}',
+                {"question": "What changed?"},
+            ),
+            (
+                TaskInputContract.array(schema={"type": "array"}),
+                "[1,2]",
+                [1, 2],
+            ),
+            (
+                TaskInputContract.file(),
+                "report.pdf",
+                {"source_kind": "local_path", "reference": "report.pdf"},
+            ),
+            (
+                TaskInputContract.file_array(),
+                "report.pdf",
+                [{"source_kind": "local_path", "reference": "report.pdf"}],
+            ),
+        )
+
+        for contract, raw_value, expected in cases:
+            with self.subTest(contract=contract.type):
+                parsed = task_cmds.task_cli_input(
+                    Namespace(
+                        task_input=raw_value,
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=(),
+                    ),
+                    self._definition(contract),
+                )
+
+            self.assertEqual(parsed.value, expected)
+
+    def test_parse_errors_are_safe(self) -> None:
+        cases = (
+            (
+                Namespace(
+                    task_input="raw",
+                    task_input_json="{}",
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                self._definition(TaskInputContract.string()),
+            ),
+            (
+                Namespace(
+                    task_input="raw",
+                    task_input_json=None,
+                    task_input_fields=("question=value",),
+                    task_files=(),
+                ),
+                self._definition(TaskInputContract.string()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json='"scalar"',
+                    task_input_fields=("question=value",),
+                    task_files=(),
+                ),
+                self._definition(self._object_contract()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=("question=value",),
+                    task_files=("document=report.pdf",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("a=one.pdf", "b=two.pdf"),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+        )
+
+        for args, definition in cases:
+            with self.subTest(args=args):
+                with self.assertRaises(task_cmds.TaskCliInputError) as error:
+                    task_cmds.task_cli_input(args, definition)
+
+            self.assertEqual(error.exception.code, "input.parse")
+            self.assertNotIn("report.pdf", error.exception.message)
+
+    def test_invalid_scalar_values_are_safe(self) -> None:
+        cases = (
+            (TaskInputContract.integer(), "true"),
+            (TaskInputContract.number(), "NaN"),
+            (TaskInputContract.boolean(), "1"),
+            (self._object_contract(), "{"),
+        )
+
+        for contract, raw_value in cases:
+            with self.subTest(contract=contract.type):
+                with self.assertRaises(task_cmds.TaskCliInputError):
+                    task_cmds.task_cli_input(
+                        Namespace(
+                            task_input=raw_value,
+                            task_input_json=None,
+                            task_input_fields=(),
+                            task_files=(),
+                        ),
+                        self._definition(contract),
+                    )
+
+    def test_invalid_field_and_file_flags_are_safe(self) -> None:
+        cases = (
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=("badfield",),
+                task_files=(),
+            ),
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=("document",),
+            ),
+        )
+
+        for args in cases:
+            with self.subTest(args=args):
+                with self.assertRaises(task_cmds.TaskCliInputError):
+                    task_cmds.task_cli_input(
+                        args,
+                        self._definition(self._object_contract()),
+                    )
+
+    def test_json_read_and_json_parse_errors_are_safe(self) -> None:
+        cases = (
+            ("@/tmp/private/input.json", "input.read"),
+            ("@", "input.parse"),
+            ("{", "input.json"),
+        )
+
+        for raw_json, code in cases:
+            with self.subTest(raw_json=raw_json):
+                with self.assertRaises(task_cmds.TaskCliInputError) as error:
+                    task_cmds.task_cli_input(
+                        Namespace(
+                            task_input=None,
+                            task_input_json=raw_json,
+                            task_input_fields=(),
+                            task_files=(),
+                        ),
+                        self._definition(self._object_contract()),
+                    )
+
+            self.assertEqual(error.exception.code, code)
+            self.assertNotIn(
+                "/tmp/private/input.json", error.exception.message
+            )
+
+    def test_field_conflicts_and_duplicates_are_rejected(self) -> None:
+        cases = (
+            Namespace(
+                task_input=None,
+                task_input_json='{"a":1}',
+                task_input_fields=("a.b=2",),
+                task_files=(),
+            ),
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=("a=1", "a=2"),
+                task_files=(),
+            ),
+        )
+
+        for args in cases:
+            with self.subTest(args=args):
+                with self.assertRaises(task_cmds.TaskCliInputError):
+                    task_cmds.task_cli_input(
+                        args,
+                        self._definition(self._object_contract()),
+                    )
+
+    def test_validate_prints_redacted_input_summary(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "question.task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "question"
+                version = "1"
+
+                [input]
+                type = "object"
+
+                [input.schema]
+                type = "object"
+                required = ["question"]
+
+                [input.schema.properties.question]
+                type = "string"
+
+                [output]
+                type = "text"
+
+                [execution]
+                type = "agent"
+                ref = "agents/question.toml"
+                """,
+                encoding="utf-8",
+            )
+
+            result = task_cmds.task_validate(
+                Namespace(
+                    definition=str(definition),
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=("question=private question",),
+                    task_files=(),
+                ),
+                console,
+                object(),
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Task input is valid.", output)
+        self.assertIn("<redacted>", output)
+        self.assertNotIn("private question", output)
+
+    def test_validate_reports_input_parse_and_validation_errors(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            definition = self._write_definition(
+                tmpdir,
+                name="integer",
+                input_type="integer",
+            )
+            parse_console = Console(record=True, width=160)
+            parse_result = task_cmds.task_validate(
+                Namespace(
+                    definition=str(definition),
+                    task_input="not-an-integer",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                parse_console,
+                object(),
+            )
+
+            validation_console = Console(record=True, width=160)
+            validation_result = task_cmds.task_validate(
+                Namespace(
+                    definition=str(definition),
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                ),
+                validation_console,
+                object(),
+            )
+
+        self.assertFalse(parse_result)
+        self.assertIn(
+            "Task input could not be parsed.",
+            parse_console.export_text(),
+        )
+        self.assertFalse(validation_result)
+        self.assertIn(
+            "Task input is invalid.", validation_console.export_text()
+        )
+
+    def test_run_reports_input_validation_before_unavailable(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "integer.task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "integer"
+                version = "1"
+
+                [input]
+                type = "integer"
+
+                [output]
+                type = "text"
+
+                [execution]
+                type = "agent"
+                ref = "agents/integer.toml"
+                """,
+                encoding="utf-8",
+            )
+
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="not-an-integer",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                console,
+                object(),
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task input could not be parsed.", output)
+        self.assertNotIn("not-an-integer", output)
+
+    def test_run_accepts_valid_input_before_unavailable(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            definition = self._write_definition(
+                tmpdir,
+                name="integer",
+                input_type="integer",
+            )
+
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="7",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                console,
+                object(),
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task input is valid.", output)
+        self.assertIn(
+            "Task run command is not available in this build.",
+            output,
+        )
+
+    def test_enqueue_reports_invalid_input_before_unavailable(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            definition = self._write_definition(
+                tmpdir,
+                name="integer",
+                input_type="integer",
+            )
+
+            result = task_cmds.task_enqueue(
+                Namespace(
+                    definition=str(definition),
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                ),
+                console,
+                object(),
+            )
+
+        self.assertFalse(result)
+        self.assertIn("Task input is invalid.", console.export_text())
+
+    def test_command_input_validation_handles_load_errors(self) -> None:
+        missing_console = Console(record=True, width=160)
+        missing_result = task_cmds.task_run(
+            Namespace(
+                definition="/tmp/private/missing.task.toml",
+                task_input="raw",
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+            ),
+            missing_console,
+            object(),
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            malformed = Path(tmpdir) / "bad.task.toml"
+            malformed.write_text('[task]\nname = "bad"\n', encoding="utf-8")
+            load_console = Console(record=True, width=160)
+            load_result = task_cmds.task_run(
+                Namespace(
+                    definition=str(malformed),
+                    task_input="raw",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                load_console,
+                object(),
+            )
+
+        self.assertFalse(missing_result)
+        self.assertIn("file.read", missing_console.export_text())
+        self.assertFalse(load_result)
+        self.assertIn(
+            "Task definition could not be loaded.",
+            load_console.export_text(),
+        )
+
+    def test_input_validation_helper_allows_missing_definition_attribute(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        result = task_cmds._validate_task_cli_input_for_command(
+            Namespace(
+                task_input="raw",
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+            ),
+            console,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(console.export_text(), "")
+
+    def test_summary_helpers_cover_files_and_redaction_fallback(self) -> None:
+        console = Console(record=True, width=160)
+        definition = self._definition(TaskInputContract.file_array())
+        value = [
+            {"source_kind": "local_path", "reference": "report-a.pdf"},
+            {"source_kind": "local_path", "reference": "report-b.pdf"},
+        ]
+
+        task_cmds._print_task_cli_input_summary(console, definition, value)
+        rendered = console.export_text()
+
+        self.assertIn("file[0]", rendered)
+        self.assertIn("file[1]", rendered)
+        self.assertNotIn("report-a.pdf", rendered)
+        self.assertEqual(
+            task_cmds._format_task_cli_value(("a", "b")),
+            '["a","b"]',
+        )
+
+        fallback_console = Console(record=True, width=160)
+        fallback_definition = self._definition(
+            TaskInputContract.string(),
+            privacy=TaskPrivacyPolicy(input=PrivacyAction.HASH),
+        )
+        task_cmds._print_task_cli_input_summary(
+            fallback_console,
+            fallback_definition,
+            "private input",
+        )
+
+        self.assertIn("<redacted>", fallback_console.export_text())
+        self.assertNotIn("private input", fallback_console.export_text())
+
+    def test_unsupported_input_type_is_rejected(self) -> None:
+        definition = self._definition(TaskInputContract.string())
+        object.__setattr__(definition.input, "type", "unknown")
+
+        with self.assertRaises(task_cmds.TaskCliInputError):
+            task_cmds.task_cli_input(
+                Namespace(
+                    task_input="raw",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                definition,
+            )
+
+    def _definition(
+        self,
+        input_contract: TaskInputContract,
+        *,
+        privacy: TaskPrivacyPolicy | None = None,
+    ) -> TaskDefinition:
+        return TaskDefinition(
+            task=TaskMetadata(name="task", version="1"),
+            input=input_contract,
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/task.toml"),
+            privacy=privacy or TaskPrivacyPolicy(),
+        )
+
+    def _object_contract(self) -> TaskInputContract:
+        return TaskInputContract.object(schema={"type": "object"})
+
+    def _write_definition(
+        self,
+        directory: str,
+        *,
+        name: str,
+        input_type: str,
+    ) -> Path:
+        definition = Path(directory) / f"{name}.task.toml"
+        definition.write_text(
+            f"""
+            [task]
+            name = "{name}"
+            version = "1"
+
+            [input]
+            type = "{input_type}"
+
+            [output]
+            type = "text"
+
+            [execution]
+            type = "agent"
+            ref = "agents/{name}.toml"
+            """,
+            encoding="utf-8",
+        )
+        return definition
+
+
+if __name__ == "__main__":
+    main()

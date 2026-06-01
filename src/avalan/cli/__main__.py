@@ -44,7 +44,7 @@ from asyncio import (
     wait_for,
 )
 from asyncio.exceptions import CancelledError
-from collections.abc import Awaitable, Iterator
+from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import fields
 from enum import StrEnum
@@ -65,6 +65,7 @@ from logging import (
 from os import environ, getenv
 from os.path import join
 from pathlib import Path
+from re import fullmatch
 from signal import SIGINT, default_int_handler
 from signal import signal as set_signal_handler
 from subprocess import run
@@ -228,6 +229,66 @@ class _HFLoggingProxy:
 
 
 hf_logging = _HFLoggingProxy()
+
+
+class _TaskArgumentParser(ArgumentParser):
+    def parse_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: Namespace | None = None,
+    ) -> Namespace:
+        parsed, extras = self.parse_known_args(args, namespace)
+        if extras and _consume_task_input_field_args(parsed, extras):
+            return parsed
+        if extras:
+            self.error("unrecognized arguments")
+        return parsed
+
+
+def _consume_task_input_field_args(
+    namespace: Namespace,
+    extras: list[str],
+) -> bool:
+    if getattr(namespace, "command", None) != "task":
+        return False
+    if getattr(namespace, "task_command", None) not in {
+        "enqueue",
+        "run",
+        "validate",
+    }:
+        return False
+    fields: list[str] = []
+    index = 0
+    while index < len(extras):
+        token = extras[index]
+        if not token.startswith("--input-") or token == "--input-json":
+            return False
+        field_and_value = token[len("--input-") :]
+        if "=" in field_and_value:
+            field, value = field_and_value.split("=", 1)
+        else:
+            if index + 1 >= len(extras):
+                return False
+            value = extras[index + 1]
+            if value.startswith("--"):
+                return False
+            field = field_and_value
+            index += 1
+        if not _valid_task_input_field(field):
+            return False
+        fields.append(f"{field}={value}")
+        index += 1
+    setattr(namespace, "task_input_fields", tuple(fields))
+    return True
+
+
+def _valid_task_input_field(value: str) -> bool:
+    return bool(
+        fullmatch(
+            r"[A-Za-z][A-Za-z0-9_-]{0,63}" r"(\.[A-Za-z][A-Za-z0-9_-]{0,63})*",
+            value,
+        )
+    )
 
 
 def _transformers_utils_module() -> object | None:
@@ -836,7 +897,7 @@ class CLI:
             help="Weight type to use (defaults to best available)",
         )
 
-        parser = ArgumentParser(
+        parser: ArgumentParser = _TaskArgumentParser(
             description="Avalan CLI", parents=[global_parser]
         )
 
@@ -1405,10 +1466,32 @@ class CLI:
             parents=[global_parser],
         )
         task_command_parsers = task_parser.add_subparsers(dest="task_command")
+        task_input_parser = ArgumentParser(add_help=False)
+        task_input_parser.add_argument(
+            "--input",
+            dest="task_input",
+            type=str,
+            default=None,
+            help="Task input value.",
+        )
+        task_input_parser.add_argument(
+            "--input-json",
+            dest="task_input_json",
+            type=str,
+            default=None,
+            help="Task input JSON value or @file.",
+        )
+        task_input_parser.add_argument(
+            "--file",
+            dest="task_files",
+            action="append",
+            default=None,
+            help="Attach a local task input file as field=path.",
+        )
         task_validate_parser = task_command_parsers.add_parser(
             name="validate",
             description="Validate an intelligence task definition",
-            parents=[global_parser],
+            parents=[global_parser, task_input_parser],
         )
         task_validate_parser.add_argument(
             "definition",
@@ -1418,7 +1501,7 @@ class CLI:
         task_run_parser = task_command_parsers.add_parser(
             name="run",
             description="Run an intelligence task directly",
-            parents=[global_parser],
+            parents=[global_parser, task_input_parser],
         )
         task_run_parser.add_argument(
             "definition",
@@ -1428,7 +1511,7 @@ class CLI:
         task_enqueue_parser = task_command_parsers.add_parser(
             name="enqueue",
             description="Enqueue an intelligence task run",
-            parents=[global_parser],
+            parents=[global_parser, task_input_parser],
         )
         task_enqueue_parser.add_argument(
             "definition",
