@@ -688,7 +688,7 @@ class PgsqlTaskStore:
             _assert_non_empty_string(attempt_id, "attempt_id")
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
-            await _run_or_raise(unit, run_id)
+            await _lock_run_or_raise(unit, run_id)
             if attempt_id is not None:
                 attempt = await _attempt_or_raise(unit, attempt_id)
                 if attempt.run_id != run_id:
@@ -780,7 +780,7 @@ class PgsqlTaskStore:
             _assert_non_empty_string(attempt_id, "attempt_id")
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
-            await _run_or_raise(unit, run_id)
+            await _lock_run_or_raise(unit, run_id)
             if attempt_id is not None:
                 attempt = await _attempt_or_raise(unit, attempt_id)
                 if attempt.run_id != run_id:
@@ -1383,6 +1383,9 @@ RETURNING *
 _SELECT_RUN_SQL = """
 SELECT * FROM "task_runs" WHERE "run_id" = %s
 """
+_SELECT_RUN_FOR_UPDATE_SQL = """
+SELECT * FROM "task_runs" WHERE "run_id" = %s FOR UPDATE
+"""
 _UPDATE_RUN_STATE_SQL = """
 UPDATE "task_runs"
 SET "state" = %s,
@@ -1569,6 +1572,14 @@ async def _fetch_run_row(
 
 async def _run_or_raise(unit: PgsqlUnitOfWork, run_id: str) -> TaskRun:
     row = await _fetch_run_row(unit, run_id)
+    if row is None:
+        raise TaskStoreNotFoundError("task run was not found")
+    return _run_from_row(row)
+
+
+async def _lock_run_or_raise(unit: PgsqlUnitOfWork, run_id: str) -> TaskRun:
+    await unit.cursor.execute(_SELECT_RUN_FOR_UPDATE_SQL, (run_id,))
+    row = await unit.cursor.fetchone()
     if row is None:
         raise TaskStoreNotFoundError("task run was not found")
     return _run_from_row(row)

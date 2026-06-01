@@ -209,6 +209,13 @@ class PgsqlStoreCoverageTest(IsolatedAsyncioTestCase):
             await store.get_attempt("missing")
         with self.assertRaises(TaskStoreNotFoundError):
             await store.get_artifact("missing")
+        with self.assertRaises(TaskStoreNotFoundError):
+            await store.append_event(
+                "missing",
+                event_type="model_complete",
+                category=pgsql_store_module.TaskEventCategory.MODEL,
+                payload={},
+            )
 
     async def test_get_definition_and_attempt_return_records(self) -> None:
         store = await _registered_store()

@@ -35,6 +35,7 @@ class FakePgsqlTaskDatabase:
         self.usage: dict[str, dict[str, object]] = {}
         self.artifacts: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
+        self.executed_queries: list[str] = []
         self.open_count = 0
         self.close_count = 0
 
@@ -167,6 +168,7 @@ class FakeCursor:
         parameters: tuple[object, ...] | None = None,
     ) -> None:
         params = parameters or ()
+        self.database.executed_queries.append(query)
         if 'SELECT * FROM "task_definitions"' in query:
             self.row = self.database.definitions.get(cast(str, params[0]))
         elif 'INSERT INTO "task_definitions"' in query:
@@ -621,6 +623,7 @@ class PgsqlStoreContractTest(
     async def test_records_events_usage_and_idempotency(self) -> None:
         run = await self._created_run()
         attempt = await self.store.create_attempt(run.run_id)
+        query_count = len(self.database.executed_queries)
 
         event = await self.store.append_event(
             run.run_id,
@@ -691,6 +694,17 @@ class PgsqlStoreContractTest(
         )
         self.assertEqual(usage.sequence, 1)
         self.assertEqual(second_usage.sequence, 2)
+        append_queries = self.database.executed_queries[query_count:]
+        locked_run_queries = tuple(
+            query
+            for query in append_queries
+            if 'SELECT * FROM "task_runs"' in query and "FOR UPDATE" in query
+        )
+        sequence_queries = tuple(
+            query for query in append_queries if 'MAX("sequence")' in query
+        )
+        self.assertEqual(len(locked_run_queries), 3)
+        self.assertEqual(len(sequence_queries), 3)
         self.assertEqual(usage.metadata["provider"], "test")
         self.assertEqual(
             await self.store.list_usage(
