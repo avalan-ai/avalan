@@ -555,6 +555,7 @@ class DirectTaskRunner:
                 (
                     lambda response: self._record_usage(
                         response,
+                        definition=definition,
                         run=run,
                         attempt=attempt,
                     )
@@ -666,11 +667,7 @@ class DirectTaskRunner:
             if definition.observability.trace
             else None
         )
-        observability_sink = (
-            self._observability_sink
-            if definition.observability.sinks != (ObservabilitySinkType.NOOP,)
-            else None
-        )
+        observability_sink = self._observability_sink_for(definition)
         if (
             not definition.observability.capture_events
             and metrics_observer is None
@@ -755,6 +752,7 @@ class DirectTaskRunner:
         self,
         response: object,
         *,
+        definition: TaskDefinition,
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> None:
@@ -771,12 +769,20 @@ class DirectTaskRunner:
         except Exception:
             pass
         await record_observability_usage(
-            self._observability_sink,
+            self._observability_sink_for(definition),
             run_id=run.run_id,
             attempt_id=attempt.attempt_id,
             source=observation.source,
             totals=observation.totals,
         )
+
+    def _observability_sink_for(
+        self,
+        definition: TaskDefinition,
+    ) -> ObservabilitySink | None:
+        if definition.observability.sinks == (ObservabilitySinkType.NOOP,):
+            return None
+        return self._observability_sink
 
     async def _record_output_artifacts(
         self,

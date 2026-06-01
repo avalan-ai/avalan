@@ -12,6 +12,7 @@ from avalan.task import (
     NoopObservabilitySink,
     ObservabilitySink,
     ObservabilitySinkHealth,
+    ObservabilitySinkType,
     SanitizedTaskEventDraft,
     TaskDefinition,
     TaskDirectTarget,
@@ -283,6 +284,41 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(sink.health().event_count, 0)
         self.assertEqual(sink.health().usage_count, 0)
+
+    async def test_noop_sink_does_not_emit_usage_when_metrics_are_enabled(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        sink = RecordingSink()
+        runner = DirectTaskRunner(
+            store,
+            target=cast(TaskDirectTarget, EventAndUsageTarget()),
+            hmac_provider=StaticHmacProvider(),
+            observability_sink=sink,
+            definition_hash=lambda task: "hash-observability-noop-sink",
+        )
+
+        result = await runner.run(
+            TaskDefinition(
+                task=TaskMetadata(name="summarize", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/summarize.toml"),
+                observability=TaskObservabilityPolicy(
+                    sinks=(ObservabilitySinkType.NOOP,),
+                    metrics=True,
+                    trace=False,
+                    capture_events=False,
+                ),
+                privacy=TaskPrivacyPolicy(),
+            ),
+            input_value="private prompt",
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(sink.events, [])
+        self.assertEqual(sink.usages, [])
+        self.assertEqual(len(await store.list_usage(result.run.run_id)), 1)
 
 
 if __name__ == "__main__":
