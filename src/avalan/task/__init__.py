@@ -212,6 +212,7 @@ from .runner import TaskRunnerError as TaskRunnerError
 from .runner import TaskRunResult as TaskRunResult
 from .sinks import NoopObservabilitySink as NoopObservabilitySink
 from .sinks import PgsqlInspectionSink as PgsqlInspectionSink
+from .sinks import PrometheusObservabilitySink as PrometheusObservabilitySink
 from .state import TASK_ATTEMPT_TERMINAL_STATES as TASK_ATTEMPT_TERMINAL_STATES
 from .state import TASK_RUN_TERMINAL_STATES as TASK_RUN_TERMINAL_STATES
 from .state import (

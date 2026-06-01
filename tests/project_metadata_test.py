@@ -120,6 +120,17 @@ def test_task_pgsql_extra_declares_postgresql_dependencies() -> None:
     assert not binary_marker.evaluate({"python_version": "3.14"})
 
 
+def test_task_prometheus_extra_declares_prometheus_dependency() -> None:
+    requirements = _requirements_by_name(
+        "task-prometheus",
+        "prometheus-client",
+    )
+
+    assert len(requirements) == 1
+    assert requirements[0].specifier == SpecifierSet(">=0.23.0,<1.0.0")
+    assert requirements[0].marker is None
+
+
 def test_task_pgsql_extra_omits_migration_dependencies() -> None:
     optional_deps = _optional_dependencies()
     task_pgsql_dependencies = {
