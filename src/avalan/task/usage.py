@@ -64,6 +64,16 @@ class UsageTotals:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class UsageObservation:
+    source: UsageSource
+    totals: UsageTotals
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.source, UsageSource)
+        assert isinstance(self.totals, UsageTotals)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UsageRecord:
     usage_id: str
     run_id: str
@@ -147,32 +157,27 @@ def freeze_usage_value(value: object) -> TaskUsageValue:
     raise AssertionError("usage metadata must be privacy-safe")
 
 
-def usage_totals_from_response(response: object) -> UsageTotals | None:
-    counters = (
-        _counter_from_attribute(response, "input_token_count"),
-        _counter_from_attribute(response, "cached_input_token_count"),
-        _counter_from_attribute(response, "cache_creation_input_token_count"),
-        _counter_from_attribute(response, "output_token_count"),
-        _counter_from_attribute(response, "reasoning_token_count"),
-        _counter_from_attribute(response, "total_token_count"),
-    )
-    if not any(value is not None for value in counters):
+def usage_observation_from_response(
+    response: object,
+) -> UsageObservation | None:
+    usage = _usage_container(response)
+    if usage is not None:
+        totals = _usage_totals_from_value(usage, _PROVIDER_COUNTER_PATHS)
+        if totals is not None:
+            return UsageObservation(source=UsageSource.EXACT, totals=totals)
+
+    totals = _usage_totals_from_value(response, _RESPONSE_COUNTER_PATHS)
+    if totals is None:
         return None
-    total_tokens = counters[5]
-    if (
-        total_tokens is None
-        and counters[0] is not None
-        and counters[3] is not None
-    ):
-        total_tokens = counters[0] + counters[3]
-    return UsageTotals(
-        input_tokens=counters[0],
-        cached_input_tokens=counters[1],
-        cache_creation_input_tokens=counters[2],
-        output_tokens=counters[3],
-        reasoning_tokens=counters[4],
-        total_tokens=total_tokens,
+    return UsageObservation(
+        source=_usage_source_from_response(response),
+        totals=totals,
     )
+
+
+def usage_totals_from_response(response: object) -> UsageTotals | None:
+    observation = usage_observation_from_response(response)
+    return observation.totals if observation is not None else None
 
 
 def attach_response_usage_recorder(
@@ -181,7 +186,7 @@ def attach_response_usage_recorder(
     store: TaskUsageStore,
     run_id: str,
     attempt_id: str | None = None,
-    source: UsageSource = UsageSource.ESTIMATED,
+    source: UsageSource | None = None,
     metadata: Mapping[str, object] | None = None,
 ) -> bool:
     add_done_callback = getattr(response, "add_done_callback", None)
@@ -194,14 +199,14 @@ def attach_response_usage_recorder(
         if recorded:
             return
         recorded = True
-        totals = usage_totals_from_response(response)
-        if totals is None:
+        observation = usage_observation_from_response(response)
+        if observation is None:
             return
         await store.append_usage(
             run_id,
             attempt_id=attempt_id,
-            source=source,
-            totals=totals,
+            source=source or observation.source,
+            totals=observation.totals,
             metadata=metadata,
         )
 
@@ -258,11 +263,128 @@ def _counter_value(totals: UsageTotals, field_name: str) -> int | None:
             raise AssertionError("unknown usage counter")
 
 
-def _counter_from_attribute(response: object, name: str) -> int | None:
-    value = getattr(response, name, None)
+CounterPath = tuple[str, ...]
+CounterPathMap = Mapping[str, tuple[CounterPath, ...]]
+
+_PROVIDER_COUNTER_PATHS: CounterPathMap = {
+    "input_tokens": (
+        ("input_tokens",),
+        ("input_token_count",),
+        ("inputTokens",),
+        ("prompt_tokens",),
+        ("prompt_token_count",),
+    ),
+    "cached_input_tokens": (
+        ("cached_input_tokens",),
+        ("cached_input_token_count",),
+        ("cache_read_input_tokens",),
+        ("cacheReadInputTokens",),
+        ("cached_content_token_count",),
+        ("input_tokens_details", "cached_tokens"),
+        ("prompt_tokens_details", "cached_tokens"),
+    ),
+    "cache_creation_input_tokens": (
+        ("cache_creation_input_tokens",),
+        ("cache_creation_input_token_count",),
+        ("cacheCreationInputTokens",),
+    ),
+    "output_tokens": (
+        ("output_tokens",),
+        ("output_token_count",),
+        ("outputTokens",),
+        ("completion_tokens",),
+        ("candidates_token_count",),
+    ),
+    "reasoning_tokens": (
+        ("reasoning_tokens",),
+        ("reasoning_token_count",),
+        ("reasoningTokens",),
+        ("thoughts_token_count",),
+        ("output_tokens_details", "reasoning_tokens"),
+        ("completion_tokens_details", "reasoning_tokens"),
+    ),
+    "total_tokens": (
+        ("total_tokens",),
+        ("total_token_count",),
+        ("totalTokens",),
+    ),
+}
+
+_RESPONSE_COUNTER_PATHS: CounterPathMap = {
+    "input_tokens": (("input_token_count",),),
+    "cached_input_tokens": (("cached_input_token_count",),),
+    "cache_creation_input_tokens": (("cache_creation_input_token_count",),),
+    "output_tokens": (("output_token_count",),),
+    "reasoning_tokens": (("reasoning_token_count",),),
+    "total_tokens": (("total_token_count",),),
+}
+
+
+def _usage_container(response: object) -> object | None:
+    for attribute in ("usage", "usage_metadata"):
+        value = _value_at_path(response, (attribute,))
+        if value is not None:
+            return value
+    return None
+
+
+def _usage_totals_from_value(
+    value: object, counter_paths: CounterPathMap
+) -> UsageTotals | None:
+    counters = {
+        name: _counter_from_paths(value, paths)
+        for name, paths in counter_paths.items()
+    }
+    if not any(counter is not None for counter in counters.values()):
+        return None
+    return UsageTotals(
+        input_tokens=counters["input_tokens"],
+        cached_input_tokens=counters["cached_input_tokens"],
+        cache_creation_input_tokens=counters["cache_creation_input_tokens"],
+        output_tokens=counters["output_tokens"],
+        reasoning_tokens=counters["reasoning_tokens"],
+        total_tokens=counters["total_tokens"],
+    )
+
+
+def _counter_from_paths(
+    value: object, paths: tuple[CounterPath, ...]
+) -> int | None:
+    for path in paths:
+        counter = _counter_from_value(_value_at_path(value, path))
+        if counter is not None:
+            return counter
+    return None
+
+
+def _counter_from_value(value: object) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         return None
     return value
+
+
+def _usage_source_from_response(response: object) -> UsageSource:
+    source = _value_at_path(response, ("usage_source",))
+    if isinstance(source, UsageSource):
+        return source
+    if isinstance(source, str):
+        try:
+            return UsageSource(source)
+        except ValueError:
+            return UsageSource.ESTIMATED
+    return UsageSource.ESTIMATED
+
+
+def _value_at_path(value: object, path: CounterPath) -> object | None:
+    current = value
+    for item in path:
+        if isinstance(current, Mapping):
+            current = current.get(item)
+        else:
+            current = getattr(current, item, None)
+        if current is None:
+            return None
+    return current
 
 
 def _assert_counter(value: int | None, field_name: str) -> None:

@@ -239,6 +239,7 @@ from .target import TaskValidationContext as TaskValidationContext
 from .usage import TaskUsageMetadata as TaskUsageMetadata
 from .usage import TaskUsageStore as TaskUsageStore
 from .usage import TaskUsageValue as TaskUsageValue
+from .usage import UsageObservation as UsageObservation
 from .usage import UsageRecord as UsageRecord
 from .usage import UsageResponse as UsageResponse
 from .usage import UsageSource as UsageSource
@@ -249,6 +250,9 @@ from .usage import (
 )
 from .usage import freeze_usage_metadata as freeze_usage_metadata
 from .usage import freeze_usage_value as freeze_usage_value
+from .usage import (
+    usage_observation_from_response as usage_observation_from_response,
+)
 from .usage import usage_totals_from_response as usage_totals_from_response
 from .validation import (
     TASK_VALIDATION_ISSUE_CODES as TASK_VALIDATION_ISSUE_CODES,

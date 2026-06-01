@@ -466,7 +466,8 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 
     async def test_response_single_stream(self):
         resp = SimpleNamespace(
-            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])],
+            usage=SimpleNamespace(input_tokens=1),
         )
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
             return_value=resp
@@ -500,6 +501,7 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(response._output_fn, TextGenerationSingleStream)
         self.assertFalse(response._use_async_generator)
+        self.assertEqual(response.usage.input_tokens, 1)
         self.assertEqual(await response.to_str(), "ok")
 
 

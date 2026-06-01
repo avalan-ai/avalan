@@ -48,7 +48,7 @@ from .target import (
     TaskTargetRunner,
     TaskValidationContext,
 )
-from .usage import UsageSource, usage_totals_from_response
+from .usage import usage_observation_from_response
 from .validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -704,14 +704,14 @@ class DirectTaskRunner:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> None:
-        totals = usage_totals_from_response(response)
-        if totals is None:
+        observation = usage_observation_from_response(response)
+        if observation is None:
             return
         await self._store.append_usage(
             run.run_id,
             attempt_id=attempt.attempt_id,
-            source=UsageSource.ESTIMATED,
-            totals=totals,
+            source=observation.source,
+            totals=observation.totals,
         )
 
     async def _record_output_artifacts(

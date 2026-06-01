@@ -498,7 +498,8 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                         {"text": {"text": " world"}},
                     ]
                 }
-            }
+            },
+            "usage": {"inputTokens": 3},
         }
         exit_stack = AsyncExitStack()
         client = self.mod.BedrockClient(exit_stack=exit_stack)
@@ -518,6 +519,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
         text = await result.__anext__()
         self.assertEqual(text, "hello world")
+        self.assertEqual(result.usage, {"inputTokens": 3})
         self.client.converse.assert_awaited_once()
         await exit_stack.aclose()
 

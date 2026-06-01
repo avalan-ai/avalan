@@ -19,7 +19,8 @@ class TextGenerationSingleStreamTestCase(IsolatedAsyncioTestCase):
             await iterator2.__anext__()
 
     async def test_async_for_and_property(self) -> None:
-        stream = TextGenerationSingleStream("foo")
+        usage = {"input_tokens": 1}
+        stream = TextGenerationSingleStream("foo", usage=usage)
         tokens = []
         async for token in stream():
             tokens.append(token)
@@ -28,4 +29,5 @@ class TextGenerationSingleStreamTestCase(IsolatedAsyncioTestCase):
             await stream.__anext__()
         iterator = stream.__aiter__()
         self.assertEqual(stream.content, "foo")
+        self.assertEqual(stream.usage, usage)
         self.assertEqual(await iterator.__anext__(), "foo")

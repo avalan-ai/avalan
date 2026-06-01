@@ -199,7 +199,10 @@ class OpenAIClient(TextGenerationVendor):
             return OpenAIStream(stream=client_stream)
 
         content = OpenAIClient._non_stream_response_content(client_stream)
-        return TextGenerationSingleStream(content)
+        return TextGenerationSingleStream(
+            content,
+            usage=OpenAIClient._response_field(client_stream, "usage"),
+        )
 
     def _template_messages(
         self,
@@ -369,40 +372,43 @@ class OpenAIClient(TextGenerationVendor):
 
     @staticmethod
     def _non_stream_response_content(response: object) -> str:
-        def _get(value: object, attribute: str) -> object | None:
-            if isinstance(value, dict):
-                return value.get(attribute)
-            return getattr(value, attribute, None)
-
         parts: list[str] = []
-        output = _get(response, "output")
+        output = OpenAIClient._response_field(response, "output")
         if not isinstance(output, list):
             return "".join(parts)
 
         for item in output:
-            item_type = _get(item, "type")
-            contents = _get(item, "content")
+            item_type = OpenAIClient._response_field(item, "type")
+            contents = OpenAIClient._response_field(item, "content")
             if not isinstance(contents, list):
                 contents = []
 
             if item_type in {None, "message", "output_text"}:
                 for content in contents:
-                    text = _get(content, "text")
+                    text = OpenAIClient._response_field(content, "text")
                     if isinstance(text, str):
                         parts.append(text)
                 continue
 
             if item_type in {"tool_call", "function_call"}:
-                call = _get(item, "call") or item
-                function = _get(call, "function") or call
+                call = OpenAIClient._response_field(item, "call") or item
+                function = (
+                    OpenAIClient._response_field(call, "function") or call
+                )
                 token = TextGenerationVendor.build_tool_call_token(
-                    _get(call, "id"),
-                    _get(function, "name"),
-                    _get(function, "arguments"),
+                    OpenAIClient._response_field(call, "id"),
+                    OpenAIClient._response_field(function, "name"),
+                    OpenAIClient._response_field(function, "arguments"),
                 )
                 parts.append(token.token)
 
         return "".join(parts)
+
+    @staticmethod
+    def _response_field(value: object, attribute: str) -> object | None:
+        if isinstance(value, dict):
+            return value.get(attribute)
+        return getattr(value, attribute, None)
 
 
 class OpenAINonStreamingResponse(TextGenerationResponse):

@@ -163,6 +163,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         return self._output_token_count
 
     @property
+    def usage(self) -> object | None:
+        return getattr(self._output_fn, "usage", None)
+
+    @property
     def is_async_generator(self) -> bool:
         return self._use_async_generator
 

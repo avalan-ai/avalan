@@ -31,6 +31,7 @@ from avalan.task import (
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
+    UsageSource,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.store import TaskExecutionContext
@@ -918,9 +919,10 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         )
         self.assertNotIn("secret-token", str(events[0].payload))
         self.assertNotIn("private-model", str(events[0].payload))
+        self.assertEqual(usage[0].source, UsageSource.ESTIMATED)
         self.assertEqual(usage[0].totals.input_tokens, 3)
         self.assertEqual(usage[0].totals.output_tokens, 2)
-        self.assertEqual(usage[0].totals.total_tokens, 5)
+        self.assertIsNone(usage[0].totals.total_tokens)
         self.assertEqual(usage[0].attempt_id, result.attempt.attempt_id)
         self.assertEqual(event_manager.listeners, [])
 

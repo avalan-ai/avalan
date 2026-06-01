@@ -242,7 +242,8 @@ def test_client_non_stream_tool_messages(anthropic_mod):
                 name="pkg__tool",
                 input={"a": 1},
             ),
-        ]
+        ],
+        usage=SimpleNamespace(input_tokens=2),
     )
 
     stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
@@ -266,6 +267,7 @@ def test_client_non_stream_tool_messages(anthropic_mod):
 
     assert isinstance(stream, TextGenerationSingleStream)
     assert stream.content == "hello<tool_call />"
+    assert stream.usage.input_tokens == 2
     build_token.assert_called_once_with("call1", "pkg__tool", {"a": 1})
 
     create_mock = stub.AsyncAnthropic.return_value.messages.create

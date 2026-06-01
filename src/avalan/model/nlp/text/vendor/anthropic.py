@@ -179,7 +179,9 @@ class AnthropicClient(TextGenerationVendor):
             content = self._non_stream_response_content(response)
             return cast(
                 TextGenerationVendorStream,
-                TextGenerationSingleStream(content),
+                TextGenerationSingleStream(
+                    content, usage=getattr(response, "usage", None)
+                ),
             )
         except Exception as error:
             AnthropicClient._translate_api_error(model_id, error)

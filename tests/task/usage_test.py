@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
@@ -21,6 +21,7 @@ from avalan.task import (
     attach_response_usage_recorder,
     freeze_usage_metadata,
     freeze_usage_value,
+    usage_observation_from_response,
     usage_totals_from_response,
 )
 from avalan.task.stores import InMemoryTaskStore
@@ -74,10 +75,16 @@ class FakeConsumedResponse:
 
 
 class FakeProviderResponse(FakeConsumedResponse):
-    cached_input_token_count = 1
-    cache_creation_input_token_count = 2
-    reasoning_token_count = 5
-    total_token_count = 99
+    def __init__(self) -> None:
+        super().__init__()
+        self.usage = SimpleNamespace(
+            input_tokens=3,
+            input_tokens_details=SimpleNamespace(cached_tokens=1),
+            cache_creation_input_tokens=2,
+            output_tokens=4,
+            output_tokens_details={"reasoning_tokens": 5},
+            total_tokens=99,
+        )
 
 
 class HostileResponse:
@@ -112,7 +119,7 @@ class UsageTotalsTest(TestCase):
         self.assertIsNone(totals.reasoning_tokens)
         self.assertIsNone(totals.total_tokens)
 
-    def test_response_usage_derives_basic_total_from_available_counts(
+    def test_response_usage_keeps_unreported_total_unavailable(
         self,
     ) -> None:
         totals = usage_totals_from_response(FakeConsumedResponse())
@@ -122,15 +129,17 @@ class UsageTotalsTest(TestCase):
             UsageTotals(
                 input_tokens=3,
                 output_tokens=4,
-                total_tokens=7,
             ),
         )
 
     def test_provider_reported_fields_are_preserved(self) -> None:
-        totals = usage_totals_from_response(FakeProviderResponse())
+        observation = usage_observation_from_response(FakeProviderResponse())
 
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.source, UsageSource.EXACT)
         self.assertEqual(
-            totals,
+            observation.totals,
             UsageTotals(
                 input_tokens=3,
                 cached_input_tokens=1,
@@ -140,6 +149,37 @@ class UsageTotalsTest(TestCase):
                 total_tokens=99,
             ),
         )
+
+    def test_text_response_counts_are_estimated(self) -> None:
+        observation = usage_observation_from_response(FakeConsumedResponse())
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.source, UsageSource.ESTIMATED)
+        self.assertIsNone(observation.totals.total_tokens)
+
+    def test_direct_response_source_marker_is_respected(self) -> None:
+        exact_enum = usage_observation_from_response(
+            SimpleNamespace(
+                input_token_count=1, usage_source=UsageSource.EXACT
+            )
+        )
+        exact_string = usage_observation_from_response(
+            SimpleNamespace(input_token_count=1, usage_source="exact")
+        )
+        invalid_string = usage_observation_from_response(
+            SimpleNamespace(input_token_count=1, usage_source="unknown")
+        )
+
+        self.assertIsNotNone(exact_enum)
+        self.assertIsNotNone(exact_string)
+        self.assertIsNotNone(invalid_string)
+        assert exact_enum is not None
+        assert exact_string is not None
+        assert invalid_string is not None
+        self.assertEqual(exact_enum.source, UsageSource.EXACT)
+        self.assertEqual(exact_string.source, UsageSource.EXACT)
+        self.assertEqual(invalid_string.source, UsageSource.ESTIMATED)
 
     def test_invalid_response_counters_are_unavailable(self) -> None:
         self.assertIsNone(usage_totals_from_response(object()))
@@ -242,7 +282,7 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].attempt_id, self.attempt.attempt_id)
         self.assertEqual(records[0].totals.input_tokens, 3)
         self.assertEqual(records[0].totals.output_tokens, 4)
-        self.assertEqual(records[0].totals.total_tokens, 7)
+        self.assertIsNone(records[0].totals.total_tokens)
         self.assertEqual(records[0].metadata["model"], "test")
 
     async def test_usage_records_are_filtered_and_aggregated(self) -> None:
@@ -275,6 +315,28 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(totals.output_tokens, 7)
         self.assertEqual(totals.total_tokens, 5)
         self.assertIsNone(totals.cached_input_tokens)
+
+    async def test_provider_response_callback_records_exact_usage(
+        self,
+    ) -> None:
+        response = FakeProviderResponse()
+
+        self.assertTrue(
+            attach_response_usage_recorder(
+                response,
+                store=self.store,
+                run_id=self.run.run_id,
+                attempt_id=self.attempt.attempt_id,
+            )
+        )
+        await response.consume()
+
+        records = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[0].totals.reasoning_tokens, 5)
+        self.assertEqual(records[0].totals.total_tokens, 99)
 
     async def test_callback_is_not_attached_without_response_support(
         self,

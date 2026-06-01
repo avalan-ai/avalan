@@ -291,7 +291,12 @@ class BedrockClient(TextGenerationVendor):
                 return BedrockStream(events=events)
 
             response = await client.converse(**payload)
-            return TextGenerationSingleStream(self._response_text(response))
+            usage = (
+                response.get("usage") if isinstance(response, dict) else None
+            )
+            return TextGenerationSingleStream(
+                self._response_text(response), usage=usage
+            )
         except Exception as error:
             if self._is_invalid_model_identifier_error(error):
                 self._raise_invalid_model_identifier(model_id, error)

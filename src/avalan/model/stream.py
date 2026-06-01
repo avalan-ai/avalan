@@ -28,13 +28,24 @@ class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
 class TextGenerationSingleStream(TextGenerationStream):
     _content: str | Token | TokenDetail
     _consumed: bool = False
+    _usage: object | None = None
 
-    def __init__(self, content: str | Token | TokenDetail) -> None:
+    def __init__(
+        self,
+        content: str | Token | TokenDetail,
+        *,
+        usage: object | None = None,
+    ) -> None:
         self._content = content
+        self._usage = usage
 
     @property
     def content(self) -> str | Token | TokenDetail:
         return self._content
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
 
     def __call__(
         self, *args: Any, **kwargs: Any

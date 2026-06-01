@@ -9,13 +9,16 @@ from avalan.model.stream import TextGenerationSingleStream
 class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
     async def test_str_prefetches_single_stream(self) -> None:
         settings = GenerationSettings()
+        usage = {"input_tokens": 2}
+        stream = TextGenerationSingleStream("hello", usage=usage)
         response = TextGenerationResponse(
-            lambda **_: TextGenerationSingleStream("hello"),
+            stream,
             logger=getLogger("response"),
             generation_settings=settings,
             settings=settings,
             use_async_generator=False,
         )
+        self.assertEqual(response.usage, usage)
         self.assertEqual(str(response), "hello")
         self.assertEqual(response.output_token_count, len("hello"))
         response._ensure_non_stream_prefetched()
