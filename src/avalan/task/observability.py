@@ -217,9 +217,12 @@ async def _notify_observer(
 ) -> None:
     if observer is None:
         return
-    result = observer(event)
-    if result is not None:
-        await result
+    try:
+        result = observer(event)
+        if result is not None:
+            await result
+    except Exception:
+        return
 
 
 def _assert_non_empty_string(value: str | None, field_name: str) -> None:
