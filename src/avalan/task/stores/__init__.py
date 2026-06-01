@@ -5,6 +5,7 @@ from .pgsql import (
 from .pgsql import TASK_PGSQL_HEAD_REVISION as TASK_PGSQL_HEAD_REVISION
 from .pgsql import PgsqlTaskMigrationError as PgsqlTaskMigrationError
 from .pgsql import PgsqlTaskMigrationSettings as PgsqlTaskMigrationSettings
+from .pgsql import PgsqlTaskStore as PgsqlTaskStore
 from .pgsql import task_pgsql_alembic_config as task_pgsql_alembic_config
 from .pgsql import task_pgsql_check as task_pgsql_check
 from .pgsql import (

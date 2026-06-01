@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.task import (
@@ -60,14 +60,17 @@ def definition() -> TaskDefinition:
     )
 
 
-class StoreContractTest(IsolatedAsyncioTestCase):
+class StoreContractAssertions:
     async def asyncSetUp(self) -> None:
         self.clock = SequenceClock()
-        self.store = InMemoryTaskStore(
+        self.store = self.create_store()
+        self.definition = definition()
+
+    def create_store(self) -> Any:
+        return InMemoryTaskStore(
             clock=self.clock,
             id_factory=SequenceIds(),
         )
-        self.definition = definition()
 
     async def test_registers_definitions_immutably(self) -> None:
         record = await self.store.register_definition(
@@ -80,7 +83,7 @@ class StoreContractTest(IsolatedAsyncioTestCase):
             definition_hash="hash-a",
         )
 
-        self.assertIs(record, same_record)
+        self.assertEqual(record, same_record)
         self.assertEqual(record.definition_id, "hash-a")
         self.assertEqual(record.spec_hash, "hash-a")
         self.assertEqual(record.metadata["labels"], ("stable",))
@@ -466,6 +469,10 @@ class StoreContractTest(IsolatedAsyncioTestCase):
         return await self.store.create_run(
             TaskExecutionRequest(definition_id="hash-a")
         )
+
+
+class StoreContractTest(StoreContractAssertions, IsolatedAsyncioTestCase):
+    pass
 
 
 class StoreHelperTest(TestCase):
