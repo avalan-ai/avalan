@@ -299,6 +299,18 @@ class PgsqlTaskQueue:
             run = await _queueable_run_row(unit, run_id, queue_name)
             now = self._now()
             queue_item_id = self._new_id()
+            run_state = _run_state(run)
+            if run_state == TaskRunState.VALIDATED:
+                queued_run = await _transition_run(
+                    unit,
+                    run_id=run_id,
+                    from_state=TaskRunState.VALIDATED,
+                    to_state=TaskRunState.QUEUED,
+                    reason="queued",
+                    transition_id=self._new_id(),
+                    now=now,
+                )
+                run_state = queued_run.state
             await unit.cursor.execute(
                 _INSERT_QUEUE_ITEM_SQL,
                 (
@@ -319,7 +331,7 @@ class PgsqlTaskQueue:
                 raise TaskQueueConflictError(
                     "task run already has an active queue job"
                 )
-            return _queue_item_from_row(row, run_state=_run_state(run))
+            return _queue_item_from_row(row, run_state=run_state)
 
         return cast(
             TaskQueueItem,

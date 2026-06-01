@@ -1368,6 +1368,50 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertNotIn("request", stored)
         self.assertNotIn("result", stored)
 
+    async def test_enqueue_transitions_validated_run_to_claimable_queue(
+        self,
+    ) -> None:
+        item = await self.queue.enqueue(
+            "run-ready",
+            queue_name="default",
+            available_at=self.now,
+        )
+
+        self.assertEqual(item.run_state, TaskRunState.QUEUED)
+        self.assertEqual(
+            self.database.runs["run-ready"]["state"],
+            TaskRunState.QUEUED.value,
+        )
+        self.assertEqual(
+            [
+                row["to_state"]
+                for row in self.database.run_transitions.values()
+            ],
+            [TaskRunState.QUEUED.value],
+        )
+
+        claim = await self.queue.claim(
+            "default",
+            worker_id="worker-1",
+            lease_expires_at=self.now + timedelta(minutes=5),
+            now=self.now,
+        )
+
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.run.run_id, "run-ready")
+        self.assertEqual(claim.queue_item.queue_item_id, item.queue_item_id)
+
+    async def test_enqueue_keeps_already_queued_run_state(self) -> None:
+        item = await self.queue.enqueue(
+            "run-queued",
+            queue_name="default",
+            available_at=self.now,
+        )
+
+        self.assertEqual(item.run_state, TaskRunState.QUEUED)
+        self.assertEqual(self.database.run_transitions, {})
+
     async def test_enqueue_rejects_missing_duplicate_and_unready_runs(
         self,
     ) -> None:
