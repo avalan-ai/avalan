@@ -88,6 +88,9 @@ from .event import TaskEventStore as TaskEventStore
 from .event import TaskEventValue as TaskEventValue
 from .event import freeze_task_event_value as freeze_task_event_value
 from .event import sanitize_raw_task_event as sanitize_raw_task_event
+from .event import (
+    sanitize_raw_task_event_closed as sanitize_raw_task_event_closed,
+)
 from .event import task_event_category as task_event_category
 from .feature_gate import FeatureGateCategory as FeatureGateCategory
 from .feature_gate import FeatureGateCheckLocation as FeatureGateCheckLocation
@@ -138,6 +141,11 @@ from .materialization import (
 )
 from .materialization import (
     task_file_descriptors_from_input as task_file_descriptors_from_input,
+)
+from .observability import TaskEventPipeline as TaskEventPipeline
+from .observability import TaskObservedEvent as TaskObservedEvent
+from .observability import (
+    TaskSanitizedEventObserver as TaskSanitizedEventObserver,
 )
 from .privacy import DROPPED_MARKER as DROPPED_MARKER
 from .privacy import ENCRYPTED_MARKER as ENCRYPTED_MARKER

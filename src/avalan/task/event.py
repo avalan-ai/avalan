@@ -1,5 +1,5 @@
 from ..event import Event, EventType
-from .privacy import PrivacySanitizer
+from .privacy import REDACTED_MARKER, PrivacySanitizer
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -20,6 +20,7 @@ TaskEventValue: TypeAlias = (
 )
 
 _UNKNOWN_EVENT_TYPE = "unknown"
+_EVENT_SANITIZATION_FAILED = "event_sanitization_failed"
 _TOKEN_EVENT_TYPES = frozenset(
     {
         "input_token_count_after",
@@ -118,7 +119,7 @@ class RawTaskEventListener:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
 
     async def __call__(self, event: Event) -> None:
-        draft = sanitize_raw_task_event(event, self.sanitizer)
+        draft = sanitize_raw_task_event_closed(event, self.sanitizer)
         await self.store.append_event(
             self.run_id,
             attempt_id=self.attempt_id,
@@ -143,6 +144,24 @@ def sanitize_raw_task_event(
         category=task_event_category(event_type),
         payload=cast(TaskEventValue, payload),
     )
+
+
+def sanitize_raw_task_event_closed(
+    event: object,
+    sanitizer: PrivacySanitizer,
+) -> SanitizedTaskEventDraft:
+    assert isinstance(sanitizer, PrivacySanitizer)
+    try:
+        return sanitize_raw_task_event(event, sanitizer)
+    except Exception:
+        return SanitizedTaskEventDraft(
+            event_type=_EVENT_SANITIZATION_FAILED,
+            category=TaskEventCategory.UNKNOWN,
+            payload={
+                "event_type": _EVENT_SANITIZATION_FAILED,
+                "privacy": REDACTED_MARKER,
+            },
+        )
 
 
 def task_event_category(event_type: str) -> TaskEventCategory:

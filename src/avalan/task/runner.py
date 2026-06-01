@@ -16,13 +16,13 @@ from .converters import (
 from .converters.text import TextFileConverter
 from .definition import RunMode, TaskDefinition, TaskInputType, TaskOutputType
 from .error import TaskError, TaskErrorValue, classify_task_error
-from .event import RawTaskEventListener
 from .input import TaskFileDescriptor
 from .materialization import (
     TaskMaterializedFile,
     materialize_task_input_files,
     task_file_descriptors_from_input,
 )
+from .observability import TaskEventPipeline, TaskSanitizedEventObserver
 from .privacy import (
     EncryptionProvider,
     HmacProvider,
@@ -237,6 +237,8 @@ class DirectTaskRunner:
         finalizer: TaskRunFinalizer | None = None,
         definition_hash: Callable[[TaskDefinition], str] | None = None,
         execution_roots: Iterable[str | Path] = (),
+        metrics_event_observer: TaskSanitizedEventObserver | None = None,
+        trace_event_observer: TaskSanitizedEventObserver | None = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -250,6 +252,8 @@ class DirectTaskRunner:
         self._finalizer = finalizer or TaskRunFinalizer()
         self._definition_hash = definition_hash or spec_hash
         self._execution_roots = tuple(execution_roots)
+        self._metrics_event_observer = metrics_event_observer
+        self._trace_event_observer = trace_event_observer
         self._clock = clock or _utc_now
         self._sleep = sleep or asyncio_sleep
 
@@ -528,15 +532,11 @@ class DirectTaskRunner:
                 run,
                 expires_at,
             ),
-            event_listener=(
-                RawTaskEventListener(
-                    store=self._store,
-                    run_id=run.run_id,
-                    sanitizer=sanitizer,
-                    attempt_id=attempt.attempt_id,
-                )
-                if definition.observability.capture_events
-                else None
+            event_listener=self._event_pipeline(
+                definition,
+                run=run,
+                attempt=attempt,
+                sanitizer=sanitizer,
             ),
             usage_observer=(
                 (
@@ -633,6 +633,40 @@ class DirectTaskRunner:
             hmac_provider=self._hmac_provider,
             encryption_provider=self._encryption_provider,
             raw_storage_allowed=self._raw_storage_allowed,
+        )
+
+    def _event_pipeline(
+        self,
+        definition: TaskDefinition,
+        *,
+        run: TaskRun,
+        attempt: TaskAttempt,
+        sanitizer: PrivacySanitizer,
+    ) -> TaskEventPipeline | None:
+        metrics_observer = (
+            self._metrics_event_observer
+            if definition.observability.metrics
+            else None
+        )
+        trace_observer = (
+            self._trace_event_observer
+            if definition.observability.trace
+            else None
+        )
+        if (
+            not definition.observability.capture_events
+            and metrics_observer is None
+            and trace_observer is None
+        ):
+            return None
+        return TaskEventPipeline(
+            store=self._store,
+            run_id=run.run_id,
+            attempt_id=attempt.attempt_id,
+            sanitizer=sanitizer,
+            capture_events=definition.observability.capture_events,
+            metrics_observer=metrics_observer,
+            trace_observer=trace_observer,
         )
 
     def _file_summaries(
