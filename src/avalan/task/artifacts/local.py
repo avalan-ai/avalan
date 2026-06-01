@@ -1,3 +1,4 @@
+from ...types import assert_non_empty_string as _assert_non_empty_string
 from ..artifact import (
     ArtifactStoreConflictError,
     ArtifactStoreError,
@@ -131,11 +132,6 @@ def _assert_artifact_id(value: str) -> None:
         r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
         value,
     ), "artifact_id must be a stable token"
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

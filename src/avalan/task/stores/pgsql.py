@@ -6,6 +6,12 @@ from ...pgsql import (
     assert_pgsql_identifier,
     classify_pgsql_error,
 )
+from ...types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ...types import (
+    assert_non_negative_int as _assert_non_negative_int,
+)
 from ..artifact import (
     TaskArtifactProvenance,
     TaskArtifactPurpose,
@@ -1363,11 +1369,6 @@ def _run_alembic_command(
     command(config, *args, **kwargs)
 
 
-def _assert_non_empty_string(value: object, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
-
-
 def _assert_revision(value: str) -> None:
     _assert_non_empty_string(value, "revision")
     assert fullmatch(r"[A-Za-z0-9_.@+-]+", value)
@@ -2319,12 +2320,6 @@ def _verify_claim_token(run: TaskRun, claim_token: str | None) -> None:
         return
     if claim_token != run.claim.claim_token:
         raise TaskStoreConflictError("task claim token did not match")
-
-
-def _assert_non_negative_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value >= 0, f"{field_name} must not be negative"
 
 
 def _row_value(

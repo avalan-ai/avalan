@@ -1,3 +1,4 @@
+from ...types import assert_non_empty_string as _assert_non_empty_string
 from ..observability import (
     ObservabilitySink,
     ObservabilitySinkHealth,
@@ -42,8 +43,3 @@ class NoopObservabilitySink(ObservabilitySink):
             event_count=self._event_count,
             usage_count=self._usage_count,
         )
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

@@ -1,3 +1,8 @@
+from ..types import (
+    assert_optional_non_negative_int,
+    assert_optional_non_negative_number,
+    assert_positive_number,
+)
 from .artifact import (
     ArtifactStore,
     TaskArtifactProvenance,
@@ -339,8 +344,14 @@ class TaskClient:
         poll_interval_seconds: float = 1.0,
     ) -> TaskClientOutput:
         assert isinstance(run_id, str) and run_id.strip()
-        _assert_non_negative_timeout(timeout_seconds)
-        _assert_positive_interval(poll_interval_seconds)
+        assert_optional_non_negative_number(
+            timeout_seconds,
+            "timeout_seconds",
+        )
+        assert_positive_number(
+            poll_interval_seconds,
+            "poll_interval_seconds",
+        )
         deadline = (
             self._clock() + timedelta(seconds=timeout_seconds)
             if timeout_seconds is not None
@@ -395,7 +406,7 @@ class TaskClient:
         attempt_id: str | None = None,
         after_sequence: int | None = None,
     ) -> tuple[SanitizedTaskEvent, ...]:
-        _assert_non_negative_sequence(after_sequence)
+        assert_optional_non_negative_int(after_sequence, "after_sequence")
         return await self._store.list_events(
             run_id,
             attempt_id=attempt_id,
@@ -540,28 +551,6 @@ def _default_definition_hash(definition: TaskDefinition) -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _assert_non_negative_timeout(value: float | None) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int | float)
-    assert not isinstance(value, bool)
-    assert value >= 0
-
-
-def _assert_positive_interval(value: float) -> None:
-    assert isinstance(value, int | float)
-    assert not isinstance(value, bool)
-    assert value > 0
-
-
-def _assert_non_negative_sequence(value: int | None) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int)
-    assert not isinstance(value, bool)
-    assert value >= 0
 
 
 def _target_runner(

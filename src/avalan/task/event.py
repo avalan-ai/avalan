@@ -1,4 +1,10 @@
 from ..event import Event, EventType
+from ..types import (
+    JsonValue,
+)
+from ..types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
 from .privacy import REDACTED_MARKER, PrivacySanitizer
 
 from collections.abc import Mapping
@@ -9,15 +15,7 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Protocol, TypeAlias, cast
 
-TaskEventValue: TypeAlias = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | tuple["TaskEventValue", ...]
-    | Mapping[str, "TaskEventValue"]
-)
+TaskEventValue: TypeAlias = JsonValue
 
 _UNKNOWN_EVENT_TYPE = "unknown"
 _EVENT_SANITIZATION_FAILED = "event_sanitization_failed"
@@ -243,8 +241,3 @@ def _is_safe_event_type(value: str) -> bool:
     if not value[0].isalpha():
         return False
     return all(character.isalnum() or character == "_" for character in value)
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

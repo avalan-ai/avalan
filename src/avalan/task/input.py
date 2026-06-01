@@ -1,3 +1,4 @@
+from ..types import assert_non_empty_string as _assert_non_empty_string
 from .store import freeze_snapshot_metadata
 
 from collections.abc import Iterable, Mapping
@@ -211,8 +212,3 @@ class TaskFileDescriptor:
             conversions=tuple(conversions),
             metadata=metadata or {},
         )
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

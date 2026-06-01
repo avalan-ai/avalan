@@ -1,5 +1,15 @@
 """Provide shared async PostgreSQL protocol helpers."""
 
+from .types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from .types import (
+    assert_optional_positive_int as _assert_optional_positive_int,
+)
+from .types import (
+    assert_optional_positive_number as _assert_optional_positive_number,
+)
+
 from asyncio import CancelledError
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -511,30 +521,3 @@ def _error_sqlstate(error: BaseException) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value
-
-
-def _assert_optional_positive_int(
-    value: object | None,
-    field_name: str,
-) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
-
-
-def _assert_optional_positive_number(
-    value: object | None,
-    field_name: str,
-) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int | float), f"{field_name} must be numeric"
-    assert not isinstance(value, bool), f"{field_name} must be numeric"
-    assert value > 0, f"{field_name} must be positive"
-
-
-def _assert_non_empty_string(value: object, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

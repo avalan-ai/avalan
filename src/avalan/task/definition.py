@@ -1,3 +1,10 @@
+from ..types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ..types import (
+    assert_optional_positive_int as _assert_positive_int,
+)
+
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -97,19 +104,6 @@ def _assert_enum(
     assert isinstance(
         value, enum_type
     ), f"{field_name} must be a {enum_type.__name__}"
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
-
-
-def _assert_positive_int(value: int | None, field_name: str) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
 
 
 def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:

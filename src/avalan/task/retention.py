@@ -1,3 +1,4 @@
+from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import (
     ArtifactStore,
     ArtifactStoreNotFoundError,
@@ -229,11 +230,6 @@ def _purpose_filter(
         ), "purposes must contain TaskArtifactPurpose values"
         selected.add(purpose)
     return frozenset(selected)
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
 
 
 def _assert_datetime(value: datetime, field_name: str) -> None:

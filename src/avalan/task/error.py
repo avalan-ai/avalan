@@ -1,3 +1,4 @@
+from ..types import JsonValue
 from .validation import TaskValidationError, TaskValidationIssue
 
 from asyncio import CancelledError
@@ -9,15 +10,7 @@ from math import isfinite
 from types import MappingProxyType
 from typing import TypeAlias, cast
 
-TaskErrorValue: TypeAlias = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | tuple["TaskErrorValue", ...]
-    | Mapping[str, "TaskErrorValue"]
-)
+TaskErrorValue: TypeAlias = JsonValue
 
 
 class TaskErrorCategory(StrEnum):

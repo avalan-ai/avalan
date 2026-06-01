@@ -1,3 +1,4 @@
+from ...types import assert_non_empty_string as _assert_non_empty_string
 from ..artifact import (
     ArtifactStore,
     TaskArtifactProvenance,
@@ -206,8 +207,3 @@ def _content_identity(ref: TaskArtifactRef) -> TaskSnapshotMetadata:
 def _assert_converter(converter: FileConverter) -> None:
     _assert_non_empty_string(converter.name, "converter.name")
     _assert_non_empty_string(converter.version, "converter.version")
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

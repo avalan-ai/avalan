@@ -1,3 +1,12 @@
+from ..types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ..types import (
+    assert_optional_non_negative_int as _assert_non_negative_int,
+)
+from ..types import (
+    assert_optional_positive_int as _assert_positive_int,
+)
 from .store import (
     TaskSnapshotMetadata,
     TaskSnapshotValue,
@@ -357,29 +366,8 @@ def assert_artifact_state_collection(
         ), f"{field_name} must contain TaskArtifactState values"
 
 
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
-
-
 def _assert_datetime(value: datetime, field_name: str) -> None:
     assert isinstance(value, datetime), f"{field_name} must be a datetime"
-
-
-def _assert_positive_int(value: int | None, field_name: str) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
-
-
-def _assert_non_negative_int(value: int | None, field_name: str) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value >= 0, f"{field_name} must be non-negative"
 
 
 def _assert_sha256(value: str) -> None:

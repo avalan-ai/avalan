@@ -14,6 +14,7 @@ from ...server.entities import (
     ChatMessage,
     MCPToolRequest,
 )
+from ...types import JsonObject, JsonScalar, MutableJsonValue
 from ...utils import to_json
 from ..sse import sse_bytes, sse_headers
 from . import (
@@ -38,6 +39,7 @@ from typing import (
     Literal,
     Mapping,
     Protocol,
+    TypeAlias,
     TypedDict,
     cast,
 )
@@ -54,9 +56,9 @@ from fastapi.responses import (
 RS: Final[str] = "\x1e"
 MODEL_FALLBACK: Final[str] = DEFAULT_MODEL_FALLBACK
 
-JSONScalar = None | bool | int | float | str
-JSONValue = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
-JSONObject = dict[str, JSONValue]
+JSONScalar: TypeAlias = JsonScalar
+JSONValue: TypeAlias = MutableJsonValue
+JSONObject: TypeAlias = JsonObject
 
 Method = Literal["initialize", "ping", "tools/list", "tools/call"]
 NotificationMethod = Literal[
@@ -1045,7 +1047,7 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
             }
         if isinstance(tool_result, ToolCallResult):
             result: JSONValue = (
-                tool_result.result
+                cast(JSONValue, tool_result.result)
                 if isinstance(
                     tool_result.result, (dict, list, str, int, float, bool)
                 )

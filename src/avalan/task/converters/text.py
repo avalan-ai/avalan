@@ -1,3 +1,4 @@
+from ...types import assert_non_empty_string as _assert_non_empty_string
 from . import TaskFileConversionError, TaskFileConversionResult
 
 from collections.abc import Mapping
@@ -106,8 +107,3 @@ def _string_option(
     if not isinstance(value, str) or not value.strip():
         raise TaskFileConversionError("text converter option is invalid")
     return value
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

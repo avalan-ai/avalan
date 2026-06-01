@@ -1,3 +1,4 @@
+from ..types import MutableJsonValue
 from .definition import PrivacyAction, TaskPrivacyPolicy
 
 from base64 import b64encode
@@ -10,15 +11,7 @@ from json import dumps
 from math import isfinite
 from typing import Protocol, TypeAlias, cast
 
-PrivacySafeValue: TypeAlias = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | list["PrivacySafeValue"]
-    | dict[str, "PrivacySafeValue"]
-)
+PrivacySafeValue: TypeAlias = MutableJsonValue
 
 REDACTED_MARKER = "<redacted>"
 DROPPED_MARKER = "<dropped>"

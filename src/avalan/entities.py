@@ -1,3 +1,5 @@
+from .types import LooseJsonValue
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -49,7 +51,7 @@ class Backend(StrEnum):
     DS4 = "ds4"
 
 
-ToolValue = bool | float | int | str | None | list[Any] | dict[str, Any]
+ToolValue: TypeAlias = LooseJsonValue
 
 Vendor = Literal[
     "anthropic",

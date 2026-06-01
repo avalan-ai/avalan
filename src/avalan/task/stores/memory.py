@@ -1,3 +1,9 @@
+from ...types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ...types import (
+    assert_non_negative_int as _assert_non_negative_int,
+)
 from ..artifact import (
     TaskArtifactProvenance,
     TaskArtifactPurpose,
@@ -754,14 +760,3 @@ def _utc_now() -> datetime:
 
 def _uuid_id() -> str:
     return uuid4().hex
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
-
-
-def _assert_non_negative_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value >= 0, f"{field_name} must not be negative"

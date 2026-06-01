@@ -1,3 +1,4 @@
+from ...types import assert_non_empty_string
 from ..event import TaskEventCategory
 from ..usage import UsageTotals
 
@@ -66,8 +67,3 @@ def assert_label_value(value: str | None, field_name: str) -> None:
     assert all(
         character.isalnum() or character == "_" for character in value
     ), f"{field_name} must be a safe label value"
-
-
-def assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

@@ -1,3 +1,4 @@
+from ..types import assert_non_empty_string as _assert_non_empty_string
 from .context import TaskInputFile
 from .definition import IdempotencyMode, TaskDefinition
 from .privacy import HmacProvider, TaskKeyMaterial, TaskKeyPurpose
@@ -253,8 +254,3 @@ def _canonical_value(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_canonical_value(item) for item in value]
     raise TaskIdempotencyError("idempotency value is not JSON-compatible")
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

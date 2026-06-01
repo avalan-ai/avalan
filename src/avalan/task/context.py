@@ -1,4 +1,5 @@
 from ..event import Event
+from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactRef
 from .definition import TaskDefinition
 from .store import (
@@ -109,8 +110,3 @@ def safe_target_metadata(
 
 def safe_target_value(value: object) -> object:
     return freeze_snapshot_value(value)
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

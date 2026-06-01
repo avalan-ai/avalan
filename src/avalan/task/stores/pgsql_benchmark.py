@@ -1,4 +1,10 @@
 from ...pgsql import assert_pgsql_identifier
+from ...types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ...types import (
+    assert_positive_int as _assert_positive_int,
+)
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -229,14 +235,3 @@ def task_pgsql_plan_issues(
 def _safe_plan_line(line: object) -> str:
     assert isinstance(line, str)
     return line.strip()
-
-
-def _assert_positive_int(value: object, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
-
-
-def _assert_non_empty_string(value: object, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

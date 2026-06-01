@@ -6,6 +6,15 @@ from ...pgsql import (
     PgsqlUnitOfWork,
     classify_pgsql_error,
 )
+from ...types import (
+    assert_int as _assert_int,
+)
+from ...types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ...types import (
+    assert_positive_int as _assert_positive_int,
+)
 from ..artifact import TaskArtifactRecord
 from ..idempotency import (
     TaskIdempotencyIdentity,
@@ -1709,21 +1718,6 @@ def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
-
-
-def _assert_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-
-
-def _assert_positive_int(value: int, field_name: str) -> None:
-    _assert_int(value, field_name)
-    assert value > 0, f"{field_name} must be positive"
 
 
 def _uuid_id() -> str:

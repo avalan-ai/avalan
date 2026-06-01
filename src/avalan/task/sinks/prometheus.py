@@ -1,3 +1,4 @@
+from ...types import assert_non_empty_string
 from ..event import (
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
@@ -12,7 +13,6 @@ from ..usage import UsageSource, UsageTotals, freeze_usage_metadata
 from ._shared import (
     KNOWN_EVENT_TYPES,
     assert_label_value,
-    assert_non_empty_string,
     event_type_label,
     usage_counter_values,
 )

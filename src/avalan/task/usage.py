@@ -1,3 +1,13 @@
+from ..types import (
+    JsonValue,
+)
+from ..types import (
+    assert_counter as _assert_counter,
+)
+from ..types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -6,15 +16,7 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Protocol, TypeAlias, cast
 
-TaskUsageValue: TypeAlias = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | tuple["TaskUsageValue", ...]
-    | Mapping[str, "TaskUsageValue"]
-)
+TaskUsageValue: TypeAlias = JsonValue
 TaskUsageMetadata: TypeAlias = Mapping[str, TaskUsageValue]
 
 
@@ -385,16 +387,3 @@ def _value_at_path(value: object, path: CounterPath) -> object | None:
         if current is None:
             return None
     return current
-
-
-def _assert_counter(value: int | None, field_name: str) -> None:
-    if value is None:
-        return
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value >= 0, f"{field_name} must be non-negative"
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"

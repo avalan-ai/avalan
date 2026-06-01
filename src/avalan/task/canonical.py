@@ -1,3 +1,4 @@
+from ..types import LooseJsonValue
 from .definition import (
     FrozenMetadata,
     ObservabilitySinkType,
@@ -12,9 +13,7 @@ from math import isfinite
 from pathlib import Path
 from typing import TypeAlias, cast
 
-CanonicalValue: TypeAlias = (
-    None | bool | int | float | str | list[object] | dict[str, object]
-)
+CanonicalValue: TypeAlias = LooseJsonValue
 
 _CANONICAL_JSON_SEPARATORS = (",", ":")
 _SENSITIVE_KEY_PARTS = (

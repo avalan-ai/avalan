@@ -1,3 +1,4 @@
+from ..types import assert_positive_int as _assert_positive_int
 from .definition import RetryBackoff, TaskRetryPolicy
 from .error import TaskError
 
@@ -98,9 +99,3 @@ class TaskAttemptPolicy:
         if self.max_delay_seconds is None:
             return delay
         return min(delay, self.max_delay_seconds)
-
-
-def _assert_positive_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"

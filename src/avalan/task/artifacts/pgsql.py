@@ -4,6 +4,7 @@ from ...pgsql import (
     PgsqlUnitOfWork,
     run_pgsql_transaction,
 )
+from ...types import assert_non_empty_string as _assert_non_empty_string
 from ..artifact import (
     ArtifactStoreConflictError,
     ArtifactStoreError,
@@ -404,11 +405,6 @@ def _assert_artifact_id(value: str) -> None:
 def _assert_sha256(value: str) -> None:
     _assert_non_empty_string(value, "sha256")
     assert fullmatch(r"[0-9a-f]{64}", value)
-
-
-def _assert_non_empty_string(value: object, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
 
 
 def _encryption_context(

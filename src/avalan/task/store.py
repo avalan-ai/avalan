@@ -1,3 +1,12 @@
+from ..types import (
+    JsonValue,
+)
+from ..types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ..types import (
+    assert_positive_int as _assert_positive_int,
+)
 from .definition import TaskDefinition
 from .event import SanitizedTaskEvent, TaskEventCategory, TaskEventValue
 from .state import (
@@ -32,15 +41,7 @@ if TYPE_CHECKING:
         TaskIdempotencyReservationResult,
     )
 
-TaskSnapshotValue: TypeAlias = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | tuple["TaskSnapshotValue", ...]
-    | Mapping[str, "TaskSnapshotValue"]
-)
+TaskSnapshotValue: TypeAlias = JsonValue
 TaskSnapshotMetadata: TypeAlias = Mapping[str, TaskSnapshotValue]
 
 
@@ -569,19 +570,8 @@ def _freeze_snapshot_value(value: object) -> TaskSnapshotValue:
     raise AssertionError("snapshot value must be privacy-safe")
 
 
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
-
-
 def _assert_datetime(value: datetime, field_name: str) -> None:
     assert isinstance(value, datetime), f"{field_name} must be a datetime"
-
-
-def _assert_positive_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
 
 
 def _assert_state_collection(

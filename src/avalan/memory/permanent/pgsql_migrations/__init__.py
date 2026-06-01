@@ -1,3 +1,5 @@
+from ....types import assert_non_empty_string as _assert_non_empty_string
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -149,11 +151,6 @@ def _run_alembic_command(
     command_module = cast(Any, settings.module_importer("alembic.command"))
     command = getattr(command_module, command_name)
     command(config, *args, **kwargs)
-
-
-def _assert_non_empty_string(value: object, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
 
 
 def _assert_pgsql_identifier(value: str, field_name: str) -> None:

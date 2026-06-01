@@ -1,3 +1,4 @@
+from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
 from .context import TaskInputFile, TaskTargetContext
@@ -513,8 +514,3 @@ def _utc_now() -> datetime:
 
 def _worker_id() -> str:
     return f"worker-{uuid4().hex}"
-
-
-def _assert_non_empty_string(value: str | None, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value.strip(), f"{field_name} must not be empty"
