@@ -161,13 +161,16 @@ class TaskEventPipeline:
         draft = sanitize_raw_task_event_closed(event, self.sanitizer)
         observed: TaskObservedEvent = draft
         if self.capture_events:
-            observed = await self.store.append_event(
-                self.run_id,
-                attempt_id=self.attempt_id,
-                category=draft.category,
-                event_type=draft.event_type,
-                payload=draft.payload,
-            )
+            try:
+                observed = await self.store.append_event(
+                    self.run_id,
+                    attempt_id=self.attempt_id,
+                    category=draft.category,
+                    event_type=draft.event_type,
+                    payload=draft.payload,
+                )
+            except Exception:
+                observed = draft
         await _notify_observer(self.metrics_observer, observed)
         await _notify_observer(self.trace_observer, observed)
         await record_observability_event(

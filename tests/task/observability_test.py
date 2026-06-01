@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
 from avalan.event import Event, EventType
 from avalan.task import (
@@ -227,6 +228,32 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(await store.list_usage(result.run.run_id)), 1)
         self.assertNotIn("private query", str(recording.events))
         self.assertNotIn("private result", str(recording.events))
+
+    async def test_runner_success_survives_usage_store_failures(self) -> None:
+        store = InMemoryTaskStore()
+        recording = RecordingSink()
+        runner = DirectTaskRunner(
+            store,
+            target=cast(TaskDirectTarget, EventAndUsageTarget()),
+            hmac_provider=StaticHmacProvider(),
+            observability_sink=recording,
+            definition_hash=lambda task: "hash-observability-usage-store",
+        )
+
+        with patch.object(
+            store,
+            "append_usage",
+            side_effect=RuntimeError("private usage store failure"),
+        ):
+            result = await runner.run(
+                definition(),
+                input_value="private prompt",
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(await store.list_usage(result.run.run_id), ())
+        self.assertEqual(len(recording.usages), 1)
+        self.assertNotIn("private usage store failure", str(result.run))
 
     async def test_noop_observability_policy_does_not_emit_to_sink(
         self,

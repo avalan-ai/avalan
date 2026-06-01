@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
 from avalan.event import Event, EventType
 from avalan.task import (
@@ -224,6 +225,42 @@ class TaskEventPipelineTest(IsolatedAsyncioTestCase):
         self.assertNotIn("private observer failure", str(stored_events))
         self.assertNotIn("private query", str(trace_events))
 
+    async def test_event_store_failures_do_not_interrupt_safe_fanout(
+        self,
+    ) -> None:
+        metrics_events: list[TaskObservedEvent] = []
+        pipeline = TaskEventPipeline(
+            store=self.store,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            sanitizer=PrivacySanitizer(),
+            metrics_observer=lambda event: maybe_observe(
+                metrics_events,
+                event,
+            ),
+        )
+
+        with patch.object(
+            self.store,
+            "append_event",
+            side_effect=RuntimeError("private event store failure"),
+        ):
+            await pipeline(
+                Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={
+                        "arguments": {"query": "private query"},
+                        "result": "private result",
+                    },
+                )
+            )
+
+        self.assertEqual(await self.store.list_events(self.run.run_id), ())
+        self.assertIsInstance(metrics_events[0], SanitizedTaskEventDraft)
+        self.assertEqual(metrics_events[0].event_type, "tool_result")
+        self.assertNotIn("private event store failure", str(metrics_events))
+        self.assertNotIn("private query", str(metrics_events))
+
     async def test_sanitizer_failures_reduce_to_safe_events(self) -> None:
         observed: list[TaskObservedEvent] = []
         pipeline = TaskEventPipeline(
@@ -332,6 +369,43 @@ class DirectRunnerEventPipelineTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(stored_events), 1)
         self.assertEqual(stored_events[0].event_type, "token_generated")
         self.assertNotIn("private observer failure", str(stored_events))
+
+    async def test_runner_success_survives_event_store_failures(self) -> None:
+        store = InMemoryTaskStore()
+        metrics_events: list[TaskObservedEvent] = []
+        runner = DirectTaskRunner(
+            store,
+            target=cast(TaskDirectTarget, EventEmittingTarget()),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "hash-runner-event-store-failure",
+            metrics_event_observer=lambda event: maybe_observe(
+                metrics_events,
+                event,
+            ),
+        )
+
+        with patch.object(
+            store,
+            "append_event",
+            side_effect=RuntimeError("private event store failure"),
+        ):
+            result = await runner.run(
+                definition(
+                    observability=TaskObservabilityPolicy(
+                        capture_events=True,
+                        metrics=True,
+                        trace=False,
+                    )
+                ),
+                input_value="private prompt",
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(await store.list_events(result.run.run_id), ())
+        self.assertIsInstance(metrics_events[0], SanitizedTaskEventDraft)
+        self.assertEqual(metrics_events[0].event_type, "token_generated")
+        self.assertNotIn("private event store failure", str(metrics_events))
+        self.assertNotIn("private-token", str(metrics_events))
 
 
 if __name__ == "__main__":

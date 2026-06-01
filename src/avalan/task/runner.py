@@ -761,12 +761,15 @@ class DirectTaskRunner:
         observation = usage_observation_from_response(response)
         if observation is None:
             return
-        await self._store.append_usage(
-            run.run_id,
-            attempt_id=attempt.attempt_id,
-            source=observation.source,
-            totals=observation.totals,
-        )
+        try:
+            await self._store.append_usage(
+                run.run_id,
+                attempt_id=attempt.attempt_id,
+                source=observation.source,
+                totals=observation.totals,
+            )
+        except Exception:
+            pass
         await record_observability_usage(
             self._observability_sink,
             run_id=run.run_id,
