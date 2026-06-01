@@ -141,9 +141,9 @@ class PrometheusObservabilitySink(ObservabilitySink):
             assert_non_empty_string(attempt_id, "attempt_id")
         assert isinstance(source, UsageSource)
         assert isinstance(totals, UsageTotals)
-        freeze_usage_metadata(metadata)
 
         try:
+            freeze_usage_metadata(metadata)
             labels = {"source": source.value}
             self._usage_record_counter.labels(**labels).inc()
             for counter_name, value in usage_counter_values(totals):

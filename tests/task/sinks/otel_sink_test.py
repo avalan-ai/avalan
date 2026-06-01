@@ -344,6 +344,30 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(health.last_failure_code, "RuntimeError")
         self.assertNotIn("private", str(health))
 
+    async def test_unsafe_usage_metadata_failure_is_counted(self) -> None:
+        tracer = FakeTracer()
+        meter = FakeMeter()
+        sink = OpenTelemetryObservabilitySink(
+            tracer=tracer,
+            meter=meter,
+        )
+
+        with self.assertRaises(AssertionError):
+            await sink.record_usage(
+                run_id="run-private",
+                source=UsageSource.EXACT,
+                totals=UsageTotals(total_tokens=1),
+                metadata={"private": object()},
+            )
+
+        health = sink.health()
+        self.assertFalse(health.healthy)
+        self.assertEqual(health.usage_count, 0)
+        self.assertEqual(health.failure_count, 1)
+        self.assertEqual(health.last_failure_code, "AssertionError")
+        self.assertNotIn("private", str(health))
+        self.assertEqual(tracer.spans, [])
+
     async def test_record_helper_isolates_sink_failures(self) -> None:
         tracer = FakeTracer(fail_on_enter=True)
         meter = FakeMeter()

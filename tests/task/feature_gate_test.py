@@ -70,6 +70,24 @@ class FeatureGateTest(TestCase):
             (),
         )
 
+    def test_postgresql_dependency_gate_requires_pool_module(self) -> None:
+        seen_modules: list[str] = []
+
+        def missing_pool_module(module: str) -> object | None:
+            seen_modules.append(module)
+            if module == "psycopg_pool":
+                return None
+            return object()
+
+        diagnostics = require_feature(
+            TaskFeature.POSTGRESQL,
+            module_finder=missing_pool_module,
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0].code, "dependency.task_pgsql_missing")
+        self.assertEqual(seen_modules, ["psycopg", "psycopg_pool"])
+
     def test_dependency_gate_swallows_import_discovery_errors(self) -> None:
         diagnostics = require_feature(
             TaskFeature.OPENTELEMETRY,

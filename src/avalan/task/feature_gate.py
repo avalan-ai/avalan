@@ -124,7 +124,7 @@ _FEATURE_GATE_SPECS = {
         category=FeatureGateCategory.DEPENDENCY,
         message="PostgreSQL task storage requires the task-pgsql extra.",
         hint="Install avalan[task-pgsql] and configure a durable task store.",
-        modules=("psycopg",),
+        modules=("psycopg", "psycopg_pool"),
     ),
     TaskFeature.POSTGRESQL_MIGRATIONS: FeatureGateSpec(
         feature=TaskFeature.POSTGRESQL_MIGRATIONS,

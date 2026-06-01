@@ -161,12 +161,12 @@ class OpenTelemetryObservabilitySink(ObservabilitySink):
             assert_non_empty_string(attempt_id, "attempt_id")
         assert isinstance(source, UsageSource)
         assert isinstance(totals, UsageTotals)
-        freeze_usage_metadata(metadata)
-        span_attributes = _usage_span_attributes(totals)
-        metric_attributes = {_USAGE_SOURCE_ATTRIBUTE: source.value}
 
         assert self.tracer is not None
         try:
+            freeze_usage_metadata(metadata)
+            span_attributes = _usage_span_attributes(totals)
+            metric_attributes = {_USAGE_SOURCE_ATTRIBUTE: source.value}
             with self.tracer.start_as_current_span(
                 _USAGE_SPAN_NAME,
                 attributes=span_attributes,
