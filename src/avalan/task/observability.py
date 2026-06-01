@@ -6,16 +6,125 @@ from .event import (
     sanitize_raw_task_event_closed,
 )
 from .privacy import PrivacySanitizer
+from .usage import UsageSource, UsageTotals
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import TypeAlias
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Protocol, TypeAlias
 
 TaskObservedEvent: TypeAlias = SanitizedTaskEvent | SanitizedTaskEventDraft
 TaskSanitizedEventObserver: TypeAlias = Callable[
     [TaskObservedEvent],
     Awaitable[None] | None,
 ]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ObservabilitySinkHealth:
+    name: str
+    event_count: int = 0
+    usage_count: int = 0
+    failure_count: int = 0
+    last_failure_code: str | None = None
+    children: tuple["ObservabilitySinkHealth", ...] = ()
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.name, "name")
+        _assert_non_negative_int(self.event_count, "event_count")
+        _assert_non_negative_int(self.usage_count, "usage_count")
+        _assert_non_negative_int(self.failure_count, "failure_count")
+        if self.last_failure_code is not None:
+            _assert_non_empty_string(
+                self.last_failure_code,
+                "last_failure_code",
+            )
+        assert isinstance(self.children, tuple)
+        for child in self.children:
+            assert isinstance(child, ObservabilitySinkHealth)
+
+    @property
+    def healthy(self) -> bool:
+        return self.failure_count == 0 and all(
+            child.healthy for child in self.children
+        )
+
+
+class ObservabilitySink(Protocol):
+    async def record_event(self, event: TaskObservedEvent) -> None: ...
+
+    async def record_usage(
+        self,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None: ...
+
+    def health(self) -> ObservabilitySinkHealth: ...
+
+
+@dataclass(slots=True, kw_only=True)
+class FanoutObservabilitySink(ObservabilitySink):
+    sinks: tuple[ObservabilitySink, ...]
+    name: str = "fanout"
+    _event_count: int = field(default=0, init=False)
+    _usage_count: int = field(default=0, init=False)
+    _failure_count: int = field(default=0, init=False)
+    _last_failure_code: str | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.name, "name")
+        assert isinstance(self.sinks, tuple)
+        for sink in self.sinks:
+            assert callable(getattr(sink, "record_event", None))
+            assert callable(getattr(sink, "record_usage", None))
+            assert callable(getattr(sink, "health", None))
+
+    async def record_event(self, event: TaskObservedEvent) -> None:
+        self._event_count += 1
+        for sink in self.sinks:
+            try:
+                await sink.record_event(event)
+            except Exception as error:
+                self._record_failure(error)
+
+    async def record_usage(
+        self,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        self._usage_count += 1
+        for sink in self.sinks:
+            try:
+                await sink.record_usage(
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    source=source,
+                    totals=totals,
+                    metadata=metadata,
+                )
+            except Exception as error:
+                self._record_failure(error)
+
+    def health(self) -> ObservabilitySinkHealth:
+        return ObservabilitySinkHealth(
+            name=self.name,
+            event_count=self._event_count,
+            usage_count=self._usage_count,
+            failure_count=self._failure_count,
+            last_failure_code=self._last_failure_code,
+            children=tuple(sink.health() for sink in self.sinks),
+        )
+
+    def _record_failure(self, error: Exception) -> None:
+        self._failure_count += 1
+        self._last_failure_code = type(error).__name__
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -27,6 +136,7 @@ class TaskEventPipeline:
     capture_events: bool = True
     metrics_observer: TaskSanitizedEventObserver | None = None
     trace_observer: TaskSanitizedEventObserver | None = None
+    observability_sink: ObservabilitySink | None = None
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.run_id, "run_id")
@@ -38,6 +148,14 @@ class TaskEventPipeline:
             assert callable(self.metrics_observer)
         if self.trace_observer is not None:
             assert callable(self.trace_observer)
+        if self.observability_sink is not None:
+            assert callable(
+                getattr(self.observability_sink, "record_event", None)
+            )
+            assert callable(
+                getattr(self.observability_sink, "record_usage", None)
+            )
+            assert callable(getattr(self.observability_sink, "health", None))
 
     async def __call__(self, event: Event) -> None:
         draft = sanitize_raw_task_event_closed(event, self.sanitizer)
@@ -52,6 +170,45 @@ class TaskEventPipeline:
             )
         await _notify_observer(self.metrics_observer, observed)
         await _notify_observer(self.trace_observer, observed)
+        await record_observability_event(
+            self.observability_sink,
+            observed,
+        )
+
+
+async def record_observability_event(
+    sink: ObservabilitySink | None,
+    event: TaskObservedEvent,
+) -> None:
+    if sink is None:
+        return
+    try:
+        await sink.record_event(event)
+    except Exception:
+        return
+
+
+async def record_observability_usage(
+    sink: ObservabilitySink | None,
+    *,
+    run_id: str,
+    source: UsageSource,
+    totals: UsageTotals,
+    attempt_id: str | None = None,
+    metadata: Mapping[str, object] | None = None,
+) -> None:
+    if sink is None:
+        return
+    try:
+        await sink.record_usage(
+            run_id=run_id,
+            attempt_id=attempt_id,
+            source=source,
+            totals=totals,
+            metadata=metadata,
+        )
+    except Exception:
+        return
 
 
 async def _notify_observer(
@@ -68,3 +225,9 @@ async def _notify_observer(
 def _assert_non_empty_string(value: str | None, field_name: str) -> None:
     assert isinstance(value, str), f"{field_name} must be a string"
     assert value.strip(), f"{field_name} must not be empty"
+
+
+def _assert_non_negative_int(value: int, field_name: str) -> None:
+    assert isinstance(value, int), f"{field_name} must be an integer"
+    assert not isinstance(value, bool), f"{field_name} must be an integer"
+    assert value >= 0, f"{field_name} must not be negative"

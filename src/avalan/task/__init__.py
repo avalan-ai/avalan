@@ -142,10 +142,19 @@ from .materialization import (
 from .materialization import (
     task_file_descriptors_from_input as task_file_descriptors_from_input,
 )
+from .observability import FanoutObservabilitySink as FanoutObservabilitySink
+from .observability import ObservabilitySink as ObservabilitySink
+from .observability import ObservabilitySinkHealth as ObservabilitySinkHealth
 from .observability import TaskEventPipeline as TaskEventPipeline
 from .observability import TaskObservedEvent as TaskObservedEvent
 from .observability import (
     TaskSanitizedEventObserver as TaskSanitizedEventObserver,
+)
+from .observability import (
+    record_observability_event as record_observability_event,
+)
+from .observability import (
+    record_observability_usage as record_observability_usage,
 )
 from .privacy import DROPPED_MARKER as DROPPED_MARKER
 from .privacy import ENCRYPTED_MARKER as ENCRYPTED_MARKER
@@ -201,6 +210,7 @@ from .runner import TaskDirectTarget as TaskDirectTarget
 from .runner import TaskRunFinalizer as TaskRunFinalizer
 from .runner import TaskRunnerError as TaskRunnerError
 from .runner import TaskRunResult as TaskRunResult
+from .sinks import NoopObservabilitySink as NoopObservabilitySink
 from .state import TASK_ATTEMPT_TERMINAL_STATES as TASK_ATTEMPT_TERMINAL_STATES
 from .state import TASK_RUN_TERMINAL_STATES as TASK_RUN_TERMINAL_STATES
 from .state import (

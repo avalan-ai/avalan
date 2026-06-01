@@ -14,7 +14,13 @@ from .converters import (
     convert_task_artifact,
 )
 from .converters.text import TextFileConverter
-from .definition import RunMode, TaskDefinition, TaskInputType, TaskOutputType
+from .definition import (
+    ObservabilitySinkType,
+    RunMode,
+    TaskDefinition,
+    TaskInputType,
+    TaskOutputType,
+)
 from .error import TaskError, TaskErrorValue, classify_task_error
 from .input import TaskFileDescriptor
 from .materialization import (
@@ -22,7 +28,12 @@ from .materialization import (
     materialize_task_input_files,
     task_file_descriptors_from_input,
 )
-from .observability import TaskEventPipeline, TaskSanitizedEventObserver
+from .observability import (
+    ObservabilitySink,
+    TaskEventPipeline,
+    TaskSanitizedEventObserver,
+    record_observability_usage,
+)
 from .privacy import (
     EncryptionProvider,
     HmacProvider,
@@ -239,6 +250,7 @@ class DirectTaskRunner:
         execution_roots: Iterable[str | Path] = (),
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
+        observability_sink: ObservabilitySink | None = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -254,6 +266,7 @@ class DirectTaskRunner:
         self._execution_roots = tuple(execution_roots)
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
+        self._observability_sink = observability_sink
         self._clock = clock or _utc_now
         self._sleep = sleep or asyncio_sleep
 
@@ -653,10 +666,16 @@ class DirectTaskRunner:
             if definition.observability.trace
             else None
         )
+        observability_sink = (
+            self._observability_sink
+            if definition.observability.sinks != (ObservabilitySinkType.NOOP,)
+            else None
+        )
         if (
             not definition.observability.capture_events
             and metrics_observer is None
             and trace_observer is None
+            and observability_sink is None
         ):
             return None
         return TaskEventPipeline(
@@ -667,6 +686,7 @@ class DirectTaskRunner:
             capture_events=definition.observability.capture_events,
             metrics_observer=metrics_observer,
             trace_observer=trace_observer,
+            observability_sink=observability_sink,
         )
 
     def _file_summaries(
@@ -743,6 +763,13 @@ class DirectTaskRunner:
             return
         await self._store.append_usage(
             run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=observation.source,
+            totals=observation.totals,
+        )
+        await record_observability_usage(
+            self._observability_sink,
+            run_id=run.run_id,
             attempt_id=attempt.attempt_id,
             source=observation.source,
             totals=observation.totals,
