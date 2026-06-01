@@ -10,8 +10,10 @@ from .idempotency import (
     TaskIdempotencyIdentity,
     TaskIdempotencyReservationResult,
 )
-from .state import TaskRunState
+from .state import TaskAttemptState, TaskRunState
 from .store import (
+    TaskAttempt,
+    TaskClaim,
     TaskExecutionRequest,
     TaskRun,
     TaskSnapshotMetadata,
@@ -212,6 +214,32 @@ class TaskQueueSubmission:
             assert artifact.run_id == self.run.run_id
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueClaim:
+    queue_item: TaskQueueItem
+    run: TaskRun
+    attempt: TaskAttempt
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.queue_item, TaskQueueItem)
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        assert self.queue_item.state == TaskQueueItemState.CLAIMED
+        assert self.run.state == TaskRunState.CLAIMED
+        assert self.run.claim is not None
+        assert isinstance(self.run.claim, TaskClaim)
+        assert self.attempt.state == TaskAttemptState.CREATED
+        assert self.queue_item.run_id == self.run.run_id
+        assert self.attempt.run_id == self.run.run_id
+        assert self.queue_item.claim_token == self.run.claim.claim_token
+        assert self.queue_item.worker_id == self.run.claim.worker_id
+        assert self.queue_item.claimed_at == self.run.claim.claimed_at
+        assert (
+            self.queue_item.lease_expires_at == self.run.claim.lease_expires_at
+        )
+        assert self.attempt.context.claim == self.run.claim
+
+
 class TaskQueue(Protocol):
     async def enqueue_run(
         self,
@@ -235,6 +263,25 @@ class TaskQueue(Protocol):
         priority: int = 0,
         available_at: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueItem: ...
+
+    async def claim(
+        self,
+        queue_name: str,
+        *,
+        worker_id: str,
+        lease_expires_at: datetime,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueClaim | None: ...
+
+    async def heartbeat(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        lease_expires_at: datetime,
+        now: datetime | None = None,
     ) -> TaskQueueItem: ...
 
     async def drain(

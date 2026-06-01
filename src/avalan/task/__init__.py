@@ -168,6 +168,7 @@ from .privacy import (
 )
 from .queue import TaskQueue as TaskQueue
 from .queue import TaskQueueArtifact as TaskQueueArtifact
+from .queue import TaskQueueClaim as TaskQueueClaim
 from .queue import TaskQueueConflictError as TaskQueueConflictError
 from .queue import TaskQueueDepth as TaskQueueDepth
 from .queue import TaskQueueError as TaskQueueError

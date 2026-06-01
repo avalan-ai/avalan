@@ -4,10 +4,17 @@ from typing import cast
 from unittest import TestCase, main
 
 from avalan.task import (
+    TaskAttempt,
+    TaskAttemptState,
+    TaskClaim,
+    TaskExecutionContext,
+    TaskExecutionRequest,
+    TaskQueueClaim,
     TaskQueueDepth,
     TaskQueueHealth,
     TaskQueueItem,
     TaskQueueItemState,
+    TaskRun,
     TaskRunState,
 )
 
@@ -111,6 +118,83 @@ class TaskQueueModelTest(TestCase):
                 claimed=0,
                 dead=0,
                 cancel_requested=0,
+            )
+
+    def test_queue_claim_validates_consistent_claim_context(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        claim = TaskClaim(
+            worker_id="worker-1",
+            claim_token="claim-token",
+            claimed_at=now,
+            lease_expires_at=now + timedelta(minutes=5),
+            heartbeat_at=now,
+        )
+        queue_item = TaskQueueItem(
+            queue_item_id="queue-item-1",
+            run_id="run-1",
+            queue_name="default",
+            state=TaskQueueItemState.CLAIMED,
+            priority=0,
+            available_at=now,
+            attempts=1,
+            created_at=now,
+            updated_at=now,
+            run_state=TaskRunState.CLAIMED,
+            claimed_at=claim.claimed_at,
+            lease_expires_at=claim.lease_expires_at,
+            worker_id=claim.worker_id,
+            claim_token=claim.claim_token,
+            heartbeat_at=claim.heartbeat_at,
+        )
+        run = TaskRun(
+            run_id="run-1",
+            definition_id="definition-1",
+            state=TaskRunState.CLAIMED,
+            request=TaskExecutionRequest(definition_id="definition-1"),
+            created_at=now,
+            updated_at=now,
+            claim=claim,
+            last_attempt_id="attempt-1",
+        )
+        attempt = TaskAttempt(
+            attempt_id="attempt-1",
+            run_id="run-1",
+            attempt_number=1,
+            state=TaskAttemptState.CREATED,
+            context=TaskExecutionContext(
+                run_id="run-1",
+                attempt_id="attempt-1",
+                attempt_number=1,
+                claim=claim,
+            ),
+            created_at=now,
+            updated_at=now,
+        )
+
+        queue_claim = TaskQueueClaim(
+            queue_item=queue_item,
+            run=run,
+            attempt=attempt,
+        )
+
+        self.assertEqual(queue_claim.attempt.context.claim, claim)
+        with self.assertRaises(AssertionError):
+            TaskQueueClaim(
+                queue_item=queue_item,
+                run=run,
+                attempt=TaskAttempt(
+                    attempt_id="attempt-2",
+                    run_id="run-1",
+                    attempt_number=2,
+                    state=TaskAttemptState.CREATED,
+                    context=TaskExecutionContext(
+                        run_id="run-1",
+                        attempt_id="attempt-2",
+                        attempt_number=2,
+                    ),
+                    created_at=now,
+                    updated_at=now,
+                ),
             )
 
 

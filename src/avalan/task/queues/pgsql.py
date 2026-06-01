@@ -14,6 +14,7 @@ from ..idempotency import (
 )
 from ..queue import (
     TaskQueueArtifact,
+    TaskQueueClaim,
     TaskQueueConflictError,
     TaskQueueDepth,
     TaskQueueError,
@@ -23,24 +24,33 @@ from ..queue import (
     TaskQueueNotFoundError,
     TaskQueueSubmission,
 )
-from ..state import TaskRunState
+from ..state import TaskAttemptState, TaskRunState
 from ..store import (
+    TaskAttempt,
+    TaskClaim,
+    TaskExecutionContext,
     TaskExecutionRequest,
     TaskRun,
     TaskSnapshotMetadata,
     freeze_snapshot_metadata,
 )
 from ..stores.pgsql import (
+    _ASSIGN_RUN_CLAIM_SQL,
     _INSERT_ARTIFACT_SQL,
+    _INSERT_ATTEMPT_SQL,
     _INSERT_IDEMPOTENCY_SQL,
     _INSERT_RUN_SQL,
     _INSERT_RUN_TRANSITION_SQL,
+    _SELECT_ATTEMPTS_FOR_RUN_SQL,
     _SELECT_IDEMPOTENCY_SQL,
     _UPDATE_RUN_STATE_SQL,
     _artifact_from_row,
     _artifact_provenance_to_payload,
     _artifact_ref_to_payload,
     _artifact_retention_to_payload,
+    _attempt_from_row,
+    _claim_to_payload,
+    _context_to_payload,
     _fetch_definition_row,
     _fetch_run_row,
     _idempotency_from_row,
@@ -313,6 +323,135 @@ class PgsqlTaskQueue:
             ),
         )
 
+    async def claim(
+        self,
+        queue_name: str,
+        *,
+        worker_id: str,
+        lease_expires_at: datetime,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueClaim | None:
+        _assert_non_empty_string(queue_name, "queue_name")
+        _assert_non_empty_string(worker_id, "worker_id")
+        assert isinstance(lease_expires_at, datetime)
+        checked_at = _ensure_aware_utc(now or self._now())
+        lease_expires_at = _ensure_aware_utc(lease_expires_at)
+        assert lease_expires_at > checked_at
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            claim_token = self._new_id()
+            await unit.cursor.execute(
+                _CLAIM_QUEUE_ITEM_SQL,
+                (
+                    queue_name,
+                    checked_at,
+                    checked_at,
+                    lease_expires_at,
+                    worker_id,
+                    claim_token,
+                    checked_at,
+                    checked_at,
+                ),
+            )
+            queue_row = await unit.cursor.fetchone()
+            if queue_row is None:
+                return None
+            claim = TaskClaim(
+                worker_id=worker_id,
+                claim_token=claim_token,
+                claimed_at=checked_at,
+                lease_expires_at=lease_expires_at,
+                heartbeat_at=checked_at,
+                metadata=safe_metadata,
+            )
+            run = await _assign_claimed_run(
+                unit,
+                run_id=_row_str(queue_row, "run_id"),
+                claim=claim,
+                transition_id=self._new_id(),
+                now=checked_at,
+                metadata=safe_metadata,
+            )
+            run, attempt = await _create_claimed_attempt(
+                unit,
+                run=run,
+                attempt_id=self._new_id(),
+                now=checked_at,
+                metadata=safe_metadata,
+            )
+            return TaskQueueClaim(
+                queue_item=_queue_item_from_row(
+                    queue_row,
+                    run_state=run.state,
+                ),
+                run=run,
+                attempt=attempt,
+            )
+
+        return cast(
+            TaskQueueClaim | None,
+            await self._transaction(
+                operation="task_queue_claim",
+                callback=execute,
+            ),
+        )
+
+    async def heartbeat(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        lease_expires_at: datetime,
+        now: datetime | None = None,
+    ) -> TaskQueueItem:
+        _assert_non_empty_string(queue_item_id, "queue_item_id")
+        _assert_non_empty_string(claim_token, "claim_token")
+        assert isinstance(lease_expires_at, datetime)
+        checked_at = _ensure_aware_utc(now or self._now())
+        lease_expires_at = _ensure_aware_utc(lease_expires_at)
+        assert lease_expires_at > checked_at
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute(
+                _HEARTBEAT_QUEUE_ITEM_SQL,
+                (
+                    checked_at,
+                    lease_expires_at,
+                    checked_at,
+                    queue_item_id,
+                    claim_token,
+                    checked_at,
+                    claim_token,
+                ),
+            )
+            row = await unit.cursor.fetchone()
+            if row is None:
+                raise TaskQueueConflictError("task queue claim did not match")
+            await unit.cursor.execute(
+                _HEARTBEAT_RUN_CLAIM_SQL,
+                (
+                    checked_at.isoformat(),
+                    lease_expires_at.isoformat(),
+                    checked_at,
+                    _row_str(row, "run_id"),
+                    claim_token,
+                ),
+            )
+            run_row = await unit.cursor.fetchone()
+            if run_row is None:
+                raise TaskQueueConflictError("task run claim did not match")
+            return _queue_item_from_row(row)
+
+        return cast(
+            TaskQueueItem,
+            await self._transaction(
+                operation="task_queue_heartbeat",
+                callback=execute,
+            ),
+        )
+
     async def drain(
         self,
         queue_name: str,
@@ -492,6 +631,80 @@ ON CONFLICT DO NOTHING
 RETURNING *
 """
 
+_CLAIM_QUEUE_ITEM_SQL = """
+WITH "candidate" AS (
+    SELECT q."queue_item_id"
+    FROM "task_queue_items" q
+    JOIN "task_runs" r ON r."run_id" = q."run_id"
+    WHERE
+        q."queue_name" = %s
+        AND q."state" = 'available'
+        AND q."available_at" <= %s
+        AND r."state" = 'queued'
+    ORDER BY q."priority" DESC, q."available_at", q."queue_item_id"
+    LIMIT 1
+    FOR UPDATE OF q, r SKIP LOCKED
+)
+UPDATE "task_queue_items" q
+SET "state" = 'claimed',
+    "claimed_at" = %s,
+    "lease_expires_at" = %s,
+    "worker_id" = %s,
+    "claim_token" = %s,
+    "heartbeat_at" = %s,
+    "attempts" = q."attempts" + 1,
+    "updated_at" = %s
+FROM "candidate" c, "task_runs" r
+WHERE q."queue_item_id" = c."queue_item_id"
+  AND r."run_id" = q."run_id"
+RETURNING q.*, r."state" AS "run_state"
+"""
+
+_HEARTBEAT_QUEUE_ITEM_SQL = """
+UPDATE "task_queue_items" q
+SET "heartbeat_at" = %s,
+    "lease_expires_at" = %s,
+    "updated_at" = %s
+FROM "task_runs" r
+WHERE q."run_id" = r."run_id"
+  AND q."queue_item_id" = %s
+  AND q."state" = 'claimed'
+  AND q."claim_token" = %s
+  AND q."lease_expires_at" > %s
+  AND r."state" = 'claimed'
+  AND (r."claim"->>'claim_token') = %s
+RETURNING q.*, r."state" AS "run_state"
+"""
+
+_HEARTBEAT_RUN_CLAIM_SQL = """
+UPDATE "task_runs"
+SET "claim" = jsonb_set(
+        jsonb_set(
+            "claim",
+            '{heartbeat_at}',
+            to_jsonb(%s::text),
+            true
+        ),
+        '{lease_expires_at}',
+        to_jsonb(%s::text),
+        true
+    ),
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = 'claimed'
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+
+_UPDATE_RUN_LAST_ATTEMPT_WITH_CLAIM_SQL = """
+UPDATE "task_runs"
+SET "last_attempt_id" = %s, "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = 'claimed'
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+
 _DRAIN_QUEUE_SQL = """
 SELECT q.*, r."state" AS "run_state"
 FROM "task_queue_items" q
@@ -535,6 +748,102 @@ SELECT
 FROM "task_queue_items" q
 WHERE q."queue_name" = %s
 """
+
+
+async def _assign_claimed_run(
+    unit: PgsqlUnitOfWork,
+    *,
+    run_id: str,
+    claim: TaskClaim,
+    transition_id: str,
+    now: datetime,
+    metadata: TaskSnapshotMetadata,
+) -> TaskRun:
+    await unit.cursor.execute(
+        _ASSIGN_RUN_CLAIM_SQL,
+        (
+            TaskRunState.CLAIMED.value,
+            _json(_claim_to_payload(claim)),
+            now,
+            run_id,
+            TaskRunState.QUEUED.value,
+        ),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError("task run claim did not match")
+    await unit.cursor.execute(
+        _INSERT_RUN_TRANSITION_SQL,
+        (
+            transition_id,
+            run_id,
+            TaskRunState.QUEUED.value,
+            TaskRunState.CLAIMED.value,
+            "claimed",
+            _json(metadata),
+            now,
+        ),
+    )
+    transition_row = await unit.cursor.fetchone()
+    if transition_row is None:
+        raise TaskQueueConflictError(
+            "task run transition could not be recorded"
+        )
+    return _run_from_row(row)
+
+
+async def _create_claimed_attempt(
+    unit: PgsqlUnitOfWork,
+    *,
+    run: TaskRun,
+    attempt_id: str,
+    now: datetime,
+    metadata: TaskSnapshotMetadata,
+) -> tuple[TaskRun, TaskAttempt]:
+    assert run.claim is not None
+    await unit.cursor.execute(_SELECT_ATTEMPTS_FOR_RUN_SQL, (run.run_id,))
+    attempt_rows = tuple(await unit.cursor.fetchall())
+    for attempt_row in attempt_rows:
+        state = TaskAttemptState(_row_str(attempt_row, "state"))
+        if state not in {
+            TaskAttemptState.SUCCEEDED,
+            TaskAttemptState.FAILED,
+            TaskAttemptState.ABANDONED,
+        }:
+            raise TaskQueueConflictError(
+                "task run already has an active attempt"
+            )
+    attempt_number = len(attempt_rows) + 1
+    context = TaskExecutionContext(
+        run_id=run.run_id,
+        attempt_id=attempt_id,
+        attempt_number=attempt_number,
+        claim=run.claim,
+    )
+    await unit.cursor.execute(
+        _INSERT_ATTEMPT_SQL,
+        (
+            attempt_id,
+            run.run_id,
+            attempt_number,
+            TaskAttemptState.CREATED.value,
+            _json(_context_to_payload(context)),
+            _json(metadata),
+            now,
+            now,
+        ),
+    )
+    inserted_attempt_row = await unit.cursor.fetchone()
+    if inserted_attempt_row is None:
+        raise TaskQueueConflictError("task attempt already exists")
+    await unit.cursor.execute(
+        _UPDATE_RUN_LAST_ATTEMPT_WITH_CLAIM_SQL,
+        (attempt_id, now, run.run_id, run.claim.claim_token),
+    )
+    run_row = await unit.cursor.fetchone()
+    if run_row is None:
+        raise TaskQueueConflictError("task run claim did not match")
+    return _run_from_row(run_row), _attempt_from_row(inserted_attempt_row)
 
 
 async def _queueable_run_row(
