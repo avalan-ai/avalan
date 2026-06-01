@@ -1,4 +1,5 @@
 from argparse import Namespace
+from contextlib import AsyncExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -8,7 +9,14 @@ from unittest.mock import MagicMock, patch
 from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
-from avalan.task import TaskRunState
+from avalan.task import (
+    TaskClientUnsupportedOperationError,
+    TaskClientWaitTimeoutError,
+    TaskRunState,
+    TaskValidationCategory,
+    TaskValidationError,
+    TaskValidationIssue,
+)
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
 
@@ -20,10 +28,16 @@ class _FakeTaskClient:
         run_result: object | None = None,
         enqueue_result: object | None = None,
         wait_result: object | None = None,
+        run_error: BaseException | None = None,
+        enqueue_error: BaseException | None = None,
+        wait_error: BaseException | None = None,
     ) -> None:
         self.run_result = run_result
         self.enqueue_result = enqueue_result
         self.wait_result = wait_result
+        self.run_error = run_error
+        self.enqueue_error = enqueue_error
+        self.wait_error = wait_error
         self.input_value: object = None
         self.wait_timeout: float | None = None
         self.poll_interval: float | None = None
@@ -35,6 +49,8 @@ class _FakeTaskClient:
         input_value: object = None,
         metadata: object | None = None,
     ) -> object:
+        if self.run_error is not None:
+            raise self.run_error
         self.input_value = input_value
         return self.run_result
 
@@ -45,6 +61,8 @@ class _FakeTaskClient:
         input_value: object = None,
         queue_metadata: object | None = None,
     ) -> object:
+        if self.enqueue_error is not None:
+            raise self.enqueue_error
         self.input_value = input_value
         return self.enqueue_result
 
@@ -55,6 +73,8 @@ class _FakeTaskClient:
         timeout_seconds: float | None = None,
         poll_interval_seconds: float = 1.0,
     ) -> object:
+        if self.wait_error is not None:
+            raise self.wait_error
         self.wait_timeout = timeout_seconds
         self.poll_interval = poll_interval_seconds
         return self.wait_result
@@ -74,6 +94,46 @@ class _FakeTaskClientContext:
         traceback: object | None,
     ) -> bool | None:
         return None
+
+
+class _FakeResource:
+    def __init__(self) -> None:
+        self.entered = False
+        self.exited = False
+        self.opened = False
+        self.closed = False
+
+    async def __aenter__(self) -> "_FakeResource":
+        self.entered = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        self.exited = True
+        return None
+
+    async def open(self) -> None:
+        self.opened = True
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _FakeTaskWorker:
+    results: list[object] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+    async def process_once(self) -> object:
+        if self.results:
+            return self.results.pop(0)
+        return SimpleNamespace(processed=False)
 
 
 class CliTaskValidateTestCase(TestCase):
@@ -228,6 +288,62 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertFalse(result)
         self.assertIn("store.missing", console.export_text())
 
+    def test_run_rejects_queued_definition(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "queued.task.toml"
+            _write_queued_definition(definition)
+
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn(
+            "Task run requires a direct-mode definition.",
+            console.export_text(),
+        )
+
+    def test_run_reports_client_error(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(run_error=ImportError("missing private dep"))
+
+        with patch.object(
+            task_cmds,
+            "_task_cli_client_context",
+            return_value=_FakeTaskClientContext(client),
+        ):
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(FIXTURE_ROOT / "minimal.task.toml"),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.missing", output)
+
     def test_run_uses_client_and_prints_sanitized_output(self) -> None:
         console = Console(record=True, width=160)
         client = _FakeTaskClient(
@@ -267,6 +383,178 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertEqual(client.input_value, "Ada Lovelace")
         self.assertIn("Task run completed (non-durable): run-1", output)
         self.assertIn('"privacy":"<redacted>"', output)
+
+    def test_enqueue_rejects_ephemeral_storage(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "queued.task.toml"
+            _write_queued_definition(definition)
+
+            result = task_cmds.task_enqueue(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    wait=False,
+                    wait_timeout=None,
+                    poll_interval=1.0,
+                    ephemeral=True,
+                    queue="default",
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("store.ephemeral_unsupported", console.export_text())
+
+    def test_enqueue_rejects_direct_definition(self) -> None:
+        console = Console(record=True, width=160)
+
+        result = task_cmds.task_enqueue(
+            Namespace(
+                definition=str(FIXTURE_ROOT / "minimal.task.toml"),
+                task_input="Ada",
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+                store_dsn="postgresql://db/tasks",
+                store_schema=None,
+                wait=False,
+                wait_timeout=None,
+                poll_interval=1.0,
+                ephemeral=False,
+                queue="default",
+            ),
+            console,
+            self.theme,
+        )
+
+        self.assertFalse(result)
+        self.assertIn(
+            "Task enqueue requires a queued-mode definition.",
+            console.export_text(),
+        )
+
+    def test_enqueue_requires_store(self) -> None:
+        console = Console(record=True, width=160)
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.dict(task_cmds.environ, {}, clear=True),
+        ):
+            definition = Path(tmpdir) / "queued.task.toml"
+            _write_queued_definition(definition)
+
+            result = task_cmds.task_enqueue(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    wait=False,
+                    wait_timeout=None,
+                    poll_interval=1.0,
+                    ephemeral=False,
+                    queue="default",
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("store.missing", console.export_text())
+
+    def test_enqueue_without_wait_returns_after_submission(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            enqueue_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-queued",
+                    state=TaskRunState.QUEUED,
+                )
+            )
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "queued.task.toml"
+            _write_queued_definition(definition)
+            with patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ):
+                result = task_cmds.task_enqueue(
+                    Namespace(
+                        definition=str(definition),
+                        task_input="Ada",
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=(),
+                        store_dsn="postgresql://db/tasks",
+                        store_schema=None,
+                        wait=False,
+                        wait_timeout=None,
+                        poll_interval=1.0,
+                        ephemeral=False,
+                        queue="",
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertIn("Task enqueued: run-queued", console.export_text())
+
+    def test_enqueue_reports_wait_timeout(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            enqueue_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-queued",
+                    state=TaskRunState.QUEUED,
+                )
+            ),
+            wait_error=TaskClientWaitTimeoutError(run_id="run-queued"),
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "queued.task.toml"
+            _write_queued_definition(definition)
+            with patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ):
+                result = task_cmds.task_enqueue(
+                    Namespace(
+                        definition=str(definition),
+                        task_input="Ada",
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=(),
+                        store_dsn="postgresql://db/tasks",
+                        store_schema=None,
+                        wait=True,
+                        wait_timeout=0.01,
+                        poll_interval=0.01,
+                        ephemeral=False,
+                        queue="default",
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertFalse(result)
+        self.assertIn("task.wait_timeout", console.export_text())
 
     def test_enqueue_waits_for_terminal_output(self) -> None:
         console = Console(record=True, width=160)
@@ -340,6 +628,350 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertIn("Task enqueued: run-queued", output)
         self.assertIn("Task finished: run-queued", output)
         self.assertNotIn("secret", output)
+
+    def test_worker_rejects_ephemeral_storage(self) -> None:
+        console = Console(record=True, width=160)
+
+        result = task_cmds.task_worker(
+            Namespace(
+                queue="default",
+                store_dsn="postgresql://db/tasks",
+                store_schema=None,
+                ephemeral=True,
+            ),
+            console,
+            self.theme,
+        )
+
+        self.assertFalse(result)
+        self.assertIn("store.ephemeral_unsupported", console.export_text())
+
+    def test_worker_processes_until_no_work(self) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeTaskWorker.results = [
+            SimpleNamespace(
+                processed=True,
+                completion=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-1",
+                        state=TaskRunState.SUCCEEDED,
+                    )
+                ),
+                retry=None,
+            ),
+            SimpleNamespace(processed=False, completion=None, retry=None),
+        ]
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
+            patch.object(
+                task_cmds, "_agent_task_target", return_value=object()
+            ),
+            patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="documents",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="tasks",
+                    worker_id="worker-a",
+                    once=False,
+                    limit=2,
+                    lease_seconds=30,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertTrue(database.entered)
+        self.assertTrue(database.exited)
+        self.assertIn("Task processed: run-1 succeeded", output)
+        self.assertIn("Task worker processed 1 run.", output)
+
+    def test_worker_reports_startup_error(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "_task_pgsql_database",
+            side_effect=OSError("private dsn"),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="default",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    worker_id=None,
+                    once=True,
+                    limit=10,
+                    lease_seconds=30,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("io.failure", console.export_text())
+
+    def test_client_context_enters_database_and_stack(self) -> None:
+        database = _FakeResource()
+        stack_resource = _FakeResource()
+        stack = AsyncExitStack()
+
+        async def exercise() -> None:
+            await stack.enter_async_context(stack_resource)
+            context = task_cmds._TaskCliClientContext(
+                client=object(),
+                database=database,
+                stack=stack,
+            )
+            async with context as client:
+                self.assertIsNotNone(client)
+            return True
+
+        task_cmds._run_awaitable(exercise())
+
+        self.assertTrue(database.opened)
+        self.assertTrue(database.closed)
+        self.assertTrue(stack_resource.entered)
+        self.assertTrue(stack_resource.exited)
+
+    def test_client_context_factories_and_helpers(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            definition_path = Path(tmpdir) / "task.toml"
+            definition_path.write_text("", encoding="utf-8")
+            with (
+                patch.object(
+                    task_cmds, "_agent_task_target", return_value=object()
+                ),
+                patch.object(
+                    task_cmds, "_task_artifact_store", return_value=None
+                ),
+            ):
+                ephemeral_context = task_cmds._task_cli_client_context(
+                    definition_path,
+                    dsn=None,
+                    schema=None,
+                    queue=False,
+                    ephemeral=True,
+                    hub=None,
+                    logger=None,
+                )
+            database = _FakeResource()
+            with (
+                patch.object(
+                    task_cmds, "_agent_task_target", return_value=object()
+                ),
+                patch.object(
+                    task_cmds, "_task_pgsql_database", return_value=database
+                ),
+                patch.object(
+                    task_cmds, "PgsqlTaskStore", return_value=object()
+                ),
+                patch.object(
+                    task_cmds, "PgsqlTaskQueue", return_value=object()
+                ),
+            ):
+                durable_context = task_cmds._task_cli_client_context(
+                    definition_path,
+                    dsn="postgresql://db/tasks",
+                    schema="tasks",
+                    queue=True,
+                    ephemeral=False,
+                    hub=None,
+                    logger=None,
+                )
+
+        self.assertIsNone(ephemeral_context.database)
+        self.assertIs(database, durable_context.database)
+
+    def test_agent_target_and_database_helpers_construct(self) -> None:
+        stack = AsyncExitStack()
+
+        target = task_cmds._agent_task_target(
+            Path("."),
+            hub=None,
+            logger=None,
+            stack=stack,
+        )
+        database = task_cmds._task_pgsql_database(
+            "postgresql://user:secret@db/tasks",
+            "tasks",
+        )
+
+        self.assertIsNotNone(target)
+        self.assertIsNotNone(database)
+
+    def test_low_level_helpers_cover_safe_branches(self) -> None:
+        console = Console(record=True, width=160)
+        task_cmds._print_task_command_error(
+            console,
+            "message",
+            "code.value",
+            "hint",
+        )
+        task_cmds._print_task_result(console, None)
+        task_cmds._print_task_execution_error(
+            console,
+            TaskClientUnsupportedOperationError(
+                code="task.unsupported",
+                operation="run",
+                message="unsupported",
+            ),
+        )
+        task_cmds._print_task_execution_error(console, OSError("private"))
+        task_cmds._print_task_execution_error(console, RuntimeError("private"))
+        task_cmds._print_task_execution_error(
+            console,
+            TaskValidationError(
+                (
+                    TaskValidationIssue(
+                        code="bad",
+                        path="input",
+                        message="bad input",
+                        hint="fix it",
+                        category=TaskValidationCategory.VALUE,
+                    ),
+                )
+            ),
+        )
+        with self.assertRaises(RuntimeError):
+            task_cmds._run_awaitable(_raise_runtime_error())
+        with patch.dict(
+            task_cmds.environ,
+            {
+                "AVALAN_TASK_STORE_SCHEMA": "tasks",
+                "AVALAN_TASK_ARTIFACT_ROOT": "/tmp/task-artifacts",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                task_cmds._task_store_schema(Namespace()), "tasks"
+            )
+            self.assertIsNotNone(task_cmds._task_artifact_store())
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            self.assertIsNone(task_cmds._task_artifact_store())
+        self.assertEqual(
+            task_cmds._safe_queue_metadata(Namespace(queue="")), {}
+        )
+        self.assertEqual(
+            task_cmds._safe_queue_metadata(Namespace(queue="q")),
+            {"cli_queue": "q"},
+        )
+        self.assertEqual(
+            task_cmds._task_command_metadata(ephemeral=True)["store_mode"],
+            "ephemeral-memory",
+        )
+
+        output = console.export_text()
+        self.assertIn("task.unsupported", output)
+        self.assertIn("task.execution", output)
+
+    def test_validate_task_cli_input_for_command_success_path(self) -> None:
+        console = Console(record=True, width=160)
+
+        result = task_cmds._validate_task_cli_input_for_command(
+            Namespace(
+                definition=str(FIXTURE_ROOT / "minimal.task.toml"),
+                task_input="Ada Lovelace",
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+            ),
+            console,
+        )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Task input is valid.", output)
+        self.assertIn("<redacted>", output)
+
+    def test_validate_task_cli_input_for_command_failure_paths(self) -> None:
+        cases = (
+            (
+                str(FIXTURE_ROOT / "missing_sections.task.toml"),
+                "Ada",
+                None,
+                "Task definition could not be loaded.",
+            ),
+            (
+                str(FIXTURE_ROOT / "minimal.task.toml"),
+                None,
+                "{not json",
+                "Task input could not be parsed.",
+            ),
+            (
+                str(FIXTURE_ROOT / "minimal.task.toml"),
+                None,
+                '{"name":"Ada"}',
+                "Task input is invalid.",
+            ),
+        )
+        for definition, task_input, task_input_json, expected in cases:
+            console = Console(record=True, width=160)
+            with self.subTest(expected=expected):
+                result = task_cmds._validate_task_cli_input_for_command(
+                    Namespace(
+                        definition=definition,
+                        task_input=task_input,
+                        task_input_json=task_input_json,
+                        task_input_fields=(),
+                        task_files=(),
+                    ),
+                    console,
+                )
+
+            self.assertFalse(result)
+            self.assertIn(expected, console.export_text())
+
+    def test_validate_task_cli_input_for_command_non_input_paths(self) -> None:
+        console = Console(record=True, width=160)
+        self.assertTrue(
+            task_cmds._validate_task_cli_input_for_command(
+                Namespace(
+                    definition=None,
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                console,
+            )
+        )
+        self.assertTrue(
+            task_cmds._validate_task_cli_input_for_command(
+                Namespace(
+                    definition=123,
+                    task_input="Ada",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                console,
+            )
+        )
+        self.assertFalse(
+            task_cmds._validate_task_cli_input_for_command(
+                Namespace(
+                    definition="/tmp/private/missing.task.toml",
+                    task_input="Ada",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                console,
+            )
+        )
+        self.assertIn("file.read", console.export_text())
 
 
 class CliTaskPgsqlTestCase(TestCase):
@@ -635,6 +1267,35 @@ class CliTaskPgsqlTestCase(TestCase):
         self.assertIn("Invalid PostgreSQL migration argument", output)
         self.assertNotIn("head;drop", output)
         self.assertNotIn("secret", output)
+
+
+def _write_queued_definition(path: Path) -> None:
+    path.write_text(
+        """
+        [task]
+        name = "queued"
+        version = "1"
+
+        [input]
+        type = "string"
+
+        [output]
+        type = "text"
+
+        [execution]
+        type = "agent"
+        ref = "agent.toml"
+
+        [run]
+        mode = "queue"
+        queue = "documents"
+        """,
+        encoding="utf-8",
+    )
+
+
+async def _raise_runtime_error() -> bool:
+    raise RuntimeError("private")
 
 
 if __name__ == "__main__":

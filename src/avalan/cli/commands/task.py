@@ -516,9 +516,6 @@ async def _task_worker(
     if dsn is None:
         _print_missing_store(console)
         return False
-    database = _task_pgsql_database(dsn, _task_store_schema(args))
-    store = PgsqlTaskStore(database)
-    queue = PgsqlTaskQueue(database)
     processed = 0
     limit = (
         1
@@ -530,6 +527,9 @@ async def _task_worker(
         )
     )
     try:
+        database = _task_pgsql_database(dsn, _task_store_schema(args))
+        store = PgsqlTaskStore(database)
+        queue = PgsqlTaskQueue(database)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(database)
             worker = TaskWorker(

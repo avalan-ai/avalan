@@ -1,9 +1,19 @@
+from asyncio import CancelledError
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
 from avalan.task import (
+    ObservabilitySinkType,
+    PrivacyAction,
+    PrivacySanitizer,
+    TaskArtifactPolicy,
+    TaskArtifactPurpose,
+    TaskArtifactRef,
+    TaskArtifactState,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionRequest,
@@ -11,7 +21,9 @@ from avalan.task import (
     TaskExecutionTarget,
     TaskInputContract,
     TaskMetadata,
+    TaskObservabilityPolicy,
     TaskOutputContract,
+    TaskPrivacyPolicy,
     TaskQueueAbandonment,
     TaskQueueArtifact,
     TaskQueueClaim,
@@ -27,12 +39,16 @@ from avalan.task import (
     TaskRunState,
     TaskTargetContext,
     TaskTargetRunner,
+    TaskValidationCategory,
     TaskValidationContext,
+    TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
 )
+from avalan.task.error import classify_task_error
 from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.worker import _target_runner, _utc_now, _worker_id
 
 
 class FakeTarget(TaskTargetRunner):
@@ -50,6 +66,44 @@ class FakeTarget(TaskTargetRunner):
     async def run(self, context: TaskTargetContext) -> object:
         self.contexts.append(context)
         await context.check_cancelled()
+        return self.output
+
+
+class InvalidTarget(FakeTarget):
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        return (
+            TaskValidationIssue(
+                code="target.invalid",
+                path="execution",
+                message="invalid target",
+                hint="fix target",
+                category=TaskValidationCategory.VALUE,
+            ),
+        )
+
+
+class ArtifactOutputTarget(FakeTarget):
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        return TaskArtifactRef(
+            artifact_id="artifact-output-1",
+            store="local",
+            storage_key="output.txt",
+            media_type="text/plain",
+            size_bytes=7,
+        )
+
+
+class UsageTarget(FakeTarget):
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        await context.observe_usage(
+            SimpleNamespace(input_token_count=3, output_token_count=5)
+        )
         return self.output
 
 
@@ -157,9 +211,8 @@ class FakeQueue:
         metadata: Mapping[str, object] | None = None,
     ) -> TaskQueueCompletion:
         assert self.item is not None
-        attempt_id = (
-            await self.store.get_run(self.item.run_id)
-        ).last_attempt_id
+        current_run = await self.store.get_run(self.item.run_id)
+        attempt_id = current_run.last_attempt_id
         attempt = await self.store.transition_attempt(
             attempt_id or "",
             from_states={TaskAttemptState.RUNNING},
@@ -171,7 +224,7 @@ class FakeQueue:
         )
         run = await self.store.transition_run(
             self.item.run_id,
-            from_states={TaskRunState.RUNNING},
+            from_states={current_run.state},
             to_state=run_state,
             reason="completed",
             result=result,
@@ -342,6 +395,46 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             run_state=self.run.state,
         )
 
+    async def _use_definition(self, definition: TaskDefinition) -> None:
+        self.definition = definition
+        self.store = InMemoryTaskStore(clock=lambda: self.now)
+        await self.store.register_definition(
+            self.definition,
+            definition_hash="hash-a",
+        )
+        run = await self.store.create_run(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<redacted>"},
+                queue="default",
+            )
+        )
+        self.run = await self.store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.VALIDATED,
+            reason="validated",
+        )
+        self.run = await self.store.transition_run(
+            self.run.run_id,
+            from_states={TaskRunState.VALIDATED},
+            to_state=TaskRunState.QUEUED,
+            reason="queued",
+        )
+        self.queue = FakeQueue(self.store, self.now)
+        self.queue.item = TaskQueueItem(
+            queue_item_id="queue-item-1",
+            run_id=self.run.run_id,
+            queue_name="default",
+            state=TaskQueueItemState.AVAILABLE,
+            priority=0,
+            available_at=self.now,
+            attempts=0,
+            created_at=self.now,
+            updated_at=self.now,
+            run_state=self.run.state,
+        )
+
     async def test_process_once_completes_claimed_run(self) -> None:
         target = FakeTarget("safe output")
         worker = TaskWorker(
@@ -394,6 +487,222 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.retry.attempt.state, TaskAttemptState.FAILED)
         self.assertNotIn("private", str(result.retry.attempt.result))
 
+    async def test_process_once_completes_terminal_failure(self) -> None:
+        await self._use_definition(
+            _definition(retry=TaskRetryPolicy(max_attempts=1))
+        )
+        target = FakeTarget()
+        target.run = _raise_os_error
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNone(result.retry)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertNotIn("private", str(self.queue.completed.run.result))
+
+    async def test_process_once_completes_cancelled_failure(self) -> None:
+        target = FakeTarget()
+        target.run = _raise_cancelled
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(
+            self.queue.completed.run.state,
+            TaskRunState.CANCELLED,
+        )
+
+    async def test_process_once_records_output_artifacts(self) -> None:
+        await self._use_definition(
+            _definition(
+                output_contract=TaskOutputContract.file(),
+                artifact=TaskArtifactPolicy.references_only(retention_days=3),
+            )
+        )
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=ArtifactOutputTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertIsNotNone(result.completion)
+        records = await self.store.list_artifacts(
+            self.run.run_id,
+            purpose=TaskArtifactPurpose.OUTPUT,
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].state, TaskArtifactState.READY)
+        self.assertEqual(records[0].retention.delete_after_days, 3)
+
+    async def test_process_once_records_usage_observations(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=UsageTarget("safe output"),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertIsNotNone(result.completion)
+        records = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].totals.input_tokens, 3)
+        self.assertEqual(records[0].totals.output_tokens, 5)
+
+    async def test_process_once_turns_output_validation_into_failure(
+        self,
+    ) -> None:
+        await self._use_definition(
+            _definition(
+                output_contract=TaskOutputContract.object(
+                    schema={"type": "object"}
+                ),
+                retry=TaskRetryPolicy(max_attempts=1),
+            )
+        )
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget("not an object"),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+
+    async def test_process_once_reports_invalid_target(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=InvalidTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        with self.assertRaises(TaskValidationError):
+            await worker.process_once()
+
+    async def test_check_cancelled_raises_cancelled_error(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+        await self.store.transition_run(
+            self.run.run_id,
+            from_states={TaskRunState.QUEUED},
+            to_state=TaskRunState.CANCEL_REQUESTED,
+            reason="cancel requested",
+        )
+
+        with self.assertRaises(CancelledError):
+            await worker._check_cancelled(self.run.run_id)
+
+    async def test_helper_branches(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=_callable_target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        self.assertIsNone(
+            worker._event_pipeline(
+                _definition(observability=TaskObservabilityPolicy.noop()),
+                run=self.run,
+                attempt=await self.store.create_attempt(self.run.run_id),
+                sanitizer=PrivacySanitizer(TaskPrivacyPolicy()),
+            )
+        )
+        self.assertIsNone(
+            worker._observability_sink_for(
+                _definition(
+                    observability=TaskObservabilityPolicy(
+                        sinks=(ObservabilitySinkType.NOOP,),
+                        metrics=False,
+                        trace=False,
+                        capture_events=False,
+                    )
+                )
+            )
+        )
+        summary = worker._safe_task_error_summary(
+            PrivacySanitizer(
+                TaskPrivacyPolicy(errors=PrivacyAction.HASH),
+            ),
+            classify_task_error(RuntimeError("private")),
+        )
+        self.assertEqual(summary["privacy"], "<redacted>")
+        self.assertIsNotNone(_target_runner(_callable_target))
+        self.assertIsInstance(_utc_now(), datetime)
+        self.assertTrue(_worker_id().startswith("worker-"))
+
+    async def test_record_usage_handles_missing_and_failed_store_records(
+        self,
+    ) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+        attempt = await self.store.create_attempt(self.run.run_id)
+
+        await worker._record_usage(
+            object(),
+            definition=self.definition,
+            run=self.run,
+            attempt=attempt,
+        )
+        with patch.object(
+            self.store,
+            "append_usage",
+            side_effect=RuntimeError("private telemetry failure"),
+        ):
+            await worker._record_usage(
+                SimpleNamespace(input_token_count=1, output_token_count=2),
+                definition=self.definition,
+                run=self.run,
+                attempt=attempt,
+            )
+
+        records = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(records, ())
+
     async def test_process_once_reports_no_work(self) -> None:
         self.queue.item = None
         worker = TaskWorker(
@@ -410,19 +719,35 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertIsNone(result.completion)
 
 
-def _definition() -> TaskDefinition:
+def _definition(
+    *,
+    artifact: TaskArtifactPolicy | None = None,
+    observability: TaskObservabilityPolicy | None = None,
+    output_contract: TaskOutputContract | None = None,
+    retry: TaskRetryPolicy | None = None,
+) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="worker_task", version="1"),
         input=TaskInputContract.string(),
-        output=TaskOutputContract.text(),
+        output=output_contract or TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agent.toml"),
+        artifact=artifact or TaskArtifactPolicy.references_only(),
+        observability=observability or TaskObservabilityPolicy(),
         run=TaskRunPolicy.queued("default"),
-        retry=TaskRetryPolicy(max_attempts=2),
+        retry=retry or TaskRetryPolicy(max_attempts=2),
     )
 
 
 async def _raise_os_error(context: TaskTargetContext) -> object:
     raise OSError("private backend path")
+
+
+async def _raise_cancelled(context: TaskTargetContext) -> object:
+    raise CancelledError()
+
+
+async def _callable_target(context: TaskTargetContext) -> object:
+    return "safe output"
 
 
 if __name__ == "__main__":

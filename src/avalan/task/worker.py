@@ -145,7 +145,7 @@ class TaskWorker:
                 attempt=attempt,
                 sanitizer=sanitizer,
             )
-        except (KeyboardInterrupt, SystemExit):
+        except (KeyboardInterrupt, SystemExit):  # pragma: no cover
             raise
         except BaseException as error:
             retry = await self._finalize_failure(
@@ -320,14 +320,21 @@ class TaskWorker:
                 now=self._now(),
                 metadata={"worker_id": self._worker_id},
             )
+        run_state = TaskRunState.FAILED
+        if isinstance(error, CancelledError):
+            await self._store.transition_run(
+                claim.run.run_id,
+                from_states={TaskRunState.RUNNING},
+                to_state=TaskRunState.CANCEL_REQUESTED,
+                reason="cancel_requested",
+                claim_token=claim.queue_item.claim_token or "",
+                metadata={"worker_id": self._worker_id},
+            )
+            run_state = TaskRunState.CANCELLED
         await self._queue.complete(
             claim.queue_item.queue_item_id,
             claim_token=claim.queue_item.claim_token or "",
-            run_state=(
-                TaskRunState.CANCELLED
-                if isinstance(error, CancelledError)
-                else TaskRunState.FAILED
-            ),
+            run_state=run_state,
             attempt_state=TaskAttemptState.FAILED,
             result=result,
             now=self._now(),
