@@ -17,6 +17,7 @@ from avalan.task import (
     TaskDefinition,
     TaskDirectTarget,
     TaskEventCategory,
+    TaskExecutionRequest,
     TaskExecutionTarget,
     TaskInputContract,
     TaskKeyMaterial,
@@ -28,6 +29,7 @@ from avalan.task import (
     TaskPrivacyPolicy,
     TaskRunState,
     TaskTargetContext,
+    UsageRecord,
     UsageSource,
     UsageTotals,
     record_observability_event,
@@ -101,6 +103,21 @@ class RecordingSink(ObservabilitySink):
             name=self.name,
             event_count=len(self.events),
             usage_count=len(self.usages),
+        )
+
+
+@dataclass(slots=True, kw_only=True)
+class RecordedUsageSink(RecordingSink):
+    records: list[UsageRecord] = field(default_factory=list)
+
+    async def record_usage_record(self, record: UsageRecord) -> None:
+        self.records.append(record)
+
+    def health(self) -> ObservabilitySinkHealth:
+        return ObservabilitySinkHealth(
+            name=self.name,
+            event_count=len(self.events),
+            usage_count=len(self.usages) + len(self.records),
         )
 
 
@@ -204,6 +221,33 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
             source=UsageSource.EXACT,
             totals=UsageTotals(total_tokens=1),
         )
+
+    async def test_usage_helper_prefers_record_hook(self) -> None:
+        store = InMemoryTaskStore()
+        await store.register_definition(
+            definition(),
+            definition_hash="hash-recorded-usage",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-recorded-usage")
+        )
+        record = await store.append_usage(
+            run.run_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(total_tokens=1),
+        )
+        sink = RecordedUsageSink()
+
+        await record_observability_usage(
+            sink,
+            run_id=record.run_id,
+            source=record.source,
+            totals=record.totals,
+            record=record,
+        )
+
+        self.assertEqual(sink.records, [record])
+        self.assertEqual(sink.usages, [])
 
     async def test_runner_success_survives_sink_failures(self) -> None:
         store = InMemoryTaskStore()

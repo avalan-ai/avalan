@@ -63,6 +63,7 @@ class PgsqlInspectionSink(ObservabilitySink):
     run_id: str | None = None
     attempt_id: str | None = None
     persist_recorded_events: bool = False
+    persist_recorded_usage: bool = False
     _event_count: int = field(default=0, init=False)
     _usage_count: int = field(default=0, init=False)
     _failure_count: int = field(default=0, init=False)
@@ -83,6 +84,7 @@ class PgsqlInspectionSink(ObservabilitySink):
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
         assert isinstance(self.persist_recorded_events, bool)
+        assert isinstance(self.persist_recorded_usage, bool)
 
     @classmethod
     def from_database(
@@ -93,6 +95,7 @@ class PgsqlInspectionSink(ObservabilitySink):
         run_id: str | None = None,
         attempt_id: str | None = None,
         persist_recorded_events: bool = False,
+        persist_recorded_usage: bool = False,
     ) -> "PgsqlInspectionSink":
         return cls(
             store=PgsqlTaskStore(database),
@@ -100,6 +103,7 @@ class PgsqlInspectionSink(ObservabilitySink):
             run_id=run_id,
             attempt_id=attempt_id,
             persist_recorded_events=persist_recorded_events,
+            persist_recorded_usage=persist_recorded_usage,
         )
 
     async def record_event(self, event: TaskObservedEvent) -> None:
@@ -145,6 +149,24 @@ class PgsqlInspectionSink(ObservabilitySink):
                 source=source,
                 totals=totals,
                 metadata=metadata,
+            )
+            self._usage_count += 1
+        except Exception as error:
+            self._record_failure(error)
+            raise
+
+    async def record_usage_record(self, record: UsageRecord) -> None:
+        assert isinstance(record, UsageRecord)
+        try:
+            if not self.persist_recorded_usage:
+                self._usage_count += 1
+                return
+            await self.store.append_usage(
+                record.run_id,
+                attempt_id=record.attempt_id,
+                source=record.source,
+                totals=record.totals,
+                metadata=record.metadata,
             )
             self._usage_count += 1
         except Exception as error:

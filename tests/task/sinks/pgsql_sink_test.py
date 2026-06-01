@@ -187,6 +187,94 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(events[0], stored)
         self.assertEqual(events[1].sequence, 2)
 
+    async def test_recorded_usage_is_not_duplicated_by_default(self) -> None:
+        stored = await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(total_tokens=9),
+            metadata={"provider": "test"},
+        )
+        sink = PgsqlInspectionSink(store=self.store)
+
+        await record_observability_usage(
+            sink,
+            run_id=stored.run_id,
+            attempt_id=stored.attempt_id,
+            source=stored.source,
+            totals=stored.totals,
+            metadata=stored.metadata,
+            record=stored,
+        )
+
+        self.assertEqual(
+            await self.store.list_usage(self.run.run_id), (stored,)
+        )
+        self.assertEqual(sink.health().usage_count, 1)
+
+    async def test_recorded_usage_can_be_copied_when_requested(self) -> None:
+        stored = await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(total_tokens=9),
+            metadata={"provider": "test"},
+        )
+        sink = PgsqlInspectionSink(
+            store=self.store,
+            persist_recorded_usage=True,
+        )
+
+        await record_observability_usage(
+            sink,
+            run_id=stored.run_id,
+            attempt_id=stored.attempt_id,
+            source=stored.source,
+            totals=stored.totals,
+            metadata=stored.metadata,
+            record=stored,
+        )
+
+        usage = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(len(usage), 2)
+        self.assertEqual(usage[0], stored)
+        self.assertEqual(usage[1].sequence, 2)
+
+    async def test_recorded_usage_copy_failures_are_counted(self) -> None:
+        stored = await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(total_tokens=9),
+        )
+        sink = PgsqlInspectionSink(
+            store=self.store,
+            persist_recorded_usage=True,
+        )
+
+        with patch.object(
+            FakeCursor,
+            "_insert_usage",
+            side_effect=RuntimeError("private usage failure"),
+        ):
+            await record_observability_usage(
+                sink,
+                run_id=stored.run_id,
+                attempt_id=stored.attempt_id,
+                source=stored.source,
+                totals=stored.totals,
+                record=stored,
+            )
+
+        health = sink.health()
+        self.assertFalse(health.healthy)
+        self.assertEqual(health.failure_count, 1)
+        self.assertEqual(health.last_failure_code, "TaskStoreError")
+        self.assertNotIn("private", str(health))
+        self.assertEqual(
+            await self.store.list_usage(self.run.run_id), (stored,)
+        )
+
     async def test_event_draft_requires_run_id(self) -> None:
         sink = PgsqlInspectionSink(store=self.store)
 

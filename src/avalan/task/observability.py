@@ -6,7 +6,7 @@ from .event import (
     sanitize_raw_task_event_closed,
 )
 from .privacy import PrivacySanitizer
-from .usage import UsageSource, UsageTotals
+from .usage import UsageRecord, UsageSource, UsageTotals
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -199,10 +199,16 @@ async def record_observability_usage(
     totals: UsageTotals,
     attempt_id: str | None = None,
     metadata: Mapping[str, object] | None = None,
+    record: UsageRecord | None = None,
 ) -> None:
     if sink is None:
         return
     try:
+        if record is not None:
+            record_usage_record = getattr(sink, "record_usage_record", None)
+            if callable(record_usage_record):
+                await record_usage_record(record)
+                return
         await sink.record_usage(
             run_id=run_id,
             attempt_id=attempt_id,
