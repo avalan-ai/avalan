@@ -228,6 +228,7 @@ class FakeCursor:
                 self.database.events,
                 cast(str, params[0]),
                 cast(str | None, params[1]),
+                cast(int | None, params[3]),
                 "sequence",
             )
         elif 'INSERT INTO "task_usage_records"' in query:
@@ -237,6 +238,7 @@ class FakeCursor:
                 self.database.usage,
                 cast(str, params[0]),
                 cast(str | None, params[1]),
+                None,
                 "sequence",
             )
         elif 'SELECT * FROM "task_artifacts" WHERE "artifact_id"' in query:
@@ -599,6 +601,7 @@ class FakeCursor:
         rows: dict[str, dict[str, object]],
         run_id: str,
         attempt_id: str | None,
+        after_sequence: int | None,
         order_key: str,
     ) -> tuple[dict[str, object], ...]:
         return tuple(
@@ -608,6 +611,10 @@ class FakeCursor:
                     for row in rows.values()
                     if row["run_id"] == run_id
                     and (attempt_id is None or row["attempt_id"] == attempt_id)
+                    and (
+                        after_sequence is None
+                        or cast(int, row["sequence"]) > after_sequence
+                    )
                 ),
                 key=lambda row: cast(Any, row[order_key]),
             )
@@ -823,6 +830,14 @@ class PgsqlStoreContractTest(
                 attempt_id=attempt.attempt_id,
             ),
             (event,),
+        )
+        self.assertEqual(
+            await self.store.list_events(
+                run.run_id,
+                attempt_id=attempt.attempt_id,
+                after_sequence=1,
+            ),
+            (),
         )
         self.assertEqual(usage.sequence, 1)
         self.assertEqual(second_usage.sequence, 2)

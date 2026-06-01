@@ -33,10 +33,12 @@ from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
 from .store import (
     TaskAttempt,
     TaskExecutionRequest,
+    TaskExecutionResult,
     TaskRun,
     TaskSnapshotValue,
     TaskStore,
     freeze_snapshot_metadata,
+    freeze_snapshot_value,
 )
 from .target import (
     CallableTaskTargetRunner,
@@ -89,6 +91,14 @@ class TaskClientValidationResult:
     def valid(self) -> bool:
         return not self.issues
 
+    def as_dict(self) -> TaskSnapshotValue:
+        return freeze_snapshot_value(
+            {
+                "valid": self.valid,
+                "issues": tuple(issue.as_dict() for issue in self.issues),
+            }
+        )
+
     def raise_for_issues(self) -> None:
         if self.issues:
             raise TaskValidationError(self.issues)
@@ -105,6 +115,18 @@ class TaskClientOutput:
     def ready(self) -> bool:
         return self.state == TaskRunState.SUCCEEDED
 
+    def as_dict(self) -> TaskSnapshotValue:
+        value: dict[str, object] = {
+            "run_id": self.run_id,
+            "state": self.state.value,
+            "ready": self.ready,
+        }
+        if self.output_summary is not None:
+            value["output_summary"] = self.output_summary
+        if self.error is not None:
+            value["error"] = self.error
+        return freeze_snapshot_value(value)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TaskClientInspection:
@@ -115,6 +137,26 @@ class TaskClientInspection:
     usage: tuple[UsageRecord, ...]
     usage_totals: UsageTotals
     artifacts: tuple[TaskSnapshotValue, ...]
+
+    def as_dict(self) -> TaskSnapshotValue:
+        return freeze_snapshot_value(
+            {
+                "run": _run_inspection_value(self.run),
+                "attempts": tuple(
+                    _attempt_inspection_value(attempt)
+                    for attempt in self.attempts
+                ),
+                "output": self.output.as_dict(),
+                "events": tuple(
+                    _event_inspection_value(event) for event in self.events
+                ),
+                "usage": tuple(
+                    _usage_inspection_value(record) for record in self.usage
+                ),
+                "usage_totals": _usage_totals_value(self.usage_totals),
+                "artifacts": self.artifacts,
+            }
+        )
 
 
 class TaskClient:
@@ -351,8 +393,14 @@ class TaskClient:
         run_id: str,
         *,
         attempt_id: str | None = None,
+        after_sequence: int | None = None,
     ) -> tuple[SanitizedTaskEvent, ...]:
-        return await self._store.list_events(run_id, attempt_id=attempt_id)
+        _assert_non_negative_sequence(after_sequence)
+        return await self._store.list_events(
+            run_id,
+            attempt_id=attempt_id,
+            after_sequence=after_sequence,
+        )
 
     async def usage(
         self,
@@ -380,12 +428,17 @@ class TaskClient:
             return references
         return (references,)
 
-    async def inspect(self, run_id: str) -> TaskClientInspection:
+    async def inspect(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> TaskClientInspection:
         return TaskClientInspection(
             run=await self._store.get_run(run_id),
             attempts=await self._store.list_attempts(run_id),
             output=await self.output(run_id),
-            events=await self.events(run_id),
+            events=await self.events(run_id, after_sequence=after_sequence),
             usage=await self.usage(run_id),
             usage_totals=await self.usage_totals(run_id),
             artifacts=await self.artifacts(run_id),
@@ -503,6 +556,14 @@ def _assert_positive_interval(value: float) -> None:
     assert value > 0
 
 
+def _assert_non_negative_sequence(value: int | None) -> None:
+    if value is None:
+        return
+    assert isinstance(value, int)
+    assert not isinstance(value, bool)
+    assert value >= 0
+
+
 def _target_runner(
     target: TaskDirectTarget | TaskTargetRunner,
 ) -> TaskTargetRunner:
@@ -511,3 +572,105 @@ def _target_runner(
     if callable(run) and callable(validate_definition):
         return cast(TaskTargetRunner, target)
     return CallableTaskTargetRunner(cast(TaskDirectTarget, target))
+
+
+def _run_inspection_value(run: TaskRun) -> dict[str, object]:
+    value: dict[str, object] = {
+        "run_id": run.run_id,
+        "definition_id": run.definition_id,
+        "state": run.state.value,
+        "created_at": _datetime_value(run.created_at),
+        "updated_at": _datetime_value(run.updated_at),
+    }
+    if run.request.input_summary is not None:
+        value["input_summary"] = run.request.input_summary
+    if run.request.file_summaries:
+        value["file_summaries"] = run.request.file_summaries
+    if run.request.queue is not None:
+        value["queue"] = run.request.queue
+    if run.last_attempt_id is not None:
+        value["last_attempt_id"] = run.last_attempt_id
+    if run.claim is not None:
+        value["claim"] = {
+            "worker_id": run.claim.worker_id,
+            "claimed_at": _datetime_value(run.claim.claimed_at),
+            "lease_expires_at": _datetime_value(run.claim.lease_expires_at),
+            "heartbeat_at": (
+                _datetime_value(run.claim.heartbeat_at)
+                if run.claim.heartbeat_at is not None
+                else None
+            ),
+        }
+    if run.result is not None:
+        value["result"] = _result_inspection_value(run.result)
+    return value
+
+
+def _attempt_inspection_value(attempt: TaskAttempt) -> dict[str, object]:
+    value: dict[str, object] = {
+        "attempt_id": attempt.attempt_id,
+        "run_id": attempt.run_id,
+        "attempt_number": attempt.attempt_number,
+        "state": attempt.state.value,
+        "created_at": _datetime_value(attempt.created_at),
+        "updated_at": _datetime_value(attempt.updated_at),
+    }
+    if attempt.result is not None:
+        value["result"] = _result_inspection_value(attempt.result)
+    return value
+
+
+def _result_inspection_value(result: TaskExecutionResult) -> dict[str, object]:
+    value: dict[str, object] = {}
+    if result.output_summary is not None:
+        value["output_summary"] = result.output_summary
+    if result.error is not None:
+        value["error"] = result.error
+    return value
+
+
+def _event_inspection_value(event: SanitizedTaskEvent) -> dict[str, object]:
+    value: dict[str, object] = {
+        "event_id": event.event_id,
+        "run_id": event.run_id,
+        "sequence": event.sequence,
+        "event_type": event.event_type,
+        "category": event.category.value,
+        "created_at": _datetime_value(event.created_at),
+    }
+    if event.attempt_id is not None:
+        value["attempt_id"] = event.attempt_id
+    if event.payload is not None:
+        value["payload"] = event.payload
+    return value
+
+
+def _usage_inspection_value(record: UsageRecord) -> dict[str, object]:
+    value: dict[str, object] = {
+        "usage_id": record.usage_id,
+        "run_id": record.run_id,
+        "sequence": record.sequence,
+        "source": record.source.value,
+        "totals": _usage_totals_value(record.totals),
+        "created_at": _datetime_value(record.created_at),
+    }
+    if record.attempt_id is not None:
+        value["attempt_id"] = record.attempt_id
+    if record.metadata:
+        value["metadata"] = record.metadata
+    return value
+
+
+def _usage_totals_value(totals: UsageTotals) -> dict[str, object]:
+    return {
+        "input_tokens": totals.input_tokens,
+        "cached_input_tokens": totals.cached_input_tokens,
+        "cache_creation_input_tokens": totals.cache_creation_input_tokens,
+        "output_tokens": totals.output_tokens,
+        "reasoning_tokens": totals.reasoning_tokens,
+        "total_tokens": totals.total_tokens,
+    }
+
+
+def _datetime_value(value: datetime) -> str:
+    return value.isoformat()

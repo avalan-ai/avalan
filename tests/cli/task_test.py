@@ -1,8 +1,10 @@
 from argparse import Namespace
 from contextlib import AsyncExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase, main
 from unittest.mock import MagicMock, patch
 
@@ -10,9 +12,13 @@ from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
 from avalan.task import (
+    SanitizedTaskEvent,
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
+    TaskEventCategory,
     TaskRunState,
+    TaskStoreNotFoundError,
+    TaskTargetContext,
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
@@ -28,19 +34,37 @@ class _FakeTaskClient:
         run_result: object | None = None,
         enqueue_result: object | None = None,
         wait_result: object | None = None,
+        inspect_result: object | None = None,
+        output_result: object | None = None,
+        events_result: tuple[object, ...] = (),
+        artifacts_result: tuple[object, ...] = (),
         run_error: BaseException | None = None,
         enqueue_error: BaseException | None = None,
         wait_error: BaseException | None = None,
+        inspect_error: BaseException | None = None,
+        output_error: BaseException | None = None,
+        events_error: BaseException | None = None,
+        artifacts_error: BaseException | None = None,
     ) -> None:
         self.run_result = run_result
         self.enqueue_result = enqueue_result
         self.wait_result = wait_result
+        self.inspect_result = inspect_result
+        self.output_result = output_result
+        self.events_result = events_result
+        self.artifacts_result = artifacts_result
         self.run_error = run_error
         self.enqueue_error = enqueue_error
         self.wait_error = wait_error
+        self.inspect_error = inspect_error
+        self.output_error = output_error
+        self.events_error = events_error
+        self.artifacts_error = artifacts_error
         self.input_value: object = None
         self.wait_timeout: float | None = None
         self.poll_interval: float | None = None
+        self.after_sequence: int | None = None
+        self.attempt_id: str | None = None
 
     async def run(
         self,
@@ -79,6 +103,44 @@ class _FakeTaskClient:
         self.poll_interval = poll_interval_seconds
         return self.wait_result
 
+    async def inspect(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> object:
+        _ = run_id
+        if self.inspect_error is not None:
+            raise self.inspect_error
+        self.after_sequence = after_sequence
+        return self.inspect_result
+
+    async def output(self, run_id: str) -> object:
+        _ = run_id
+        if self.output_error is not None:
+            raise self.output_error
+        return self.output_result
+
+    async def events(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str | None = None,
+        after_sequence: int | None = None,
+    ) -> tuple[object, ...]:
+        _ = run_id
+        if self.events_error is not None:
+            raise self.events_error
+        self.attempt_id = attempt_id
+        self.after_sequence = after_sequence
+        return self.events_result
+
+    async def artifacts(self, run_id: str) -> tuple[object, ...]:
+        _ = run_id
+        if self.artifacts_error is not None:
+            raise self.artifacts_error
+        return self.artifacts_result
+
 
 class _FakeTaskClientContext:
     def __init__(self, client: _FakeTaskClient) -> None:
@@ -94,6 +156,14 @@ class _FakeTaskClientContext:
         traceback: object | None,
     ) -> bool | None:
         return None
+
+
+class _Snapshot:
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    def as_dict(self) -> object:
+        return self.value
 
 
 class _FakeResource:
@@ -229,22 +299,230 @@ class CliTaskCommandShellTestCase(TestCase):
     def setUp(self) -> None:
         self.theme = MagicMock()
 
-    def test_shell_commands_report_unavailable_diagnostic(self) -> None:
+    def test_inspection_commands_require_durable_store(self) -> None:
         commands = [
-            ("artifacts", task_cmds.task_artifacts),
-            ("events", task_cmds.task_events),
-            ("inspect", task_cmds.task_inspect),
-            ("output", task_cmds.task_output),
+            task_cmds.task_artifacts,
+            task_cmds.task_events,
+            task_cmds.task_inspect,
+            task_cmds.task_output,
         ]
 
-        for name, command in commands:
+        for command in commands:
             console = Console(record=True, width=160)
-            with self.subTest(command=name):
-                result = command(Namespace(), console, self.theme)
+            with (
+                self.subTest(command=command.__name__),
+                patch.dict(task_cmds.environ, {}, clear=True),
+            ):
+                result = command(
+                    Namespace(
+                        run_id="run-private",
+                        store_dsn=None,
+                        store_schema=None,
+                        attempt_id=None,
+                        after_sequence=None,
+                    ),
+                    console,
+                    self.theme,
+                )
 
             output = console.export_text()
             self.assertFalse(result)
-            self.assertIn(f"Task {name} command is not available", output)
+            self.assertIn("store.missing", output)
+            self.assertNotIn("run-private", output)
+
+    def test_inspection_commands_print_stable_snapshots(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        client = _FakeTaskClient(
+            inspect_result=_Snapshot(
+                {
+                    "run": {
+                        "run_id": "run-1",
+                        "state": "succeeded",
+                        "input_summary": {"privacy": "<redacted>"},
+                    },
+                    "events": (),
+                }
+            ),
+            output_result=_Snapshot(
+                {
+                    "run_id": "run-1",
+                    "state": "failed",
+                    "ready": False,
+                    "error": {"code": "runnable.failed"},
+                }
+            ),
+            events_result=(
+                SanitizedTaskEvent(
+                    event_id="event-1",
+                    run_id="run-1",
+                    sequence=2,
+                    event_type="token_generated",
+                    category=TaskEventCategory.TOKEN,
+                    created_at=now,
+                    attempt_id="attempt-1",
+                    payload={"privacy": "<redacted>"},
+                ),
+            ),
+            artifacts_result=(
+                {
+                    "artifact_id": "artifact-1",
+                    "state": "ready",
+                    "ref": {
+                        "artifact_id": "artifact-1",
+                        "store": "local",
+                    },
+                },
+            ),
+        )
+
+        with patch.object(
+            task_cmds,
+            "_task_cli_inspection_client_context",
+            return_value=_FakeTaskClientContext(client),
+        ):
+            inspect_console = Console(record=True, width=200)
+            inspect_result = task_cmds.task_inspect(
+                Namespace(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    after_sequence=1,
+                ),
+                inspect_console,
+                self.theme,
+            )
+            output_console = Console(record=True, width=200)
+            output_result = task_cmds.task_output(
+                Namespace(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                ),
+                output_console,
+                self.theme,
+            )
+            events_console = Console(record=True, width=200)
+            events_result = task_cmds.task_events(
+                Namespace(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    attempt_id="attempt-1",
+                    after_sequence=1,
+                ),
+                events_console,
+                self.theme,
+            )
+            artifacts_console = Console(record=True, width=200)
+            artifacts_result = task_cmds.task_artifacts(
+                Namespace(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                ),
+                artifacts_console,
+                self.theme,
+            )
+
+        self.assertTrue(inspect_result)
+        self.assertTrue(output_result)
+        self.assertTrue(events_result)
+        self.assertTrue(artifacts_result)
+        self.assertEqual(client.after_sequence, 1)
+        self.assertEqual(client.attempt_id, "attempt-1")
+        rendered = (
+            inspect_console.export_text()
+            + output_console.export_text()
+            + events_console.export_text()
+            + artifacts_console.export_text()
+        )
+        self.assertIn("inspect", rendered)
+        self.assertIn('"input_summary":{"privacy":"<redacted>"}', rendered)
+        self.assertIn('"error":{"code":"runnable.failed"}', rendered)
+        self.assertIn('"sequence":2', rendered)
+        self.assertIn('"artifact_id":"artifact-1"', rendered)
+        self.assertNotIn("secret", rendered)
+        self.assertNotIn("token_id", rendered)
+
+    def test_inspection_commands_report_not_found_safely(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            output_error=TaskStoreNotFoundError("private run secret")
+        )
+
+        with patch.object(
+            task_cmds,
+            "_task_cli_inspection_client_context",
+            return_value=_FakeTaskClientContext(client),
+        ):
+            result = task_cmds.task_output(
+                Namespace(
+                    run_id="run-private",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("task.not_found", output)
+        self.assertNotIn("private run secret", output)
+        self.assertNotIn("run-private", output)
+
+    def test_inspection_commands_report_safe_errors(self) -> None:
+        cases = (
+            (
+                task_cmds.task_inspect,
+                _FakeTaskClient(inspect_error=ImportError("private")),
+                "dependency.missing",
+                Namespace(
+                    run_id="run-private",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    after_sequence=None,
+                ),
+            ),
+            (
+                task_cmds.task_events,
+                _FakeTaskClient(events_error=OSError("private")),
+                "io.failure",
+                Namespace(
+                    run_id="run-private",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    attempt_id=None,
+                    after_sequence=None,
+                ),
+            ),
+            (
+                task_cmds.task_artifacts,
+                _FakeTaskClient(artifacts_error=AssertionError("private")),
+                "task.inspection",
+                Namespace(
+                    run_id="run-private",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                ),
+            ),
+        )
+        for command, client, expected, args in cases:
+            console = Console(record=True, width=160)
+            with (
+                self.subTest(command=command.__name__),
+                patch.object(
+                    task_cmds,
+                    "_task_cli_inspection_client_context",
+                    return_value=_FakeTaskClientContext(client),
+                ),
+            ):
+                result = command(args, console, self.theme)
+
+            output = console.export_text()
+            self.assertFalse(result)
+            self.assertIn(expected, output)
+            self.assertNotIn("private", output)
 
     def test_run_requires_store_without_ephemeral(self) -> None:
         console = Console(record=True, width=160)
@@ -790,9 +1068,32 @@ class CliTaskCommandShellTestCase(TestCase):
                     hub=None,
                     logger=None,
                 )
+            inspection_database = _FakeResource()
+            with (
+                patch.object(
+                    task_cmds,
+                    "_task_pgsql_database",
+                    return_value=inspection_database,
+                ),
+                patch.object(
+                    task_cmds, "PgsqlTaskStore", return_value=object()
+                ),
+            ):
+                inspection_context = (
+                    task_cmds._task_cli_inspection_client_context(
+                        Namespace(
+                            store_dsn="postgresql://db/tasks",
+                            store_schema="tasks",
+                        ),
+                        Console(record=True, width=160),
+                    )
+                )
 
         self.assertIsNone(ephemeral_context.database)
         self.assertIs(database, durable_context.database)
+        self.assertIsNotNone(inspection_context)
+        assert inspection_context is not None
+        self.assertIs(inspection_database, inspection_context.database)
 
     def test_agent_target_and_database_helpers_construct(self) -> None:
         stack = AsyncExitStack()
@@ -830,6 +1131,15 @@ class CliTaskCommandShellTestCase(TestCase):
         )
         task_cmds._print_task_execution_error(console, OSError("private"))
         task_cmds._print_task_execution_error(console, RuntimeError("private"))
+        task_cmds._print_task_inspection_error(
+            console,
+            ImportError("private"),
+        )
+        task_cmds._print_task_inspection_error(console, OSError("private"))
+        task_cmds._print_task_inspection_error(
+            console,
+            AssertionError("private"),
+        )
         task_cmds._print_task_execution_error(
             console,
             TaskValidationError(
@@ -846,6 +1156,17 @@ class CliTaskCommandShellTestCase(TestCase):
         )
         with self.assertRaises(RuntimeError):
             task_cmds._run_awaitable(_raise_runtime_error())
+        with self.assertRaises(TaskClientUnsupportedOperationError):
+            task_cmds._run_awaitable(
+                task_cmds._task_cli_inspection_target(
+                    cast(TaskTargetContext, object())
+                )
+            )
+        self.assertIsNone(
+            task_cmds._task_cli_after_sequence(Namespace(after_sequence=None))
+        )
+        with self.assertRaises(AssertionError):
+            task_cmds._task_cli_after_sequence(Namespace(after_sequence=-1))
         with patch.dict(
             task_cmds.environ,
             {
@@ -874,6 +1195,8 @@ class CliTaskCommandShellTestCase(TestCase):
 
         output = console.export_text()
         self.assertIn("task.unsupported", output)
+        self.assertIn("dependency.missing", output)
+        self.assertIn("task.inspection", output)
         self.assertIn("task.execution", output)
 
     def test_validate_task_cli_input_for_command_success_path(self) -> None:

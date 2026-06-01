@@ -34,6 +34,7 @@ class PgsqlInspectionStore(Protocol):
         run_id: str,
         *,
         attempt_id: str | None = None,
+        after_sequence: int | None = None,
     ) -> tuple[SanitizedTaskEvent, ...]: ...
 
     async def append_usage(
@@ -178,11 +179,18 @@ class PgsqlInspectionSink(ObservabilitySink):
         run_id: str,
         *,
         attempt_id: str | None = None,
+        after_sequence: int | None = None,
     ) -> tuple[SanitizedTaskEvent, ...]:
         _assert_non_empty_string(run_id, "run_id")
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
-        return await self.store.list_events(run_id, attempt_id=attempt_id)
+        if after_sequence is not None:
+            _assert_non_negative_int(after_sequence, "after_sequence")
+        return await self.store.list_events(
+            run_id,
+            attempt_id=attempt_id,
+            after_sequence=after_sequence,
+        )
 
     async def usage(
         self,
@@ -232,3 +240,9 @@ def _event_attempt_id(
 def _assert_non_empty_string(value: str | None, field_name: str) -> None:
     assert isinstance(value, str), f"{field_name} must be a string"
     assert value.strip(), f"{field_name} must not be empty"
+
+
+def _assert_non_negative_int(value: int, field_name: str) -> None:
+    assert isinstance(value, int), f"{field_name} must be an integer"
+    assert not isinstance(value, bool), f"{field_name} must be an integer"
+    assert value >= 0, f"{field_name} must not be negative"

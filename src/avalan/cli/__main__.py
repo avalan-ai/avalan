@@ -1579,6 +1579,24 @@ class CLI:
             type=str,
             help="Task run id to inspect",
         )
+        task_inspect_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_inspect_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_inspect_parser.add_argument(
+            "--after-sequence",
+            type=int,
+            default=None,
+            help="Only include events after this sequence.",
+        )
         task_output_parser = task_command_parsers.add_parser(
             name="output",
             description="Inspect a task run output",
@@ -1588,6 +1606,18 @@ class CLI:
             "run_id",
             type=str,
             help="Task run id to inspect",
+        )
+        task_output_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_output_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
         )
         task_events_parser = task_command_parsers.add_parser(
             name="events",
@@ -1599,6 +1629,30 @@ class CLI:
             type=str,
             help="Task run id to inspect",
         )
+        task_events_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_events_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_events_parser.add_argument(
+            "--attempt-id",
+            type=str,
+            default=None,
+            help="Only include events for this attempt.",
+        )
+        task_events_parser.add_argument(
+            "--after-sequence",
+            type=int,
+            default=None,
+            help="Only include events after this sequence.",
+        )
         task_artifacts_parser = task_command_parsers.add_parser(
             name="artifacts",
             description="Inspect task run artifacts",
@@ -1608,6 +1662,18 @@ class CLI:
             "run_id",
             type=str,
             help="Task run id to inspect",
+        )
+        task_artifacts_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_artifacts_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
         )
         task_worker_parser = task_command_parsers.add_parser(
             name="worker",

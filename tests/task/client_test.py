@@ -13,11 +13,13 @@ from avalan.task import (
     TaskArtifactRef,
     TaskArtifactRetention,
     TaskArtifactStat,
+    TaskAttemptState,
     TaskClient,
     TaskClientUnsupportedOperationError,
     TaskClientValidationResult,
     TaskClientWaitTimeoutError,
     TaskDefinition,
+    TaskEventCategory,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
@@ -44,6 +46,7 @@ from avalan.task import (
     TaskValidationError,
     TaskValidationIssue,
     UsageSource,
+    UsageTotals,
 )
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
@@ -328,6 +331,10 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             events = await client.events(result.run.run_id)
             usage = await client.usage(result.run.run_id)
             inspection = await client.inspect(result.run.run_id)
+            inspection_snapshot = cast(
+                Mapping[str, object],
+                inspection.as_dict(),
+            )
 
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, "short summary")
@@ -352,6 +359,20 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(inspection.usage, usage)
         self.assertIsNone(inspection.usage_totals.total_tokens)
         self.assertEqual(inspection.artifacts, ())
+        self.assertNotIn("private prompt", str(inspection_snapshot))
+        self.assertNotIn("secret-token", str(inspection_snapshot))
+        self.assertNotIn("token_id", str(inspection_snapshot))
+        self.assertNotIn("claim_token", str(inspection_snapshot))
+        run_snapshot = cast(
+            Mapping[str, object],
+            inspection_snapshot["run"],
+        )
+        self.assertIn("hmac-sha256", str(run_snapshot["input_summary"]))
+        event_snapshots = cast(
+            tuple[Mapping[str, object], ...],
+            inspection_snapshot["events"],
+        )
+        self.assertEqual(event_snapshots[0]["sequence"], 1)
         self.assertEqual(loader.event_manager.listeners, [])
 
     async def test_direct_callable_target_uses_shared_validation(
@@ -375,6 +396,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         result = await client.run(_definition(), input_value="private prompt")
 
         self.assertTrue(validation.valid)
+        self.assertEqual(validation.as_dict(), {"valid": True, "issues": ()})
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, "callable summary")
 
@@ -392,6 +414,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         )
 
         self.assertFalse(result.valid)
+        self.assertFalse(cast(Mapping[str, object], result.as_dict())["valid"])
         self.assertEqual(
             [issue.code for issue in result.issues],
             [
@@ -746,6 +769,142 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             await client.artifacts(mapping_ref.run_id),
             ({"artifact_id": "artifact-3"},),
         )
+
+    async def test_events_support_incremental_sequence_fetch(self) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition()
+        await store.register_definition(
+            definition,
+            definition_hash="hash-events",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-events")
+        )
+        client = TaskClient(
+            store,
+            target=RejectingTarget(),
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        await store.append_event(
+            run.run_id,
+            event_type="start",
+            category=TaskEventCategory.ENGINE,
+            payload={"status": "first"},
+        )
+        await store.append_event(
+            run.run_id,
+            event_type="end",
+            category=TaskEventCategory.ENGINE,
+            payload={"status": "second"},
+        )
+
+        events = await client.events(run.run_id, after_sequence=1)
+        inspection = await client.inspect(run.run_id, after_sequence=1)
+
+        self.assertEqual([event.event_type for event in events], ["end"])
+        self.assertEqual(inspection.events, events)
+        with self.assertRaises(AssertionError):
+            await client.events(run.run_id, after_sequence=-1)
+
+    async def test_inspection_snapshot_includes_safe_optional_fields(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition()
+        await store.register_definition(
+            definition,
+            definition_hash="hash-optional",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(
+                definition_id="hash-optional",
+                input_summary={"privacy": "<redacted>"},
+                file_summaries=({"artifact_id": "input-1"},),
+                queue="documents",
+            )
+        )
+        await store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.VALIDATED,
+            reason="validated",
+        )
+        queued = await store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.VALIDATED},
+            to_state=TaskRunState.QUEUED,
+            reason="queued",
+        )
+        claimed = await store.assign_claim(
+            queued.run_id,
+            from_states={TaskRunState.QUEUED},
+            worker_id="worker-1",
+            lease_expires_at=queued.updated_at + timedelta(minutes=5),
+            reason="claimed",
+        )
+        assert claimed.claim is not None
+        attempt = await store.create_attempt(
+            claimed.run_id,
+            claim_token=claimed.claim.claim_token,
+        )
+        await store.transition_attempt(
+            attempt.attempt_id,
+            from_states={TaskAttemptState.CREATED},
+            to_state=TaskAttemptState.RUNNING,
+            reason="started",
+            claim_token=claimed.claim.claim_token,
+        )
+        await store.append_usage(
+            claimed.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1),
+            metadata={"provider": "safe"},
+        )
+        await store.transition_attempt(
+            attempt.attempt_id,
+            from_states={TaskAttemptState.RUNNING},
+            to_state=TaskAttemptState.FAILED,
+            reason="failed",
+            result=TaskExecutionResult(error={"code": "attempt.failed"}),
+            claim_token=claimed.claim.claim_token,
+        )
+        client = TaskClient(
+            store,
+            target=RejectingTarget(),
+            hmac_provider=StaticHmacProvider(),
+        )
+        claimed_snapshot = str(
+            (await client.inspect(claimed.run_id)).as_dict()
+        )
+        await store.transition_run(
+            claimed.run_id,
+            from_states={TaskRunState.CLAIMED},
+            to_state=TaskRunState.FAILED,
+            reason="failed",
+            result=TaskExecutionResult(error={"code": "run.failed"}),
+            claim_token=claimed.claim.claim_token,
+        )
+
+        output = await client.output(claimed.run_id)
+        inspection = cast(
+            Mapping[str, object],
+            (await client.inspect(claimed.run_id)).as_dict(),
+        )
+
+        self.assertEqual(
+            cast(Mapping[str, object], output.as_dict())["error"],
+            {"code": "run.failed"},
+        )
+        rendered = str(inspection)
+        self.assertIn("documents", rendered)
+        self.assertIn("worker-1", claimed_snapshot)
+        self.assertIn("input-1", rendered)
+        self.assertIn("attempt.failed", rendered)
+        self.assertIn("provider", rendered)
+        self.assertNotIn(claimed.claim.claim_token, claimed_snapshot)
+        self.assertNotIn(claimed.claim.claim_token, rendered)
 
 
 def _definition(

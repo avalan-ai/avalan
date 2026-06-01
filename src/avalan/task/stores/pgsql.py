@@ -746,10 +746,13 @@ class PgsqlTaskStore:
         run_id: str,
         *,
         attempt_id: str | None = None,
+        after_sequence: int | None = None,
     ) -> tuple[SanitizedTaskEvent, ...]:
         _assert_non_empty_string(run_id, "run_id")
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if after_sequence is not None:
+            _assert_non_negative_int(after_sequence, "after_sequence")
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
             await _run_or_raise(unit, run_id)
@@ -761,7 +764,13 @@ class PgsqlTaskStore:
                     )
             await unit.cursor.execute(
                 _SELECT_EVENTS_SQL,
-                (run_id, attempt_id, attempt_id),
+                (
+                    run_id,
+                    attempt_id,
+                    attempt_id,
+                    after_sequence,
+                    after_sequence,
+                ),
             )
             return tuple(
                 _event_from_row(row) for row in await unit.cursor.fetchall()
@@ -1512,6 +1521,7 @@ _SELECT_EVENTS_SQL = """
 SELECT * FROM "task_events"
 WHERE "run_id" = %s
   AND (%s IS NULL OR "attempt_id" = %s)
+  AND (%s IS NULL OR "sequence" > %s)
 ORDER BY "sequence", "created_at", "event_id"
 """
 _SELECT_NEXT_USAGE_SEQUENCE_SQL = """
@@ -2309,6 +2319,12 @@ def _verify_claim_token(run: TaskRun, claim_token: str | None) -> None:
         return
     if claim_token != run.claim.claim_token:
         raise TaskStoreConflictError("task claim token did not match")
+
+
+def _assert_non_negative_int(value: int, field_name: str) -> None:
+    assert isinstance(value, int), f"{field_name} must be an integer"
+    assert not isinstance(value, bool), f"{field_name} must be an integer"
+    assert value >= 0, f"{field_name} must not be negative"
 
 
 def _row_value(

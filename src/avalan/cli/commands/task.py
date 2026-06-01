@@ -15,6 +15,8 @@ from ...task import (
     TaskInputType,
     TaskLoadIssue,
     TaskRunState,
+    TaskStoreNotFoundError,
+    TaskTargetContext,
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
@@ -205,8 +207,8 @@ def task_inspect(
     console: Console,
     theme: Theme,
 ) -> bool:
-    """Print a diagnostic for task inspection."""
-    return _print_command_unavailable(console, "inspect")
+    """Inspect a task run."""
+    return _run_awaitable(_task_inspect(args, console))
 
 
 def task_output(
@@ -214,8 +216,8 @@ def task_output(
     console: Console,
     theme: Theme,
 ) -> bool:
-    """Print a diagnostic for task output inspection."""
-    return _print_command_unavailable(console, "output")
+    """Inspect a task run output."""
+    return _run_awaitable(_task_output(args, console))
 
 
 def task_events(
@@ -223,8 +225,8 @@ def task_events(
     console: Console,
     theme: Theme,
 ) -> bool:
-    """Print a diagnostic for task event inspection."""
-    return _print_command_unavailable(console, "events")
+    """Inspect task run events."""
+    return _run_awaitable(_task_events(args, console))
 
 
 def task_artifacts(
@@ -232,8 +234,8 @@ def task_artifacts(
     console: Console,
     theme: Theme,
 ) -> bool:
-    """Print a diagnostic for task artifact inspection."""
-    return _print_command_unavailable(console, "artifacts")
+    """Inspect task run artifacts."""
+    return _run_awaitable(_task_artifacts(args, console))
 
 
 def task_worker(
@@ -497,6 +499,105 @@ async def _task_enqueue(
     return True
 
 
+async def _task_inspect(args: Namespace, console: Console) -> bool:
+    client_context = _task_cli_inspection_client_context(args, console)
+    if client_context is None:
+        return False
+    try:
+        async with client_context as client:
+            inspection = await client.inspect(
+                args.run_id,
+                after_sequence=_task_cli_after_sequence(args),
+            )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_task_inspection_error(console, exc)
+        return False
+    console.print(
+        f"inspect {_format_task_cli_value(inspection.as_dict())}",
+        markup=False,
+        soft_wrap=True,
+    )
+    return True
+
+
+async def _task_output(args: Namespace, console: Console) -> bool:
+    client_context = _task_cli_inspection_client_context(args, console)
+    if client_context is None:
+        return False
+    try:
+        async with client_context as client:
+            output = await client.output(args.run_id)
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_task_inspection_error(console, exc)
+        return False
+    console.print(
+        f"output {_format_task_cli_value(output.as_dict())}",
+        markup=False,
+        soft_wrap=True,
+    )
+    return True
+
+
+async def _task_events(args: Namespace, console: Console) -> bool:
+    client_context = _task_cli_inspection_client_context(args, console)
+    if client_context is None:
+        return False
+    try:
+        async with client_context as client:
+            events = await client.events(
+                args.run_id,
+                attempt_id=getattr(args, "attempt_id", None),
+                after_sequence=_task_cli_after_sequence(args),
+            )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_task_inspection_error(console, exc)
+        return False
+    console.print(
+        f"events {_format_task_cli_value(_task_event_cli_values(events))}",
+        markup=False,
+        soft_wrap=True,
+    )
+    return True
+
+
+async def _task_artifacts(args: Namespace, console: Console) -> bool:
+    client_context = _task_cli_inspection_client_context(args, console)
+    if client_context is None:
+        return False
+    try:
+        async with client_context as client:
+            artifacts = await client.artifacts(args.run_id)
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_task_inspection_error(console, exc)
+        return False
+    console.print(
+        f"artifacts {_format_task_cli_value(artifacts)}",
+        markup=False,
+        soft_wrap=True,
+    )
+    return True
+
+
 async def _task_worker(
     args: Namespace,
     console: Console,
@@ -570,14 +671,6 @@ async def _task_worker(
         markup=False,
     )
     return True
-
-
-def _print_command_unavailable(console: Console, command: str) -> bool:
-    console.print(
-        f"Task {command} command is not available in this build.",
-        markup=False,
-    )
-    return False
 
 
 def _load_definition_for_execution(
@@ -654,6 +747,35 @@ def _task_cli_client_context(
         ),
         database=database,
         stack=stack,
+    )
+
+
+def _task_cli_inspection_client_context(
+    args: Namespace,
+    console: Console,
+) -> _TaskCliClientContext | None:
+    dsn = _task_store_dsn(args)
+    if dsn is None:
+        _print_missing_inspection_store(console)
+        return None
+    database = _task_pgsql_database(dsn, _task_store_schema(args))
+    return _TaskCliClientContext(
+        TaskClient(
+            PgsqlTaskStore(database),
+            target=_task_cli_inspection_target,
+        ),
+        database=database,
+    )
+
+
+async def _task_cli_inspection_target(
+    context: TaskTargetContext,
+) -> object:
+    _ = context
+    raise TaskClientUnsupportedOperationError(
+        code="task.inspect_only",
+        operation="run",
+        message="Inspection clients cannot execute task runs.",
     )
 
 
@@ -747,6 +869,19 @@ def _print_missing_store(console: Console) -> None:
     )
 
 
+def _print_missing_inspection_store(console: Console) -> None:
+    console.print("Task store is not configured.", markup=False)
+    console.print(
+        "error store.missing task inspection requires a configured durable"
+        " task store.",
+        markup=False,
+    )
+    console.print(
+        "Set AVALAN_TASK_STORE_DSN or pass --store-dsn.",
+        markup=False,
+    )
+
+
 def _print_task_command_error(
     console: Console,
     message: str,
@@ -756,6 +891,23 @@ def _print_task_command_error(
     console.print(message, markup=False)
     console.print(f"error {code}", markup=False)
     console.print(hint, markup=False)
+
+
+def _print_task_inspection_error(
+    console: Console,
+    error: BaseException,
+) -> None:
+    console.print("Task inspection failed.", markup=False)
+    if isinstance(error, TaskStoreNotFoundError):
+        console.print("error task.not_found", markup=False)
+        return
+    if isinstance(error, ImportError):
+        console.print("error dependency.missing", markup=False)
+        return
+    if isinstance(error, OSError):
+        console.print("error io.failure", markup=False)
+        return
+    console.print("error task.inspection", markup=False)
 
 
 def _print_task_execution_error(
@@ -790,6 +942,38 @@ def _print_task_result(
     if value is None:
         return
     console.print(f"output {_format_task_cli_value(value)}", markup=False)
+
+
+def _task_cli_after_sequence(args: Namespace) -> int | None:
+    value = getattr(args, "after_sequence", None)
+    if value is None:
+        return None
+    assert isinstance(value, int)
+    assert not isinstance(value, bool)
+    assert value >= 0
+    return value
+
+
+def _task_event_cli_value(event: object) -> Mapping[str, object]:
+    value: dict[str, object] = {
+        "event_id": getattr(event, "event_id"),
+        "run_id": getattr(event, "run_id"),
+        "sequence": getattr(event, "sequence"),
+        "event_type": getattr(event, "event_type"),
+        "category": getattr(getattr(event, "category"), "value"),
+        "created_at": getattr(event, "created_at").isoformat(),
+    }
+    attempt_id = getattr(event, "attempt_id", None)
+    if attempt_id is not None:
+        value["attempt_id"] = attempt_id
+    payload = getattr(event, "payload", None)
+    if payload is not None:
+        value["payload"] = payload
+    return value
+
+
+def _task_event_cli_values(events: Iterable[object]) -> tuple[object, ...]:
+    return tuple(_task_event_cli_value(event) for event in events)
 
 
 def _run_awaitable(awaitable: Coroutine[object, object, bool]) -> bool:

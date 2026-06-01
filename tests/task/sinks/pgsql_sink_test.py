@@ -187,6 +187,27 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(events[0], stored)
         self.assertEqual(events[1].sequence, 2)
 
+    async def test_events_support_incremental_fetch(self) -> None:
+        await self.store.append_event(
+            self.run.run_id,
+            event_type="model_start",
+            category=TaskEventCategory.MODEL,
+            payload={"status": "first"},
+        )
+        second = await self.store.append_event(
+            self.run.run_id,
+            event_type="model_complete",
+            category=TaskEventCategory.MODEL,
+            payload={"status": "second"},
+        )
+        sink = PgsqlInspectionSink(store=self.store)
+
+        events = await sink.events(self.run.run_id, after_sequence=1)
+
+        self.assertEqual(events, (second,))
+        with self.assertRaises(AssertionError):
+            await sink.events(self.run.run_id, after_sequence=-1)
+
     async def test_recorded_usage_is_not_duplicated_by_default(self) -> None:
         stored = await self.store.append_usage(
             self.run.run_id,

@@ -435,6 +435,7 @@ class TaskStore(Protocol):
         run_id: str,
         *,
         attempt_id: str | None = None,
+        after_sequence: int | None = None,
     ) -> tuple[SanitizedTaskEvent, ...]: ...
 
     async def append_usage(
