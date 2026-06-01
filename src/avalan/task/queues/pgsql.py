@@ -997,6 +997,18 @@ WHERE "run_id" = %s
 RETURNING *
 """
 
+_UPDATE_CLAIMED_RUN_STATE_SQL = """
+UPDATE "task_runs"
+SET "state" = %s,
+    "result" = COALESCE(%s::jsonb, "result"),
+    "claim" = CASE WHEN %s::boolean THEN NULL ELSE "claim" END,
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = 'claimed'
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+
 _COMPLETE_QUEUE_ITEM_SQL = """
 UPDATE "task_queue_items"
 SET "state" = %s,
@@ -1209,14 +1221,13 @@ async def _transition_claimed_run(
     metadata: TaskSnapshotMetadata,
 ) -> TaskRun:
     await unit.cursor.execute(
-        _UPDATE_RUN_STATE_SQL,
+        _UPDATE_CLAIMED_RUN_STATE_SQL,
         (
             to_state.value,
             _json(_result_to_payload(result)) if result else None,
+            to_state == TaskRunState.QUEUED,
             now,
             run_id,
-            TaskRunState.CLAIMED.value,
-            claim_token,
             claim_token,
         ),
     )

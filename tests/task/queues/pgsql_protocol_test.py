@@ -225,6 +225,8 @@ class FakeCursor:
             self.row = self.database.runs.get(cast(str, params[0]))
         elif 'UPDATE "task_runs"' in query and '"claim" = %s::jsonb' in query:
             self.row = self._assign_run_claim(params)
+        elif 'UPDATE "task_runs"' in query and '"claim" = CASE' in query:
+            self.row = self._transition_claimed_run(params)
         elif 'UPDATE "task_runs"' in query and "jsonb_set" in query:
             self.row = self._heartbeat_run_claim(params)
         elif 'UPDATE "task_runs"' in query and '"last_attempt_id"' in query:
@@ -344,6 +346,39 @@ class FakeCursor:
                     else row.get("result")
                 ),
                 "updated_at": params[2],
+            }
+        )
+        return row
+
+    def _transition_claimed_run(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        run_id = cast(str, params[4])
+        row = self.database.runs.get(run_id)
+        claim = cast(
+            dict[str, object] | None, row.get("claim") if row else None
+        )
+        if self.database.stale_transition:
+            self.database.stale_transition = False
+            return None
+        if (
+            row is None
+            or row["state"] != TaskRunState.CLAIMED.value
+            or claim is None
+            or claim.get("claim_token") != params[5]
+        ):
+            return None
+        row.update(
+            {
+                "state": params[0],
+                "result": (
+                    loads(cast(str, params[1]))
+                    if params[1] is not None
+                    else row.get("result")
+                ),
+                "claim": None if params[2] else claim,
+                "updated_at": params[3],
             }
         )
         return row
@@ -1885,8 +1920,23 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(retry.queue_item.attempts, 1)
         self.assertEqual(retry.run.state, TaskRunState.QUEUED)
         self.assertIsNone(retry.run.result)
+        self.assertIsNone(retry.run.claim)
+        self.assertIsNone(self.database.runs["run-queued"]["claim"])
         self.assertEqual(retry.attempt.state, TaskAttemptState.FAILED)
         self.assertEqual(retry.attempt.result, result)
+
+        second_claim = await self.queue.claim(
+            "default",
+            worker_id="worker-2",
+            lease_expires_at=retry_at + timedelta(minutes=5),
+            now=retry_at,
+        )
+
+        self.assertIsNotNone(second_claim)
+        assert second_claim is not None
+        self.assertEqual(second_claim.attempt.attempt_number, 2)
+        self.assertEqual(second_claim.run.state, TaskRunState.CLAIMED)
+        self.assertIsNotNone(second_claim.run.claim)
 
     async def test_retry_rejects_exhausted_claim_without_mutation(
         self,
