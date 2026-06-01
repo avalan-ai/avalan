@@ -11,6 +11,14 @@ from avalan.pgsql import (
     PgsqlOperationError,
 )
 from avalan.task import (
+    IdempotencyMode,
+    TaskArtifactPurpose,
+    TaskArtifactRef,
+    TaskArtifactRetention,
+    TaskExecutionRequest,
+    TaskIdempotencyDigest,
+    TaskIdempotencyIdentity,
+    TaskQueueArtifact,
     TaskQueueConflictError,
     TaskQueueError,
     TaskQueueItemState,
@@ -43,11 +51,20 @@ class SequenceIds:
 
 class FakePgsqlQueueDatabase:
     def __init__(self) -> None:
+        self.definitions: dict[str, dict[str, object]] = {}
         self.runs: dict[str, dict[str, object]] = {}
+        self.run_transitions: dict[str, dict[str, object]] = {}
+        self.artifacts: dict[str, dict[str, object]] = {}
+        self.idempotency: dict[str, dict[str, object]] = {}
         self.queue_items: dict[str, dict[str, object]] = {}
         self.depth_returns_none = False
         self.health_returns_none = False
         self.execute_error: BaseException | None = None
+        self.fail_on_query: str | None = None
+        self.executed_queries: list[str] = []
+        self.race_on_idempotency_insert = False
+        self.drop_idempotency_insert = False
+        self.stale_transition = False
         self.open_count = 0
         self.close_count = 0
 
@@ -62,12 +79,31 @@ class FakePgsqlQueueDatabase:
 
     def snapshot(self) -> dict[str, object]:
         return {
+            "definitions": deepcopy(self.definitions),
             "runs": deepcopy(self.runs),
+            "run_transitions": deepcopy(self.run_transitions),
+            "artifacts": deepcopy(self.artifacts),
+            "idempotency": deepcopy(self.idempotency),
             "queue_items": deepcopy(self.queue_items),
         }
 
     def restore(self, snapshot: dict[str, object]) -> None:
+        self.definitions = cast(
+            dict[str, dict[str, object]], snapshot["definitions"]
+        )
         self.runs = cast(dict[str, dict[str, object]], snapshot["runs"])
+        self.run_transitions = cast(
+            dict[str, dict[str, object]],
+            snapshot["run_transitions"],
+        )
+        self.artifacts = cast(
+            dict[str, dict[str, object]],
+            snapshot["artifacts"],
+        )
+        self.idempotency = cast(
+            dict[str, dict[str, object]],
+            snapshot["idempotency"],
+        )
         self.queue_items = cast(
             dict[str, dict[str, object]],
             snapshot["queue_items"],
@@ -156,7 +192,29 @@ class FakeCursor:
         params = parameters or ()
         if self.database.execute_error is not None:
             raise self.database.execute_error
-        if 'SELECT "run_id", "state", "queue_name"' in query:
+        self.database.executed_queries.append(query)
+        if (
+            self.database.fail_on_query is not None
+            and self.database.fail_on_query in query
+        ):
+            raise RuntimeError("backend failure includes raw details")
+        if 'SELECT * FROM "task_definitions"' in query:
+            self.row = self.database.definitions.get(cast(str, params[0]))
+        elif 'INSERT INTO "task_runs"' in query:
+            self.row = self._insert_run(params)
+        elif 'SELECT * FROM "task_runs"' in query:
+            self.row = self.database.runs.get(cast(str, params[0]))
+        elif 'UPDATE "task_runs"' in query:
+            self.row = self._transition_run(params)
+        elif 'INSERT INTO "task_run_transitions"' in query:
+            self.row = self._insert_run_transition(params)
+        elif 'SELECT * FROM "task_idempotency_keys"' in query:
+            self.row = self.database.idempotency.get(cast(str, params[0]))
+        elif 'INSERT INTO "task_idempotency_keys"' in query:
+            self.row = self._insert_idempotency(params)
+        elif 'INSERT INTO "task_artifacts"' in query:
+            self.row = self._insert_artifact(params)
+        elif 'SELECT "run_id", "state", "queue_name"' in query:
             self.row = self.database.runs.get(cast(str, params[0]))
         elif 'INSERT INTO "task_queue_items"' in query:
             self.row = self._insert_queue_item(params)
@@ -177,6 +235,151 @@ class FakeCursor:
 
     async def close(self) -> None:
         return None
+
+    def _insert_run(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        run_id = cast(str, params[0])
+        if run_id in self.database.runs:
+            return None
+        row = {
+            "run_id": run_id,
+            "definition_id": params[1],
+            "state": params[2],
+            "queue_name": params[3],
+            "request": loads(cast(str, params[4])),
+            "metadata": loads(cast(str, params[5])),
+            "claim": None,
+            "last_attempt_id": None,
+            "result": None,
+            "created_at": params[6],
+            "updated_at": params[7],
+        }
+        self.database.runs[run_id] = row
+        return row
+
+    def _transition_run(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        run_id = cast(str, params[3])
+        row = self.database.runs.get(run_id)
+        if self.database.stale_transition:
+            self.database.stale_transition = False
+            return None
+        if row is None or row["state"] != params[4]:
+            return None
+        row.update(
+            {
+                "state": params[0],
+                "result": (
+                    loads(cast(str, params[1]))
+                    if params[1] is not None
+                    else row.get("result")
+                ),
+                "updated_at": params[2],
+            }
+        )
+        return row
+
+    def _insert_run_transition(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        transition_id = cast(str, params[0])
+        if transition_id in self.database.run_transitions:
+            return None
+        row = {
+            "transition_id": transition_id,
+            "run_id": params[1],
+            "from_state": params[2],
+            "to_state": params[3],
+            "reason": params[4],
+            "metadata": loads(cast(str, params[5])),
+            "created_at": params[6],
+        }
+        self.database.run_transitions[transition_id] = row
+        return row
+
+    def _insert_idempotency(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        identity_key = cast(str, params[0])
+        if self.database.race_on_idempotency_insert:
+            self.database.race_on_idempotency_insert = False
+            self.database.idempotency[identity_key] = {
+                "identity_key": identity_key,
+                "task_name": params[1],
+                "task_version": params[2],
+                "spec_hash": params[3],
+                "owner_scope_hash": loads(cast(str, params[4])),
+                "strategy": params[5],
+                "window_hash": None,
+                "input_hash": loads(cast(str, params[7])),
+                "file_hash": None,
+                "custom_hash": None,
+                "run_id": "run-ready",
+                "metadata": {},
+                "expires_at": None,
+                "created_at": params[13],
+            }
+            return None
+        if self.database.drop_idempotency_insert:
+            self.database.drop_idempotency_insert = False
+            return None
+        if identity_key in self.database.idempotency:
+            return None
+        row = {
+            "identity_key": identity_key,
+            "task_name": params[1],
+            "task_version": params[2],
+            "spec_hash": params[3],
+            "owner_scope_hash": loads(cast(str, params[4])),
+            "strategy": params[5],
+            "window_hash": (
+                loads(cast(str, params[6])) if params[6] is not None else None
+            ),
+            "input_hash": (
+                loads(cast(str, params[7])) if params[7] is not None else None
+            ),
+            "file_hash": (
+                loads(cast(str, params[8])) if params[8] is not None else None
+            ),
+            "custom_hash": (
+                loads(cast(str, params[9])) if params[9] is not None else None
+            ),
+            "run_id": params[10],
+            "metadata": loads(cast(str, params[11])),
+            "expires_at": params[12],
+            "created_at": params[13],
+        }
+        self.database.idempotency[identity_key] = row
+        return row
+
+    def _insert_artifact(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        artifact_id = cast(str, params[0])
+        if artifact_id in self.database.artifacts:
+            return None
+        row = {
+            "artifact_id": artifact_id,
+            "run_id": params[1],
+            "attempt_id": params[2],
+            "purpose": params[3],
+            "state": params[4],
+            "ref": loads(cast(str, params[5])),
+            "provenance": loads(cast(str, params[6])),
+            "retention": loads(cast(str, params[7])),
+            "metadata": loads(cast(str, params[8])),
+            "created_at": params[9],
+            "updated_at": params[10],
+        }
+        self.database.artifacts[artifact_id] = row
+        return row
 
     def _insert_queue_item(
         self,
@@ -357,6 +560,7 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
                 },
             }
         )
+        self.database.definitions["hash-a"] = {"definition_id": "hash-a"}
 
     async def test_context_manager_opens_and_closes_database(self) -> None:
         async with self.queue as opened:
@@ -385,6 +589,276 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
 
         self.assertTrue(item.queue_item_id)
         self.assertIsNotNone(item.available_at.tzinfo)
+
+    async def test_enqueue_run_persists_submission_atomically(self) -> None:
+        identity = self._identity()
+        artifact = TaskQueueArtifact(
+            ref=TaskArtifactRef(
+                artifact_id="artifact-1",
+                store="local",
+                storage_key="runs/run-1/input.txt",
+                media_type="text/plain",
+                size_bytes=4,
+                sha256="a" * 64,
+            ),
+            purpose=TaskArtifactPurpose.INPUT,
+            retention=TaskArtifactRetention(delete_after_days=2),
+            metadata={"identity": {"digest": "<hmac-sha256>"}},
+        )
+
+        submission = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<redacted>"},
+                file_summaries=({"artifact_id": "artifact-1"},),
+                queue="default",
+            ),
+            queue_name="default",
+            priority=5,
+            available_at=self.now,
+            idempotency=identity,
+            idempotency_expires_at=self.now + timedelta(days=1),
+            artifacts=(artifact,),
+            run_metadata={"source": "sdk"},
+            queue_metadata={"tenant": "safe"},
+        )
+
+        self.assertTrue(submission.created)
+        self.assertEqual(submission.run.run_id, "id-1")
+        self.assertEqual(submission.run.state, TaskRunState.QUEUED)
+        self.assertEqual(submission.run.request.queue, "default")
+        self.assertIsNotNone(submission.queue_item)
+        queue_item = submission.queue_item
+        self.assertEqual(
+            queue_item.queue_item_id if queue_item else "", "id-4"
+        )
+        self.assertEqual(queue_item.priority if queue_item else 0, 5)
+        self.assertEqual(queue_item.metadata["tenant"], "safe")
+        self.assertEqual(submission.idempotency.created, True)
+        self.assertEqual(submission.artifacts[0].artifact_id, "artifact-1")
+        self.assertEqual(
+            [
+                row["to_state"]
+                for row in self.database.run_transitions.values()
+            ],
+            [TaskRunState.VALIDATED.value, TaskRunState.QUEUED.value],
+        )
+        stored_queue = self.database.queue_items["id-4"]
+        self.assertNotIn("request", stored_queue)
+        self.assertNotIn("result", stored_queue)
+        self.assertLess(
+            self._query_index('INSERT INTO "task_idempotency_keys"'),
+            self._query_index('INSERT INTO "task_queue_items"'),
+        )
+        self.assertLess(
+            self._query_index('INSERT INTO "task_artifacts"'),
+            self._query_index('INSERT INTO "task_queue_items"'),
+        )
+
+    async def test_enqueue_run_returns_existing_idempotent_run(self) -> None:
+        identity = self._identity()
+        existing = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+        )
+
+        duplicate = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+        )
+
+        self.assertTrue(existing.created)
+        self.assertFalse(duplicate.created)
+        self.assertEqual(duplicate.run.run_id, existing.run.run_id)
+        self.assertIsNone(duplicate.queue_item)
+        self.assertEqual(
+            [
+                run_id
+                for run_id in self.database.runs
+                if run_id.startswith("id-")
+            ],
+            [existing.run.run_id],
+        )
+        self.assertEqual(len(self.database.queue_items), 1)
+
+    async def test_enqueue_run_rolls_back_failed_submission(self) -> None:
+        self.database.fail_on_query = 'INSERT INTO "task_queue_items"'
+
+        with self.assertRaises(TaskQueueError) as error:
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=self._identity(),
+                artifacts=(
+                    TaskQueueArtifact(
+                        ref=TaskArtifactRef(
+                            artifact_id="artifact-1",
+                            store="local",
+                            storage_key="runs/run-1/input.txt",
+                        ),
+                    ),
+                ),
+            )
+
+        self.assertNotIn("raw details", str(error.exception))
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(self.database.run_transitions, {})
+        self.assertEqual(self.database.artifacts, {})
+        self.assertEqual(self.database.idempotency, {})
+        self.assertEqual(self.database.queue_items, {})
+
+    async def test_enqueue_run_rolls_back_racing_idempotency_conflict(
+        self,
+    ) -> None:
+        self.database.race_on_idempotency_insert = True
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=self._identity(),
+            )
+
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(self.database.run_transitions, {})
+        self.assertEqual(self.database.idempotency, {})
+        self.assertEqual(self.database.queue_items, {})
+
+    async def test_enqueue_run_rejects_missing_idempotency_target(
+        self,
+    ) -> None:
+        self.database.idempotency["identity-1"] = self._idempotency_row(
+            run_id="missing"
+        )
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=self._identity(),
+            )
+
+    async def test_enqueue_run_rolls_back_conflicted_run_id(self) -> None:
+        self.database.runs["id-1"] = {
+            "run_id": "id-1",
+            "state": TaskRunState.CREATED.value,
+            "queue_name": "default",
+        }
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+            )
+
+        self.assertEqual(self.database.run_transitions, {})
+        self.assertEqual(self.database.queue_items, {})
+
+    async def test_enqueue_run_rolls_back_conflicted_queue_item(self) -> None:
+        self.database.queue_items["active"] = {
+            "queue_item_id": "active",
+            "run_id": "id-1",
+            "queue_name": "default",
+            "state": TaskQueueItemState.AVAILABLE.value,
+        }
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+            )
+
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(set(self.database.queue_items), {"active"})
+
+    async def test_enqueue_run_rolls_back_idempotency_insert_gap(self) -> None:
+        self.database.drop_idempotency_insert = True
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=self._identity(),
+            )
+
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(self.database.idempotency, {})
+
+    async def test_enqueue_run_rolls_back_conflicted_artifact(self) -> None:
+        self.database.artifacts["artifact-1"] = {"artifact_id": "artifact-1"}
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                artifacts=(
+                    TaskQueueArtifact(
+                        ref=TaskArtifactRef(
+                            artifact_id="artifact-1",
+                            store="local",
+                            storage_key="runs/run-1/input.txt",
+                        ),
+                    ),
+                ),
+            )
+
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(set(self.database.artifacts), {"artifact-1"})
+
+    async def test_enqueue_run_rolls_back_stale_transition(self) -> None:
+        self.database.stale_transition = True
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+            )
+
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(self.database.queue_items, {})
+
+    async def test_enqueue_run_rolls_back_transition_insert_conflict(
+        self,
+    ) -> None:
+        self.database.run_transitions["id-2"] = {"transition_id": "id-2"}
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+            )
+
+        self.assertNotIn("id-1", self.database.runs)
+        self.assertEqual(set(self.database.run_transitions), {"id-2"})
+
+    async def test_enqueue_run_rejects_invalid_submission_inputs(self) -> None:
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a", queue="private"),
+                queue_name="default",
+            )
+        with self.assertRaises(TaskQueueNotFoundError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="missing"),
+                queue_name="default",
+            )
+        with self.assertRaises(AssertionError):
+            TaskQueueArtifact(
+                ref=TaskArtifactRef(
+                    artifact_id="artifact-1",
+                    store="local",
+                    storage_key="runs/run-1/input.txt",
+                ),
+                metadata={"raw": object()},
+            )
+        with self.assertRaises(AssertionError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(definition_id="hash-a"),
+                queue_name="default",
+                queue_metadata={"raw": object()},
+            )
 
     async def test_enqueue_stores_only_safe_scheduling_metadata(self) -> None:
         item = await self.queue.enqueue(
@@ -646,6 +1120,48 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             "updated_at": self.now,
             **claimed_fields,
         }
+
+    def _identity(self) -> TaskIdempotencyIdentity:
+        digest = TaskIdempotencyDigest(
+            algorithm="hmac-sha256",
+            digest="a" * 64,
+            key_id="test-key",
+        )
+        return TaskIdempotencyIdentity(
+            identity_key="identity-1",
+            task_name="summarize",
+            task_version="1",
+            spec_hash="hash-a",
+            owner_scope=digest,
+            strategy=IdempotencyMode.INPUT_HASH,
+            input=digest,
+        )
+
+    def _idempotency_row(self, *, run_id: str) -> dict[str, object]:
+        identity = self._identity()
+        digest = identity.owner_scope.as_dict()
+        return {
+            "identity_key": identity.identity_key,
+            "task_name": identity.task_name,
+            "task_version": identity.task_version,
+            "spec_hash": identity.spec_hash,
+            "owner_scope_hash": digest,
+            "strategy": identity.strategy.value,
+            "window_hash": None,
+            "input_hash": digest,
+            "file_hash": None,
+            "custom_hash": None,
+            "run_id": run_id,
+            "metadata": {},
+            "expires_at": None,
+            "created_at": self.now,
+        }
+
+    def _query_index(self, fragment: str) -> int:
+        for index, query in enumerate(self.database.executed_queries):
+            if fragment in query:
+                return index
+        raise AssertionError(f"query fragment was not executed: {fragment}")
 
 
 if __name__ == "__main__":

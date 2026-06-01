@@ -167,6 +167,7 @@ from .privacy import (
     privacy_policy_with_defaults as privacy_policy_with_defaults,
 )
 from .queue import TaskQueue as TaskQueue
+from .queue import TaskQueueArtifact as TaskQueueArtifact
 from .queue import TaskQueueConflictError as TaskQueueConflictError
 from .queue import TaskQueueDepth as TaskQueueDepth
 from .queue import TaskQueueError as TaskQueueError
@@ -174,6 +175,7 @@ from .queue import TaskQueueHealth as TaskQueueHealth
 from .queue import TaskQueueItem as TaskQueueItem
 from .queue import TaskQueueItemState as TaskQueueItemState
 from .queue import TaskQueueNotFoundError as TaskQueueNotFoundError
+from .queue import TaskQueueSubmission as TaskQueueSubmission
 from .retention import TaskRetentionAction as TaskRetentionAction
 from .retention import TaskRetentionError as TaskRetentionError
 from .retention import TaskRetentionResult as TaskRetentionResult

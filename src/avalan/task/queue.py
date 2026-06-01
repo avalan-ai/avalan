@@ -1,5 +1,19 @@
+from .artifact import (
+    TaskArtifactProvenance,
+    TaskArtifactPurpose,
+    TaskArtifactRecord,
+    TaskArtifactRef,
+    TaskArtifactRetention,
+    TaskArtifactState,
+)
+from .idempotency import (
+    TaskIdempotencyIdentity,
+    TaskIdempotencyReservationResult,
+)
 from .state import TaskRunState
 from .store import (
+    TaskExecutionRequest,
+    TaskRun,
     TaskSnapshotMetadata,
     empty_snapshot_metadata,
     freeze_snapshot_metadata,
@@ -29,6 +43,34 @@ class TaskQueueItemState(StrEnum):
     CLAIMED = "claimed"
     DONE = "done"
     DEAD = "dead"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueArtifact:
+    ref: TaskArtifactRef
+    purpose: TaskArtifactPurpose = TaskArtifactPurpose.INPUT
+    state: TaskArtifactState = TaskArtifactState.READY
+    provenance: TaskArtifactProvenance = field(
+        default_factory=TaskArtifactProvenance
+    )
+    retention: TaskArtifactRetention = field(
+        default_factory=TaskArtifactRetention
+    )
+    metadata: TaskSnapshotMetadata = field(
+        default_factory=empty_snapshot_metadata
+    )
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.ref, TaskArtifactRef)
+        assert isinstance(self.purpose, TaskArtifactPurpose)
+        assert self.state == TaskArtifactState.READY
+        assert isinstance(self.provenance, TaskArtifactProvenance)
+        assert isinstance(self.retention, TaskArtifactRetention)
+        object.__setattr__(
+            self,
+            "metadata",
+            freeze_snapshot_metadata(self.metadata),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -145,7 +187,46 @@ class TaskQueueHealth:
         _assert_non_negative_int(self.expired_claims, "expired_claims")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueSubmission:
+    run: TaskRun
+    created: bool
+    queue_item: TaskQueueItem | None = None
+    idempotency: TaskIdempotencyReservationResult | None = None
+    artifacts: tuple[TaskArtifactRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.created, bool)
+        if self.queue_item is not None:
+            assert isinstance(self.queue_item, TaskQueueItem)
+            assert self.queue_item.run_id == self.run.run_id
+        if self.idempotency is not None:
+            assert isinstance(
+                self.idempotency, TaskIdempotencyReservationResult
+            )
+            assert self.idempotency.reservation.run_id == self.run.run_id
+        assert isinstance(self.artifacts, tuple)
+        for artifact in self.artifacts:
+            assert isinstance(artifact, TaskArtifactRecord)
+            assert artifact.run_id == self.run.run_id
+
+
 class TaskQueue(Protocol):
+    async def enqueue_run(
+        self,
+        request: TaskExecutionRequest,
+        *,
+        queue_name: str,
+        priority: int = 0,
+        available_at: datetime | None = None,
+        idempotency: TaskIdempotencyIdentity | None = None,
+        idempotency_expires_at: datetime | None = None,
+        artifacts: tuple[TaskQueueArtifact, ...] = (),
+        run_metadata: Mapping[str, object] | None = None,
+        queue_metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSubmission: ...
+
     async def enqueue(
         self,
         run_id: str,
