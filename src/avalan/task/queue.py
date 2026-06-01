@@ -281,9 +281,22 @@ class TaskQueueRetry:
         assert isinstance(self.attempt, TaskAttempt)
         assert self.queue_item.run_id == self.run.run_id
         assert self.attempt.run_id == self.run.run_id
-        assert self.queue_item.state == TaskQueueItemState.AVAILABLE
-        assert self.run.state == TaskRunState.QUEUED
+        assert (
+            self.queue_item.state == TaskQueueItemState.AVAILABLE
+            and self.run.state == TaskRunState.QUEUED
+        ) or (
+            self.queue_item.state == TaskQueueItemState.DEAD
+            and self.run.state == TaskRunState.FAILED
+        )
         assert self.attempt.state == TaskAttemptState.FAILED
+
+    @property
+    def retryable(self) -> bool:
+        return self.queue_item.state == TaskQueueItemState.AVAILABLE
+
+    @property
+    def exhausted(self) -> bool:
+        return self.queue_item.state == TaskQueueItemState.DEAD
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -598,19 +598,48 @@ class PgsqlTaskQueue:
                 now=checked_at,
             )
             run_from_state = _run_state(queue_row)
-            if _row_int(queue_row, "attempts", 0) >= max_attempts:
-                raise TaskQueueConflictError("task queue retry limit reached")
+            exhausted = _row_int(queue_row, "attempts", 0) >= max_attempts
             attempt = await _transition_claimed_attempt(
                 unit,
                 attempt_id=_row_str(queue_row, "last_attempt_id"),
                 claim_token=claim_token,
                 to_state=TaskAttemptState.FAILED,
                 result=result,
-                reason="attempt_retry",
+                reason=(
+                    "attempt_retry_exhausted" if exhausted else "attempt_retry"
+                ),
                 transition_id=self._new_id(),
                 now=checked_at,
                 metadata=safe_metadata,
             )
+            if exhausted:
+                run = await _transition_claimed_run(
+                    unit,
+                    run_id=_row_str(queue_row, "run_id"),
+                    claim_token=claim_token,
+                    from_state=run_from_state,
+                    to_state=TaskRunState.FAILED,
+                    result=result,
+                    reason="attempt_retry_exhausted",
+                    transition_id=self._new_id(),
+                    now=checked_at,
+                    metadata=safe_metadata,
+                )
+                updated_queue = await _complete_queue_item(
+                    unit,
+                    queue_item_id=queue_item_id,
+                    claim_token=claim_token,
+                    to_state=TaskQueueItemState.DEAD,
+                    now=checked_at,
+                )
+                return TaskQueueRetry(
+                    queue_item=_queue_item_from_row(
+                        updated_queue,
+                        run_state=run.state,
+                    ),
+                    run=run,
+                    attempt=attempt,
+                )
             run = await _transition_claimed_run(
                 unit,
                 run_id=_row_str(queue_row, "run_id"),

@@ -2089,6 +2089,8 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertIsNone(retry.queue_item.claim_token)
         self.assertEqual(retry.queue_item.attempts, 1)
         self.assertEqual(retry.run.state, TaskRunState.QUEUED)
+        self.assertTrue(retry.retryable)
+        self.assertFalse(retry.exhausted)
         self.assertIsNone(retry.run.result)
         self.assertIsNone(retry.run.claim)
         self.assertIsNone(self.database.runs["run-queued"]["claim"])
@@ -2108,10 +2110,49 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(second_claim.run.state, TaskRunState.CLAIMED)
         self.assertIsNotNone(second_claim.run.claim)
 
-    async def test_retry_rejects_exhausted_claim_without_mutation(
+    async def test_retry_exhaustion_completes_failed_run(
         self,
     ) -> None:
         claim = await self._claim_ready_running_attempt()
+        result = TaskExecutionResult(error={"code": "infra.failure"})
+
+        retry = await self.queue.retry(
+            "manual-ready",
+            claim_token=claim.queue_item.claim_token or "",
+            result=result,
+            available_at=self.now + timedelta(minutes=1),
+            max_attempts=1,
+            now=self.now + timedelta(seconds=1),
+            metadata={"source": "worker"},
+        )
+
+        self.assertFalse(retry.retryable)
+        self.assertTrue(retry.exhausted)
+        self.assertEqual(retry.queue_item.state, TaskQueueItemState.DEAD)
+        self.assertEqual(retry.run.state, TaskRunState.FAILED)
+        self.assertEqual(retry.attempt.state, TaskAttemptState.FAILED)
+        self.assertEqual(retry.run.result, result)
+        self.assertEqual(retry.attempt.result, result)
+        self.assertIsNone(retry.run.claim)
+        self.assertIsNone(retry.queue_item.claim_token)
+        self.assertEqual(
+            self.database.attempt_transitions["id-4"]["reason"],
+            "attempt_retry_exhausted",
+        )
+        self.assertEqual(
+            self.database.run_transitions["id-5"]["reason"],
+            "attempt_retry_exhausted",
+        )
+        self.assertEqual(
+            self.database.run_transitions["id-5"]["metadata"]["source"],
+            "worker",
+        )
+
+    async def test_retry_exhaustion_rolls_back_stale_queue_update(
+        self,
+    ) -> None:
+        claim = await self._claim_ready_running_attempt()
+        self.database.stale_complete_queue_item = True
         previous = self.database.snapshot()
 
         with self.assertRaises(TaskQueueConflictError):
