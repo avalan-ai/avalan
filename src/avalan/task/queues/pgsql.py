@@ -27,7 +27,12 @@ from ..queue import (
     TaskQueueRetry,
     TaskQueueSubmission,
 )
-from ..state import TaskAttemptState, TaskRunState, is_terminal_run_state
+from ..state import (
+    TaskAttemptState,
+    TaskRunState,
+    is_terminal_run_state,
+    is_valid_run_transition,
+)
 from ..store import (
     TaskAttempt,
     TaskClaim,
@@ -512,6 +517,7 @@ class PgsqlTaskQueue:
                 claim_token=claim_token,
                 now=checked_at,
             )
+            run_from_state = _run_state(queue_row)
             attempt = await _transition_claimed_attempt(
                 unit,
                 attempt_id=_row_str(queue_row, "last_attempt_id"),
@@ -527,6 +533,7 @@ class PgsqlTaskQueue:
                 unit,
                 run_id=_row_str(queue_row, "run_id"),
                 claim_token=claim_token,
+                from_state=run_from_state,
                 to_state=run_state,
                 result=result,
                 reason="completed",
@@ -590,6 +597,7 @@ class PgsqlTaskQueue:
                 claim_token=claim_token,
                 now=checked_at,
             )
+            run_from_state = _run_state(queue_row)
             if _row_int(queue_row, "attempts", 0) >= max_attempts:
                 raise TaskQueueConflictError("task queue retry limit reached")
             attempt = await _transition_claimed_attempt(
@@ -607,6 +615,7 @@ class PgsqlTaskQueue:
                 unit,
                 run_id=_row_str(queue_row, "run_id"),
                 claim_token=claim_token,
+                from_state=run_from_state,
                 to_state=TaskRunState.QUEUED,
                 result=None,
                 reason="attempt_retry",
@@ -664,6 +673,7 @@ class PgsqlTaskQueue:
                 claim_token = _row_str(queue_row, "claim_token")
                 attempts = _row_int(queue_row, "attempts", 0)
                 retryable = attempts < max_attempts
+                run_from_state = _run_state(queue_row)
                 attempt = await _transition_claimed_attempt(
                     unit,
                     attempt_id=_row_str(queue_row, "last_attempt_id"),
@@ -679,6 +689,7 @@ class PgsqlTaskQueue:
                     unit,
                     run_id=_row_str(queue_row, "run_id"),
                     claim_token=claim_token,
+                    from_state=run_from_state,
                     to_state=(
                         TaskRunState.QUEUED
                         if retryable
@@ -941,7 +952,7 @@ WHERE q."run_id" = r."run_id"
   AND q."state" = 'claimed'
   AND q."claim_token" = %s
   AND q."lease_expires_at" > %s
-  AND r."state" = 'claimed'
+  AND r."state" IN ('claimed', 'running')
   AND (r."claim"->>'claim_token') = %s
 RETURNING q.*, r."state" AS "run_state"
 """
@@ -961,7 +972,7 @@ SET "claim" = jsonb_set(
     ),
     "updated_at" = %s
 WHERE "run_id" = %s
-  AND "state" = 'claimed'
+  AND "state" IN ('claimed', 'running')
   AND ("claim"->>'claim_token') = %s
 RETURNING *
 """
@@ -974,7 +985,7 @@ WHERE q."queue_item_id" = %s
   AND q."state" = 'claimed'
   AND q."claim_token" = %s
   AND q."lease_expires_at" > %s
-  AND r."state" = 'claimed'
+  AND r."state" IN ('claimed', 'running', 'cancel_requested')
   AND (r."claim"->>'claim_token') = %s
 FOR UPDATE OF q, r
 """
@@ -986,7 +997,7 @@ WITH "candidate" AS (
     JOIN "task_runs" r ON r."run_id" = a."run_id"
     WHERE a."attempt_id" = %s
       AND a."state" = ANY(%s)
-      AND r."state" = 'claimed'
+      AND r."state" IN ('claimed', 'running', 'cancel_requested')
       AND r."last_attempt_id" = a."attempt_id"
       AND (r."claim"->>'claim_token') = %s
     FOR UPDATE OF a, r
@@ -1016,7 +1027,7 @@ SET "state" = %s,
     "claim" = CASE WHEN %s::boolean THEN NULL ELSE "claim" END,
     "updated_at" = %s
 WHERE "run_id" = %s
-  AND "state" = 'claimed'
+  AND "state" = %s
   AND ("claim"->>'claim_token') = %s
 RETURNING *
 """
@@ -1059,7 +1070,7 @@ JOIN "task_runs" r ON r."run_id" = q."run_id"
 WHERE q."queue_name" = %s
   AND q."state" = 'claimed'
   AND q."lease_expires_at" <= %s
-  AND r."state" = 'claimed'
+  AND r."state" IN ('claimed', 'running')
   AND (r."claim"->>'claim_token') = q."claim_token"
 ORDER BY q."lease_expires_at", q."queue_item_id"
 LIMIT %s
@@ -1230,6 +1241,7 @@ async def _transition_claimed_run(
     *,
     run_id: str,
     claim_token: str,
+    from_state: TaskRunState,
     to_state: TaskRunState,
     result: TaskExecutionResult | None,
     reason: str,
@@ -1237,6 +1249,8 @@ async def _transition_claimed_run(
     now: datetime,
     metadata: TaskSnapshotMetadata,
 ) -> TaskRun:
+    if not is_valid_run_transition(from_state, to_state):
+        raise TaskQueueConflictError("task run transition is not valid")
     await unit.cursor.execute(
         _UPDATE_CLAIMED_RUN_STATE_SQL,
         (
@@ -1248,6 +1262,7 @@ async def _transition_claimed_run(
             ),
             now,
             run_id,
+            from_state.value,
             claim_token,
         ),
     )
@@ -1259,7 +1274,7 @@ async def _transition_claimed_run(
         (
             transition_id,
             run_id,
-            TaskRunState.CLAIMED.value,
+            from_state.value,
             to_state.value,
             reason,
             _json(metadata),
