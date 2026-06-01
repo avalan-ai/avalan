@@ -507,11 +507,18 @@ class PgsqlTaskStore:
                 raise TaskStoreConflictError("task attempt already exists")
             await unit.cursor.execute(
                 _UPDATE_RUN_LAST_ATTEMPT_SQL,
-                (attempt_id, now, run_id),
+                (
+                    attempt_id,
+                    now,
+                    run_id,
+                    run.state.value,
+                    claim_token,
+                    claim_token,
+                ),
             )
             run_row = await unit.cursor.fetchone()
             if run_row is None:
-                raise TaskStoreNotFoundError("task run was not found")
+                raise TaskStoreConflictError("task run state did not match")
             return _attempt_from_row(row)
 
         return cast(
@@ -590,6 +597,10 @@ class PgsqlTaskStore:
                     now,
                     attempt_id,
                     attempt.state.value,
+                    attempt.run_id,
+                    run.state.value,
+                    claim_token,
+                    claim_token,
                 ),
             )
             row = await unit.cursor.fetchone()
@@ -1418,6 +1429,11 @@ _UPDATE_RUN_LAST_ATTEMPT_SQL = """
 UPDATE "task_runs"
 SET "last_attempt_id" = %s, "updated_at" = %s
 WHERE "run_id" = %s
+  AND "state" = %s
+  AND (
+      (%s IS NULL AND "claim" IS NULL)
+      OR ("claim"->>'claim_token') = %s
+  )
 RETURNING *
 """
 _INSERT_RUN_TRANSITION_SQL = """
@@ -1450,13 +1466,21 @@ WHERE "run_id" = %s
 ORDER BY "attempt_number", "created_at", "attempt_id"
 """
 _UPDATE_ATTEMPT_STATE_SQL = """
-UPDATE "task_attempts"
+UPDATE "task_attempts" a
 SET "state" = %s,
-    "result" = COALESCE(%s::jsonb, "result"),
+    "result" = COALESCE(%s::jsonb, a."result"),
     "updated_at" = %s
-WHERE "attempt_id" = %s
-  AND "state" = %s
-RETURNING *
+FROM "task_runs" r
+WHERE a."attempt_id" = %s
+  AND a."state" = %s
+  AND a."run_id" = r."run_id"
+  AND r."run_id" = %s
+  AND r."state" = %s
+  AND (
+      (%s IS NULL AND r."claim" IS NULL)
+      OR (r."claim"->>'claim_token') = %s
+  )
+RETURNING a.*
 """
 _INSERT_ATTEMPT_TRANSITION_SQL = """
 INSERT INTO "task_attempt_transitions" (

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from json import loads
@@ -16,10 +17,13 @@ from store_contract_test import (  # type: ignore[import-not-found]
 
 from avalan.task import (
     IdempotencyMode,
+    TaskAttemptState,
     TaskEventCategory,
     TaskExecutionRequest,
     TaskIdempotencyDigest,
     TaskIdempotencyIdentity,
+    TaskRunState,
+    TaskStoreConflictError,
     UsageSource,
     UsageTotals,
 )
@@ -38,6 +42,12 @@ class FakePgsqlTaskDatabase:
         self.artifacts: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
         self.executed_queries: list[str] = []
+        self.before_attempt_update: (
+            Callable[[tuple[object, ...]], None] | None
+        ) = None
+        self.before_last_attempt_update: (
+            Callable[[tuple[object, ...]], None] | None
+        ) = None
         self.open_count = 0
         self.close_count = 0
 
@@ -334,8 +344,15 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
+        if self.database.before_last_attempt_update is not None:
+            self.database.before_last_attempt_update(params)
         run = self.database.runs.get(cast(str, params[2]))
-        if run is None:
+        if run is None or run["state"] != params[3]:
+            return None
+        claim = cast(dict[str, object] | None, run["claim"])
+        if (claim is None and params[4] is not None) or (
+            claim is not None and claim["claim_token"] != params[5]
+        ):
             return None
         run["last_attempt_id"] = params[0]
         run["updated_at"] = params[1]
@@ -382,8 +399,22 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
+        if self.database.before_attempt_update is not None:
+            self.database.before_attempt_update(params)
         attempt = self.database.attempts.get(cast(str, params[3]))
         if attempt is None or attempt["state"] != params[4]:
+            return None
+        run = self.database.runs.get(cast(str, params[5]))
+        if (
+            run is None
+            or attempt["run_id"] != run["run_id"]
+            or run["state"] != params[6]
+        ):
+            return None
+        claim = cast(dict[str, object] | None, run["claim"])
+        if (claim is None and params[7] is not None) or (
+            claim is not None and claim["claim_token"] != params[8]
+        ):
             return None
         attempt["state"] = params[0]
         if params[1] is not None:
@@ -640,6 +671,86 @@ class PgsqlStoreContractTest(
 
         self.assertEqual(self.database.open_count, 1)
         self.assertEqual(self.database.close_count, 1)
+
+    async def test_create_attempt_update_rechecks_run_state(self) -> None:
+        run = await self._created_run()
+
+        def finish_run(params: tuple[object, ...]) -> None:
+            assert params[2] == run.run_id
+            self.database.runs[run.run_id][
+                "state"
+            ] = TaskRunState.SUCCEEDED.value
+
+        self.database.before_last_attempt_update = finish_run
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.create_attempt(run.run_id)
+
+        self.assertEqual(self.database.attempts, {})
+        self.assertEqual(
+            self.database.runs[run.run_id]["state"],
+            TaskRunState.CREATED.value,
+        )
+
+    async def test_attempt_transition_update_rechecks_claim(self) -> None:
+        run = await self._created_run()
+        run = await self.store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.VALIDATED,
+            reason="validated",
+        )
+        run = await self.store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.VALIDATED},
+            to_state=TaskRunState.QUEUED,
+            reason="queued",
+        )
+        claimed = await self.store.assign_claim(
+            run.run_id,
+            from_states={TaskRunState.QUEUED},
+            worker_id="worker-1",
+            lease_expires_at=datetime(2026, 1, 1, 1, tzinfo=UTC),
+            reason="claimed",
+        )
+        assert claimed.claim is not None
+        running = await self.store.transition_run(
+            claimed.run_id,
+            from_states={TaskRunState.CLAIMED},
+            to_state=TaskRunState.RUNNING,
+            reason="started",
+            claim_token=claimed.claim.claim_token,
+        )
+        attempt = await self.store.create_attempt(
+            running.run_id,
+            claim_token=claimed.claim.claim_token,
+        )
+
+        def replace_claim(params: tuple[object, ...]) -> None:
+            assert params[5] == run.run_id
+            claim = self.database.runs[run.run_id]["claim"]
+            assert isinstance(claim, dict)
+            claim["claim_token"] = "replacement-token"
+
+        self.database.before_attempt_update = replace_claim
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.transition_attempt(
+                attempt.attempt_id,
+                from_states={TaskAttemptState.CREATED},
+                to_state=TaskAttemptState.RUNNING,
+                reason="attempt_started",
+                claim_token=claimed.claim.claim_token,
+            )
+
+        self.assertEqual(
+            self.database.attempts[attempt.attempt_id]["state"],
+            TaskAttemptState.CREATED.value,
+        )
+        self.assertEqual(
+            await self.store.list_attempt_transitions(attempt.attempt_id),
+            (),
+        )
 
     async def test_records_events_usage_and_idempotency(self) -> None:
         run = await self._created_run()

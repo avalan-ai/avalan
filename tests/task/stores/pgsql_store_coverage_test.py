@@ -245,7 +245,7 @@ class PgsqlStoreCoverageTest(IsolatedAsyncioTestCase):
             "_update_run_last_attempt",
             return_value=None,
         ):
-            with self.assertRaises(TaskStoreNotFoundError):
+            with self.assertRaises(TaskStoreConflictError):
                 await store.create_attempt(run.run_id)
 
     async def test_run_transition_conflict_branches(self) -> None:
