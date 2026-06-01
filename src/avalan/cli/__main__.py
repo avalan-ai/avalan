@@ -417,6 +417,36 @@ def task_validate(*args: Any, **kwargs: Any) -> Any:
     )
 
 
+def task_artifacts(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_artifacts")(
+        *args, **kwargs
+    )
+
+
+def task_enqueue(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_enqueue")(
+        *args, **kwargs
+    )
+
+
+def task_events(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_events")(
+        *args, **kwargs
+    )
+
+
+def task_inspect(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_inspect")(
+        *args, **kwargs
+    )
+
+
+def task_output(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_output")(
+        *args, **kwargs
+    )
+
+
 def task_pgsql_check(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.task", "task_pgsql_check")(
         *args, **kwargs
@@ -443,6 +473,18 @@ def task_pgsql_stamp(*args: Any, **kwargs: Any) -> Any:
 
 def task_pgsql_status(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.task", "task_pgsql_status")(
+        *args, **kwargs
+    )
+
+
+def task_run(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_run")(
+        *args, **kwargs
+    )
+
+
+def task_worker(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_worker")(
         *args, **kwargs
     )
 
@@ -1372,6 +1414,77 @@ class CLI:
             "definition",
             type=str,
             help="Task definition TOML file to validate",
+        )
+        task_run_parser = task_command_parsers.add_parser(
+            name="run",
+            description="Run an intelligence task directly",
+            parents=[global_parser],
+        )
+        task_run_parser.add_argument(
+            "definition",
+            type=str,
+            help="Task definition TOML file to run",
+        )
+        task_enqueue_parser = task_command_parsers.add_parser(
+            name="enqueue",
+            description="Enqueue an intelligence task run",
+            parents=[global_parser],
+        )
+        task_enqueue_parser.add_argument(
+            "definition",
+            type=str,
+            help="Task definition TOML file to enqueue",
+        )
+        task_inspect_parser = task_command_parsers.add_parser(
+            name="inspect",
+            description="Inspect a task run",
+            parents=[global_parser],
+        )
+        task_inspect_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_output_parser = task_command_parsers.add_parser(
+            name="output",
+            description="Inspect a task run output",
+            parents=[global_parser],
+        )
+        task_output_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_events_parser = task_command_parsers.add_parser(
+            name="events",
+            description="Inspect task run events",
+            parents=[global_parser],
+        )
+        task_events_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_artifacts_parser = task_command_parsers.add_parser(
+            name="artifacts",
+            description="Inspect task run artifacts",
+            parents=[global_parser],
+        )
+        task_artifacts_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_worker_parser = task_command_parsers.add_parser(
+            name="worker",
+            description="Run a task queue worker",
+            parents=[global_parser],
+        )
+        task_worker_parser.add_argument(
+            "--queue",
+            type=str,
+            default="default",
+            help="Task queue name to claim from.",
         )
         task_pgsql_parser = task_command_parsers.add_parser(
             name="pgsql",
@@ -2976,6 +3089,16 @@ class CLI:
             case "task":
                 subcommand = args.task_command or "validate"
                 match subcommand:
+                    case "artifacts":
+                        task_artifacts(args, console, theme)
+                    case "enqueue":
+                        task_enqueue(args, console, theme)
+                    case "events":
+                        task_events(args, console, theme)
+                    case "inspect":
+                        task_inspect(args, console, theme)
+                    case "output":
+                        task_output(args, console, theme)
                     case "validate":
                         task_validate(args, console, theme)
                     case "pgsql":
@@ -2991,6 +3114,10 @@ class CLI:
                                 task_pgsql_stamp(args, console, theme)
                             case "status":
                                 task_pgsql_status(args, console, theme)
+                    case "run":
+                        task_run(args, console, theme)
+                    case "worker":
+                        task_worker(args, console, theme)
 
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)

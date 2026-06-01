@@ -138,6 +138,56 @@ class CliTaskOptionTestCase(TestCase):
         self.assertEqual(args.dsn, "postgresql://localhost/tasks")
         self.assertEqual(args.migration_revision, "head")
 
+    def test_task_shell_subcommand_arguments(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        cases = [
+            (
+                ["task", "run", "tasks/example.task.toml"],
+                {
+                    "task_command": "run",
+                    "definition": "tasks/example.task.toml",
+                },
+            ),
+            (
+                ["task", "enqueue", "tasks/example.task.toml"],
+                {
+                    "task_command": "enqueue",
+                    "definition": "tasks/example.task.toml",
+                },
+            ),
+            (
+                ["task", "inspect", "run-123"],
+                {"task_command": "inspect", "run_id": "run-123"},
+            ),
+            (
+                ["task", "output", "run-123"],
+                {"task_command": "output", "run_id": "run-123"},
+            ),
+            (
+                ["task", "events", "run-123"],
+                {"task_command": "events", "run_id": "run-123"},
+            ),
+            (
+                ["task", "artifacts", "run-123"],
+                {"task_command": "artifacts", "run_id": "run-123"},
+            ),
+            (
+                ["task", "worker", "--queue", "documents"],
+                {"task_command": "worker", "queue": "documents"},
+            ),
+        ]
+
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertEqual(args.command, "task")
+            for name, value in expected.items():
+                self.assertEqual(getattr(args, name), value)
+
 
 class CliModelRunOptionTestCase(TestCase):
     def test_backend_help_includes_ds4_choice(self) -> None:
@@ -814,6 +864,19 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.commands.model",
                 "model_uninstall",
             ),
+            (
+                "task_artifacts",
+                "avalan.cli.commands.task",
+                "task_artifacts",
+            ),
+            (
+                "task_enqueue",
+                "avalan.cli.commands.task",
+                "task_enqueue",
+            ),
+            ("task_events", "avalan.cli.commands.task", "task_events"),
+            ("task_inspect", "avalan.cli.commands.task", "task_inspect"),
+            ("task_output", "avalan.cli.commands.task", "task_output"),
             ("task_validate", "avalan.cli.commands.task", "task_validate"),
             (
                 "task_pgsql_check",
@@ -840,6 +903,8 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.commands.task",
                 "task_pgsql_status",
             ),
+            ("task_run", "avalan.cli.commands.task", "task_run"),
+            ("task_worker", "avalan.cli.commands.task", "task_worker"),
         ]
         for wrapper_name, module_name, function_name in commands:
             command.reset_mock()
@@ -938,6 +1003,21 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             deploy_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.deploy_run", AsyncMock())
             )
+            task_artifacts_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_artifacts")
+            )
+            task_enqueue_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_enqueue")
+            )
+            task_events_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_events")
+            )
+            task_inspect_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_inspect")
+            )
+            task_output_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_output")
+            )
             task_validate_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_validate")
             )
@@ -955,6 +1035,12 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             )
             task_pgsql_status_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_pgsql_status")
+            )
+            task_run_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_run")
+            )
+            task_worker_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_worker")
             )
             tokenize_mock = stack.enter_context(
                 patch("avalan.cli.__main__.tokenize", AsyncMock())
@@ -977,12 +1063,19 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "search", model_search),
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
+                ("task", "artifacts", task_artifacts_mock),
+                ("task", "enqueue", task_enqueue_mock),
+                ("task", "events", task_events_mock),
+                ("task", "inspect", task_inspect_mock),
+                ("task", "output", task_output_mock),
                 ("task", "validate", task_validate_mock),
                 ("task", "pgsql:check", task_pgsql_check_mock),
                 ("task", "pgsql:diagnose", task_pgsql_diagnose_mock),
                 ("task", "pgsql:migrate", task_pgsql_migrate_mock),
                 ("task", "pgsql:stamp", task_pgsql_stamp_mock),
                 ("task", "pgsql:status", task_pgsql_status_mock),
+                ("task", "run", task_run_mock),
+                ("task", "worker", task_worker_mock),
                 ("tokenizer", None, tokenize_mock),
             ]
             for cmd, subcmd, fn in scenarios:

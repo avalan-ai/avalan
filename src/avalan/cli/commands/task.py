@@ -75,6 +75,69 @@ def task_validate(
     return True
 
 
+def task_run(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task run execution."""
+    return _print_command_unavailable(console, "run")
+
+
+def task_enqueue(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task enqueue execution."""
+    return _print_command_unavailable(console, "enqueue")
+
+
+def task_inspect(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task inspection."""
+    return _print_command_unavailable(console, "inspect")
+
+
+def task_output(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task output inspection."""
+    return _print_command_unavailable(console, "output")
+
+
+def task_events(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task event inspection."""
+    return _print_command_unavailable(console, "events")
+
+
+def task_artifacts(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task artifact inspection."""
+    return _print_command_unavailable(console, "artifacts")
+
+
+def task_worker(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Print a diagnostic for task worker startup."""
+    return _print_command_unavailable(console, "worker")
+
+
 def task_pgsql_status(
     args: Namespace,
     console: Console,
@@ -177,6 +240,14 @@ def task_pgsql_diagnose(
     console.print("Task PostgreSQL diagnostics.", markup=False)
     console.print(table)
     return settings is not None
+
+
+def _print_command_unavailable(console: Console, command: str) -> bool:
+    console.print(
+        f"Task {command} command is not available in this build.",
+        markup=False,
+    )
+    return False
 
 
 def _print_issues(

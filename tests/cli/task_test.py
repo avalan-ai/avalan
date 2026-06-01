@@ -100,6 +100,31 @@ class CliTaskValidateTestCase(TestCase):
         self.assertNotIn("/tmp/private/missing.task.toml", output)
 
 
+class CliTaskCommandShellTestCase(TestCase):
+    def setUp(self) -> None:
+        self.theme = MagicMock()
+
+    def test_shell_commands_report_unavailable_diagnostic(self) -> None:
+        commands = [
+            ("artifacts", task_cmds.task_artifacts),
+            ("enqueue", task_cmds.task_enqueue),
+            ("events", task_cmds.task_events),
+            ("inspect", task_cmds.task_inspect),
+            ("output", task_cmds.task_output),
+            ("run", task_cmds.task_run),
+            ("worker", task_cmds.task_worker),
+        ]
+
+        for name, command in commands:
+            console = Console(record=True, width=160)
+            with self.subTest(command=name):
+                result = command(Namespace(), console, self.theme)
+
+            output = console.export_text()
+            self.assertFalse(result)
+            self.assertIn(f"Task {name} command is not available", output)
+
+
 class CliTaskPgsqlTestCase(TestCase):
     def setUp(self) -> None:
         self.theme = MagicMock()
