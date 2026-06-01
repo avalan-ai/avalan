@@ -672,8 +672,25 @@ class PgsqlTaskQueue:
             for queue_row in expired_rows:
                 claim_token = _row_str(queue_row, "claim_token")
                 attempts = _row_int(queue_row, "attempts", 0)
-                retryable = attempts < max_attempts
                 run_from_state = _run_state(queue_row)
+                cancel_requested = (
+                    run_from_state == TaskRunState.CANCEL_REQUESTED
+                )
+                retryable = attempts < max_attempts and not cancel_requested
+                run_to_state = (
+                    TaskRunState.CANCELLED
+                    if cancel_requested
+                    else (
+                        TaskRunState.QUEUED
+                        if retryable
+                        else TaskRunState.FAILED
+                    )
+                )
+                queue_to_state = (
+                    TaskQueueItemState.AVAILABLE
+                    if retryable
+                    else TaskQueueItemState.DEAD
+                )
                 attempt = await _transition_claimed_attempt(
                     unit,
                     attempt_id=_row_str(queue_row, "last_attempt_id"),
@@ -690,11 +707,7 @@ class PgsqlTaskQueue:
                     run_id=_row_str(queue_row, "run_id"),
                     claim_token=claim_token,
                     from_state=run_from_state,
-                    to_state=(
-                        TaskRunState.QUEUED
-                        if retryable
-                        else TaskRunState.FAILED
-                    ),
+                    to_state=run_to_state,
                     result=None,
                     reason="abandoned",
                     transition_id=self._new_id(),
@@ -705,11 +718,7 @@ class PgsqlTaskQueue:
                     unit,
                     queue_item_id=_row_str(queue_row, "queue_item_id"),
                     claim_token=claim_token,
-                    to_state=(
-                        TaskQueueItemState.AVAILABLE
-                        if retryable
-                        else TaskQueueItemState.DEAD
-                    ),
+                    to_state=queue_to_state,
                     available_at=checked_at,
                     now=checked_at,
                 )
@@ -1070,7 +1079,7 @@ JOIN "task_runs" r ON r."run_id" = q."run_id"
 WHERE q."queue_name" = %s
   AND q."state" = 'claimed'
   AND q."lease_expires_at" <= %s
-  AND r."state" IN ('claimed', 'running')
+  AND r."state" IN ('claimed', 'running', 'cancel_requested')
   AND (r."claim"->>'claim_token') = q."claim_token"
 ORDER BY q."lease_expires_at", q."queue_item_id"
 LIMIT %s

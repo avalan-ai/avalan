@@ -302,7 +302,11 @@ class TaskQueueAbandonment:
             TaskQueueItemState.AVAILABLE,
             TaskQueueItemState.DEAD,
         }
-        assert self.run.state in {TaskRunState.QUEUED, TaskRunState.FAILED}
+        assert self.run.state in {
+            TaskRunState.QUEUED,
+            TaskRunState.FAILED,
+            TaskRunState.CANCELLED,
+        }
         assert self.attempt.state == TaskAttemptState.ABANDONED
 
     @property

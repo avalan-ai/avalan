@@ -827,6 +827,7 @@ class FakeCursor:
                 in {
                     TaskRunState.CLAIMED.value,
                     TaskRunState.RUNNING.value,
+                    TaskRunState.CANCEL_REQUESTED.value,
                 }
                 and claim is not None
                 and claim.get("claim_token") == row["claim_token"]
@@ -2242,6 +2243,54 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             self.database.run_transitions["id-2"]["from_state"],
             TaskRunState.RUNNING.value,
+        )
+
+    async def test_abandon_expired_cancel_requested_claim_finishes_cancelled(
+        self,
+    ) -> None:
+        self._add_claimed_row(
+            queue_item_id="manual-cancelled",
+            run_id="run-cancelled",
+            attempt_id="attempt-cancelled",
+            attempts=1,
+            lease_expires_at=self.now - timedelta(seconds=1),
+        )
+        self.database.runs["run-cancelled"][
+            "state"
+        ] = TaskRunState.CANCEL_REQUESTED.value
+        self.database.attempts["attempt-cancelled"][
+            "state"
+        ] = TaskAttemptState.RUNNING.value
+
+        abandoned = await self.queue.abandon_expired(
+            "default",
+            max_attempts=3,
+            limit=10,
+            now=self.now,
+        )
+
+        self.assertEqual(len(abandoned), 1)
+        self.assertFalse(abandoned[0].retryable)
+        self.assertEqual(
+            abandoned[0].queue_item.state,
+            TaskQueueItemState.DEAD,
+        )
+        self.assertEqual(abandoned[0].run.state, TaskRunState.CANCELLED)
+        self.assertIsNone(abandoned[0].run.claim)
+        self.assertEqual(
+            abandoned[0].attempt.state,
+            TaskAttemptState.ABANDONED,
+        )
+        self.assertIsNone(
+            self.database.queue_items["manual-cancelled"]["claim_token"],
+        )
+        self.assertEqual(
+            self.database.run_transitions["id-2"]["from_state"],
+            TaskRunState.CANCEL_REQUESTED.value,
+        )
+        self.assertEqual(
+            self.database.run_transitions["id-2"]["to_state"],
+            TaskRunState.CANCELLED.value,
         )
 
     async def test_drain_orders_ready_items_and_surfaces_cancellation(
