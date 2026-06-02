@@ -27,6 +27,7 @@ from avalan.task import (
     TaskTargetContext,
     TaskTargetRunner,
     TaskValidationContext,
+    TaskValidationError,
     TaskValidationIssue,
     UsageSource,
 )
@@ -82,6 +83,82 @@ max_bytes = 4096
 metrics = true
 trace = false
 capture_events = true
+""",
+        encoding="utf-8",
+    )
+    return task_path
+
+
+def _write_structured_task_workspace(root: Path) -> Path:
+    (root / "agents").mkdir()
+    (root / "agents" / "structured.toml").write_text(
+        """
+[agent]
+name = "Structured reviewer"
+task = "Return a JSON review result."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+        encoding="utf-8",
+    )
+    task_path = root / "structured.task.toml"
+    task_path.write_text(
+        """
+[task]
+name = "structured_review"
+version = "1"
+
+[input]
+type = "object"
+
+[input.schema]
+type = "object"
+required = ["question", "limit"]
+additionalProperties = false
+
+[input.schema.properties.question]
+type = "string"
+minLength = 1
+
+[input.schema.properties.limit]
+type = "integer"
+minimum = 1
+maximum = 5
+
+[output]
+type = "json"
+
+[output.schema]
+type = "object"
+required = ["status", "count", "summary"]
+additionalProperties = false
+
+[output.schema.properties.status]
+type = "string"
+enum = ["ready"]
+
+[output.schema.properties.count]
+type = "integer"
+minimum = 1
+
+[output.schema.properties.summary]
+type = "string"
+minLength = 1
+
+[execution]
+type = "agent"
+ref = "agents/structured.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 60
+
+[observability]
+sinks = ["noop"]
+metrics = false
+trace = false
+capture_events = false
 """,
         encoding="utf-8",
     )
@@ -182,7 +259,202 @@ class ReviewingTarget(TaskTargetRunner):
         )
 
 
+class StructuredTarget(TaskTargetRunner):
+    def __init__(self, output: Mapping[str, object] | None = None) -> None:
+        self.output = output or {
+            "status": "ready",
+            "count": 2,
+            "summary": "private structured answer",
+        }
+        self.definition_refs: list[str] = []
+        self.input_values: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = context
+        self.definition_refs.append(definition.execution.ref)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.input_values.append(context.input_value)
+        await context.check_cancelled()
+        return self.output
+
+
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
+    async def test_loaded_structured_task_runs_directly_and_redacts_output(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_structured_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = StructuredTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-structured-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            input_value = {
+                "question": "private customer escalation",
+                "limit": 2,
+            }
+
+            validation = await client.validate(
+                definition,
+                input_value=input_value,
+            )
+            result = await client.run(
+                definition,
+                input_value=input_value,
+                metadata={"tenant": "safe"},
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(definition.input.type, TaskInputType.OBJECT)
+        self.assertEqual(definition.output.type, TaskOutputType.JSON)
+        self.assertEqual(
+            target.definition_refs,
+            ["agents/structured.toml"] * 2,
+        )
+        self.assertEqual(target.input_values, [input_value])
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, target.output)
+        self.assertTrue(output.ready)
+        self.assertEqual(
+            output.output_summary,
+            {"status": "ready", "count": 2},
+        )
+        input_summary = cast(
+            Mapping[str, object],
+            inspection.run.request.input_summary,
+        )
+        self.assertEqual(input_summary["privacy"], HASHED_MARKER)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+        self.assertEqual(inspection.events, ())
+        self.assertEqual(inspection.usage, ())
+        self.assertIsNone(inspection.usage_totals.total_tokens)
+        self.assertEqual(inspection.artifacts, ())
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private customer escalation", inspection_value)
+        self.assertNotIn("private structured answer", inspection_value)
+
+    async def test_loaded_structured_task_rejects_invalid_input_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_structured_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = StructuredTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-structured-invalid",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            input_value = {
+                "question": "private customer escalation",
+                "limit": 9,
+            }
+
+            validation = await client.validate(
+                definition,
+                input_value=input_value,
+            )
+            with self.assertRaises(TaskValidationError) as error:
+                await client.run(definition, input_value=input_value)
+
+        self.assertFalse(validation.valid)
+        self.assertEqual(len(validation.issues), 1)
+        self.assertEqual(validation.issues[0].code, "input.invalid_type")
+        self.assertEqual(validation.issues[0].path, "input")
+        self.assertEqual(target.definition_refs, ["agents/structured.toml"])
+        self.assertEqual(target.input_values, [])
+        self.assertEqual(len(error.exception.issues), 1)
+        self.assertNotIn("private customer escalation", str(error.exception))
+        self.assertNotIn("9", str(error.exception))
+
+    async def test_loaded_structured_task_rejects_invalid_output_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_structured_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = StructuredTarget(
+                {
+                    "status": "ready",
+                    "summary": "private structured answer",
+                }
+            )
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-structured-bad-output",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            input_value = {
+                "question": "private customer escalation",
+                "limit": 2,
+            }
+
+            result = await client.run(
+                definition,
+                input_value=input_value,
+                metadata={"tenant": "safe"},
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(target.input_values, [input_value])
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertFalse(output.ready)
+        error_summary = cast(Mapping[str, object], output.error)
+        self.assertEqual(error_summary["category"], "output_contract")
+        self.assertEqual(error_summary["code"], "output_contract.failed")
+        details = cast(Mapping[str, object], error_summary["details"])
+        issues = cast(tuple[Mapping[str, object], ...], details["issues"])
+        self.assertEqual(issues[0]["code"], "output.invalid_type")
+        self.assertEqual(issues[0]["path"], "output")
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(inspection.events, ())
+        self.assertEqual(inspection.usage, ())
+        self.assertEqual(inspection.artifacts, ())
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private customer escalation", inspection_value)
+        self.assertNotIn("private structured answer", inspection_value)
+
     async def test_loaded_file_task_runs_directly_and_inspects_safely(
         self,
     ) -> None:
