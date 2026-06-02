@@ -40,7 +40,7 @@ class FlowManager:
             await event_manager.trigger(
                 Event(
                     type=EventType.FLOW_MANAGER_CALL_BEFORE,
-                    payload={"flow": flow, "status": "started"},
+                    payload={"name": "flow", "status": "started"},
                     started=start,
                 )
             )
@@ -60,7 +60,7 @@ class FlowManager:
                 await event_manager.trigger(
                     Event(
                         type=EventType.FLOW_MANAGER_CALL_AFTER,
-                        payload={"flow": flow, "status": "failed"},
+                        payload={"name": "flow", "status": "failed"},
                         started=start,
                         finished=end,
                         elapsed=end - start,
@@ -74,8 +74,7 @@ class FlowManager:
                     Event(
                         type=EventType.FLOW_MANAGER_CALL_AFTER,
                         payload={
-                            "flow": flow,
-                            "result": result,
+                            "name": "flow",
                             "status": "succeeded",
                         },
                         started=start,
