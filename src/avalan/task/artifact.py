@@ -174,7 +174,7 @@ class TaskArtifactRef:
             freeze_snapshot_metadata(self.metadata),
         )
 
-    def summary(self) -> TaskSnapshotValue:
+    def summary(self, *, include_metadata: bool = True) -> TaskSnapshotValue:
         value: dict[str, object] = {
             "artifact_id": self.artifact_id,
             "store": self.store,
@@ -185,7 +185,7 @@ class TaskArtifactRef:
             value["size_bytes"] = self.size_bytes
         if self.sha256 is not None:
             value["sha256"] = self.sha256
-        if self.metadata:
+        if include_metadata and self.metadata:
             value["metadata"] = self.metadata
         return freeze_snapshot_value(value)
 
@@ -248,7 +248,7 @@ class TaskArtifactRecord:
             "artifact_id": self.artifact_id,
             "purpose": self.purpose.value,
             "state": self.state.value,
-            "ref": self.ref.summary(),
+            "ref": self.ref.summary(include_metadata=False),
         }
         if self.attempt_id is not None:
             value["attempt_id"] = self.attempt_id
@@ -292,7 +292,7 @@ class TaskOutputArtifact:
         return freeze_snapshot_value(
             {
                 "state": self.state.value,
-                "ref": self.ref.summary(),
+                "ref": self.ref.summary(include_metadata=False),
             }
         )
 

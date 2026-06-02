@@ -891,6 +891,81 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private.txt", str(error.exception))
         self.assertNotIn("safe prompt", str(error.exception))
 
+    async def test_durable_attachment_runs_through_queue_and_inspection(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: "explicit-input-e2e",
+            )
+            explicit_ref = await artifact_store.put(
+                b"private explicit attachment",
+                media_type="text/plain",
+                metadata={"filename": "private.txt"},
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = ReadingTarget()
+            client = _client(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                clock=clock,
+            )
+
+            submission = await client.enqueue(
+                _definition(),
+                input_value="private prompt with attachment",
+                files=(
+                    TaskInputFile(
+                        logical_path="provided/private.txt",
+                        artifact_ref=explicit_ref,
+                        media_type="text/plain",
+                        size_bytes=explicit_ref.size_bytes,
+                        metadata={"filename": "private.txt"},
+                    ),
+                ),
+            )
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+            inspection = await client.inspect(submission.run.run_id)
+            artifacts = await store.list_artifacts(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(target.file_bodies, [b"private explicit attachment"])
+        self.assertEqual(len(target.inputs), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].artifact_id, "explicit-input-e2e")
+        self.assertEqual(artifacts[0].purpose, TaskArtifactPurpose.INPUT)
+        self.assertEqual(artifacts[0].state, TaskArtifactState.READY)
+        self.assertEqual(len(inspection.artifacts), 1)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private explicit attachment", inspection_value)
+        self.assertNotIn("private prompt with attachment", inspection_value)
+        self.assertNotIn("private.txt", inspection_value)
+
     async def test_output_artifact_task_runs_through_queue_and_inspection(
         self,
     ) -> None:

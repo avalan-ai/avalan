@@ -15,14 +15,20 @@ from avalan.task import (
     TaskClient,
     TaskDefinition,
     TaskDefinitionLoader,
+    TaskExecutionTarget,
     TaskFileConversionRequest,
     TaskFileConversionResult,
     TaskFileDescriptor,
+    TaskInputContract,
     TaskInputFile,
     TaskInputType,
     TaskKeyMaterial,
     TaskKeyPurpose,
+    TaskMetadata,
+    TaskObservabilityPolicy,
+    TaskOutputContract,
     TaskOutputType,
+    TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
     TaskTargetRunner,
@@ -30,9 +36,54 @@ from avalan.task import (
     TaskValidationError,
     TaskValidationIssue,
     UsageSource,
+    spec_hash,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.stores import InMemoryTaskStore
+
+
+def _write_text_task_workspace(root: Path) -> Path:
+    (root / "agents").mkdir()
+    (root / "agents" / "summarizer.toml").write_text(
+        """
+[agent]
+name = "Summarizer"
+task = "Summarize the provided text."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+        encoding="utf-8",
+    )
+    task_path = root / "summarize.task.toml"
+    task_path.write_text(
+        """
+[task]
+name = "text_summary"
+version = "1"
+
+[input]
+type = "string"
+
+[output]
+type = "text"
+
+[execution]
+type = "agent"
+ref = "agents/summarizer.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 60
+
+[observability]
+metrics = false
+trace = false
+capture_events = false
+""",
+        encoding="utf-8",
+    )
+    return task_path
 
 
 def _write_task_workspace(root: Path) -> Path:
@@ -204,6 +255,28 @@ class PrefixingTextConverter:
         )
 
 
+class TextSummaryTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.definition_refs: list[str] = []
+        self.input_values: list[object] = []
+        self.metadata_values: list[Mapping[str, object]] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = context
+        self.definition_refs.append(definition.execution.ref)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.input_values.append(context.input_value)
+        self.metadata_values.append(context.metadata)
+        await context.check_cancelled()
+        return "public summary"
+
+
 class ReviewingTarget(TaskTargetRunner):
     def __init__(self) -> None:
         self.definition_refs: list[str] = []
@@ -310,6 +383,125 @@ class DirectCancellingTarget(TaskTargetRunner):
 
 
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
+    async def test_loaded_text_task_runs_directly_and_inspects_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_text_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = TextSummaryTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-text-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            validation = await client.validate(
+                definition,
+                input_value="private text prompt",
+            )
+            result = await client.run(
+                definition,
+                input_value="private text prompt",
+                metadata={"tenant": "safe"},
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(
+            target.definition_refs, ["agents/summarizer.toml"] * 2
+        )
+        self.assertEqual(target.input_values, ["private text prompt"])
+        self.assertEqual(target.metadata_values, [{"tenant": "safe"}])
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.SUCCEEDED)
+        self.assertEqual(result.output, "public summary")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.output_summary, {"privacy": "<redacted>"})
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(inspection.events, ())
+        self.assertEqual(inspection.usage, ())
+        self.assertEqual(inspection.artifacts, ())
+        input_summary = cast(
+            Mapping[str, object],
+            inspection.run.request.input_summary,
+        )
+        self.assertEqual(input_summary["privacy"], HASHED_MARKER)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private text prompt", inspection_value)
+        self.assertNotIn("public summary", inspection_value)
+
+    async def test_sdk_equivalent_text_task_runs_with_same_identity(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            toml_definition = TaskDefinitionLoader().load(
+                _write_text_task_workspace(root)
+            )
+            sdk_definition = TaskDefinition(
+                task=TaskMetadata(name="text_summary", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/summarizer.toml"),
+                run=TaskRunPolicy.direct(timeout_seconds=60),
+                observability=TaskObservabilityPolicy(
+                    metrics=False,
+                    trace=False,
+                    capture_events=False,
+                ),
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = TextSummaryTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            toml_result = await client.run(
+                toml_definition,
+                input_value="private text prompt",
+            )
+            sdk_result = await client.run(
+                sdk_definition,
+                input_value="private text prompt",
+            )
+            toml_inspection = await client.inspect(toml_result.run.run_id)
+            sdk_inspection = await client.inspect(sdk_result.run.run_id)
+
+        self.assertEqual(spec_hash(toml_definition), spec_hash(sdk_definition))
+        self.assertEqual(
+            toml_result.run.definition_id,
+            sdk_result.run.definition_id,
+        )
+        self.assertEqual(
+            target.definition_refs, ["agents/summarizer.toml"] * 2
+        )
+        self.assertEqual(
+            target.input_values,
+            ["private text prompt", "private text prompt"],
+        )
+        self.assertEqual(toml_result.output, "public summary")
+        self.assertEqual(sdk_result.output, "public summary")
+        self.assertEqual(toml_inspection.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(sdk_inspection.run.state, TaskRunState.SUCCEEDED)
+        self.assertNotIn("private text prompt", str(toml_inspection.as_dict()))
+        self.assertNotIn("private text prompt", str(sdk_inspection.as_dict()))
+
     async def test_loaded_structured_task_runs_directly_and_redacts_output(
         self,
     ) -> None:
