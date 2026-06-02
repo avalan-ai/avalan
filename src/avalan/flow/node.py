@@ -1,7 +1,11 @@
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..flow.flow import Flow
+
+CancellationChecker = Callable[[], Awaitable[None]]
 
 
 class Node:
@@ -24,59 +28,96 @@ class Node:
         self.subgraph: "Flow | None" = subgraph
 
     def execute(self, inputs: dict[str, Any]) -> Any:
-        # Delegate to subgraph if present
         if self.subgraph is not None:
-            initial = (
-                next(iter(inputs.values())) if len(inputs) == 1 else inputs
-            )
+            initial = self._subgraph_initial(inputs)
             result = self.subgraph.execute(
                 initial_node=None, initial_data=initial
             )
-            if self.output_schema and not isinstance(
-                result, self.output_schema
-            ):
-                raise TypeError(
-                    f"{self.name} output {result!r} not {self.output_schema}"
-                )
+            self._validate_output(result)
             return result
 
-        # Validate input schema
-        if self.input_schema:
-            if isinstance(self.input_schema, type):
-                if isinstance(inputs, dict) and len(inputs) == 1:
-                    val = next(iter(inputs.values()))
-                    if not isinstance(val, self.input_schema):
-                        raise TypeError(
-                            f"{self.name} input {val!r} not"
-                            f" {self.input_schema}"
-                        )
-                elif not isinstance(inputs, self.input_schema):
-                    raise TypeError(
-                        f"{self.name} input {inputs!r} not {self.input_schema}"
-                    )
+        self._validate_input(inputs)
+        output = self._compute_output(inputs)
+        if isawaitable(output):
+            close = getattr(output, "close", None)
+            if callable(close):
+                close()
+            raise TypeError(
+                f"{self.name} produced awaitable output; use execute_async"
+            )
+        self._validate_output(output)
 
-        # Compute output
-        if callable(self.func):
-            try:
-                output = self.func(inputs)
-            except TypeError:
-                output = self.func(*inputs.values())
-        else:
+        return output
+
+    async def execute_async(
+        self,
+        inputs: dict[str, Any],
+        *,
+        cancellation_checker: CancellationChecker | None = None,
+    ) -> Any:
+        await _check_cancelled(cancellation_checker)
+        if self.subgraph is not None:
+            result = await self.subgraph.execute_async(
+                initial_node=None,
+                initial_data=self._subgraph_initial(inputs),
+                cancellation_checker=cancellation_checker,
+            )
+            self._validate_output(result)
+            await _check_cancelled(cancellation_checker)
+            return result
+
+        self._validate_input(inputs)
+        await _check_cancelled(cancellation_checker)
+        output = self._compute_output(inputs)
+        if isawaitable(output):
+            output = await output
+        self._validate_output(output)
+        await _check_cancelled(cancellation_checker)
+        return output
+
+    def _compute_output(self, inputs: dict[str, Any]) -> Any:
+        if not callable(self.func):
             if not inputs:
-                output = None
-            elif len(inputs) == 1:
-                output = next(iter(inputs.values()))
-            else:
-                output = inputs
+                return None
+            if len(inputs) == 1:
+                return next(iter(inputs.values()))
+            return inputs
+        try:
+            return self.func(inputs)
+        except TypeError:
+            return self.func(*inputs.values())
 
-        # Validate output schema
+    def _subgraph_initial(self, inputs: dict[str, Any]) -> Any:
+        return next(iter(inputs.values())) if len(inputs) == 1 else inputs
+
+    def _validate_input(self, inputs: dict[str, Any]) -> None:
+        if not self.input_schema:
+            return
+        if isinstance(self.input_schema, type):
+            if isinstance(inputs, dict) and len(inputs) == 1:
+                val = next(iter(inputs.values()))
+                if not isinstance(val, self.input_schema):
+                    raise TypeError(
+                        f"{self.name} input {val!r} not {self.input_schema}"
+                    )
+            elif not isinstance(inputs, self.input_schema):
+                raise TypeError(
+                    f"{self.name} input {inputs!r} not {self.input_schema}"
+                )
+
+    def _validate_output(self, output: Any) -> None:
         if self.output_schema and output is not None:
             if not isinstance(output, self.output_schema):
                 raise TypeError(
                     f"{self.name} output {output!r} not {self.output_schema}"
                 )
 
-        return output
-
     def __repr__(self) -> str:
         return f"<Node {self.name}>"
+
+
+async def _check_cancelled(
+    cancellation_checker: CancellationChecker | None,
+) -> None:
+    if cancellation_checker is not None:
+        await cancellation_checker()

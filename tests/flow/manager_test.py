@@ -1,4 +1,5 @@
 import unittest
+from asyncio import CancelledError, sleep
 from unittest.mock import AsyncMock, MagicMock
 
 from avalan.agent.loader import OrchestratorLoader
@@ -41,6 +42,33 @@ class FlowManagerCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after.started, before.started)
         self.assertIsNotNone(after.finished)
         self.assertIsNotNone(after.elapsed)
+
+    async def test_call_passes_initial_data_and_timeout(self) -> None:
+        async def slow(_: dict[str, object]) -> str:
+            await sleep(0.05)
+            return "done"
+
+        flow = Flow()
+        flow.add_node(Node("A", func=slow))
+        loader = MagicMock(spec=OrchestratorLoader)
+        loader.event_manager = None
+        manager = FlowManager(loader, logger=MagicMock())
+
+        with self.assertRaises(TimeoutError):
+            await manager(flow, timeout_seconds=0.001)
+
+    async def test_call_honors_cancellation_checker(self) -> None:
+        async def cancelled() -> None:
+            raise CancelledError()
+
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: 1))
+        loader = MagicMock(spec=OrchestratorLoader)
+        loader.event_manager = None
+        manager = FlowManager(loader, logger=MagicMock())
+
+        with self.assertRaises(CancelledError):
+            await manager(flow, cancellation_checker=cancelled)
 
 
 if __name__ == "__main__":

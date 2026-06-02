@@ -1,9 +1,10 @@
 from ..flow.connection import Connection
-from ..flow.node import Node
+from ..flow.node import CancellationChecker, Node
 
 import re
 from collections import deque
-from typing import Any, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 
 class Flow:
@@ -25,8 +26,10 @@ class Flow:
         src_name: str,
         dest_name: str,
         label: str | None = None,
-        conditions: list[Callable[[Any], bool]] | None = None,
-        filters: list[Callable[[Any], Any]] | None = None,
+        conditions: (
+            list[Callable[[Any], bool | Awaitable[bool]]] | None
+        ) = None,
+        filters: list[Callable[[Any], Any | Awaitable[Any]]] | None = None,
     ) -> None:
         if src_name not in self.nodes or dest_name not in self.nodes:
             raise KeyError(f"Unknown node: {src_name} or {dest_name}")
@@ -181,6 +184,83 @@ class Flow:
             return next(iter(terminal.values()))
         return terminal
 
+    async def execute_async(
+        self,
+        initial_node: str | Node | None = None,
+        initial_data: Any = None,
+        *,
+        cancellation_checker: CancellationChecker | None = None,
+    ) -> Any:
+        start_nodes = self._resolve_start_nodes(initial_node)
+        if not start_nodes:
+            raise ValueError(
+                "Flow has no valid starting node; graph may contain a cycle"
+            )
+
+        incoming_counts = {
+            name: len(self.incoming.get(name, [])) for name in self.nodes
+        }
+        indegree = dict(incoming_counts)
+        buffers: dict[str, dict[str, Any]] = {name: {} for name in self.nodes}
+        if initial_data is not None and len(start_nodes) == 1:
+            buffers[start_nodes[0].name] = {"__init__": initial_data}
+
+        queue: deque[Node] = deque()
+        for node in start_nodes:
+            indegree[node.name] = 0
+            queue.append(node)
+
+        outputs: dict[str, Any] = {}
+        processed: set[str] = set()
+        reachable = self._collect_reachable(start_nodes)
+        await _check_cancelled(cancellation_checker)
+        while queue:
+            await _check_cancelled(cancellation_checker)
+            node = queue.popleft()
+            processed.add(node.name)
+            inputs = buffers[node.name]
+            if incoming_counts[node.name] > 0 and not inputs:
+                outputs[node.name] = None
+            else:
+                outputs[node.name] = await node.execute_async(
+                    inputs,
+                    cancellation_checker=cancellation_checker,
+                )
+            await _check_cancelled(cancellation_checker)
+            out_value = outputs[node.name]
+            for connection in self.outgoing.get(node.name, []):
+                indegree[connection.dest.name] -= 1
+                if out_value is not None and (
+                    await connection.check_conditions_async(out_value)
+                ):
+                    forwarded = await connection.apply_filters_async(out_value)
+                    buffers[connection.dest.name][node.name] = forwarded
+                if indegree[connection.dest.name] == 0:
+                    queue.append(connection.dest)
+
+        if processed != reachable:
+            remaining = sorted(reachable - processed)
+            raise ValueError(
+                "Flow contains a cycle involving: " + ", ".join(remaining)
+            )
+
+        cycle_nodes = self._detect_cycle_nodes(start_nodes)
+        if cycle_nodes:
+            remaining = sorted(cycle_nodes)
+            raise ValueError(
+                "Flow contains a cycle involving: " + ", ".join(remaining)
+            )
+
+        terminal = {
+            name: outputs[name]
+            for name, outs in self.outgoing.items()
+            if not outs
+        }
+        await _check_cancelled(cancellation_checker)
+        if len(terminal) == 1:
+            return next(iter(terminal.values()))
+        return terminal
+
     def _resolve_start_nodes(
         self, initial_node: str | Node | None
     ) -> list[Node]:
@@ -234,3 +314,10 @@ class Flow:
         for node in start_nodes:
             dfs(node.name)
         return cycle_nodes
+
+
+async def _check_cancelled(
+    cancellation_checker: CancellationChecker | None,
+) -> None:
+    if cancellation_checker is not None:
+        await cancellation_checker()

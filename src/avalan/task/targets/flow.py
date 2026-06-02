@@ -1,3 +1,4 @@
+from ...flow.flow import Flow
 from ..context import TaskTargetContext
 from ..definition import (
     TaskDefinition,
@@ -12,8 +13,12 @@ from ..validation import (
     TaskValidationIssue,
 )
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
+
+FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -26,8 +31,14 @@ class FlowCompatibility:
 
 
 class FlowTaskTargetRunner(TaskTargetRunner):
-    def __init__(self, *, ref_base: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ref_base: str | Path | None = None,
+        flow_resolver: FlowResolver | None = None,
+    ) -> None:
         self._ref_base = Path(ref_base) if ref_base is not None else None
+        self._flow_resolver = flow_resolver
 
     async def validate_definition(
         self,
@@ -44,14 +55,37 @@ class FlowTaskTargetRunner(TaskTargetRunner):
 
     async def run(self, context: TaskTargetContext) -> object:
         assert isinstance(context, TaskTargetContext)
-        raise TaskValidationError(
-            (
-                _unsupported_flow_issue(
-                    path="execution.type",
-                    message="Flow-backed task execution is not available.",
-                    hint="Use an agent execution target.",
-                ),
+        if context.definition.execution.type != TaskTargetType.FLOW:
+            raise TaskValidationError((_unknown_target_issue(),))
+        if self._flow_resolver is None:
+            raise TaskValidationError(
+                (
+                    _unsupported_flow_issue(
+                        path="execution.ref",
+                        message="Flow task target cannot resolve the flow.",
+                        hint="Configure a flow resolver for execution.",
+                    ),
+                )
             )
+        await context.check_cancelled()
+        resolved = self._flow_resolver(context)
+        if isawaitable(resolved):
+            resolved = await resolved
+        if not isinstance(resolved, Flow):
+            raise TaskValidationError(
+                (
+                    _unsupported_flow_issue(
+                        path="execution.ref",
+                        message="Flow resolver did not return a flow.",
+                        hint="Return an avalan Flow instance.",
+                    ),
+                )
+            )
+        await context.check_cancelled()
+        return await resolved.execute_async(
+            initial_node=None,
+            initial_data=context.input_value,
+            cancellation_checker=context.check_cancelled,
         )
 
 
@@ -75,7 +109,7 @@ def validate_flow_task_compatibility(
     if path_issue is not None:
         issues.append(path_issue)
     issues.extend(_validate_flow_contracts(definition))
-    issues.extend(_flow_runtime_issues())
+    issues.extend(_flow_observability_issues(definition))
     return FlowCompatibility(issues=tuple(issues))
 
 
@@ -133,33 +167,20 @@ def _validate_flow_contracts(
     return tuple(issues)
 
 
-def _flow_runtime_issues() -> tuple[TaskValidationIssue, ...]:
+def _flow_observability_issues(
+    definition: TaskDefinition,
+) -> tuple[TaskValidationIssue, ...]:
+    if (
+        not definition.observability.capture_events
+        and not definition.observability.metrics
+        and not definition.observability.trace
+    ):
+        return ()
     return (
-        _unsupported_flow_issue(
-            path="execution.async",
-            message="Flow task targets do not provide async execution.",
-            hint=(
-                "Use an agent target until flow execution is task-compatible."
-            ),
-        ),
-        _unsupported_flow_issue(
-            path="execution.cancellation",
-            message=(
-                "Flow task targets do not provide cancellation checkpoints."
-            ),
-            hint="Use an agent target until flow cancellation is available.",
-        ),
-        _unsupported_flow_issue(
-            path="run.timeout_seconds",
-            message="Flow task targets do not enforce task timeouts.",
-            hint=(
-                "Use an agent target until flow timeout boundaries are ready."
-            ),
-        ),
         _unsupported_flow_issue(
             path="observability.capture_events",
             message="Flow task targets do not expose sanitized task events.",
-            hint="Use an agent target until flow events are task-compatible.",
+            hint="Disable flow observability until flow events are available.",
         ),
     )
 
