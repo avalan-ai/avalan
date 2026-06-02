@@ -79,6 +79,7 @@ TASK_VALIDATION_ISSUE_CODES = frozenset(
         "execution.path_escape",
         "execution.unknown_target",
         "execution.unsupported_flow",
+        "feature.flow_backed_tasks_disabled",
         "feature.remote_url_file_inputs_disabled",
         "input.invalid_file",
         "input.invalid_schema",
@@ -1292,12 +1293,8 @@ def _validate_execution_target(
         )
     if target.type == TaskTargetType.FLOW:
         issues.append(
-            _issue(
-                code="execution.unsupported_flow",
-                path="execution.type",
-                message="Flow-backed task execution is not available.",
-                hint="Use an agent execution target.",
-                category=TaskValidationCategory.UNSUPPORTED,
+            _feature_issue(
+                TaskFeature.FLOW_BACKED_TASKS, path="execution.type"
             )
         )
         return tuple(issues)

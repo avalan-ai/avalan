@@ -132,6 +132,7 @@ class TaskValidationTest(TestCase):
                 "execution.path_escape",
                 "execution.unknown_target",
                 "execution.unsupported_flow",
+                "feature.flow_backed_tasks_disabled",
                 "feature.remote_url_file_inputs_disabled",
                 "input.invalid_file",
                 "input.invalid_schema",
@@ -189,7 +190,7 @@ class TaskValidationTest(TestCase):
             [
                 "input.invalid_schema",
                 "output.invalid_schema",
-                "execution.unsupported_flow",
+                "feature.flow_backed_tasks_disabled",
                 "limits.invalid_value",
             ],
         )
