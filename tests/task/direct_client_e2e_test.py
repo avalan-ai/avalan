@@ -1051,9 +1051,11 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(input_summary["privacy"], HASHED_MARKER)
         inspection_value = str(inspection.as_dict())
+        persisted_artifacts = str(artifacts)
         self.assertNotIn("private source body", inspection_value)
         self.assertNotIn("private generated summary", inspection_value)
         self.assertNotIn("source.txt", inspection_value)
+        self.assertNotIn("summary.txt", persisted_artifacts)
         self.assertNotIn("private-token-text", inspection_value)
         self.assertNotIn("token_id", inspection_value)
 

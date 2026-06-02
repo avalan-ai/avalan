@@ -1,6 +1,8 @@
 from .artifact import (
     ArtifactStore,
+    TaskArtifactProvenance,
     TaskArtifactPurpose,
+    TaskArtifactRef,
     TaskArtifactRetention,
     TaskOutputArtifact,
     task_output_artifact_from_value,
@@ -48,6 +50,7 @@ from .store import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
+    TaskSnapshotMetadata,
     TaskSnapshotValue,
     TaskStore,
     TaskStoreConflictError,
@@ -591,6 +594,7 @@ class DirectTaskRunner:
             output,
             run=run,
             attempt=attempt,
+            sanitizer=sanitizer,
         )
         await self._check_cancellation_or_expiry(run, expires_at)
         try:
@@ -793,17 +797,25 @@ class DirectTaskRunner:
         *,
         run: TaskRun,
         attempt: TaskAttempt,
+        sanitizer: PrivacySanitizer,
     ) -> None:
         for artifact in _output_artifacts_from_output(definition, output):
+            safe_artifact = _sanitize_output_artifact(
+                artifact,
+                sanitizer,
+            )
             await self._store.append_artifact(
                 run.run_id,
-                ref=artifact.ref,
+                ref=safe_artifact.ref,
                 purpose=TaskArtifactPurpose.OUTPUT,
-                state=artifact.state,
+                state=safe_artifact.state,
                 attempt_id=attempt.attempt_id,
-                provenance=artifact.provenance,
-                retention=_output_artifact_retention(definition, artifact),
-                metadata=artifact.metadata,
+                provenance=safe_artifact.provenance,
+                retention=_output_artifact_retention(
+                    definition,
+                    safe_artifact,
+                ),
+                metadata=safe_artifact.metadata,
             )
 
     async def _input_files_from_materialized(
@@ -1058,6 +1070,83 @@ def _coerce_output_artifact(value: object) -> TaskOutputArtifact:
     artifact = task_output_artifact_from_value(value)
     assert artifact is not None, "output artifact must be validated first"
     return artifact
+
+
+def _sanitize_output_artifact(
+    artifact: TaskOutputArtifact,
+    sanitizer: PrivacySanitizer,
+) -> TaskOutputArtifact:
+    return TaskOutputArtifact(
+        ref=_sanitize_artifact_ref(artifact.ref, sanitizer),
+        state=artifact.state,
+        provenance=_sanitize_artifact_provenance(
+            artifact.provenance,
+            sanitizer,
+        ),
+        retention=_sanitize_artifact_retention(
+            artifact.retention,
+            sanitizer,
+        ),
+        metadata=_sanitize_output_metadata(artifact.metadata, sanitizer),
+    )
+
+
+def _sanitize_artifact_ref(
+    ref: TaskArtifactRef,
+    sanitizer: PrivacySanitizer,
+) -> TaskArtifactRef:
+    if not ref.metadata:
+        return ref
+    return TaskArtifactRef(
+        artifact_id=ref.artifact_id,
+        store=ref.store,
+        storage_key=ref.storage_key,
+        media_type=ref.media_type,
+        size_bytes=ref.size_bytes,
+        sha256=ref.sha256,
+        metadata=_sanitize_output_metadata(ref.metadata, sanitizer),
+    )
+
+
+def _sanitize_artifact_provenance(
+    provenance: TaskArtifactProvenance,
+    sanitizer: PrivacySanitizer,
+) -> TaskArtifactProvenance:
+    if not provenance.metadata:
+        return provenance
+    return TaskArtifactProvenance(
+        source_artifact_id=provenance.source_artifact_id,
+        source_run_id=provenance.source_run_id,
+        source_attempt_id=provenance.source_attempt_id,
+        operation=provenance.operation,
+        converter=provenance.converter,
+        metadata=_sanitize_output_metadata(provenance.metadata, sanitizer),
+    )
+
+
+def _sanitize_artifact_retention(
+    retention: TaskArtifactRetention,
+    sanitizer: PrivacySanitizer,
+) -> TaskArtifactRetention:
+    if not retention.metadata:
+        return retention
+    return TaskArtifactRetention(
+        expires_at=retention.expires_at,
+        delete_after_days=retention.delete_after_days,
+        retain_metadata=retention.retain_metadata,
+        metadata=_sanitize_output_metadata(retention.metadata, sanitizer),
+    )
+
+
+def _sanitize_output_metadata(
+    metadata: TaskSnapshotMetadata,
+    sanitizer: PrivacySanitizer,
+) -> TaskSnapshotMetadata:
+    if not metadata:
+        return metadata
+    safe_metadata = sanitizer.sanitize(PrivacyField.OUTPUT, metadata)
+    assert isinstance(safe_metadata, Mapping)
+    return freeze_snapshot_metadata(cast(Mapping[str, object], safe_metadata))
 
 
 def _output_artifact_retention(

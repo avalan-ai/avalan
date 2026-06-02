@@ -125,7 +125,6 @@ class ArtifactRecordArrayTarget:
         ref = await context.artifact_store.put(
             b"private stale bytes",
             media_type="text/plain",
-            metadata={"name": "stale"},
         )
         created_at = datetime(2026, 1, 1, tzinfo=UTC)
         return [
@@ -141,6 +140,41 @@ class ArtifactRecordArrayTarget:
                 provenance=TaskArtifactProvenance(operation="export"),
                 retention=TaskArtifactRetention(delete_after_days=2),
                 metadata={"state": "simulated"},
+            )
+        ]
+
+
+class PrivateArtifactRecordTarget:
+    async def __call__(self, context: TaskTargetContext) -> object:
+        assert context.artifact_store is not None
+        ref = await context.artifact_store.put(
+            b"private bytes",
+            media_type="text/plain",
+            metadata={"filename": "private-ref.txt"},
+        )
+        created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        return [
+            TaskArtifactRecord(
+                artifact_id=ref.artifact_id,
+                run_id=context.execution.run_id,
+                attempt_id=context.execution.attempt_id,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                state=TaskArtifactState.READY,
+                ref=ref,
+                created_at=created_at,
+                updated_at=created_at,
+                provenance=TaskArtifactProvenance(
+                    operation="export",
+                    metadata={"prompt": "private prompt"},
+                ),
+                retention=TaskArtifactRetention(
+                    delete_after_days=2,
+                    metadata={"tenant": "private retention"},
+                ),
+                metadata={
+                    "filename": "private-output.txt",
+                    "state": "simulated",
+                },
             )
         ]
 
@@ -1265,6 +1299,8 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             self.assertEqual(records[0].attempt_id, result.attempt.attempt_id)
             self.assertEqual(records[0].state, TaskArtifactState.READY)
             self.assertEqual(records[0].retention.delete_after_days, 4)
+            self.assertIn("privacy", records[0].ref.metadata)
+            self.assertNotIn("report", str(records[0].ref.metadata))
             self.assertNotIn(
                 "private report bytes",
                 str(records[0].summary()),
@@ -1309,6 +1345,55 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             self.assertEqual(records[0].provenance.operation, "export")
             self.assertEqual(records[0].retention.delete_after_days, 2)
             self.assertEqual(records[0].metadata["state"], "simulated")
+
+    async def test_artifact_output_sanitizes_record_metadata(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as artifacts:
+            runner = DirectTaskRunner(
+                self.store,
+                target=PrivateArtifactRecordTarget(),
+                hmac_provider=self.hmac_provider,
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "artifact-private-1",
+                ),
+                definition_hash=lambda task: "hash-artifact-metadata",
+            )
+
+            result = await runner.run(
+                definition(
+                    output_contract=TaskOutputContract.artifact_array(),
+                    privacy=TaskPrivacyPolicy(output=PrivacyAction.REDACT),
+                ),
+                input_value="private prompt",
+            )
+
+            self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+            records = await self.store.list_artifacts(
+                result.run.run_id,
+                purpose=TaskArtifactPurpose.OUTPUT,
+            )
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].metadata, {"state": "simulated"})
+            self.assertEqual(
+                records[0].ref.metadata,
+                {"privacy": "<redacted>"},
+            )
+            self.assertEqual(
+                records[0].provenance.metadata,
+                {"privacy": "<redacted>"},
+            )
+            self.assertEqual(
+                records[0].retention.metadata,
+                {"privacy": "<redacted>"},
+            )
+            persisted = str(records)
+            self.assertNotIn("private-ref.txt", persisted)
+            self.assertNotIn("private-output.txt", persisted)
+            self.assertNotIn("private prompt", persisted)
+            self.assertNotIn("private retention", persisted)
 
     async def test_artifact_output_validation_fails_before_success(
         self,
