@@ -62,7 +62,12 @@ _STRUCTURED_OUTPUT_TYPES = frozenset(
         TaskOutputType.ARRAY,
     }
 )
-_SUPPORTED_TARGET_TYPES = frozenset({TaskTargetType.AGENT})
+_SUPPORTED_TARGET_TYPES = frozenset(
+    {
+        TaskTargetType.AGENT,
+        TaskTargetType.FLOW,
+    }
+)
 _PATH_TARGET_TYPES = frozenset(
     {
         TaskTargetType.AGENT,
@@ -1291,13 +1296,6 @@ def _validate_execution_target(
                 execution_roots=execution_roots,
             )
         )
-    if target.type == TaskTargetType.FLOW:
-        issues.append(
-            _feature_issue(
-                TaskFeature.FLOW_BACKED_TASKS, path="execution.type"
-            )
-        )
-        return tuple(issues)
     if target.type not in _SUPPORTED_TARGET_TYPES:
         issues.append(
             _issue(

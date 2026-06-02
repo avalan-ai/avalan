@@ -10,22 +10,46 @@ from unittest.mock import patch
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 from avalan.task import (
+    STORED_MARKER,
+    DirectTaskRunner,
     TaskDefinition,
     TaskExecutionTarget,
     TaskInputContract,
+    TaskKeyMaterial,
+    TaskKeyPurpose,
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
+    TaskPrivacyPolicy,
+    TaskRunPolicy,
+    TaskRunState,
     TaskTargetContext,
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
 )
 from avalan.task.store import TaskExecutionContext
+from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import (
+    FLOW_TASK_INPUT_KEY,
     FlowTaskTargetRunner,
+    flow_task_input_binding,
     validate_flow_task_compatibility,
 )
+
+
+class StaticHmacProvider:
+    def hmac_key(
+        self,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+    ) -> TaskKeyMaterial:
+        return TaskKeyMaterial(
+            key_id=key_id or purpose.value,
+            algorithm="hmac-sha256",
+            secret=b"flow-target-secret",
+        )
 
 
 class FlowTaskTargetRunnerValidationTest(TestCase):
@@ -242,7 +266,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
     async def test_run_executes_resolved_flow(self) -> None:
         flow = Flow()
-        flow.add_node(Node("A", func=lambda inputs: inputs["__init__"] + "!"))
+        flow.add_node(
+            Node("A", func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY] + "!")
+        )
         runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
 
         result = await runner.run(self._context(input_value="ready"))
@@ -251,7 +277,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
     async def test_run_awaits_async_resolver(self) -> None:
         flow = Flow()
-        flow.add_node(Node("A", func=lambda inputs: inputs["__init__"] + 1))
+        flow.add_node(
+            Node("A", func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY] + 1)
+        )
 
         async def resolver(_: TaskTargetContext) -> Flow:
             await sleep(0)
@@ -259,9 +287,109 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         runner = FlowTaskTargetRunner(flow_resolver=resolver)
 
-        result = await runner.run(self._context(input_value=1))
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.integer(),
+                ),
+                input_value=1,
+            )
+        )
 
         self.assertEqual(result, 2)
+
+    async def test_run_binds_object_fields_and_full_input(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "name": inputs["name"],
+                    "limit": inputs[FLOW_TASK_INPUT_KEY]["limit"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.object(
+                        {
+                            "type": "object",
+                            "required": ["name", "limit"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string"},
+                                "limit": {"type": "integer"},
+                            },
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(),
+                ),
+                input_value={"name": "report", "limit": 3},
+            )
+        )
+
+        self.assertEqual(result, {"name": "report", "limit": 3})
+
+    async def test_run_rejects_invalid_input_contract_safely(self) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: "unused private output"))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    definition=self._context_definition(
+                        input_contract=TaskInputContract.integer(),
+                    ),
+                    input_value="private prompt",
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_type")
+        self.assertNotIn("private prompt", str(error.exception))
+        self.assertNotIn("unused private output", str(error.exception))
+
+    async def test_run_unwraps_stored_queued_input(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY] + "!",
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={
+                    "privacy": STORED_MARKER,
+                    "value": "ready",
+                },
+            )
+        )
+
+        self.assertEqual(result, "ready!")
+
+    async def test_run_rejects_multiple_start_nodes_safely(self) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: "private A"))
+        flow.add_node(Node("B", func=lambda _: "private B"))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(input_value="private prompt"))
+
+        self.assertEqual(
+            error.exception.issues[0].code, "execution.unsupported_flow"
+        )
+        self.assertNotIn("private prompt", str(error.exception))
+        self.assertNotIn("private A", str(error.exception))
 
     async def test_run_rejects_invalid_resolver_result_safely(self) -> None:
         def resolver(_: TaskTargetContext) -> Flow:
@@ -349,14 +477,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         cancellation_checker: Callable[[], Awaitable[None]] | None = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
-            definition=definition
-            or TaskDefinition(
-                task=TaskMetadata(name="flow-task", version="1"),
-                input=TaskInputContract.string(),
-                output=TaskOutputContract.text(),
-                execution=TaskExecutionTarget.flow("flows/report.toml"),
-                observability=TaskObservabilityPolicy.noop(),
-            ),
+            definition=definition or self._context_definition(),
             execution=TaskExecutionContext(
                 run_id="run-1",
                 attempt_id="attempt-1",
@@ -364,6 +485,148 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             ),
             input_value=input_value,
             cancellation_checker=cancellation_checker,
+        )
+
+    def _context_definition(
+        self,
+        *,
+        input_contract: TaskInputContract | None = None,
+        output_contract: TaskOutputContract | None = None,
+        privacy: TaskPrivacyPolicy | None = None,
+        run: TaskRunPolicy | None = None,
+    ) -> TaskDefinition:
+        return TaskDefinition(
+            task=TaskMetadata(name="flow-task", version="1"),
+            input=input_contract or TaskInputContract.string(),
+            output=output_contract or TaskOutputContract.text(),
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            privacy=privacy or TaskPrivacyPolicy(),
+            run=run or TaskRunPolicy.direct(),
+        )
+
+
+class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.store = InMemoryTaskStore()
+
+    async def test_direct_runner_commits_object_output_after_validation(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "status": "ready",
+                    "count": inputs["limit"],
+                },
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-success",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=self._object_input_contract(),
+                output_contract=self._object_output_contract(),
+            ),
+            input_value={"prompt": "safe summary", "limit": 2},
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, {"status": "ready", "count": 2})
+
+    async def test_direct_runner_rejects_invalid_flow_output(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "status": "ready",
+                    "count": "private invalid count",
+                },
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-invalid-output",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=self._object_input_contract(),
+                output_contract=self._object_output_contract(),
+            ),
+            input_value={"prompt": "private prompt", "limit": 1},
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertIsNone(result.output)
+        self.assertNotIn("private invalid count", str(result.run.result))
+        self.assertNotIn("private prompt", str(result.run.result))
+
+    def test_input_binding_exposes_scalar_array_and_object_shapes(
+        self,
+    ) -> None:
+        self.assertEqual(
+            flow_task_input_binding("ready"),
+            {FLOW_TASK_INPUT_KEY: "ready", "value": "ready"},
+        )
+        self.assertEqual(
+            flow_task_input_binding([1, 2]),
+            {FLOW_TASK_INPUT_KEY: (1, 2), "items": (1, 2)},
+        )
+        self.assertEqual(
+            flow_task_input_binding({"limit": 2}),
+            {FLOW_TASK_INPUT_KEY: {"limit": 2}, "limit": 2},
+        )
+
+    def _definition(
+        self,
+        *,
+        input_contract: TaskInputContract,
+        output_contract: TaskOutputContract,
+    ) -> TaskDefinition:
+        return TaskDefinition(
+            task=TaskMetadata(name="flow-task", version="1"),
+            input=input_contract,
+            output=output_contract,
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            privacy=TaskPrivacyPolicy(),
+        )
+
+    def _object_input_contract(self) -> TaskInputContract:
+        return TaskInputContract.object(
+            {
+                "type": "object",
+                "required": ["prompt", "limit"],
+                "additionalProperties": False,
+                "properties": {
+                    "prompt": {"type": "string", "minLength": 1},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
+            }
+        )
+
+    def _object_output_contract(self) -> TaskOutputContract:
+        return TaskOutputContract.object(
+            {
+                "type": "object",
+                "required": ["status", "count"],
+                "additionalProperties": False,
+                "properties": {
+                    "status": {"type": "string", "enum": ["ready"]},
+                    "count": {"type": "integer", "minimum": 1},
+                },
+            }
         )
 
 

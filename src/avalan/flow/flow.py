@@ -3,7 +3,7 @@ from ..flow.node import CancellationChecker, Node
 
 import re
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 
@@ -189,8 +189,11 @@ class Flow:
         initial_node: str | Node | None = None,
         initial_data: Any = None,
         *,
+        initial_inputs: Mapping[str, Any] | None = None,
         cancellation_checker: CancellationChecker | None = None,
     ) -> Any:
+        if initial_data is not None and initial_inputs is not None:
+            raise ValueError("initial_data and initial_inputs are exclusive")
         start_nodes = self._resolve_start_nodes(initial_node)
         if not start_nodes:
             raise ValueError(
@@ -202,7 +205,9 @@ class Flow:
         }
         indegree = dict(incoming_counts)
         buffers: dict[str, dict[str, Any]] = {name: {} for name in self.nodes}
-        if initial_data is not None and len(start_nodes) == 1:
+        if initial_inputs is not None and len(start_nodes) == 1:
+            buffers[start_nodes[0].name] = dict(initial_inputs)
+        elif initial_data is not None and len(start_nodes) == 1:
             buffers[start_nodes[0].name] = {"__init__": initial_data}
 
         queue: deque[Node] = deque()

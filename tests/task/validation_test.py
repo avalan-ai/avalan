@@ -190,7 +190,6 @@ class TaskValidationTest(TestCase):
             [
                 "input.invalid_schema",
                 "output.invalid_schema",
-                "feature.flow_backed_tasks_disabled",
                 "limits.invalid_value",
             ],
         )
@@ -199,7 +198,6 @@ class TaskValidationTest(TestCase):
             [
                 "input.schema",
                 "output.schema",
-                "execution.type",
                 "limits.total_tokens",
             ],
         )

@@ -1,24 +1,42 @@
 from ...flow.flow import Flow
 from ..context import TaskTargetContext
 from ..definition import (
+    RunMode,
     TaskDefinition,
     TaskInputType,
     TaskOutputType,
     TaskTargetType,
+)
+from ..privacy import (
+    DROPPED_MARKER,
+    ENCRYPTED_MARKER,
+    HASHED_MARKER,
+    REDACTED_MARKER,
+    STORED_MARKER,
 )
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..validation import (
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
+    validate_task_input,
 )
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
+FLOW_TASK_INPUT_KEY = "__task_input__"
+_UNAVAILABLE_PRIVACY_MARKERS = frozenset(
+    {
+        DROPPED_MARKER,
+        ENCRYPTED_MARKER,
+        HASHED_MARKER,
+        REDACTED_MARKER,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -82,9 +100,26 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                 )
             )
         await context.check_cancelled()
+        task_input = _task_input_value(context)
+        input_issues = validate_task_input(context.definition, task_input)
+        if input_issues:
+            raise TaskValidationError(input_issues)
+        start_node = _single_start_node_name(resolved)
+        if start_node is None:
+            raise TaskValidationError(
+                (
+                    _unsupported_flow_issue(
+                        path="execution.ref",
+                        message=(
+                            "Flow task target requires exactly one start node."
+                        ),
+                        hint="Use a compatible flow with one entry point.",
+                    ),
+                )
+            )
         return await resolved.execute_async(
-            initial_node=None,
-            initial_data=context.input_value,
+            initial_node=start_node,
+            initial_inputs=flow_task_input_binding(task_input),
             cancellation_checker=context.check_cancelled,
         )
 
@@ -165,6 +200,60 @@ def _validate_flow_contracts(
             )
         )
     return tuple(issues)
+
+
+def flow_task_input_binding(value: object) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        binding = dict(value)
+        binding.setdefault(FLOW_TASK_INPUT_KEY, dict(value))
+        return binding
+    if isinstance(value, list | tuple):
+        return {
+            FLOW_TASK_INPUT_KEY: tuple(value),
+            "items": tuple(value),
+        }
+    return {
+        FLOW_TASK_INPUT_KEY: value,
+        "value": value,
+    }
+
+
+def _task_input_value(context: TaskTargetContext) -> object:
+    value = context.input_value
+    if context.definition.run.mode != RunMode.QUEUE:
+        return value
+    if (
+        isinstance(value, Mapping)
+        and value.get("privacy") == STORED_MARKER
+        and "value" in value
+    ):
+        return value["value"]
+    if (
+        isinstance(value, Mapping)
+        and value.get("privacy") in _UNAVAILABLE_PRIVACY_MARKERS
+    ):
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path="input",
+                    message="Queued flow task input is not available.",
+                    hint=(
+                        "Persist a JSON-compatible input value or run the "
+                        "task directly."
+                    ),
+                ),
+            )
+        )
+    return value
+
+
+def _single_start_node_name(flow: Flow) -> str | None:
+    start_nodes = [
+        name for name, inbound in flow.incoming.items() if not inbound
+    ]
+    if len(start_nodes) != 1:
+        return None
+    return start_nodes[0]
 
 
 def _flow_observability_issues(

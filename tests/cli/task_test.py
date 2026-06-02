@@ -316,7 +316,7 @@ class CliTaskValidateTestCase(TestCase):
         self.assertFalse(result)
         self.assertIn("Task definition is invalid.", output)
         self.assertIn("output.invalid_schema", output)
-        self.assertIn("feature.flow_backed_tasks_disabled", output)
+        self.assertNotIn("feature.flow_backed_tasks_disabled", output)
         self.assertNotIn("flows/private.toml", output)
 
     def test_validate_missing_file_prints_safe_diagnostic(self) -> None:

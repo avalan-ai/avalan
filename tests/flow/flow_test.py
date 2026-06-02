@@ -322,6 +322,18 @@ class FlowAsyncExecutionTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("cycle", str(context.exception))
 
+    async def test_execute_async_rejects_two_initial_input_modes(self) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda inputs: inputs["value"]))
+
+        with self.assertRaises(ValueError) as context:
+            await flow.execute_async(
+                initial_data="private",
+                initial_inputs={"value": "safe"},
+            )
+
+        self.assertIn("exclusive", str(context.exception))
+
 
 class FlowAddConnectionTestCase(TestCase):
     def test_add_connection_unknown_src(self):

@@ -8,6 +8,8 @@ from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.event import Event, EventType
+from avalan.flow.flow import Flow
+from avalan.flow.node import Node
 from avalan.task import (
     HASHED_MARKER,
     REDACTED_MARKER,
@@ -28,6 +30,7 @@ from avalan.task import (
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskMetadata,
+    TaskObservabilityPolicy,
     TaskOutputContract,
     TaskQueue,
     TaskQueueAbandonment,
@@ -53,6 +56,7 @@ from avalan.task import (
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.targets import FLOW_TASK_INPUT_KEY, FlowTaskTargetRunner
 
 
 class StaticHmacProvider:
@@ -1614,6 +1618,145 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private-token", inspection_value)
         self.assertNotIn("token_id", inspection_value)
 
+    async def test_queued_flow_scalar_input_runs_with_stored_json(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: f"{inputs[FLOW_TASK_INPUT_KEY]} done",
+            )
+        )
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="safe",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(processed.output, "safe done")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+
+    async def test_queued_flow_object_input_validates_output_contract(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "status": "ready",
+                    "count": inputs["limit"],
+                    "summary": f"{inputs['prompt']} done",
+                },
+            )
+        )
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _structured_definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value={"prompt": "safe", "limit": 2},
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            output.output_summary,
+            {"status": "ready", "count": 2},
+        )
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+
+    async def test_queued_flow_rejects_unavailable_input_safely(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: "unused private output"))
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+
+        submission = await client.enqueue(
+            definition,
+            input_value="private prompt",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.retry)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertIn("input_contract", str(output.error))
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private prompt", inspection_value)
+        self.assertNotIn("unused private output", inspection_value)
+
+    async def _enqueue_raw_input(
+        self,
+        store: InMemoryTaskStore,
+        queue: InMemoryTaskQueue,
+        definition: TaskDefinition,
+        *,
+        input_value: object,
+    ) -> TaskQueueSubmission:
+        await store.register_definition(
+            definition,
+            definition_hash="queue-worker-e2e",
+        )
+        return await queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id="queue-worker-e2e",
+                input_summary=input_value,
+                queue=definition.run.queue,
+            ),
+            queue_name=definition.run.queue or "default",
+        )
+
 
 def _client(
     store: InMemoryTaskStore,
@@ -1660,6 +1803,8 @@ def _worker(
 def _structured_definition(
     *,
     retry: TaskRetryPolicy | None = None,
+    execution: TaskExecutionTarget | None = None,
+    observability: TaskObservabilityPolicy | None = None,
 ) -> TaskDefinition:
     return _definition(
         input_contract=TaskInputContract.object(
@@ -1686,6 +1831,8 @@ def _structured_definition(
             }
         ),
         retry=retry,
+        execution=execution,
+        observability=observability,
     )
 
 
@@ -1695,14 +1842,17 @@ def _definition(
     output_contract: TaskOutputContract | None = None,
     artifact: TaskArtifactPolicy | None = None,
     retry: TaskRetryPolicy | None = None,
+    execution: TaskExecutionTarget | None = None,
+    observability: TaskObservabilityPolicy | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="queue_worker_e2e", version="1"),
         input=input_contract or TaskInputContract.string(),
         output=output_contract or TaskOutputContract.text(),
-        execution=TaskExecutionTarget.agent("agent.toml"),
+        execution=execution or TaskExecutionTarget.agent("agent.toml"),
         run=TaskRunPolicy.queued("default"),
         artifact=artifact or TaskArtifactPolicy.references_only(),
+        observability=observability or TaskObservabilityPolicy(),
         retry=retry or TaskRetryPolicy(max_attempts=2),
     )
 
