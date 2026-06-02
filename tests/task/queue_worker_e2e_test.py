@@ -855,6 +855,57 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("same-owner", str(inspection.as_dict()))
         self.assertNotIn("same prompt", str(inspection.as_dict()))
 
+    async def test_duplicate_submission_after_completion_reuses_result(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition()
+
+        first = await client.enqueue(
+            definition,
+            input_value="same completed prompt",
+            idempotency_key="same-completed-window",
+            owner_scope="same-completed-owner",
+        )
+        processed = await worker.process_once()
+        second = await client.enqueue(
+            definition,
+            input_value="same completed prompt",
+            idempotency_key="same-completed-window",
+            owner_scope="same-completed-owner",
+        )
+        output = await client.output(second.run.run_id)
+        inspection = await client.inspect(second.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(first.created)
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertFalse(second.created)
+        self.assertEqual(second.run.run_id, first.run.run_id)
+        self.assertEqual(second.run.state, TaskRunState.SUCCEEDED)
+        self.assertIsNotNone(second.queue_item)
+        assert second.queue_item is not None
+        self.assertEqual(second.queue_item.state, TaskQueueItemState.DONE)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.output_summary, {"privacy": REDACTED_MARKER})
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 0)
+        self.assertEqual(len(target.inputs), 1)
+        self.assertEqual(
+            [attempt.state for attempt in inspection.attempts],
+            [TaskAttemptState.SUCCEEDED],
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("same completed prompt", inspection_value)
+        self.assertNotIn("same-completed-window", inspection_value)
+        self.assertNotIn("same-completed-owner", inspection_value)
+
     async def test_queued_attachment_requires_durable_reference(
         self,
     ) -> None:

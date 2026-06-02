@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -9,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from avalan.event import Event, EventType
 from avalan.task import (
     HASHED_MARKER,
+    RetryBackoff,
     TaskArtifactPurpose,
     TaskArtifactState,
     TaskAttemptState,
@@ -28,6 +30,7 @@ from avalan.task import (
     TaskObservabilityPolicy,
     TaskOutputContract,
     TaskOutputType,
+    TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
@@ -357,6 +360,49 @@ class StructuredTarget(TaskTargetRunner):
         return self.output
 
 
+class FlakyTextSummaryTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.definition_refs: list[str] = []
+        self.input_values: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = context
+        self.definition_refs.append(definition.execution.ref)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.input_values.append(context.input_value)
+        attempt_number = len(self.input_values)
+        await context.check_cancelled()
+        if context.event_listener is not None:
+            event_result = context.event_listener(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={
+                        "status": "retrying",
+                        "token": f"private-token-{attempt_number}",
+                        "token_id": attempt_number,
+                    },
+                )
+            )
+            if event_result is not None:
+                await event_result
+        await context.observe_usage(
+            SimpleNamespace(
+                input_token_count=attempt_number,
+                output_token_count=attempt_number + 2,
+                total_token_count=(attempt_number * 2) + 2,
+            )
+        )
+        if attempt_number == 1:
+            raise OSError("private transient path /tmp/customer-secret.txt")
+        return "public retry summary"
+
+
 class DirectCancellingTarget(TaskTargetRunner):
     def __init__(
         self,
@@ -501,6 +547,98 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(sdk_inspection.run.state, TaskRunState.SUCCEEDED)
         self.assertNotIn("private text prompt", str(toml_inspection.as_dict()))
         self.assertNotIn("private text prompt", str(sdk_inspection.as_dict()))
+
+    async def test_loaded_text_task_retries_and_inspects_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = replace(
+                TaskDefinitionLoader().load(_write_text_task_workspace(root)),
+                retry=TaskRetryPolicy(
+                    max_attempts=2,
+                    backoff=RetryBackoff.LINEAR,
+                ),
+                observability=TaskObservabilityPolicy(
+                    metrics=True,
+                    trace=False,
+                    capture_events=True,
+                ),
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = FlakyTextSummaryTarget()
+            delays: list[float] = []
+
+            async def sleep(delay: float) -> None:
+                delays.append(delay)
+
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-text-retry-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                sleep=sleep,
+            )
+
+            validation = await client.validate(
+                definition,
+                input_value="private retry prompt",
+            )
+            result = await client.run(
+                definition,
+                input_value="private retry prompt",
+                metadata={"tenant": "safe"},
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+            events_after_first = await client.events(
+                result.run.run_id,
+                after_sequence=1,
+            )
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(
+            target.definition_refs, ["agents/summarizer.toml"] * 2
+        )
+        self.assertEqual(
+            target.input_values,
+            ["private retry prompt", "private retry prompt"],
+        )
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.SUCCEEDED)
+        self.assertEqual(result.attempt.attempt_number, 2)
+        self.assertEqual(result.output, "public retry summary")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.output_summary, {"privacy": "<redacted>"})
+        self.assertEqual(delays, [1])
+        self.assertEqual(
+            [attempt.state for attempt in inspection.attempts],
+            [TaskAttemptState.FAILED, TaskAttemptState.SUCCEEDED],
+        )
+        first_error = cast(
+            Mapping[str, object],
+            inspection.attempts[0].result.error,
+        )
+        self.assertEqual(first_error["category"], "infra")
+        self.assertEqual(first_error["code"], "infra.failure")
+        attempt_details = cast(Mapping[str, object], first_error["attempt"])
+        self.assertEqual(attempt_details["failed_attempt_count"], 1)
+        self.assertEqual(attempt_details["max_attempts"], 2)
+        self.assertEqual(len(inspection.events), 2)
+        self.assertEqual(events_after_first, (inspection.events[1],))
+        self.assertEqual(inspection.usage_totals.input_tokens, 3)
+        self.assertEqual(inspection.usage_totals.output_tokens, 7)
+        self.assertEqual(inspection.usage_totals.total_tokens, 10)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private retry prompt", inspection_value)
+        self.assertNotIn("private transient path", inspection_value)
+        self.assertNotIn("customer-secret", inspection_value)
+        self.assertNotIn("private-token", inspection_value)
+        self.assertNotIn("token_id", inspection_value)
 
     async def test_loaded_structured_task_runs_directly_and_redacts_output(
         self,
