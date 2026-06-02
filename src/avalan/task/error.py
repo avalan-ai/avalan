@@ -160,6 +160,8 @@ def classify_task_error(error: BaseException) -> TaskError:
     if isinstance(error, AsyncTimeoutError):
         return TaskError.timeout()
     if isinstance(error, TaskValidationError):
+        if _is_output_contract_error(error.issues):
+            return TaskError.output_contract(error.issues)
         return TaskError.input_contract(error.issues)
     if isinstance(error, MemoryError):
         return TaskError.budget()
@@ -168,6 +170,15 @@ def classify_task_error(error: BaseException) -> TaskError:
     if isinstance(error, OSError):
         return TaskError.infra()
     return TaskError.runnable()
+
+
+def _is_output_contract_error(
+    issues: tuple[TaskValidationIssue, ...],
+) -> bool:
+    return all(
+        issue.code.startswith("output.") or issue.path.startswith("output")
+        for issue in issues
+    )
 
 
 def _freeze_details(

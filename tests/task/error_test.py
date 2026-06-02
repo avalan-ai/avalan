@@ -83,6 +83,20 @@ class TaskErrorTest(TestCase):
                 ),
                 TaskErrorCategory.INPUT_CONTRACT,
             ),
+            (
+                TaskValidationError(
+                    (
+                        TaskValidationIssue(
+                            code="output.invalid_type",
+                            path="output",
+                            message="private output is invalid",
+                            hint="Return a valid output.",
+                            category=TaskValidationCategory.VALUE,
+                        ),
+                    )
+                ),
+                TaskErrorCategory.OUTPUT_CONTRACT,
+            ),
             (MemoryError("secret"), TaskErrorCategory.BUDGET),
             (OSError("secret"), TaskErrorCategory.INFRA),
             (

@@ -41,7 +41,6 @@ from avalan.task import (
     TaskTargetRunner,
     TaskValidationCategory,
     TaskValidationContext,
-    TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
 )
@@ -599,8 +598,13 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.queue.completed)
         assert self.queue.completed is not None
         self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        assert self.queue.completed.run.result is not None
+        self.assertEqual(
+            self.queue.completed.run.result.error["code"],
+            "output_contract.failed",
+        )
 
-    async def test_process_once_reports_invalid_target(self) -> None:
+    async def test_process_once_finalizes_invalid_target(self) -> None:
         worker = TaskWorker(
             self.store,
             cast(object, self.queue),
@@ -609,8 +613,22 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             clock=lambda: self.now,
         )
 
-        with self.assertRaises(TaskValidationError):
-            await worker.process_once()
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNone(result.retry)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertEqual(
+            self.queue.completed.attempt.state,
+            TaskAttemptState.FAILED,
+        )
+        assert self.queue.completed.run.result is not None
+        self.assertEqual(
+            self.queue.completed.run.result.error["code"],
+            "input_contract.failed",
+        )
 
     async def test_check_cancelled_raises_cancelled_error(self) -> None:
         worker = TaskWorker(

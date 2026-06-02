@@ -136,10 +136,10 @@ class TaskWorker:
         definition = (
             await self._store.get_definition(claim.run.definition_id)
         ).definition
-        await self._validate_target(definition)
         sanitizer = self._sanitizer(definition)
         run, attempt = await self._start_claimed_attempt(claim)
         try:
+            await self._validate_target(definition)
             output = await self._execute(
                 definition,
                 run=run,
