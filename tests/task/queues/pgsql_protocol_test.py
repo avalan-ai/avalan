@@ -229,9 +229,12 @@ class FakeCursor:
             'UPDATE "task_runs"' in query
             and '"claim" = CASE' in query
             and '"state" = %s' in query
-            and "%s IS NULL" not in query
         ):
-            self.row = self._transition_claimed_run(params)
+            self.row = (
+                self._transition_run(params)
+                if "%s::text" in query
+                else self._transition_claimed_run(params)
+            )
         elif 'UPDATE "task_runs"' in query and "jsonb_set" in query:
             self.row = self._heartbeat_run_claim(params)
         elif 'UPDATE "task_runs"' in query and '"last_attempt_id"' in query:
@@ -336,6 +339,7 @@ class FakeCursor:
         if (
             row is None
             or row["state"] != params[5]
+            or (params[6] is None and claim is not None)
             or (
                 params[6] is not None
                 and (claim is None or claim.get("claim_token") != params[7])

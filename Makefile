@@ -1,6 +1,7 @@
-REAL_TARGETS := install lint test tests test-coverage version release
-TEST_ARGS := $(filter-out test tests,$(MAKECMDGOALS))
+REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage version release
+TEST_ARGS := $(filter-out test tests test-pgsql tests-pgsql,$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
+TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
 
 ifneq ($(filter coverage,$(TEST_ARGS)),)
 PYTEST_ARGS += --cov=src/ --cov-report=xml
@@ -26,13 +27,26 @@ ifeq ($(filter no-install,$(TEST_ARGS)),)
 	poetry sync --all-extras --with test
 endif
 ifneq ($(strip $(AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN)),)
-	poetry run python scripts/task_pgsql_test_database.py -- $(PYTEST_ARGS)
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run -- python scripts/task_pgsql_test_database.py -- $(PYTEST_ARGS)
+else ifneq ($(strip $(AVALAN_TASK_TEST_POSTGRESQL_DOCKER)),)
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run -- python scripts/task_pgsql_test_database.py --docker -- $(PYTEST_ARGS)
 else
 	poetry run pytest $(PYTEST_ARGS)
 endif
 
-.PHONY: test tests
+.PHONY: test tests test-pgsql tests-pgsql
 tests: test
+
+test-pgsql:
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run -- python scripts/task_pgsql_test_database.py --docker -- $(PYTEST_ARGS)
+
+tests-pgsql: test-pgsql
 
 test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))

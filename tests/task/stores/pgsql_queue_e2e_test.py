@@ -60,7 +60,11 @@ class RecordingTarget(TaskTargetRunner):
             self.failures -= 1
             raise OSError("private backend path")
         await context.observe_usage(
-            SimpleNamespace(input_token_count=3, output_token_count=5)
+            SimpleNamespace(
+                input_token_count=3,
+                output_token_count=5,
+                total_token_count=8,
+            )
         )
         return "safe output"
 

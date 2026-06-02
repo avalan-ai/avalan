@@ -136,6 +136,9 @@ class FakeSqlalchemyConnection:
     def __init__(self) -> None:
         self.executed: list[tuple[object, object | None]] = []
 
+    def begin(self) -> FakeTransaction:
+        return FakeTransaction()
+
     def execute(
         self,
         statement: object,

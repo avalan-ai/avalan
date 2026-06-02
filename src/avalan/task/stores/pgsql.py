@@ -91,6 +91,7 @@ from inspect import isawaitable
 from json import dumps, loads
 from pathlib import Path
 from re import fullmatch
+from threading import Lock
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -100,6 +101,7 @@ TASK_PGSQL_ADVISORY_LOCK_ID = 8_172_673_911_930_301_927
 _TASK_PGSQL_REVISION_MODULE = (
     "avalan.task.stores.pgsql_migrations.versions.v20260530_0001_task_schema"
 )
+_TASK_PGSQL_ALEMBIC_LOCK = Lock()
 
 ModuleImporter = Callable[[str], object]
 TaskPgsqlState = TaskRunState | TaskAttemptState
@@ -1369,7 +1371,8 @@ def _run_alembic_command(
     config = task_pgsql_alembic_config(settings)
     command_module = cast(Any, settings.module_importer("alembic.command"))
     command = getattr(command_module, command_name)
-    command(config, *args, **kwargs)
+    with _TASK_PGSQL_ALEMBIC_LOCK:
+        command(config, *args, **kwargs)
 
 
 def _assert_revision(value: str) -> None:
@@ -1430,8 +1433,8 @@ SET "state" = %s,
 WHERE "run_id" = %s
   AND "state" = %s
   AND (
-      (%s IS NULL AND "claim" IS NULL)
-      OR ("claim"->>'claim_token') = %s
+      (%s::text IS NULL AND "claim" IS NULL)
+      OR ("claim"->>'claim_token') = %s::text
   )
 RETURNING *
 """
@@ -1451,8 +1454,8 @@ SET "last_attempt_id" = %s, "updated_at" = %s
 WHERE "run_id" = %s
   AND "state" = %s
   AND (
-      (%s IS NULL AND "claim" IS NULL)
-      OR ("claim"->>'claim_token') = %s
+      (%s::text IS NULL AND "claim" IS NULL)
+      OR ("claim"->>'claim_token') = %s::text
   )
 RETURNING *
 """
@@ -1497,8 +1500,8 @@ WHERE a."attempt_id" = %s
   AND r."run_id" = %s
   AND r."state" = %s
   AND (
-      (%s IS NULL AND r."claim" IS NULL)
-      OR (r."claim"->>'claim_token') = %s
+      (%s::text IS NULL AND r."claim" IS NULL)
+      OR (r."claim"->>'claim_token') = %s::text
   )
 RETURNING a.*
 """
@@ -1531,8 +1534,8 @@ RETURNING *
 _SELECT_EVENTS_SQL = """
 SELECT * FROM "task_events"
 WHERE "run_id" = %s
-  AND (%s IS NULL OR "attempt_id" = %s)
-  AND (%s IS NULL OR "sequence" > %s)
+  AND (%s::text IS NULL OR "attempt_id" = %s::text)
+  AND (%s::integer IS NULL OR "sequence" > %s::integer)
 ORDER BY "sequence", "created_at", "event_id"
 """
 _SELECT_NEXT_USAGE_SEQUENCE_SQL = """
@@ -1553,7 +1556,7 @@ RETURNING *
 _SELECT_USAGE_SQL = """
 SELECT * FROM "task_usage_records"
 WHERE "run_id" = %s
-  AND (%s IS NULL OR "attempt_id" = %s)
+  AND (%s::text IS NULL OR "attempt_id" = %s::text)
 ORDER BY "sequence", "created_at", "usage_id"
 """
 _INSERT_ARTIFACT_SQL = """
@@ -1572,9 +1575,9 @@ SELECT * FROM "task_artifacts" WHERE "artifact_id" = %s
 _SELECT_ARTIFACTS_SQL = """
 SELECT * FROM "task_artifacts"
 WHERE "run_id" = %s
-  AND (%s IS NULL OR "attempt_id" = %s)
-  AND (%s IS NULL OR "purpose" = %s)
-  AND (%s IS NULL OR "state" = %s)
+  AND (%s::text IS NULL OR "attempt_id" = %s::text)
+  AND (%s::text IS NULL OR "purpose" = %s::text)
+  AND (%s::text IS NULL OR "state" = %s::text)
 ORDER BY "created_at", "artifact_id"
 """
 _UPDATE_ARTIFACT_STATE_SQL = """

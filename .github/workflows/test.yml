@@ -119,7 +119,12 @@ jobs:
         if: matrix.target.os == 'ubuntu-latest'
         run: poetry run pip install "mlx-lm[cpu]==0.31.3"
 
+      - name: Run tests with PostgreSQL e2e coverage analysis
+        if: matrix.target.os == 'ubuntu-latest'
+        run: make test-pgsql coverage no-install
+
       - name: Run tests with coverage analysis
+        if: matrix.target.os != 'ubuntu-latest'
         run: make test coverage no-install
 
       - name: Upload coverage to Coveralls

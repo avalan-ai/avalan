@@ -86,8 +86,10 @@ Set `AVALAN_TASK_PGSQL_DSN` before running migration diagnostics, and set
 `AVALAN_TASK_PGSQL_SCHEMA` when using an isolated schema.
 
 Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL
-verification tests against an existing test database. Set
-`AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN` before `make test` to create and drop a
-throwaway database for the migration and queue e2e tests. Set
+verification tests against an existing test database. Run `make test-pgsql` to
+start a throwaway PostgreSQL container with Docker, create and drop a temporary
+test database, and run the full suite including migration and queue e2e tests.
+Set `AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN` before `make test` to run the same
+temporary database flow against an existing PostgreSQL server. Set
 `AVALAN_TASK_BENCHMARK_POSTGRESQL_DSN` only when running the opt-in EXPLAIN
 benchmark checks.

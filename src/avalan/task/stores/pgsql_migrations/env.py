@@ -35,16 +35,15 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        _prepare_connection(connection)
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            version_table=_version_table(),
-            version_table_schema=_task_schema(),
-            include_schemas=_task_schema() is not None,
-        )
-
-        with context.begin_transaction():
+        with connection.begin():
+            _prepare_connection(connection)
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                version_table=_version_table(),
+                version_table_schema=_task_schema(),
+                include_schemas=_task_schema() is not None,
+            )
             context.run_migrations()
 
 
