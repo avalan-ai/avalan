@@ -10,6 +10,10 @@ from unittest.mock import patch
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 from avalan.task import (
+    DROPPED_MARKER,
+    ENCRYPTED_MARKER,
+    HASHED_MARKER,
+    REDACTED_MARKER,
     STORED_MARKER,
     DirectTaskRunner,
     PrivacyAction,
@@ -374,6 +378,61 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             {"reserved": "private spoofed input", "limit": 3},
         )
 
+    async def test_run_isolates_object_input_from_node_mutation(self) -> None:
+        def mutate(inputs: dict[str, object]) -> dict[str, object]:
+            nested = cast(dict[str, object], inputs["nested"])
+            items = cast(list[str], nested["items"])
+            items.append("mutated")
+            full_input = cast(dict[str, object], inputs[FLOW_TASK_INPUT_KEY])
+            full_nested = cast(dict[str, object], full_input["nested"])
+            return {
+                "field": tuple(items),
+                "full": tuple(cast(list[str], full_nested["items"])),
+            }
+
+        flow = Flow()
+        flow.add_node(Node("A", func=mutate))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        input_value = {"nested": {"items": ["original"]}}
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.object(
+                        {
+                            "type": "object",
+                            "required": ["nested"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "nested": {
+                                    "type": "object",
+                                    "required": ["items"],
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "items": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                },
+                            },
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(),
+                ),
+                input_value=input_value,
+            )
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "field": ("original", "mutated"),
+                "full": ("original",),
+            },
+        )
+        self.assertEqual(input_value, {"nested": {"items": ["original"]}})
+
     async def test_run_binds_scalar_input_value(self) -> None:
         flow = Flow()
         flow.add_node(
@@ -433,6 +492,59 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "ready!")
+
+    async def test_run_accepts_plain_queued_input(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY] + "!",
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value="ready",
+            )
+        )
+
+        self.assertEqual(result, "ready!")
+
+    async def test_run_rejects_unavailable_queued_input_safely(self) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: "unused output"))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        for marker in (
+            DROPPED_MARKER,
+            ENCRYPTED_MARKER,
+            HASHED_MARKER,
+            REDACTED_MARKER,
+        ):
+            with self.subTest(marker=marker):
+                with self.assertRaises(TaskValidationError) as error:
+                    await runner.run(
+                        self._context(
+                            definition=self._context_definition(
+                                run=TaskRunPolicy.queued("default"),
+                            ),
+                            input_value={
+                                "privacy": marker,
+                                "raw": "private prompt",
+                            },
+                        )
+                    )
+
+                self.assertEqual(
+                    error.exception.issues[0].code,
+                    "execution.unsupported_flow",
+                )
+                self.assertNotIn("private prompt", str(error.exception))
+                self.assertNotIn("unused output", str(error.exception))
 
     async def test_run_rejects_multiple_start_nodes_safely(self) -> None:
         flow = Flow()
@@ -598,6 +710,83 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, {"status": "ready", "count": 2})
+
+    async def test_direct_runner_keeps_flow_input_mutation_local(
+        self,
+    ) -> None:
+        def mutate(inputs: dict[str, object]) -> dict[str, object]:
+            nested = cast(dict[str, object], inputs["nested"])
+            items = cast(list[str], nested["items"])
+            items.append("mutated")
+            full_input = cast(dict[str, object], inputs[FLOW_TASK_INPUT_KEY])
+            full_nested = cast(dict[str, object], full_input["nested"])
+            return {
+                "field": items,
+                "full": cast(list[str], full_nested["items"]),
+            }
+
+        flow = Flow()
+        flow.add_node(Node("A", func=mutate))
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-input-isolation",
+        )
+        input_value = {"nested": {"items": ["original"]}}
+
+        result = await runner.run(
+            self._definition(
+                input_contract=TaskInputContract.object(
+                    {
+                        "type": "object",
+                        "required": ["nested"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "nested": {
+                                "type": "object",
+                                "required": ["items"],
+                                "additionalProperties": False,
+                                "properties": {
+                                    "items": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                },
+                            },
+                        },
+                    }
+                ),
+                output_contract=TaskOutputContract.object(
+                    {
+                        "type": "object",
+                        "required": ["field", "full"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "field": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "full": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                    }
+                ),
+            ),
+            input_value=input_value,
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            result.output,
+            {
+                "field": ["original", "mutated"],
+                "full": ["original"],
+            },
+        )
+        self.assertEqual(input_value, {"nested": {"items": ["original"]}})
 
     async def test_direct_runner_persists_sanitized_flow_events(self) -> None:
         flow = Flow()
@@ -821,6 +1010,46 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
                     "limit": 2,
                 },
                 "limit": 2,
+            },
+        )
+
+    def test_input_binding_isolates_nested_object_mutation(self) -> None:
+        value = {"nested": {"items": ["original"]}}
+        binding = flow_task_input_binding(value)
+        nested = cast(dict[str, object], binding["nested"])
+        cast(list[str], nested["items"]).append("mutated")
+        full_input = cast(dict[str, object], binding[FLOW_TASK_INPUT_KEY])
+        full_nested = cast(dict[str, object], full_input["nested"])
+
+        self.assertEqual(
+            cast(list[str], nested["items"]),
+            ["original", "mutated"],
+        )
+        self.assertEqual(cast(list[str], full_nested["items"]), ["original"])
+        self.assertEqual(value, {"nested": {"items": ["original"]}})
+
+    def test_input_binding_isolates_nested_array_mutation(self) -> None:
+        value = [{"items": ["original"]}]
+        binding = flow_task_input_binding(value)
+        field_items = cast(tuple[object, ...], binding["items"])
+        field_item = cast(dict[str, object], field_items[0])
+        cast(list[str], field_item["items"]).append("mutated")
+        full_items = cast(tuple[object, ...], binding[FLOW_TASK_INPUT_KEY])
+        full_item = cast(dict[str, object], full_items[0])
+
+        self.assertEqual(
+            cast(list[str], field_item["items"]),
+            ["original", "mutated"],
+        )
+        self.assertEqual(cast(list[str], full_item["items"]), ["original"])
+        self.assertEqual(value, [{"items": ["original"]}])
+
+    def test_input_binding_copies_nested_tuple_values(self) -> None:
+        self.assertEqual(
+            flow_task_input_binding([("first", "second")]),
+            {
+                FLOW_TASK_INPUT_KEY: (("first", "second"),),
+                "items": (("first", "second"),),
             },
         )
 

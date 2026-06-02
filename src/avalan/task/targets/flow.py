@@ -234,18 +234,37 @@ def _validate_flow_contracts(
 
 def flow_task_input_binding(value: object) -> dict[str, object]:
     if isinstance(value, Mapping):
-        binding = dict(value)
-        binding[FLOW_TASK_INPUT_KEY] = dict(value)
+        binding = _copy_mapping(value)
+        binding[FLOW_TASK_INPUT_KEY] = _copy_mapping(value)
         return binding
     if isinstance(value, list | tuple):
+        items = tuple(_copy_task_input_value(item) for item in value)
         return {
-            FLOW_TASK_INPUT_KEY: tuple(value),
-            "items": tuple(value),
+            FLOW_TASK_INPUT_KEY: items,
+            "items": tuple(_copy_task_input_value(item) for item in value),
         }
     return {
-        FLOW_TASK_INPUT_KEY: value,
-        "value": value,
+        FLOW_TASK_INPUT_KEY: _copy_task_input_value(value),
+        "value": _copy_task_input_value(value),
     }
+
+
+def _copy_mapping(value: Mapping[object, object]) -> dict[str, object]:
+    copied: dict[str, object] = {}
+    for key, item in value.items():
+        assert isinstance(key, str), "task input keys must be strings"
+        copied[key] = _copy_task_input_value(item)
+    return copied
+
+
+def _copy_task_input_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _copy_mapping(value)
+    if isinstance(value, list):
+        return [_copy_task_input_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_task_input_value(item) for item in value)
+    return value
 
 
 def _task_input_value(context: TaskTargetContext) -> object:
