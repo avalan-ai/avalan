@@ -3,6 +3,7 @@ from ...cli.theme import Theme
 from ...pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from ...task import (
     REDACTED_MARKER,
+    FeatureGateDiagnostic,
     PrivacyField,
     PrivacySanitizationError,
     PrivacySanitizer,
@@ -12,6 +13,7 @@ from ...task import (
     TaskClientWaitTimeoutError,
     TaskDefinition,
     TaskDefinitionLoader,
+    TaskFeature,
     TaskInputType,
     TaskLoadIssue,
     TaskRunState,
@@ -20,6 +22,7 @@ from ...task import (
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
+    require_feature,
     validate_task_definition,
     validate_task_input,
 )
@@ -617,6 +620,10 @@ async def _task_worker(
     if dsn is None:
         _print_missing_store(console)
         return False
+    diagnostics = require_feature(TaskFeature.QUEUE_WORKERS)
+    if diagnostics:
+        _print_feature_gate_diagnostics(console, diagnostics)
+        return False
     processed = 0
     limit = (
         1
@@ -933,6 +940,20 @@ def _print_task_execution_error(
         console.print("error io.failure", markup=False)
         return
     console.print("error task.execution", markup=False)
+
+
+def _print_feature_gate_diagnostics(
+    console: Console,
+    diagnostics: Iterable[FeatureGateDiagnostic],
+) -> None:
+    rows = tuple(diagnostics)
+    console.print("Task feature is unavailable.", markup=False)
+    for diagnostic in rows:
+        console.print(
+            f"error {diagnostic.code} {diagnostic.message}",
+            markup=False,
+        )
+        console.print(diagnostic.hint, markup=False)
 
 
 def _print_task_result(

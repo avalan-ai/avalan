@@ -99,6 +99,34 @@ def test_task_extra_declares_jsonschema_dependency() -> None:
     assert requirements[0].marker is None
 
 
+def test_task_documents_extra_declares_document_dependencies() -> None:
+    markitdown_requirements = _requirements_by_name(
+        "task-documents",
+        "markitdown",
+    )
+    markdownify_requirements = _requirements_by_name(
+        "task-documents",
+        "markdownify",
+    )
+
+    assert len(markitdown_requirements) == 1
+    assert len(markdownify_requirements) == 1
+    assert markitdown_requirements[0].specifier == SpecifierSet(
+        ">=0.1.2,<0.2.0"
+    )
+    assert markitdown_requirements[0].extras == {"pdf"}
+    assert markdownify_requirements[0].specifier == SpecifierSet(
+        ">=1.1.0,<2.0.0"
+    )
+    assert markdownify_requirements[0].marker is None
+
+    markitdown_marker = markitdown_requirements[0].marker
+
+    assert markitdown_marker is not None
+    assert markitdown_marker.evaluate({"python_version": "3.13"})
+    assert not markitdown_marker.evaluate({"python_version": "3.14"})
+
+
 def test_task_pgsql_extra_declares_postgresql_dependencies() -> None:
     psycopg_requirements = _requirements_by_name("task-pgsql", "psycopg")
     binary_requirements = _requirements_by_name(

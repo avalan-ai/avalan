@@ -34,6 +34,7 @@ class TaskFeature(StrEnum):
     POSTGRESQL = "postgresql"
     POSTGRESQL_MIGRATIONS = "postgresql_migrations"
     PROMETHEUS = "prometheus"
+    QUEUE_WORKERS = "queue_workers"
     RAW_STORAGE = "raw_storage"
     REMOTE_URL_FILE_INPUTS = "remote_url_file_inputs"
     TASK_CLI = "task_cli"
@@ -81,7 +82,7 @@ _FEATURE_GATE_SPECS = {
         category=FeatureGateCategory.DEPENDENCY,
         message="Document conversion requires the task-documents extra.",
         hint="Install avalan[task-documents] to convert document inputs.",
-        modules=("markitdown",),
+        modules=("markdownify",),
     ),
     TaskFeature.FLOW_BACKED_TASKS: FeatureGateSpec(
         feature=TaskFeature.FLOW_BACKED_TASKS,
@@ -152,6 +153,19 @@ _FEATURE_GATE_SPECS = {
             "Install avalan[task-prometheus] before enabling Prometheus sinks."
         ),
         modules=("prometheus_client",),
+    ),
+    TaskFeature.QUEUE_WORKERS: FeatureGateSpec(
+        feature=TaskFeature.QUEUE_WORKERS,
+        code="dependency.task_worker_pgsql_missing",
+        path="worker.store.postgresql",
+        category=FeatureGateCategory.DEPENDENCY,
+        message="Task queue workers require the task-pgsql extra.",
+        hint="Install avalan[task-pgsql] before starting task workers.",
+        modules=("psycopg", "psycopg_pool"),
+        check_locations=(
+            FeatureGateCheckLocation.CLI,
+            FeatureGateCheckLocation.WORKER,
+        ),
     ),
     TaskFeature.RAW_STORAGE: FeatureGateSpec(
         feature=TaskFeature.RAW_STORAGE,

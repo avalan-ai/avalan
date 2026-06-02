@@ -154,6 +154,57 @@ class FeatureGateTest(TestCase):
         )
         self.assertEqual(seen_modules, ["alembic", "sqlalchemy"])
 
+    def test_document_conversion_gate_checks_task_document_modules(
+        self,
+    ) -> None:
+        diagnostics = require_feature(
+            TaskFeature.DOCUMENT_CONVERSION,
+            module_finder=self._missing_module,
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            "dependency.task_documents_missing",
+        )
+        self.assertIn("avalan[task-documents]", diagnostics[0].hint)
+
+        seen_modules: list[str] = []
+
+        def present_document_module(module: str) -> object | None:
+            seen_modules.append(module)
+            return object()
+
+        self.assertEqual(
+            require_feature(
+                TaskFeature.DOCUMENT_CONVERSION,
+                module_finder=present_document_module,
+            ),
+            (),
+        )
+        self.assertEqual(seen_modules, ["markdownify"])
+
+    def test_queue_worker_gate_requires_postgresql_dependencies(self) -> None:
+        diagnostics = require_feature(
+            TaskFeature.QUEUE_WORKERS,
+            module_finder=self._missing_module,
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].as_dict(),
+            {
+                "code": "dependency.task_worker_pgsql_missing",
+                "path": "worker.store.postgresql",
+                "category": "dependency",
+                "severity": "error",
+                "message": "Task queue workers require the task-pgsql extra.",
+                "hint": (
+                    "Install avalan[task-pgsql] before starting task workers."
+                ),
+            },
+        )
+
     def test_configuration_gate_requires_explicit_enablement(self) -> None:
         self.assertFalse(feature_available(TaskFeature.RAW_STORAGE))
         self.assertEqual(
@@ -216,6 +267,7 @@ class FeatureGateTest(TestCase):
                 "dependency.task_pgsql_migrations_missing"
             ),
             TaskFeature.PROMETHEUS: "dependency.task_prometheus_missing",
+            TaskFeature.QUEUE_WORKERS: "dependency.task_worker_pgsql_missing",
             TaskFeature.RAW_STORAGE: "feature.raw_storage_disabled",
             TaskFeature.REMOTE_URL_FILE_INPUTS: (
                 "feature.remote_url_file_inputs_disabled"
@@ -254,6 +306,13 @@ class FeatureGateTest(TestCase):
             (
                 FeatureGateCheckLocation.CLI,
                 FeatureGateCheckLocation.SDK,
+            ),
+        )
+        self.assertEqual(
+            gate_check_locations(TaskFeature.QUEUE_WORKERS),
+            (
+                FeatureGateCheckLocation.CLI,
+                FeatureGateCheckLocation.WORKER,
             ),
         )
         self.assertEqual(

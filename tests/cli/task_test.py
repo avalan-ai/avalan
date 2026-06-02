@@ -566,6 +566,37 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertFalse(result)
         self.assertIn("store.missing", console.export_text())
 
+    def test_worker_reports_missing_dependency_gate(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "require_feature",
+            return_value=(
+                SimpleNamespace(
+                    code="dependency.task_worker_pgsql_missing",
+                    message="Task queue workers require the task-pgsql extra.",
+                    hint="Install avalan[task-pgsql] before starting workers.",
+                ),
+            ),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="default",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.task_worker_pgsql_missing", output)
+        self.assertIn("avalan[task-pgsql]", output)
+        self.assertNotIn("postgresql://db/tasks", output)
+
     def test_run_rejects_queued_definition(self) -> None:
         console = Console(record=True, width=160)
 
@@ -945,6 +976,7 @@ class CliTaskCommandShellTestCase(TestCase):
             patch.object(
                 task_cmds, "_task_pgsql_database", return_value=database
             ),
+            patch.object(task_cmds, "require_feature", return_value=()),
             patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
             patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
             patch.object(
@@ -977,10 +1009,13 @@ class CliTaskCommandShellTestCase(TestCase):
     def test_worker_reports_startup_error(self) -> None:
         console = Console(record=True, width=160)
 
-        with patch.object(
-            task_cmds,
-            "_task_pgsql_database",
-            side_effect=OSError("private dsn"),
+        with (
+            patch.object(
+                task_cmds,
+                "_task_pgsql_database",
+                side_effect=OSError("private dsn"),
+            ),
+            patch.object(task_cmds, "require_feature", return_value=()),
         ):
             result = task_cmds.task_worker(
                 Namespace(
