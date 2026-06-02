@@ -1087,13 +1087,18 @@ def _sanitize_output_artifact(
             artifact.retention,
             sanitizer,
         ),
-        metadata=_sanitize_output_metadata(artifact.metadata, sanitizer),
+        metadata=_sanitize_metadata(
+            artifact.metadata,
+            sanitizer,
+            PrivacyField.OUTPUT,
+        ),
     )
 
 
 def _sanitize_artifact_ref(
     ref: TaskArtifactRef,
     sanitizer: PrivacySanitizer,
+    field: PrivacyField = PrivacyField.OUTPUT,
 ) -> TaskArtifactRef:
     if not ref.metadata:
         return ref
@@ -1104,7 +1109,7 @@ def _sanitize_artifact_ref(
         media_type=ref.media_type,
         size_bytes=ref.size_bytes,
         sha256=ref.sha256,
-        metadata=_sanitize_output_metadata(ref.metadata, sanitizer),
+        metadata=_sanitize_metadata(ref.metadata, sanitizer, field),
     )
 
 
@@ -1120,7 +1125,11 @@ def _sanitize_artifact_provenance(
         source_attempt_id=provenance.source_attempt_id,
         operation=provenance.operation,
         converter=provenance.converter,
-        metadata=_sanitize_output_metadata(provenance.metadata, sanitizer),
+        metadata=_sanitize_metadata(
+            provenance.metadata,
+            sanitizer,
+            PrivacyField.OUTPUT,
+        ),
     )
 
 
@@ -1134,17 +1143,22 @@ def _sanitize_artifact_retention(
         expires_at=retention.expires_at,
         delete_after_days=retention.delete_after_days,
         retain_metadata=retention.retain_metadata,
-        metadata=_sanitize_output_metadata(retention.metadata, sanitizer),
+        metadata=_sanitize_metadata(
+            retention.metadata,
+            sanitizer,
+            PrivacyField.OUTPUT,
+        ),
     )
 
 
-def _sanitize_output_metadata(
+def _sanitize_metadata(
     metadata: TaskSnapshotMetadata,
     sanitizer: PrivacySanitizer,
+    field: PrivacyField,
 ) -> TaskSnapshotMetadata:
     if not metadata:
         return metadata
-    safe_metadata = sanitizer.sanitize(PrivacyField.OUTPUT, metadata)
+    safe_metadata = sanitizer.sanitize(field, metadata)
     assert isinstance(safe_metadata, Mapping)
     return freeze_snapshot_metadata(cast(Mapping[str, object], safe_metadata))
 

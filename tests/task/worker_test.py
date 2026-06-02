@@ -94,6 +94,7 @@ class ArtifactOutputTarget(FakeTarget):
             storage_key="output.txt",
             media_type="text/plain",
             size_bytes=7,
+            metadata={"filename": "private-output.txt"},
         )
 
 
@@ -555,6 +556,8 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].state, TaskArtifactState.READY)
         self.assertEqual(records[0].retention.delete_after_days, 3)
+        self.assertEqual(records[0].ref.metadata, {"privacy": "<redacted>"})
+        self.assertNotIn("private-output", str(records))
 
     async def test_process_once_records_usage_observations(self) -> None:
         worker = TaskWorker(

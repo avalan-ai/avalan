@@ -1154,6 +1154,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(artifacts[0].artifact_id, "explicit-input-e2e")
         self.assertEqual(artifacts[0].purpose, TaskArtifactPurpose.INPUT)
         self.assertEqual(artifacts[0].state, TaskArtifactState.READY)
+        self.assertIn("privacy", artifacts[0].ref.metadata)
         self.assertEqual(len(inspection.artifacts), 1)
         self.assertEqual(len(inspection.attempts), 1)
         self.assertEqual(
@@ -1164,6 +1165,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private explicit attachment", inspection_value)
         self.assertNotIn("private prompt with attachment", inspection_value)
         self.assertNotIn("private.txt", inspection_value)
+        self.assertNotIn("private.txt", str(artifacts))
 
     async def test_output_artifact_task_runs_through_queue_and_inspection(
         self,
@@ -1233,6 +1235,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].state, TaskArtifactState.READY)
         self.assertEqual(records[0].purpose, TaskArtifactPurpose.OUTPUT)
         self.assertEqual(records[0].retention.delete_after_days, 5)
+        self.assertEqual(records[0].ref.metadata, {"privacy": "<redacted>"})
         self.assertEqual(len(inspection.artifacts), 1)
         artifact = inspection.artifacts[0]
         assert isinstance(artifact, Mapping)
@@ -1240,6 +1243,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(artifact["state"], TaskArtifactState.READY.value)
         self.assertNotIn("private generated report", str(inspection.as_dict()))
         self.assertNotIn("private artifact prompt", str(inspection.as_dict()))
+        self.assertNotIn("report.txt", str(records))
 
     async def test_cancelled_queued_submission_is_not_claimed(
         self,

@@ -29,6 +29,7 @@ from .runner import (
     _output_artifact_retention,
     _output_artifacts_from_output,
     _output_summary_value,
+    _sanitize_output_artifact,
     _snapshot_value,
     _task_error_with_attempt_counts,
 )
@@ -219,6 +220,7 @@ class TaskWorker:
             output,
             run=run,
             attempt=attempt,
+            sanitizer=sanitizer,
         )
         await self._check_cancelled(run.run_id)
         return output
@@ -369,17 +371,25 @@ class TaskWorker:
         *,
         run: TaskRun,
         attempt: TaskAttempt,
+        sanitizer: PrivacySanitizer,
     ) -> None:
         for artifact in _output_artifacts_from_output(definition, output):
+            safe_artifact = _sanitize_output_artifact(
+                artifact,
+                sanitizer,
+            )
             await self._store.append_artifact(
                 run.run_id,
-                ref=artifact.ref,
+                ref=safe_artifact.ref,
                 purpose=TaskArtifactPurpose.OUTPUT,
-                state=artifact.state,
+                state=safe_artifact.state,
                 attempt_id=attempt.attempt_id,
-                provenance=artifact.provenance,
-                retention=_output_artifact_retention(definition, artifact),
-                metadata=artifact.metadata,
+                provenance=safe_artifact.provenance,
+                retention=_output_artifact_retention(
+                    definition,
+                    safe_artifact,
+                ),
+                metadata=safe_artifact.metadata,
             )
 
     async def _record_usage(

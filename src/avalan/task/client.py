@@ -33,6 +33,7 @@ from .runner import (
     TaskDirectTarget,
     TaskRunResult,
     _input_summary_value,
+    _sanitize_artifact_ref,
     _snapshot_value,
 )
 from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
@@ -571,7 +572,11 @@ class TaskClient:
             assert isinstance(metadata, Mapping)
             artifacts.append(
                 TaskQueueArtifact(
-                    ref=file.artifact_ref,
+                    ref=_sanitize_artifact_ref(
+                        file.artifact_ref,
+                        sanitizer,
+                        PrivacyField.FILES,
+                    ),
                     purpose=TaskArtifactPurpose.INPUT,
                     provenance=TaskArtifactProvenance(
                         operation="client_attachment",

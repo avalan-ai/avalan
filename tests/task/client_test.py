@@ -546,6 +546,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             media_type="application/pdf",
             size_bytes=42,
             sha256="a" * 64,
+            metadata={"filename": "private-ref.pdf"},
         )
 
         submission = await client.enqueue(
@@ -569,19 +570,24 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         artifacts = await store.list_artifacts(submission.run.run_id)
 
         self.assertEqual(len(queue.artifacts), 1)
-        self.assertEqual(queue.artifacts[0].ref, ref)
+        self.assertEqual(queue.artifacts[0].ref.artifact_id, ref.artifact_id)
+        self.assertIn("privacy", queue.artifacts[0].ref.metadata)
+        self.assertNotIn("private-ref", str(queue.artifacts[0].ref.metadata))
         self.assertEqual(
             queue.artifacts[0].provenance.operation,
             "client_attachment",
         )
         self.assertEqual(len(artifacts), 1)
-        self.assertEqual(artifacts[0].ref, ref)
+        self.assertEqual(artifacts[0].ref.artifact_id, ref.artifact_id)
+        self.assertIn("privacy", artifacts[0].ref.metadata)
+        self.assertNotIn("private-ref", str(artifacts[0].ref.metadata))
         self.assertIn("privacy", queue.artifacts[0].metadata)
         self.assertNotIn("private-report", str(queue.artifacts[0].metadata))
         self.assertNotIn(
             "private-report",
             str(queue.artifacts[0].provenance.metadata),
         )
+        self.assertNotIn("private-ref", str(artifacts))
 
     async def test_enqueue_rejects_non_durable_explicit_files(self) -> None:
         store = InMemoryTaskStore()
