@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -635,6 +635,81 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(inspection.usage_totals.total_tokens, 10)
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("private retry prompt", inspection_value)
+        self.assertNotIn("private transient path", inspection_value)
+        self.assertNotIn("customer-secret", inspection_value)
+        self.assertNotIn("private-token", inspection_value)
+        self.assertNotIn("token_id", inspection_value)
+
+    async def test_direct_retry_expiry_finalizes_safely(self) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            current_time = datetime(2026, 1, 1, tzinfo=UTC)
+            expires_at = current_time + timedelta(seconds=1)
+            definition = replace(
+                TaskDefinitionLoader().load(_write_text_task_workspace(root)),
+                retry=TaskRetryPolicy(
+                    max_attempts=2,
+                    backoff=RetryBackoff.LINEAR,
+                ),
+                observability=TaskObservabilityPolicy(
+                    metrics=True,
+                    trace=False,
+                    capture_events=True,
+                ),
+            )
+            store = InMemoryTaskStore(clock=lambda: current_time)
+            target = FlakyTextSummaryTarget()
+            delays: list[float] = []
+
+            async def sleep(delay: float) -> None:
+                nonlocal current_time
+                delays.append(delay)
+                current_time += timedelta(seconds=delay)
+
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-retry-expiry-e2e",
+                clock=lambda: current_time,
+                sleep=sleep,
+            )
+
+            result = await client.run(
+                definition,
+                input_value="private expiring prompt",
+                metadata={"tenant": "safe"},
+                expires_at=expires_at,
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(delays, [1])
+        self.assertEqual(
+            target.definition_refs,
+            ["agents/summarizer.toml"],
+        )
+        self.assertEqual(target.input_values, ["private expiring prompt"])
+        self.assertEqual(result.run.state, TaskRunState.EXPIRED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.EXPIRED)
+        error_summary = cast(Mapping[str, object], output.error)
+        self.assertEqual(error_summary["category"], "timeout")
+        self.assertEqual(error_summary["code"], "timeout.exceeded")
+        details = cast(Mapping[str, object], error_summary["details"])
+        self.assertEqual(details["scope"], "run")
+        self.assertEqual(
+            [attempt.state for attempt in inspection.attempts],
+            [TaskAttemptState.FAILED],
+        )
+        self.assertEqual(len(inspection.events), 1)
+        self.assertEqual(inspection.usage_totals.input_tokens, 1)
+        self.assertEqual(inspection.usage_totals.output_tokens, 3)
+        self.assertEqual(inspection.usage_totals.total_tokens, 4)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private expiring prompt", inspection_value)
         self.assertNotIn("private transient path", inspection_value)
         self.assertNotIn("customer-secret", inspection_value)
         self.assertNotIn("private-token", inspection_value)

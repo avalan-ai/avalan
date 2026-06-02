@@ -1286,6 +1286,48 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("customer-secret", str(inspection.as_dict()))
         self.assertNotIn("private retry prompt", str(inspection.as_dict()))
 
+    async def test_invalid_structured_queue_input_is_rejected_safely(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = StructuredQueueTarget(
+            (
+                {
+                    "status": "ready",
+                    "count": 1,
+                    "summary": "unused private summary",
+                },
+            )
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(
+                _structured_definition(),
+                input_value={
+                    "prompt": "private structured prompt",
+                    "limit": 0,
+                },
+                queue_metadata={"tenant": "safe"},
+            )
+        idle = await worker.process_once()
+        depth = await queue.depth("default")
+
+        self.assertEqual(len(error.exception.issues), 1)
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_type")
+        self.assertEqual(error.exception.issues[0].path, "input")
+        self.assertFalse(idle.processed)
+        self.assertEqual(queue.items, {})
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(target.inputs, [])
+        error_value = str(error.exception)
+        self.assertNotIn("private structured prompt", error_value)
+        self.assertNotIn("unused private summary", error_value)
+        self.assertNotIn("tenant", error_value)
+
     async def test_transient_structured_queue_failure_retries_to_success(
         self,
     ) -> None:
