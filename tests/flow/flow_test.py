@@ -168,6 +168,18 @@ class FlowExecutionTestCase(TestCase):
             flow.execute(initial_node="A", initial_data=1)
         self.assertIn("cycle", str(context.exception))
 
+    def test_execute_rejects_async_connection_hooks(self) -> None:
+        async def should_not_forward(_: object) -> bool:
+            return False
+
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: 1))
+        flow.add_node(Node("B", func=lambda _: 2))
+        flow.add_connection("A", "B", conditions=[should_not_forward])
+
+        with self.assertRaisesRegex(TypeError, "check_conditions_async"):
+            flow.execute()
+
 
 class FlowAsyncExecutionTestCase(IsolatedAsyncioTestCase):
     async def test_execute_async_runs_async_nodes_edges_and_filters(

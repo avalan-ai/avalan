@@ -21,6 +21,15 @@ class ConnectionTestCase(TestCase):
         self.assertFalse(conn.check_conditions(1))
         self.assertEqual(calls, ["c1", "c2"])
 
+    def test_check_conditions_rejects_async_condition(self) -> None:
+        async def condition(_: object) -> bool:
+            return False
+
+        conn = Connection(Node("A"), Node("B"), conditions=[condition])
+
+        with self.assertRaisesRegex(TypeError, "check_conditions_async"):
+            conn.check_conditions(1)
+
     def test_apply_filters(self):
         def f1(x):
             return x + 1
@@ -30,6 +39,20 @@ class ConnectionTestCase(TestCase):
 
         conn = Connection(Node("A"), Node("B"), filters=[f1, f2])
         self.assertEqual(conn.apply_filters(1), 4)
+
+    def test_apply_filters_rejects_async_filter(self) -> None:
+        async def filter_function(_: object) -> int:
+            return 2
+
+        conn = Connection(Node("A"), Node("B"), filters=[filter_function])
+
+        with self.assertRaisesRegex(TypeError, "apply_filters_async"):
+            conn.apply_filters(1)
+
+    def test_repr(self) -> None:
+        conn = Connection(Node("A"), Node("B"))
+
+        self.assertEqual(repr(conn), "<Conn A->B>")
 
 
 class ConnectionAsyncTestCase(IsolatedAsyncioTestCase):
