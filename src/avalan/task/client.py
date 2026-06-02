@@ -52,6 +52,7 @@ from .target import (
 )
 from .usage import UsageRecord, UsageTotals
 from .validation import (
+    TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
     validate_task_definition,
@@ -280,6 +281,11 @@ class TaskClient:
         validation = await self.validate(definition, input_value=input_value)
         validation.raise_for_issues()
         sanitizer = self._sanitizer(definition)
+        explicit_artifacts = self._explicit_queue_artifacts(
+            definition,
+            sanitizer,
+            files,
+        )
         definition_id = self._definition_hash_value(definition)
         await self._store.register_definition(
             definition,
@@ -331,7 +337,10 @@ class TaskClient:
             available_at=available_at,
             idempotency=idempotency,
             idempotency_expires_at=idempotency_expires_at,
-            artifacts=self._queue_artifacts(definition, materialized_files),
+            artifacts=(
+                *explicit_artifacts,
+                *self._queue_artifacts(definition, materialized_files),
+            ),
             run_metadata={"runner": "queue"},
             queue_metadata=queue_metadata,
         )
@@ -523,6 +532,54 @@ class TaskClient:
             )
             for file in files
         )
+
+    def _explicit_queue_artifacts(
+        self,
+        definition: TaskDefinition,
+        sanitizer: PrivacySanitizer,
+        files: tuple[TaskInputFile, ...],
+    ) -> tuple[TaskQueueArtifact, ...]:
+        issues: list[TaskValidationIssue] = []
+        artifacts: list[TaskQueueArtifact] = []
+        for index, file in enumerate(files):
+            if file.artifact_ref is None:
+                issues.append(
+                    TaskValidationIssue(
+                        code="input.invalid_file",
+                        path=f"files[{index}].artifact_ref",
+                        message=(
+                            "Queued task file attachments require a durable "
+                            "artifact reference."
+                        ),
+                        hint=(
+                            "Store file bytes in an artifact backend before "
+                            "enqueueing queued task attachments."
+                        ),
+                        category=TaskValidationCategory.UNSUPPORTED,
+                    )
+                )
+                continue
+            metadata = _snapshot_value(
+                sanitizer.sanitize(PrivacyField.FILES, file.summary())
+            )
+            assert isinstance(metadata, Mapping)
+            artifacts.append(
+                TaskQueueArtifact(
+                    ref=file.artifact_ref,
+                    purpose=TaskArtifactPurpose.INPUT,
+                    provenance=TaskArtifactProvenance(
+                        operation="client_attachment",
+                        metadata={"file": metadata},
+                    ),
+                    retention=TaskArtifactRetention(
+                        delete_after_days=definition.artifact.retention_days,
+                    ),
+                    metadata=metadata,
+                )
+            )
+        if issues:
+            raise TaskValidationError(tuple(issues))
+        return tuple(artifacts)
 
 
 def _unsupported_queue_operation(

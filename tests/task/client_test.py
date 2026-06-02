@@ -26,6 +26,7 @@ from avalan.task import (
     TaskFileDescriptor,
     TaskIdempotencyIdentity,
     TaskInputContract,
+    TaskInputFile,
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskMetadata,
@@ -488,6 +489,86 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 
         self.assertEqual(len(submission.run.definition_id), 64)
         self.assertIsNone(queue.requests[0].idempotency_key)
+
+    async def test_enqueue_persists_explicit_durable_files(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-explicit-file-hash",
+        )
+        ref = TaskArtifactRef(
+            artifact_id="artifact-explicit",
+            store="local",
+            storage_key="artifacts/artifact-explicit",
+            media_type="application/pdf",
+            size_bytes=42,
+            sha256="a" * 64,
+        )
+
+        submission = await client.enqueue(
+            _definition(
+                run=TaskRunPolicy.queued(
+                    "documents",
+                    idempotency=IdempotencyMode.NONE,
+                )
+            ),
+            input_value="private prompt",
+            files=(
+                TaskInputFile(
+                    logical_path="private-report.pdf",
+                    artifact_ref=ref,
+                    media_type="application/pdf",
+                    size_bytes=42,
+                    metadata={"name": "private-report.pdf"},
+                ),
+            ),
+        )
+        artifacts = await store.list_artifacts(submission.run.run_id)
+
+        self.assertEqual(len(queue.artifacts), 1)
+        self.assertEqual(queue.artifacts[0].ref, ref)
+        self.assertEqual(
+            queue.artifacts[0].provenance.operation,
+            "client_attachment",
+        )
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].ref, ref)
+        self.assertIn("privacy", queue.artifacts[0].metadata)
+        self.assertNotIn("private-report", str(queue.artifacts[0].metadata))
+        self.assertNotIn(
+            "private-report",
+            str(queue.artifacts[0].provenance.metadata),
+        )
+
+    async def test_enqueue_rejects_non_durable_explicit_files(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-nondurable-file-hash",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(
+                _definition(run=TaskRunPolicy.queued("documents")),
+                input_value="private prompt",
+                files=(TaskInputFile(logical_path="private-report.pdf"),),
+            )
+
+        self.assertEqual(queue.requests, [])
+        self.assertEqual(len(error.exception.issues), 1)
+        issue = error.exception.issues[0]
+        self.assertEqual(issue.code, "input.invalid_file")
+        self.assertEqual(issue.path, "files[0].artifact_ref")
+        self.assertEqual(issue.category, TaskValidationCategory.UNSUPPORTED)
+        self.assertNotIn("private-report", str(error.exception))
 
     async def test_enqueue_materializes_files_and_waits_for_terminal_output(
         self,
