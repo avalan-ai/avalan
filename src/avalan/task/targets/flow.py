@@ -199,6 +199,20 @@ def _validate_flow_contracts(
                 hint="Use an agent target for artifact-producing tasks.",
             )
         )
+    if (
+        definition.output.type in {TaskOutputType.OBJECT, TaskOutputType.ARRAY}
+        and definition.output.schema is None
+        and definition.output.schema_ref is None
+    ):
+        issues.append(
+            _unsupported_flow_issue(
+                path="output.schema",
+                message=(
+                    "Flow task targets require a structured output schema."
+                ),
+                hint="Declare the expected flow output schema.",
+            )
+        )
     return tuple(issues)
 
 

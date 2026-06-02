@@ -333,6 +333,23 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"name": "report", "limit": 3})
 
+    async def test_run_binds_scalar_input_value(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "full": inputs[FLOW_TASK_INPUT_KEY],
+                    "value": inputs["value"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(self._context(input_value="ready"))
+
+        self.assertEqual(result, {"full": "ready", "value": "ready"})
+
     async def test_run_rejects_invalid_input_contract_safely(self) -> None:
         flow = Flow()
         flow.add_node(Node("A", func=lambda _: "unused private output"))
@@ -587,6 +604,22 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             flow_task_input_binding({"limit": 2}),
             {FLOW_TASK_INPUT_KEY: {"limit": 2}, "limit": 2},
         )
+
+    def test_flow_validator_requires_structured_output_schema(self) -> None:
+        report = validate_flow_task_compatibility(
+            self._definition(
+                input_contract=self._object_input_contract(),
+                output_contract=TaskOutputContract.object(),
+            ),
+            TaskValidationContext(),
+        )
+
+        self.assertFalse(report.compatible)
+        self.assertEqual(
+            [issue.path for issue in report.issues],
+            ["output.schema"],
+        )
+        self.assertNotIn("private", str(report.issues))
 
     def _definition(
         self,
