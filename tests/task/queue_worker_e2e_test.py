@@ -134,6 +134,52 @@ class TextTarget(TaskTargetRunner):
         return "public answer"
 
 
+class StructuredQueueTarget(TaskTargetRunner):
+    def __init__(self, outcomes: tuple[object, ...]) -> None:
+        self.outcomes = outcomes
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        await context.check_cancelled()
+        attempt_number = len(self.inputs)
+        if context.event_listener is not None:
+            result = context.event_listener(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={
+                        "status": "attempt",
+                        "count": attempt_number,
+                        "token": f"private-token-{attempt_number}",
+                        "token_id": attempt_number,
+                    },
+                )
+            )
+            if result is not None:
+                await result
+        await context.observe_usage(
+            SimpleNamespace(
+                input_token_count=attempt_number,
+                output_token_count=attempt_number + 1,
+                total_token_count=(attempt_number * 2) + 1,
+            )
+        )
+        outcome = self.outcomes[
+            min(attempt_number - 1, len(self.outcomes) - 1)
+        ]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
 class ArtifactOutputTarget(TaskTargetRunner):
     async def validate_definition(
         self,
@@ -1114,6 +1160,140 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("customer-secret", str(inspection.as_dict()))
         self.assertNotIn("private retry prompt", str(inspection.as_dict()))
 
+    async def test_transient_structured_queue_failure_retries_to_success(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = StructuredQueueTarget(
+            (
+                OSError("private backend path /tmp/customer-secret.txt"),
+                {
+                    "status": "ready",
+                    "count": 2,
+                    "summary": "private final summary",
+                },
+            )
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await client.enqueue(
+            _structured_definition(retry=TaskRetryPolicy(max_attempts=2)),
+            input_value={
+                "prompt": "private structured prompt",
+                "limit": 2,
+            },
+        )
+        retry = await worker.process_once()
+        completed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(retry.processed)
+        self.assertIsNotNone(retry.retry)
+        assert retry.retry is not None
+        self.assertTrue(retry.retry.retryable)
+        self.assertEqual(retry.retry.run.state, TaskRunState.QUEUED)
+        self.assertTrue(completed.processed)
+        self.assertIsNotNone(completed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            output.output_summary, {"status": "ready", "count": 2}
+        )
+        self.assertEqual(
+            [attempt.state for attempt in inspection.attempts],
+            [TaskAttemptState.FAILED, TaskAttemptState.SUCCEEDED],
+        )
+        first_error = cast(
+            Mapping[str, object],
+            inspection.attempts[0].result.error,
+        )
+        self.assertEqual(first_error["category"], "infra")
+        self.assertEqual(first_error["code"], "infra.failure")
+        self.assertEqual(len(inspection.events), 2)
+        self.assertEqual(
+            [event.sequence for event in inspection.events], [1, 2]
+        )
+        self.assertEqual(inspection.usage_totals.input_tokens, 3)
+        self.assertEqual(inspection.usage_totals.output_tokens, 5)
+        self.assertEqual(inspection.usage_totals.total_tokens, 8)
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 0)
+        self.assertEqual(len(target.inputs), 2)
+        for input_value in target.inputs:
+            assert isinstance(input_value, Mapping)
+            self.assertEqual(input_value["privacy"], HASHED_MARKER)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private backend path", inspection_value)
+        self.assertNotIn("customer-secret", inspection_value)
+        self.assertNotIn("private structured prompt", inspection_value)
+        self.assertNotIn("private final summary", inspection_value)
+        self.assertNotIn("private-token", inspection_value)
+        self.assertNotIn("token_id", inspection_value)
+
+    async def test_structured_queue_output_contract_failure_stays_safe(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = StructuredQueueTarget(
+            (
+                {
+                    "status": "ready",
+                    "count": "private invalid count",
+                    "summary": "private invalid summary",
+                },
+            )
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await client.enqueue(
+            _structured_definition(retry=TaskRetryPolicy(max_attempts=2)),
+            input_value={
+                "prompt": "private invalid prompt",
+                "limit": 1,
+            },
+        )
+        result = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(result.processed)
+        self.assertIsNone(result.retry)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
+        error_summary = cast(Mapping[str, object], output.error)
+        self.assertEqual(error_summary["category"], "output_contract")
+        self.assertEqual(error_summary["code"], "output_contract.failed")
+        details = cast(Mapping[str, object], error_summary["details"])
+        issues = cast(tuple[Mapping[str, object], ...], details["issues"])
+        self.assertEqual(issues[0]["code"], "output.invalid_type")
+        self.assertEqual(issues[0]["path"], "output")
+        self.assertEqual(len(inspection.events), 1)
+        self.assertEqual(inspection.usage_totals.input_tokens, 1)
+        self.assertEqual(inspection.usage_totals.output_tokens, 2)
+        self.assertEqual(inspection.usage_totals.total_tokens, 3)
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 1)
+        self.assertEqual(len(target.inputs), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private invalid prompt", inspection_value)
+        self.assertNotIn("private invalid count", inspection_value)
+        self.assertNotIn("private invalid summary", inspection_value)
+        self.assertNotIn("private-token", inspection_value)
+        self.assertNotIn("token_id", inspection_value)
+
 
 def _client(
     store: InMemoryTaskStore,
@@ -1152,6 +1332,38 @@ def _worker(
         worker_id="worker-1",
         artifact_store=artifact_store,
         clock=lambda: clock.now,
+    )
+
+
+def _structured_definition(
+    *,
+    retry: TaskRetryPolicy | None = None,
+) -> TaskDefinition:
+    return _definition(
+        input_contract=TaskInputContract.object(
+            schema={
+                "type": "object",
+                "required": ["prompt", "limit"],
+                "additionalProperties": False,
+                "properties": {
+                    "prompt": {"type": "string", "minLength": 1},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
+            }
+        ),
+        output_contract=TaskOutputContract.object(
+            schema={
+                "type": "object",
+                "required": ["status", "count", "summary"],
+                "additionalProperties": False,
+                "properties": {
+                    "status": {"type": "string", "enum": ["ready"]},
+                    "count": {"type": "integer", "minimum": 1},
+                    "summary": {"type": "string", "minLength": 1},
+                },
+            }
+        ),
+        retry=retry,
     )
 
 
