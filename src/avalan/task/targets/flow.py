@@ -13,6 +13,7 @@ from ..privacy import (
     ENCRYPTED_MARKER,
     HASHED_MARKER,
     REDACTED_MARKER,
+    STORED_ENVELOPE_MARKER,
     STORED_MARKER,
 )
 from ..target import TaskTargetRunner, TaskValidationContext
@@ -271,16 +272,15 @@ def _task_input_value(context: TaskTargetContext) -> object:
     value = context.input_value
     if context.definition.run.mode != RunMode.QUEUE:
         return value
-    if (
-        isinstance(value, Mapping)
-        and value.get("privacy") == STORED_MARKER
-        and "value" in value
-    ):
+    if not isinstance(value, Mapping):
+        return value
+    if _is_stored_privacy_envelope(value):
         return value["value"]
-    if (
-        isinstance(value, Mapping)
-        and value.get("privacy") in _UNAVAILABLE_PRIVACY_MARKERS
-    ):
+    if _is_legacy_stored_privacy_envelope(value):
+        if _can_be_declared_object_input(context.definition, value):
+            return value
+        return value["value"]
+    if value.get("privacy") in _UNAVAILABLE_PRIVACY_MARKERS:
         raise TaskValidationError(
             (
                 _unsupported_flow_issue(
@@ -294,6 +294,36 @@ def _task_input_value(context: TaskTargetContext) -> object:
             )
         )
     return value
+
+
+def _is_stored_privacy_envelope(value: Mapping[object, object]) -> bool:
+    return (
+        value.get("privacy") == STORED_MARKER
+        and value.get("format") == STORED_ENVELOPE_MARKER
+        and "value" in value
+    )
+
+
+def _is_legacy_stored_privacy_envelope(
+    value: Mapping[object, object],
+) -> bool:
+    return (
+        value.get("privacy") == STORED_MARKER
+        and "format" not in value
+        and "value" in value
+    )
+
+
+def _can_be_declared_object_input(
+    definition: TaskDefinition,
+    value: Mapping[object, object],
+) -> bool:
+    if definition.input.type != TaskInputType.OBJECT:
+        return False
+    issues = validate_task_input(definition, value)
+    return not issues or all(
+        issue.code == "dependency.jsonschema_missing" for issue in issues
+    )
 
 
 async def _emit_flow_event(

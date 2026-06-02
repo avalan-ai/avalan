@@ -13,6 +13,7 @@ from avalan.flow.node import Node
 from avalan.task import (
     HASHED_MARKER,
     REDACTED_MARKER,
+    STORED_MARKER,
     TaskArtifactPolicy,
     TaskArtifactPurpose,
     TaskArtifactRef,
@@ -1777,6 +1778,104 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             },
         )
         self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(output.output_summary, {"status": "ready"})
+
+    async def test_queued_flow_keeps_legacy_user_envelope_fields(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+
+        def use_full_input(inputs: Mapping[str, object]) -> dict[str, object]:
+            full_input = cast(
+                Mapping[str, object],
+                inputs[FLOW_TASK_INPUT_KEY],
+            )
+            return {
+                "status": "ready",
+                "limit": full_input["limit"],
+                "privacy": full_input["privacy"],
+                "value": full_input["value"],
+            }
+
+        flow = Flow()
+        flow.add_node(Node("A", func=use_full_input))
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            input_contract=TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "required": ["privacy", "value", "limit"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "privacy": {
+                            "type": "string",
+                            "enum": [STORED_MARKER],
+                        },
+                        "value": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1},
+                    },
+                }
+            ),
+            output_contract=TaskOutputContract.object(
+                schema={
+                    "type": "object",
+                    "required": [
+                        "status",
+                        "privacy",
+                        "value",
+                        "limit",
+                    ],
+                    "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ready"]},
+                        "privacy": {"type": "string"},
+                        "value": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1},
+                    },
+                }
+            ),
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value={
+                "privacy": STORED_MARKER,
+                "value": "safe envelope value",
+                "limit": 2,
+            },
+        )
+        processed = await worker.process_once()
+        run = await store.get_run(submission.run.run_id)
+        output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(
+            processed.output,
+            {
+                "status": "ready",
+                "privacy": STORED_MARKER,
+                "value": "safe envelope value",
+                "limit": 2,
+            },
+        )
+        self.assertEqual(
+            run.request.input_summary,
+            {
+                "privacy": STORED_MARKER,
+                "value": "safe envelope value",
+                "limit": 2,
+            },
+        )
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
         self.assertEqual(output.output_summary, {"status": "ready"})
 

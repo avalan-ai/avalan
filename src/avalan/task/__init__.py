@@ -161,6 +161,7 @@ from .privacy import DROPPED_MARKER as DROPPED_MARKER
 from .privacy import ENCRYPTED_MARKER as ENCRYPTED_MARKER
 from .privacy import HASHED_MARKER as HASHED_MARKER
 from .privacy import REDACTED_MARKER as REDACTED_MARKER
+from .privacy import STORED_ENVELOPE_MARKER as STORED_ENVELOPE_MARKER
 from .privacy import STORED_MARKER as STORED_MARKER
 from .privacy import EncryptedPrivacyValue as EncryptedPrivacyValue
 from .privacy import EncryptionProvider as EncryptionProvider

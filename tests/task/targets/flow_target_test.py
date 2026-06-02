@@ -14,6 +14,7 @@ from avalan.task import (
     ENCRYPTED_MARKER,
     HASHED_MARKER,
     REDACTED_MARKER,
+    STORED_ENVELOPE_MARKER,
     STORED_MARKER,
     DirectTaskRunner,
     PrivacyAction,
@@ -485,6 +486,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                     run=TaskRunPolicy.queued("default"),
                 ),
                 input_value={
+                    "format": STORED_ENVELOPE_MARKER,
                     "privacy": STORED_MARKER,
                     "value": "ready",
                 },
@@ -492,6 +494,77 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "ready!")
+
+    async def test_run_unwraps_legacy_stored_queued_input(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY] + "!",
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={
+                    "privacy": STORED_MARKER,
+                    "value": "ready",
+                },
+            )
+        )
+
+        self.assertEqual(result, "ready!")
+
+    async def test_run_keeps_legacy_object_input_envelope_collision(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "privacy": inputs["privacy"],
+                    "value": inputs["value"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.object(
+                        {
+                            "type": "object",
+                            "required": ["privacy", "value"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "privacy": {
+                                    "type": "string",
+                                    "enum": [STORED_MARKER],
+                                },
+                                "value": {"type": "string"},
+                            },
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(),
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={
+                    "privacy": STORED_MARKER,
+                    "value": "ready",
+                },
+            )
+        )
+
+        self.assertEqual(
+            result,
+            {"privacy": STORED_MARKER, "value": "ready"},
+        )
 
     async def test_run_accepts_plain_queued_input(self) -> None:
         flow = Flow()

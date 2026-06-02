@@ -18,6 +18,7 @@ DROPPED_MARKER = "<dropped>"
 HASHED_MARKER = "<hmac-sha256>"
 ENCRYPTED_MARKER = "<encrypted>"
 STORED_MARKER = "<stored>"
+STORED_ENVELOPE_MARKER = "avalan.privacy.stored.v1"
 
 _CANONICAL_JSON_SEPARATORS = (",", ":")
 _COMMON_SAFE_FIELDS = frozenset(
@@ -420,6 +421,7 @@ class PrivacySanitizer:
         if not self.raw_storage_allowed or self.policy.raw_retention_days <= 0:
             raise PrivacySanitizationError("raw privacy storage is disabled")
         return {
+            "format": STORED_ENVELOPE_MARKER,
             "privacy": STORED_MARKER,
             "value": _private_json_value(value),
         }

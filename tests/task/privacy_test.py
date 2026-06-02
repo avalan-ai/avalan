@@ -7,6 +7,7 @@ from avalan.task import (
     ENCRYPTED_MARKER,
     HASHED_MARKER,
     REDACTED_MARKER,
+    STORED_ENVELOPE_MARKER,
     STORED_MARKER,
     EncryptedPrivacyValue,
     PrivacyAction,
@@ -266,7 +267,11 @@ class PrivacyTest(TestCase):
         )
         self.assertEqual(
             retained.sanitize(PrivacyField.OUTPUT, {"safe": True}),
-            {"privacy": STORED_MARKER, "value": {"safe": True}},
+            {
+                "format": STORED_ENVELOPE_MARKER,
+                "privacy": STORED_MARKER,
+                "value": {"safe": True},
+            },
         )
 
     def test_store_serializes_json_scalars_and_binary_values(self) -> None:
@@ -285,6 +290,7 @@ class PrivacyTest(TestCase):
         self.assertEqual(
             sanitized,
             {
+                "format": STORED_ENVELOPE_MARKER,
                 "privacy": STORED_MARKER,
                 "value": [
                     1,
