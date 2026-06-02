@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -435,6 +436,8 @@ class InMemoryTaskQueue:
             claim_token=claim_token,
             metadata=metadata,
         )
+        queued_run = replace(queued_run, claim=None)
+        self.store._runs[run.run_id] = queued_run
         updated = TaskQueueItem(
             queue_item_id=item.queue_item_id,
             run_id=item.run_id,
@@ -652,6 +655,82 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(depth.active, 0)
         self.assertEqual(depth.dead, 0)
         self.assertIsNone(health.oldest_available_at)
+
+    async def test_file_array_task_materializes_all_inputs(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            first_path = root / "first.txt"
+            second_path = root / "second.txt"
+            first_path.write_text("first private body", encoding="utf-8")
+            second_path.write_text("second private body", encoding="utf-8")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = ReadingTarget()
+            client = _client(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                clock=clock,
+            )
+            definition = _definition(
+                input_contract=TaskInputContract.file_array(
+                    mime_types=("text/plain",)
+                ),
+                artifact=TaskArtifactPolicy(max_count=2),
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value=(
+                    TaskFileDescriptor.local_path(
+                        "first.txt",
+                        mime_type="text/plain",
+                        metadata={"filename": "first.txt"},
+                    ),
+                    TaskFileDescriptor.local_path(
+                        "second.txt",
+                        mime_type="text/plain",
+                        metadata={"filename": "second.txt"},
+                    ),
+                ),
+            )
+            processed = await worker.process_once()
+            inspection = await client.inspect(submission.run.run_id)
+            artifacts = await store.list_artifacts(
+                submission.run.run_id,
+                purpose=TaskArtifactPurpose.INPUT,
+            )
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(
+            target.file_bodies,
+            [b"first private body", b"second private body"],
+        )
+        self.assertEqual(len(artifacts), 2)
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [TaskArtifactPurpose.INPUT, TaskArtifactPurpose.INPUT],
+        )
+        self.assertEqual(len(inspection.artifacts), 2)
+        self.assertNotIn("first private body", str(inspection.as_dict()))
+        self.assertNotIn("second private body", str(inspection.as_dict()))
 
     async def test_duplicate_submission_reuses_queued_run(self) -> None:
         clock = Clock()
@@ -892,6 +971,46 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private backend path", str(inspection.as_dict()))
         self.assertNotIn("customer-secret", str(inspection.as_dict()))
         self.assertNotIn("private prompt", str(inspection.as_dict()))
+
+    async def test_retry_exhaustion_records_safe_terminal_failure(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = FailingTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await client.enqueue(
+            _definition(retry=TaskRetryPolicy(max_attempts=2)),
+            input_value="private retry prompt",
+        )
+        retry = await worker.process_once()
+        terminal = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(retry.processed)
+        self.assertIsNotNone(retry.retry)
+        assert retry.retry is not None
+        self.assertTrue(retry.retry.retryable)
+        self.assertEqual(retry.retry.run.state, TaskRunState.QUEUED)
+        self.assertTrue(terminal.processed)
+        self.assertIsNone(terminal.retry)
+        self.assertIsNotNone(terminal.claimed)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(
+            [attempt.state for attempt in inspection.attempts],
+            [TaskAttemptState.FAILED, TaskAttemptState.FAILED],
+        )
+        self.assertEqual(depth.dead, 1)
+        self.assertIn("infra", str(output.error))
+        self.assertNotIn("private backend path", str(inspection.as_dict()))
+        self.assertNotIn("customer-secret", str(inspection.as_dict()))
+        self.assertNotIn("private retry prompt", str(inspection.as_dict()))
 
 
 def _client(
