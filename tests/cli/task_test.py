@@ -177,7 +177,14 @@ class _Snapshot:
 
 
 class _FakeResource:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        open_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self.open_error = open_error
+        self.close_error = close_error
         self.entered = False
         self.exited = False
         self.opened = False
@@ -198,9 +205,13 @@ class _FakeResource:
 
     async def open(self) -> None:
         self.opened = True
+        if self.open_error is not None:
+            raise self.open_error
 
     async def aclose(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class _FakeTaskWorker:
@@ -722,6 +733,44 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertIn("Task run completed (non-durable): run-1", output)
         self.assertIn('"privacy":"<redacted>"', output)
 
+    def test_run_without_result_skips_output_line(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.FAILED,
+                    result=None,
+                )
+            )
+        )
+
+        with patch.object(
+            task_cmds,
+            "_task_cli_client_context",
+            return_value=_FakeTaskClientContext(client),
+        ):
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(FIXTURE_ROOT / "minimal.task.toml"),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task run completed (non-durable): run-1", output)
+        self.assertIn("state failed", output)
+        self.assertNotIn("output ", output)
+
     def test_enqueue_rejects_ephemeral_storage(self) -> None:
         console = Console(record=True, width=160)
 
@@ -1045,6 +1094,60 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertIn("Task processed: run-1 succeeded", output)
         self.assertIn("Task worker processed 1 run.", output)
 
+    def test_worker_reports_retry_and_counts_missing_run_results(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeTaskWorker.instances = []
+        _FakeTaskWorker.results = [
+            SimpleNamespace(
+                processed=True,
+                completion=None,
+                retry=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-retry",
+                        state=TaskRunState.QUEUED,
+                    )
+                ),
+            ),
+            SimpleNamespace(processed=True, completion=None, retry=None),
+        ]
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "require_feature", return_value=()),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
+            patch.object(
+                task_cmds, "_agent_task_target", return_value=object()
+            ),
+            patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="documents",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="tasks",
+                    worker_id="worker-a",
+                    once=False,
+                    limit=2,
+                    lease_seconds=30,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Task processed: run-retry queued", output)
+        self.assertIn("Task worker processed 2 runs.", output)
+        self.assertNotIn("None", output)
+
     def test_worker_reports_startup_error(self) -> None:
         console = Console(record=True, width=160)
 
@@ -1079,7 +1182,7 @@ class CliTaskCommandShellTestCase(TestCase):
         stack_resource = _FakeResource()
         stack = AsyncExitStack()
 
-        async def exercise() -> None:
+        async def exercise() -> bool:
             await stack.enter_async_context(stack_resource)
             context = task_cmds._TaskCliClientContext(
                 client=object(),
@@ -1096,6 +1199,98 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertTrue(database.closed)
         self.assertTrue(stack_resource.entered)
         self.assertTrue(stack_resource.exited)
+
+    def test_client_context_closes_stack_when_database_open_fails(
+        self,
+    ) -> None:
+        database = _FakeResource(open_error=OSError("private open"))
+        stack_resource = _FakeResource()
+        stack = AsyncExitStack()
+
+        async def exercise() -> bool:
+            await stack.enter_async_context(stack_resource)
+            context = task_cmds._TaskCliClientContext(
+                client=object(),
+                database=database,
+                stack=stack,
+            )
+            with self.assertRaises(OSError):
+                async with context:
+                    pass
+            return True
+
+        task_cmds._run_awaitable(exercise())
+
+        self.assertTrue(database.opened)
+        self.assertFalse(database.closed)
+        self.assertTrue(stack_resource.entered)
+        self.assertTrue(stack_resource.exited)
+
+    def test_client_context_closes_stack_when_database_close_fails(
+        self,
+    ) -> None:
+        database = _FakeResource(close_error=OSError("private close"))
+        stack_resource = _FakeResource()
+        stack = AsyncExitStack()
+
+        async def exercise() -> bool:
+            await stack.enter_async_context(stack_resource)
+            context = task_cmds._TaskCliClientContext(
+                client=object(),
+                database=database,
+                stack=stack,
+            )
+            with self.assertRaises(OSError):
+                async with context:
+                    pass
+            return True
+
+        task_cmds._run_awaitable(exercise())
+
+        self.assertTrue(database.opened)
+        self.assertTrue(database.closed)
+        self.assertTrue(stack_resource.entered)
+        self.assertTrue(stack_resource.exited)
+
+    def test_client_context_handles_optional_resources(self) -> None:
+        client = object()
+        database = _FakeResource()
+        stack_resource = _FakeResource()
+        stack = AsyncExitStack()
+        failing_database = _FakeResource(open_error=OSError("private open"))
+
+        async def exercise() -> bool:
+            async with task_cmds._TaskCliClientContext(
+                client=client,
+            ) as returned:
+                self.assertIs(returned, client)
+            async with task_cmds._TaskCliClientContext(
+                client=client,
+                database=database,
+            ):
+                pass
+            await stack.enter_async_context(stack_resource)
+            async with task_cmds._TaskCliClientContext(
+                client=client,
+                stack=stack,
+            ):
+                pass
+            with self.assertRaises(OSError):
+                async with task_cmds._TaskCliClientContext(
+                    client=client,
+                    database=failing_database,
+                ):
+                    pass
+            return True
+
+        task_cmds._run_awaitable(exercise())
+
+        self.assertTrue(database.opened)
+        self.assertTrue(database.closed)
+        self.assertTrue(stack_resource.entered)
+        self.assertTrue(stack_resource.exited)
+        self.assertTrue(failing_database.opened)
+        self.assertFalse(failing_database.closed)
 
     def test_client_context_factories_and_helpers(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1328,6 +1523,20 @@ class CliTaskCommandShellTestCase(TestCase):
             task_cmds._task_command_metadata(ephemeral=True)["store_mode"],
             "ephemeral-memory",
         )
+        event_value = task_cmds._task_event_cli_value(
+            SimpleNamespace(
+                event_id="event-1",
+                run_id="run-1",
+                sequence=1,
+                event_type="start",
+                category=TaskEventCategory.ENGINE,
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                attempt_id=None,
+                payload=None,
+            )
+        )
+        self.assertNotIn("attempt_id", event_value)
+        self.assertNotIn("payload", event_value)
 
         output = console.export_text()
         self.assertIn("task.unsupported", output)

@@ -73,6 +73,7 @@ from math import isfinite
 from os import environ, strerror
 from pathlib import Path
 from re import fullmatch
+from sys import exc_info
 from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
@@ -134,10 +135,18 @@ class _TaskCliClientContext:
     stack: AsyncExitStack | None = None
 
     async def __aenter__(self) -> TaskClient:
+        stack_entered = False
         if self.stack is not None:
             await self.stack.__aenter__()
-        if self.database is not None:
-            await self.database.open()
+            stack_entered = True
+        try:
+            if self.database is not None:
+                await self.database.open()
+        except BaseException:
+            if stack_entered and self.stack is not None:
+                exc_type, exc, traceback = exc_info()
+                await self.stack.__aexit__(exc_type, exc, traceback)
+            raise
         return self.client
 
     async def __aexit__(
@@ -146,10 +155,12 @@ class _TaskCliClientContext:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        if self.database is not None:
-            await self.database.aclose()
-        if self.stack is not None:
-            await self.stack.__aexit__(exc_type, exc, traceback)
+        try:
+            if self.database is not None:
+                await self.database.aclose()
+        finally:
+            if self.stack is not None:
+                await self.stack.__aexit__(exc_type, exc, traceback)
         return None
 
 

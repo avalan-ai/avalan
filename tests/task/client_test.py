@@ -1026,6 +1026,76 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertNotIn(claimed.claim.claim_token, claimed_snapshot)
         self.assertNotIn(claimed.claim.claim_token, rendered)
 
+    async def test_inspection_snapshot_omits_absent_optional_fields(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition()
+        await store.register_definition(
+            definition,
+            definition_hash="hash-minimal",
+        )
+        minimal_run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-minimal")
+        )
+        await store.append_event(
+            minimal_run.run_id,
+            event_type="start",
+            category=TaskEventCategory.ENGINE,
+            payload=None,
+        )
+        await store.append_usage(
+            minimal_run.run_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=0),
+        )
+        attempt_run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-minimal")
+        )
+        await store.create_attempt(attempt_run.run_id)
+        client = TaskClient(
+            store,
+            target=RejectingTarget(),
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        minimal_snapshot = cast(
+            Mapping[str, object],
+            (await client.inspect(minimal_run.run_id)).as_dict(),
+        )
+        attempt_snapshot = cast(
+            Mapping[str, object],
+            (await client.inspect(attempt_run.run_id)).as_dict(),
+        )
+
+        run_snapshot = cast(
+            Mapping[str, object],
+            minimal_snapshot["run"],
+        )
+        self.assertNotIn("input_summary", run_snapshot)
+        self.assertNotIn("file_summaries", run_snapshot)
+        self.assertNotIn("queue", run_snapshot)
+        self.assertNotIn("last_attempt_id", run_snapshot)
+        self.assertNotIn("claim", run_snapshot)
+        self.assertNotIn("result", run_snapshot)
+        event_snapshots = cast(
+            tuple[Mapping[str, object], ...],
+            minimal_snapshot["events"],
+        )
+        self.assertNotIn("attempt_id", event_snapshots[0])
+        self.assertNotIn("payload", event_snapshots[0])
+        usage_snapshots = cast(
+            tuple[Mapping[str, object], ...],
+            minimal_snapshot["usage"],
+        )
+        self.assertNotIn("attempt_id", usage_snapshots[0])
+        self.assertNotIn("metadata", usage_snapshots[0])
+        attempt_snapshots = cast(
+            tuple[Mapping[str, object], ...],
+            attempt_snapshot["attempts"],
+        )
+        self.assertNotIn("result", attempt_snapshots[0])
+
 
 def _definition(
     *,
