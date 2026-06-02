@@ -1703,6 +1703,83 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             TaskAttemptState.SUCCEEDED,
         )
 
+    async def test_queued_flow_reserved_input_key_cannot_spoof_binding(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+
+        def use_full_input(inputs: Mapping[str, object]) -> dict[str, object]:
+            full_input = cast(
+                Mapping[str, object],
+                inputs[FLOW_TASK_INPUT_KEY],
+            )
+            return {
+                "status": "ready",
+                "limit": full_input["limit"],
+                "reserved": full_input[FLOW_TASK_INPUT_KEY],
+            }
+
+        flow = Flow()
+        flow.add_node(Node("A", func=use_full_input))
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            input_contract=TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "required": [FLOW_TASK_INPUT_KEY, "limit"],
+                    "additionalProperties": False,
+                    "properties": {
+                        FLOW_TASK_INPUT_KEY: {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1},
+                    },
+                }
+            ),
+            output_contract=TaskOutputContract.object(
+                schema={
+                    "type": "object",
+                    "required": ["status", "limit", "reserved"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ready"]},
+                        "limit": {"type": "integer", "minimum": 1},
+                        "reserved": {"type": "string"},
+                    },
+                }
+            ),
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value={
+                FLOW_TASK_INPUT_KEY: "spoofed input",
+                "limit": 2,
+            },
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(
+            processed.output,
+            {
+                "status": "ready",
+                "limit": 2,
+                "reserved": "spoofed input",
+            },
+        )
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(output.output_summary, {"status": "ready"})
+
     async def test_queued_flow_rejects_unavailable_input_safely(
         self,
     ) -> None:

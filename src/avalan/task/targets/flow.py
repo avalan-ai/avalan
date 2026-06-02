@@ -235,7 +235,7 @@ def _validate_flow_contracts(
 def flow_task_input_binding(value: object) -> dict[str, object]:
     if isinstance(value, Mapping):
         binding = dict(value)
-        binding.setdefault(FLOW_TASK_INPUT_KEY, dict(value))
+        binding[FLOW_TASK_INPUT_KEY] = dict(value)
         return binding
     if isinstance(value, list | tuple):
         return {

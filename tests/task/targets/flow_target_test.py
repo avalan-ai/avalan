@@ -331,6 +331,49 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"name": "report", "limit": 3})
 
+    async def test_run_does_not_trust_reserved_object_input_key(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "reserved": inputs[FLOW_TASK_INPUT_KEY][
+                        FLOW_TASK_INPUT_KEY
+                    ],
+                    "limit": inputs[FLOW_TASK_INPUT_KEY]["limit"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.object(
+                        {
+                            "type": "object",
+                            "required": [FLOW_TASK_INPUT_KEY, "limit"],
+                            "additionalProperties": False,
+                            "properties": {
+                                FLOW_TASK_INPUT_KEY: {"type": "string"},
+                                "limit": {"type": "integer"},
+                            },
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(),
+                ),
+                input_value={
+                    FLOW_TASK_INPUT_KEY: "private spoofed input",
+                    "limit": 3,
+                },
+            )
+        )
+
+        self.assertEqual(
+            result,
+            {"reserved": "private spoofed input", "limit": 3},
+        )
+
     async def test_run_binds_scalar_input_value(self) -> None:
         flow = Flow()
         flow.add_node(
@@ -764,6 +807,21 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(
             flow_task_input_binding({"limit": 2}),
             {FLOW_TASK_INPUT_KEY: {"limit": 2}, "limit": 2},
+        )
+        self.assertEqual(
+            flow_task_input_binding(
+                {
+                    FLOW_TASK_INPUT_KEY: "spoofed",
+                    "limit": 2,
+                }
+            ),
+            {
+                FLOW_TASK_INPUT_KEY: {
+                    FLOW_TASK_INPUT_KEY: "spoofed",
+                    "limit": 2,
+                },
+                "limit": 2,
+            },
         )
 
     def test_flow_validator_requires_structured_output_schema(self) -> None:
