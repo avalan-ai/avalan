@@ -14,6 +14,7 @@ from avalan.task import (
     TaskArtifactState,
     TaskAttemptState,
     TaskClient,
+    TaskClientWaitTimeoutError,
     TaskDefinition,
     TaskExecutionRequest,
     TaskExecutionResult,
@@ -107,6 +108,24 @@ class ReadingTarget(TaskTargetRunner):
                 total_token_count=14,
             )
         )
+        return "public answer"
+
+
+class TextTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        await context.check_cancelled()
         return "public answer"
 
 
@@ -612,6 +631,106 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(depth.active, 0)
         self.assertEqual(depth.dead, 0)
         self.assertIsNone(health.oldest_available_at)
+
+    async def test_duplicate_submission_reuses_queued_run(self) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition()
+
+        first = await client.enqueue(
+            definition,
+            input_value="same prompt",
+            idempotency_key="same-window",
+            owner_scope="same-owner",
+        )
+        second = await client.enqueue(
+            definition,
+            input_value="same prompt",
+            idempotency_key="same-window",
+            owner_scope="same-owner",
+        )
+        before_work = await queue.depth("default")
+        processed = await worker.process_once()
+        after_work = await queue.depth("default")
+        output = await client.output(first.run.run_id)
+        inspection = await client.inspect(first.run.run_id)
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertEqual(second.run.run_id, first.run.run_id)
+        self.assertIsNotNone(first.queue_item)
+        self.assertIsNotNone(second.queue_item)
+        assert first.queue_item is not None
+        assert second.queue_item is not None
+        self.assertEqual(
+            second.queue_item.queue_item_id,
+            first.queue_item.queue_item_id,
+        )
+        self.assertEqual(before_work.available, 1)
+        self.assertEqual(before_work.active, 1)
+        self.assertTrue(processed.processed)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(after_work.active, 0)
+        self.assertEqual(len(target.inputs), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertNotIn("same-window", str(inspection.as_dict()))
+        self.assertNotIn("same-owner", str(inspection.as_dict()))
+        self.assertNotIn("same prompt", str(inspection.as_dict()))
+
+    async def test_scheduled_submission_waits_until_available(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        available_at = clock.now + timedelta(seconds=30)
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="scheduled prompt",
+            available_at=available_at,
+        )
+        idle = await worker.process_once()
+        scheduled_depth = await queue.depth("default")
+        scheduled_health = await queue.health("default")
+        with self.assertRaises(TaskClientWaitTimeoutError) as timeout:
+            await client.wait(
+                submission.run.run_id,
+                timeout_seconds=0,
+                poll_interval_seconds=0.01,
+            )
+        await clock.sleep(30)
+        processed = await worker.process_once()
+        output = await client.wait(
+            submission.run.run_id,
+            timeout_seconds=0,
+            poll_interval_seconds=0.01,
+        )
+        ready_health = await queue.health("default")
+
+        self.assertFalse(idle.processed)
+        self.assertEqual(timeout.exception.run_id, submission.run.run_id)
+        self.assertEqual(scheduled_depth.available, 0)
+        self.assertEqual(scheduled_depth.scheduled, 1)
+        self.assertEqual(scheduled_depth.active, 1)
+        self.assertIsNone(scheduled_health.oldest_available_at)
+        self.assertTrue(processed.processed)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(target.inputs), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertIsNone(ready_health.oldest_available_at)
 
     async def test_terminal_worker_failure_is_safe_to_inspect(self) -> None:
         clock = Clock()
