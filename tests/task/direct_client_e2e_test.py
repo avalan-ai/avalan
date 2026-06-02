@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -284,6 +284,31 @@ class StructuredTarget(TaskTargetRunner):
         return self.output
 
 
+class DirectCancellingTarget(TaskTargetRunner):
+    def __init__(
+        self,
+        cancel: Callable[[str], Awaitable[object]],
+    ) -> None:
+        self.cancel = cancel
+        self.definition_refs: list[str] = []
+        self.input_values: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = context
+        self.definition_refs.append(definition.execution.ref)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.input_values.append(context.input_value)
+        await self.cancel(context.execution.run_id)
+        await context.check_cancelled()
+        return {"status": "ready", "count": 1, "summary": "unused"}
+
+
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
     async def test_loaded_structured_task_runs_directly_and_redacts_output(
         self,
@@ -354,6 +379,65 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("private customer escalation", inspection_value)
         self.assertNotIn("private structured answer", inspection_value)
+
+    async def test_direct_run_cancellation_finalizes_safely(self) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_structured_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            client_ref: list[TaskClient] = []
+
+            async def cancel(run_id: str) -> object:
+                return await client_ref[0].cancel(run_id)
+
+            target = DirectCancellingTarget(cancel)
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-cancel-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            client_ref.append(client)
+            input_value = {
+                "question": "private cancellation request",
+                "limit": 1,
+            }
+
+            result = await client.run(definition, input_value=input_value)
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(target.definition_refs, ["agents/structured.toml"])
+        self.assertEqual(target.input_values, [input_value])
+        self.assertEqual(result.run.state, TaskRunState.CANCELLED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.CANCELLED)
+        error_summary = cast(Mapping[str, object], output.error)
+        self.assertEqual(error_summary["category"], "cancellation")
+        self.assertEqual(error_summary["code"], "cancellation.requested")
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.FAILED,
+        )
+        self.assertEqual(inspection.events, ())
+        self.assertEqual(inspection.usage, ())
+        self.assertEqual(inspection.artifacts, ())
+        input_summary = cast(
+            Mapping[str, object],
+            inspection.run.request.input_summary,
+        )
+        self.assertEqual(input_summary["privacy"], HASHED_MARKER)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private cancellation request", inspection_value)
+        self.assertNotIn("unused", inspection_value)
 
     async def test_loaded_structured_task_rejects_invalid_input_safely(
         self,
@@ -565,6 +649,104 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private generated summary", inspection_value)
         self.assertNotIn("source.txt", inspection_value)
         self.assertNotIn("private-token-text", inspection_value)
+        self.assertNotIn("token_id", inspection_value)
+
+    async def test_loaded_file_task_accessors_filter_safe_records(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            artifact_ids = iter(
+                (
+                    "input-artifact",
+                    "converted-artifact",
+                    "output-artifact",
+                )
+            )
+            definition = TaskDefinitionLoader().load(
+                _write_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            target = ReviewingTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-client-accessors-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                definition,
+                input_value=TaskFileDescriptor.local_path(
+                    "source.txt",
+                    mime_type="text/plain",
+                    conversions=(TaskFileConversionRequest(name="text"),),
+                    metadata={"filename": "source.txt"},
+                ),
+            )
+            events = await client.events(
+                result.run.run_id,
+                attempt_id=result.attempt.attempt_id,
+            )
+            events_after_first = await client.events(
+                result.run.run_id,
+                after_sequence=events[0].sequence,
+            )
+            usage = await client.usage(
+                result.run.run_id,
+                attempt_id=result.attempt.attempt_id,
+            )
+            usage_totals = await client.usage_totals(result.run.run_id)
+            artifacts = await client.artifacts(result.run.run_id)
+            inspection = await client.inspect(
+                result.run.run_id,
+                after_sequence=events[0].sequence,
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].attempt_id, result.attempt.attempt_id)
+        self.assertEqual(events[0].event_type, "token_generated")
+        self.assertEqual(events_after_first, ())
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].attempt_id, result.attempt.attempt_id)
+        self.assertEqual(usage[0].totals.input_tokens, 13)
+        self.assertEqual(usage[0].totals.output_tokens, 8)
+        self.assertEqual(usage[0].totals.total_tokens, 21)
+        self.assertEqual(usage_totals.input_tokens, 13)
+        self.assertEqual(usage_totals.output_tokens, 8)
+        self.assertEqual(usage_totals.total_tokens, 21)
+        self.assertEqual(len(artifacts), 3)
+        output_artifact = cast(Mapping[str, object], artifacts[-1])
+        self.assertEqual(
+            output_artifact["purpose"],
+            TaskArtifactPurpose.OUTPUT.value,
+        )
+        self.assertEqual(
+            output_artifact["state"],
+            TaskArtifactState.READY.value,
+        )
+        self.assertEqual(
+            output_artifact["attempt_id"],
+            result.attempt.attempt_id,
+        )
+        self.assertEqual(inspection.events, ())
+        self.assertEqual(len(inspection.artifacts), 3)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private source body", inspection_value)
+        self.assertNotIn("private generated summary", inspection_value)
+        self.assertNotIn("private-token-text", inspection_value)
+        self.assertNotIn("source.txt", inspection_value)
         self.assertNotIn("token_id", inspection_value)
 
     async def test_direct_run_reads_explicit_and_converted_inputs(
