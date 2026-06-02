@@ -867,6 +867,36 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private node failure", str(events))
         self.assertNotIn("private prompt", str(events))
 
+    async def test_direct_runner_classifies_flow_validation_failure(
+        self,
+    ) -> None:
+        def resolver(_: TaskTargetContext) -> Flow:
+            return cast(Flow, "private invalid flow")
+
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=resolver),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-runtime-validation",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=TaskInputContract.string(),
+                output_contract=TaskOutputContract.text(),
+            ),
+            input_value="private prompt",
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertIsNone(result.output)
+        assert result.run.result is not None
+        error = cast(Mapping[str, object], result.run.result.error)
+        self.assertEqual(error["category"], "runnable")
+        self.assertEqual(error["code"], "runnable.failed")
+        self.assertNotIn("private invalid flow", str(error))
+        self.assertNotIn("private prompt", str(error))
+
     async def test_direct_runner_records_flow_file_output_artifact(
         self,
     ) -> None:

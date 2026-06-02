@@ -102,12 +102,13 @@ class TaskError:
         )
 
     @classmethod
-    def runnable(cls) -> "TaskError":
+    def runnable(cls, *, retryable: bool = True) -> "TaskError":
+        assert isinstance(retryable, bool)
         return cls(
             category=TaskErrorCategory.RUNNABLE,
             code=TaskErrorCode.RUNNABLE_FAILED,
             message="Task runnable failed.",
-            retryable=True,
+            retryable=retryable,
         )
 
     @classmethod
@@ -162,7 +163,9 @@ def classify_task_error(error: BaseException) -> TaskError:
     if isinstance(error, TaskValidationError):
         if _is_output_contract_error(error.issues):
             return TaskError.output_contract(error.issues)
-        return TaskError.input_contract(error.issues)
+        if _is_input_contract_error(error.issues):
+            return TaskError.input_contract(error.issues)
+        return TaskError.runnable(retryable=False)
     if isinstance(error, MemoryError):
         return TaskError.budget()
     if error.__class__.__name__ == "PrivacySanitizationError":
@@ -177,6 +180,15 @@ def _is_output_contract_error(
 ) -> bool:
     return all(
         issue.code.startswith("output.") or issue.path.startswith("output")
+        for issue in issues
+    )
+
+
+def _is_input_contract_error(
+    issues: tuple[TaskValidationIssue, ...],
+) -> bool:
+    return all(
+        issue.code.startswith("input.") or issue.path.startswith("input")
         for issue in issues
     )
 

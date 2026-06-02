@@ -630,7 +630,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         assert self.queue.completed.run.result is not None
         self.assertEqual(
             self.queue.completed.run.result.error["code"],
-            "input_contract.failed",
+            "runnable.failed",
         )
 
     async def test_check_cancelled_raises_cancelled_error(self) -> None:

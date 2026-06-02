@@ -112,6 +112,54 @@ class TaskErrorTest(TestCase):
                 self.assertEqual(error.category, category)
                 self.assertNotIn("secret", str(error.as_dict()))
 
+    def test_classifier_maps_target_validation_to_runnable(self) -> None:
+        cases = (
+            (
+                TaskValidationError(
+                    (
+                        TaskValidationIssue(
+                            code="execution.unsupported_flow",
+                            path="execution.ref",
+                            message="private flow is unavailable",
+                            hint="Configure a resolver.",
+                            category=TaskValidationCategory.UNSUPPORTED,
+                        ),
+                    )
+                ),
+                "execution-only",
+            ),
+            (
+                TaskValidationError(
+                    (
+                        TaskValidationIssue(
+                            code="execution.unsupported_flow",
+                            path="execution.ref",
+                            message="private flow is unavailable",
+                            hint="Configure a resolver.",
+                            category=TaskValidationCategory.UNSUPPORTED,
+                        ),
+                        TaskValidationIssue(
+                            code="input.invalid_type",
+                            path="input",
+                            message="private input is invalid",
+                            hint="Pass a valid value.",
+                            category=TaskValidationCategory.VALUE,
+                        ),
+                    )
+                ),
+                "mixed",
+            ),
+        )
+
+        for exception, name in cases:
+            with self.subTest(name=name):
+                error = classify_task_error(exception)
+
+                self.assertEqual(error.category, TaskErrorCategory.RUNNABLE)
+                self.assertEqual(error.code, TaskErrorCode.RUNNABLE_FAILED)
+                self.assertFalse(error.retryable)
+                self.assertNotIn("private", str(error.as_dict()))
+
     def test_error_details_reject_unsafe_values(self) -> None:
         with self.assertRaises(AssertionError):
             TaskError(
