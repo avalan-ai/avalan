@@ -10,7 +10,9 @@ from avalan.event import Event, EventType
 from avalan.task import (
     HASHED_MARKER,
     REDACTED_MARKER,
+    TaskArtifactPolicy,
     TaskArtifactPurpose,
+    TaskArtifactRef,
     TaskArtifactState,
     TaskAttemptState,
     TaskClient,
@@ -127,6 +129,25 @@ class TextTarget(TaskTargetRunner):
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         return "public answer"
+
+
+class ArtifactOutputTarget(TaskTargetRunner):
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        await context.check_cancelled()
+        assert context.artifact_store is not None
+        return await context.artifact_store.put(
+            b"private generated report",
+            media_type="text/plain",
+            metadata={"filename": "report.txt"},
+        )
 
 
 class FailingTarget(TaskTargetRunner):
@@ -684,6 +705,110 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("same-owner", str(inspection.as_dict()))
         self.assertNotIn("same prompt", str(inspection.as_dict()))
 
+    async def test_output_artifact_task_runs_through_queue_and_inspection(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: "artifact-output-e2e",
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = ArtifactOutputTarget()
+            client = _client(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                clock=clock,
+            )
+            definition = _definition(
+                output_contract=TaskOutputContract.file(),
+                artifact=TaskArtifactPolicy.references_only(
+                    retention_days=5,
+                ),
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private artifact prompt",
+            )
+            processed = await worker.process_once()
+            output = await client.wait(
+                submission.run.run_id,
+                timeout_seconds=0,
+                poll_interval_seconds=0.01,
+            )
+            inspection = await client.inspect(submission.run.run_id)
+            records = await store.list_artifacts(
+                submission.run.run_id,
+                purpose=TaskArtifactPurpose.OUTPUT,
+            )
+            reader = await artifact_store.open(records[0].ref)
+            try:
+                body = reader.read()
+            finally:
+                reader.close()
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertIsInstance(processed.output, TaskArtifactRef)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        assert isinstance(output.output_summary, Mapping)
+        self.assertEqual(output.output_summary["state"], "ready")
+        self.assertEqual(body, b"private generated report")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].state, TaskArtifactState.READY)
+        self.assertEqual(records[0].purpose, TaskArtifactPurpose.OUTPUT)
+        self.assertEqual(records[0].retention.delete_after_days, 5)
+        self.assertEqual(len(inspection.artifacts), 1)
+        artifact = inspection.artifacts[0]
+        assert isinstance(artifact, Mapping)
+        self.assertEqual(artifact["purpose"], TaskArtifactPurpose.OUTPUT.value)
+        self.assertEqual(artifact["state"], TaskArtifactState.READY.value)
+        self.assertNotIn("private generated report", str(inspection.as_dict()))
+        self.assertNotIn("private artifact prompt", str(inspection.as_dict()))
+
+    async def test_cancelled_queued_submission_is_not_claimed(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private cancelled prompt",
+        )
+        cancelled = await client.cancel(submission.run.run_id)
+        idle = await worker.process_once()
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertEqual(cancelled.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertFalse(idle.processed)
+        self.assertEqual(inspection.run.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertEqual(inspection.attempts, ())
+        self.assertEqual(depth.cancel_requested, 1)
+        self.assertEqual(depth.available, 1)
+        self.assertEqual(target.inputs, [])
+        self.assertNotIn("private cancelled prompt", str(inspection.as_dict()))
+
     async def test_scheduled_submission_waits_until_available(
         self,
     ) -> None:
@@ -812,14 +937,17 @@ def _worker(
 def _definition(
     *,
     input_contract: TaskInputContract | None = None,
+    output_contract: TaskOutputContract | None = None,
+    artifact: TaskArtifactPolicy | None = None,
     retry: TaskRetryPolicy | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="queue_worker_e2e", version="1"),
         input=input_contract or TaskInputContract.string(),
-        output=TaskOutputContract.text(),
+        output=output_contract or TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agent.toml"),
         run=TaskRunPolicy.queued("default"),
+        artifact=artifact or TaskArtifactPolicy.references_only(),
         retry=retry or TaskRetryPolicy(max_attempts=2),
     )
 
