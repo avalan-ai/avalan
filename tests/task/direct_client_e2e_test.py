@@ -1,0 +1,331 @@
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from typing import BinaryIO, cast
+from unittest import IsolatedAsyncioTestCase, main
+
+from avalan.event import Event, EventType
+from avalan.task import (
+    HASHED_MARKER,
+    TaskArtifactPurpose,
+    TaskArtifactState,
+    TaskAttemptState,
+    TaskClient,
+    TaskDefinition,
+    TaskDefinitionLoader,
+    TaskFileConversionRequest,
+    TaskFileDescriptor,
+    TaskInputType,
+    TaskKeyMaterial,
+    TaskKeyPurpose,
+    TaskOutputType,
+    TaskRunState,
+    TaskTargetContext,
+    TaskTargetRunner,
+    TaskValidationContext,
+    TaskValidationIssue,
+    UsageSource,
+)
+from avalan.task.artifacts import LocalArtifactStore
+from avalan.task.stores import InMemoryTaskStore
+
+
+def _write_task_workspace(root: Path) -> Path:
+    (root / "agents").mkdir()
+    (root / "agents" / "reviewer.toml").write_text(
+        """
+[agent]
+name = "Reviewer"
+task = "Review the uploaded document."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+        encoding="utf-8",
+    )
+    (root / "source.txt").write_text(
+        "private source body",
+        encoding="utf-8",
+    )
+    task_path = root / "review.task.toml"
+    task_path.write_text(
+        """
+[task]
+name = "document_review"
+version = "1"
+
+[input]
+type = "file"
+file_conversions = ["text"]
+mime_types = ["text/plain"]
+
+[output]
+type = "file"
+
+[execution]
+type = "agent"
+ref = "agents/reviewer.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 60
+
+[artifact]
+retention_days = 9
+max_bytes = 4096
+
+[observability]
+metrics = true
+trace = false
+capture_events = true
+""",
+        encoding="utf-8",
+    )
+    return task_path
+
+
+class StaticHmacProvider:
+    def hmac_key(
+        self,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+    ) -> TaskKeyMaterial:
+        return TaskKeyMaterial(
+            key_id=key_id or purpose.value,
+            algorithm="hmac-sha256",
+            secret=b"direct-client-e2e-secret",
+        )
+
+
+class ReviewingTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.definition_refs: list[str] = []
+        self.input_values: list[object] = []
+        self.file_bodies: list[bytes] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = context
+        self.definition_refs.append(definition.execution.ref)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.input_values.append(context.input_value)
+        await context.check_cancelled()
+        assert context.artifact_store is not None
+        for file in context.files:
+            assert file.artifact_ref is not None
+            reader: BinaryIO = await context.artifact_store.open(
+                file.artifact_ref
+            )
+            try:
+                self.file_bodies.append(reader.read())
+            finally:
+                reader.close()
+        if context.event_listener is not None:
+            event_result = context.event_listener(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={
+                        "status": "ready",
+                        "token": "private-token-text",
+                        "token_id": 41,
+                    },
+                )
+            )
+            if event_result is not None:
+                await event_result
+        await context.observe_usage(
+            SimpleNamespace(
+                input_token_count=13,
+                output_token_count=8,
+                total_token_count=21,
+            )
+        )
+        return await context.artifact_store.put(
+            b"private generated summary",
+            media_type="text/plain",
+            metadata={"filename": "summary.txt"},
+        )
+
+
+class DirectClientE2ETest(IsolatedAsyncioTestCase):
+    async def test_loaded_file_task_runs_directly_and_inspects_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            artifact_ids = iter(
+                (
+                    "input-artifact",
+                    "converted-artifact",
+                    "output-artifact",
+                )
+            )
+            definition = TaskDefinitionLoader().load(
+                _write_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            target = ReviewingTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-client-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            input_value = TaskFileDescriptor.local_path(
+                "source.txt",
+                mime_type="text/plain",
+                conversions=(TaskFileConversionRequest(name="text"),),
+                metadata={"filename": "source.txt"},
+            )
+            validation = await client.validate(
+                definition,
+                input_value=input_value,
+            )
+
+            result = await client.run(
+                definition,
+                input_value=input_value,
+                metadata={"tenant": "safe"},
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+            artifacts = await store.list_artifacts(result.run.run_id)
+            output_records = await store.list_artifacts(
+                result.run.run_id,
+                purpose=TaskArtifactPurpose.OUTPUT,
+            )
+            reader = await artifact_store.open(output_records[0].ref)
+            try:
+                output_body = reader.read()
+            finally:
+                reader.close()
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(definition.input.type, TaskInputType.FILE)
+        self.assertEqual(definition.output.type, TaskOutputType.FILE)
+        self.assertEqual(target.definition_refs, ["agents/reviewer.toml"] * 2)
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertTrue(output.ready)
+        self.assertIs(output.error, None)
+        self.assertEqual(target.file_bodies, [b"private source body"])
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.CONVERTED,
+                TaskArtifactPurpose.OUTPUT,
+            ],
+        )
+        self.assertEqual(
+            [artifact.state for artifact in artifacts],
+            [
+                TaskArtifactState.READY,
+                TaskArtifactState.READY,
+                TaskArtifactState.READY,
+            ],
+        )
+        self.assertEqual(output_records[0].retention.delete_after_days, 9)
+        self.assertEqual(output_body, b"private generated summary")
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(len(inspection.events), 1)
+        self.assertEqual(inspection.events[0].event_type, "token_generated")
+        self.assertEqual(len(inspection.usage), 1)
+        self.assertEqual(inspection.usage[0].source, UsageSource.ESTIMATED)
+        self.assertEqual(inspection.usage_totals.input_tokens, 13)
+        self.assertEqual(inspection.usage_totals.output_tokens, 8)
+        self.assertEqual(inspection.usage_totals.total_tokens, 21)
+        self.assertEqual(len(inspection.artifacts), 3)
+        output_summary = cast(Mapping[str, object], output.output_summary)
+        self.assertEqual(output_summary, {"state": "ready"})
+        input_summary = cast(
+            Mapping[str, object],
+            inspection.run.request.input_summary,
+        )
+        self.assertEqual(input_summary["privacy"], HASHED_MARKER)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private source body", inspection_value)
+        self.assertNotIn("private generated summary", inspection_value)
+        self.assertNotIn("source.txt", inspection_value)
+        self.assertNotIn("private-token-text", inspection_value)
+        self.assertNotIn("token_id", inspection_value)
+
+    async def test_loaded_file_task_rejects_escaped_input_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = ReviewingTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=LocalArtifactStore(
+                    root / "artifacts",
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "unexpected-artifact",
+                ),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-client-e2e-escape",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                definition,
+                input_value=TaskFileDescriptor.local_path(
+                    "../source.txt",
+                    mime_type="text/plain",
+                    conversions=(TaskFileConversionRequest(name="text"),),
+                ),
+            )
+            inspection = await client.inspect(result.run.run_id)
+            artifacts = await store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        self.assertEqual(target.definition_refs, ["agents/reviewer.toml"])
+        self.assertEqual(target.input_values, [])
+        self.assertEqual(target.file_bodies, [])
+        self.assertEqual(artifacts, ())
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.FAILED,
+        )
+        error_summary = cast(
+            Mapping[str, object],
+            result.run.result.error if result.run.result else {},
+        )
+        self.assertEqual(error_summary["category"], "input_contract")
+        self.assertEqual(error_summary["code"], "input_contract.failed")
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("../source", inspection_value)
+        self.assertNotIn("private source body", inspection_value)
+
+
+if __name__ == "__main__":
+    main()
