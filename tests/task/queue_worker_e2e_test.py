@@ -24,6 +24,7 @@ from avalan.task import (
     TaskExecutionTarget,
     TaskFileDescriptor,
     TaskInputContract,
+    TaskInputFile,
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskMetadata,
@@ -45,6 +46,7 @@ from avalan.task import (
     TaskTargetContext,
     TaskTargetRunner,
     TaskValidationContext,
+    TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
 )
@@ -806,6 +808,42 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("same-window", str(inspection.as_dict()))
         self.assertNotIn("same-owner", str(inspection.as_dict()))
         self.assertNotIn("same prompt", str(inspection.as_dict()))
+
+    async def test_queued_attachment_requires_durable_reference(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(
+                _definition(),
+                input_value="safe prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="volatile/private.txt",
+                        media_type="text/plain",
+                        size_bytes=7,
+                        metadata={"filename": "private.txt"},
+                    ),
+                ),
+            )
+        depth = await queue.depth("default")
+
+        self.assertEqual(len(error.exception.issues), 1)
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "files[0].artifact_ref",
+        )
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(queue.items, {})
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(target.inputs, [])
+        self.assertNotIn("private.txt", str(error.exception))
+        self.assertNotIn("safe prompt", str(error.exception))
 
     async def test_output_artifact_task_runs_through_queue_and_inspection(
         self,

@@ -16,7 +16,9 @@ from avalan.task import (
     TaskDefinition,
     TaskDefinitionLoader,
     TaskFileConversionRequest,
+    TaskFileConversionResult,
     TaskFileDescriptor,
+    TaskInputFile,
     TaskInputType,
     TaskKeyMaterial,
     TaskKeyPurpose,
@@ -97,6 +99,31 @@ class StaticHmacProvider:
             key_id=key_id or purpose.value,
             algorithm="hmac-sha256",
             secret=b"direct-client-e2e-secret",
+        )
+
+
+class PrefixingTextConverter:
+    @property
+    def name(self) -> str:
+        return "text"
+
+    @property
+    def version(self) -> str:
+        return "direct-e2e"
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = source_media_type
+        prefix = str((options or {}).get("prefix", ""))
+        return TaskFileConversionResult(
+            content=f"{prefix}{content.decode()}".encode(),
+            media_type="text/plain",
+            metadata={"prefix": prefix},
         )
 
 
@@ -267,6 +294,108 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("source.txt", inspection_value)
         self.assertNotIn("private-token-text", inspection_value)
         self.assertNotIn("token_id", inspection_value)
+
+    async def test_direct_run_reads_explicit_and_converted_inputs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            artifact_ids = iter(
+                (
+                    "explicit-artifact",
+                    "input-artifact",
+                    "converted-artifact",
+                    "output-artifact",
+                )
+            )
+            definition = TaskDefinitionLoader().load(
+                _write_task_workspace(root)
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            explicit_ref = await artifact_store.put(
+                b"private explicit body",
+                media_type="text/plain",
+                metadata={"filename": "explicit.txt"},
+            )
+            target = ReviewingTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                file_converters={"text": PrefixingTextConverter()},
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-client-e2e-converted",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            input_value = TaskFileDescriptor.local_path(
+                "source.txt",
+                mime_type="text/plain",
+                conversions=(
+                    TaskFileConversionRequest(
+                        name="text",
+                        options={"prefix": "converted: "},
+                    ),
+                ),
+                metadata={"filename": "source.txt"},
+            )
+
+            result = await client.run(
+                definition,
+                input_value=input_value,
+                files=(
+                    TaskInputFile(
+                        logical_path="provided/explicit.txt",
+                        artifact_ref=explicit_ref,
+                        media_type="text/plain",
+                        size_bytes=explicit_ref.size_bytes,
+                        metadata={"filename": "explicit.txt"},
+                    ),
+                ),
+                metadata={"tenant": "safe"},
+            )
+            inspection = await client.inspect(result.run.run_id)
+            artifacts = await store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            target.file_bodies,
+            [
+                b"private explicit body",
+                b"converted: private source body",
+            ],
+        )
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.CONVERTED,
+                TaskArtifactPurpose.OUTPUT,
+            ],
+        )
+        self.assertEqual(
+            [artifact.artifact_id for artifact in artifacts],
+            [
+                "input-artifact",
+                "converted-artifact",
+                "output-artifact",
+            ],
+        )
+        self.assertEqual(artifacts[1].provenance.converter, "text")
+        self.assertEqual(artifacts[1].retention.delete_after_days, 9)
+        self.assertEqual(len(inspection.artifacts), 3)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private explicit body", inspection_value)
+        self.assertNotIn("private source body", inspection_value)
+        self.assertNotIn("explicit.txt", inspection_value)
+        self.assertNotIn("source.txt", inspection_value)
 
     async def test_loaded_file_task_rejects_escaped_input_safely(
         self,
