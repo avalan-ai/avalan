@@ -39,6 +39,21 @@ def _find_parser(parser: ArgumentParser, prog: str) -> ArgumentParser:
     raise AssertionError(f"Parser {prog!r} was not found.")
 
 
+def _find_parser_with_suffix(
+    parser: ArgumentParser,
+    prog_suffix: str,
+) -> ArgumentParser:
+    stack = [parser]
+    while stack:
+        candidate = stack.pop()
+        if candidate.prog.endswith(prog_suffix):
+            return candidate
+        for action in candidate._actions:
+            if isinstance(action, _SubParsersAction):
+                stack.extend(action.choices.values())
+    raise AssertionError(f"Parser ending with {prog_suffix!r} was not found.")
+
+
 class CliInitTestCase(TestCase):
     def test_constructor_creates_parser_and_sets_help_full(self):
         logger = MagicMock()
@@ -304,11 +319,11 @@ class CliModelRunOptionTestCase(TestCase):
         with patch.object(sys, "argv", ["prog"]):
             cli = CLI(logger)
 
-        model_run_help = _find_parser(
-            cli._parser, "prog model run"
+        model_run_help = _find_parser_with_suffix(
+            cli._parser, " model run"
         ).format_help()
-        agent_run_help = _find_parser(
-            cli._parser, "prog agent run"
+        agent_run_help = _find_parser_with_suffix(
+            cli._parser, " agent run"
         ).format_help()
 
         for option in (
