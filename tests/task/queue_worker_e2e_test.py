@@ -855,6 +855,80 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("same-owner", str(inspection.as_dict()))
         self.assertNotIn("same prompt", str(inspection.as_dict()))
 
+    async def test_explicit_queue_name_runs_on_matching_worker(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        default_worker = _worker(
+            store,
+            queue,
+            target=target,
+            clock=clock,
+        )
+        priority_worker = _worker(
+            store,
+            queue,
+            target=target,
+            queue_name="priority-documents",
+            clock=clock,
+        )
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private priority prompt",
+            queue_name="priority-documents",
+            queue_metadata={"tenant": "safe"},
+        )
+        default_depth = await queue.depth("default")
+        priority_depth = await queue.depth("priority-documents")
+        idle = await default_worker.process_once()
+        processed = await priority_worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        final_default_depth = await queue.depth("default")
+        final_priority_depth = await queue.depth("priority-documents")
+
+        self.assertTrue(submission.created)
+        self.assertIsNotNone(submission.queue_item)
+        assert submission.queue_item is not None
+        self.assertEqual(
+            submission.queue_item.queue_name,
+            "priority-documents",
+        )
+        self.assertEqual(
+            submission.queue_item.metadata,
+            {"tenant": "safe"},
+        )
+        self.assertEqual(
+            submission.run.request.queue,
+            "priority-documents",
+        )
+        self.assertEqual(default_depth.active, 0)
+        self.assertEqual(priority_depth.available, 1)
+        self.assertFalse(idle.processed)
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(final_default_depth.active, 0)
+        self.assertEqual(final_priority_depth.active, 0)
+        self.assertEqual(len(target.inputs), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertIn("priority-documents", inspection_value)
+        self.assertNotIn("private priority prompt", inspection_value)
+        self.assertNotIn("tenant", inspection_value)
+
     async def test_duplicate_submission_after_completion_reuses_result(
         self,
     ) -> None:
@@ -1490,6 +1564,7 @@ def _worker(
     queue: InMemoryTaskQueue,
     *,
     target: TaskTargetRunner,
+    queue_name: str = "default",
     artifact_store: LocalArtifactStore | None = None,
     clock: Clock,
 ) -> TaskWorker:
@@ -1498,6 +1573,7 @@ def _worker(
         cast(TaskQueue, queue),
         target=target,
         worker_id="worker-1",
+        queue_name=queue_name,
         artifact_store=artifact_store,
         clock=lambda: clock.now,
     )

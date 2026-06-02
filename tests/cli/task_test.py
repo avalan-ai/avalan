@@ -61,6 +61,8 @@ class _FakeTaskClient:
         self.events_error = events_error
         self.artifacts_error = artifacts_error
         self.input_value: object = None
+        self.queue_name: str | None = None
+        self.queue_metadata: object = None
         self.wait_timeout: float | None = None
         self.poll_interval: float | None = None
         self.after_sequence: int | None = None
@@ -83,11 +85,14 @@ class _FakeTaskClient:
         definition: object,
         *,
         input_value: object = None,
+        queue_name: str | None = None,
         queue_metadata: object | None = None,
     ) -> object:
         if self.enqueue_error is not None:
             raise self.enqueue_error
         self.input_value = input_value
+        self.queue_name = queue_name
+        self.queue_metadata = queue_metadata
         return self.enqueue_result
 
     async def wait(
@@ -814,13 +819,18 @@ class CliTaskCommandShellTestCase(TestCase):
                         wait_timeout=None,
                         poll_interval=1.0,
                         ephemeral=False,
-                        queue="",
+                        queue="priority-documents",
                     ),
                     console,
                     self.theme,
                 )
 
         self.assertTrue(result)
+        self.assertEqual(client.queue_name, "priority-documents")
+        self.assertEqual(
+            client.queue_metadata,
+            {"cli_queue": "priority-documents"},
+        )
         self.assertIn("Task enqueued: run-queued", console.export_text())
 
     def test_enqueue_reports_wait_timeout(self) -> None:
@@ -1223,6 +1233,7 @@ class CliTaskCommandShellTestCase(TestCase):
             task_cmds._safe_queue_metadata(Namespace(queue="q")),
             {"cli_queue": "q"},
         )
+        self.assertIsNone(task_cmds._task_cli_queue_name(Namespace(queue="")))
         self.assertEqual(
             task_cmds._task_command_metadata(ephemeral=True)["store_mode"],
             "ephemeral-memory",

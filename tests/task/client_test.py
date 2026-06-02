@@ -490,6 +490,45 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(len(submission.run.definition_id), 64)
         self.assertIsNone(queue.requests[0].idempotency_key)
 
+    async def test_enqueue_uses_explicit_queue_name(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-queue-override-hash",
+        )
+        definition = _definition(
+            run=TaskRunPolicy.queued(
+                "documents",
+                idempotency=IdempotencyMode.NONE,
+            )
+        )
+
+        submission = await client.enqueue(
+            definition,
+            input_value="private prompt",
+            queue_name="priority-documents",
+        )
+
+        self.assertEqual(queue.requests[0].queue, "priority-documents")
+        self.assertEqual(
+            submission.run.request.queue,
+            "priority-documents",
+        )
+        queue_item = submission.queue_item
+        self.assertIsNotNone(queue_item)
+        assert queue_item is not None
+        self.assertEqual(queue_item.queue_name, "priority-documents")
+        with self.assertRaises(AssertionError):
+            await client.enqueue(
+                definition,
+                input_value="private prompt",
+                queue_name=" ",
+            )
+
     async def test_enqueue_persists_explicit_durable_files(self) -> None:
         store = InMemoryTaskStore()
         queue = RecordingQueue(store)

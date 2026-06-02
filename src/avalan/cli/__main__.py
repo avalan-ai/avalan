@@ -1548,6 +1548,12 @@ class CLI:
             help="Durable task store PostgreSQL schema.",
         )
         task_enqueue_parser.add_argument(
+            "--queue",
+            type=str,
+            default=None,
+            help="Queue name to submit the task run to.",
+        )
+        task_enqueue_parser.add_argument(
             "--wait",
             action="store_true",
             help="Wait for the enqueued task to finish.",

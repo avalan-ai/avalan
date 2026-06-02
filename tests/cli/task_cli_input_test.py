@@ -28,6 +28,8 @@ class CliTaskInputParserTestCase(TestCase):
                 "task",
                 "enqueue",
                 "tasks/document.task.toml",
+                "--queue",
+                "priority-documents",
                 "--input-json",
                 "@input.json",
                 "--input-question",
@@ -43,6 +45,7 @@ class CliTaskInputParserTestCase(TestCase):
         self.assertEqual(args.command, "task")
         self.assertEqual(args.task_command, "enqueue")
         self.assertEqual(args.definition, "tasks/document.task.toml")
+        self.assertEqual(args.queue, "priority-documents")
         self.assertEqual(args.task_input_json, "@input.json")
         self.assertEqual(
             args.task_input_fields,

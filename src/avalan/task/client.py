@@ -1,4 +1,5 @@
 from ..types import (
+    assert_non_empty_string,
     assert_optional_non_negative_int,
     assert_optional_non_negative_number,
     assert_positive_number,
@@ -266,10 +267,13 @@ class TaskClient:
         idempotency_expires_at: datetime | None = None,
         idempotency_window: object = None,
         owner_scope: object = "default",
+        queue_name: str | None = None,
         queue_metadata: Mapping[str, object] | None = None,
     ) -> TaskQueueSubmission:
         assert isinstance(definition, TaskDefinition)
         assert isinstance(files, tuple)
+        if queue_name is not None:
+            assert_non_empty_string(queue_name, "queue_name")
         if available_at is not None:
             assert isinstance(available_at, datetime)
         if idempotency_expires_at is not None:
@@ -303,6 +307,8 @@ class TaskClient:
             for materialized_file in materialized_files
         )
         queued_files = (*files, *input_files)
+        selected_queue_name = queue_name or definition.run.queue
+        assert selected_queue_name is not None
         input_summary_value = _input_summary_value(definition, input_value)
         idempotency = task_idempotency_identity(
             definition,
@@ -329,10 +335,10 @@ class TaskClient:
                 idempotency_key=(
                     idempotency.identity_key if idempotency else None
                 ),
-                queue=definition.run.queue,
+                queue=selected_queue_name,
                 metadata=freeze_snapshot_metadata(metadata),
             ),
-            queue_name=definition.run.queue or "",
+            queue_name=selected_queue_name,
             priority=definition.run.priority or 0,
             available_at=available_at,
             idempotency=idempotency,

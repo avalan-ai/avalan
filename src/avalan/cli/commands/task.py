@@ -465,6 +465,7 @@ async def _task_enqueue(
             submission = await client.enqueue(
                 definition,
                 input_value=task_input.value,
+                queue_name=_task_cli_queue_name(args),
                 queue_metadata=_safe_queue_metadata(args),
             )
             console.print(
@@ -852,10 +853,17 @@ def _task_store_schema(args: Namespace) -> str | None:
 
 
 def _safe_queue_metadata(args: Namespace) -> Mapping[str, object]:
-    queue_name = getattr(args, "queue", None)
-    if isinstance(queue_name, str) and queue_name.strip():
+    queue_name = _task_cli_queue_name(args)
+    if queue_name is not None:
         return {"cli_queue": queue_name}
     return {}
+
+
+def _task_cli_queue_name(args: Namespace) -> str | None:
+    value = getattr(args, "queue", None)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _task_command_metadata(*, ephemeral: bool) -> Mapping[str, object]:
