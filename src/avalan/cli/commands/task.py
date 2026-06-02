@@ -4,6 +4,7 @@ from ...pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from ...task import (
     REDACTED_MARKER,
     FeatureGateDiagnostic,
+    HmacProvider,
     PrivacyField,
     PrivacySanitizationError,
     PrivacySanitizer,
@@ -15,6 +16,8 @@ from ...task import (
     TaskDefinitionLoader,
     TaskFeature,
     TaskInputType,
+    TaskKeyMaterial,
+    TaskKeyPurpose,
     TaskLoadIssue,
     TaskRunState,
     TaskStoreNotFoundError,
@@ -56,6 +59,8 @@ from ...task.targets.agent import (
 
 from argparse import Namespace
 from asyncio import run as asyncio_run
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from collections.abc import Coroutine, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
@@ -93,6 +98,33 @@ class TaskCliInputError(ValueError):
         self.message = message
         self.hint = hint
         super().__init__(message)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _TaskCliHmacProvider:
+    key_id: str
+    secret: bytes
+    algorithm: str = "hmac-sha256"
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.key_id, str) and self.key_id.strip()
+        assert isinstance(self.secret, bytes) and self.secret
+        assert isinstance(self.algorithm, str) and self.algorithm.strip()
+
+    def hmac_key(
+        self,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+    ) -> TaskKeyMaterial:
+        assert isinstance(purpose, TaskKeyPurpose)
+        if key_id is not None:
+            assert isinstance(key_id, str) and key_id.strip()
+        return TaskKeyMaterial(
+            key_id=key_id or self.key_id,
+            algorithm=self.algorithm,
+            secret=self.secret,
+        )
 
 
 @dataclass(slots=True)
@@ -146,6 +178,8 @@ def task_validate(
 
     issues = validate_task_definition(
         load_result.definition,
+        hmac_provider=_task_hmac_provider(),
+        require_configured_keys=True,
         execution_roots=(definition_path.parent,),
     )
     if issues:
@@ -650,6 +684,7 @@ async def _task_worker(
                     logger=logger,
                     stack=stack,
                 ),
+                hmac_provider=_task_hmac_provider(),
                 worker_id=getattr(args, "worker_id", None),
                 queue_name=getattr(args, "queue", None) or "default",
                 lease_seconds=getattr(args, "lease_seconds", 300),
@@ -731,12 +766,14 @@ def _task_cli_client_context(
         stack=stack,
     )
     artifact_store = _task_artifact_store()
+    hmac_provider = _task_hmac_provider()
     if ephemeral:
         return _TaskCliClientContext(
             TaskClient(
                 InMemoryTaskStore(),
                 target=target,
                 artifact_store=artifact_store,
+                hmac_provider=hmac_provider,
                 execution_roots=(definition_path.parent,),
             ),
             stack=stack,
@@ -751,6 +788,7 @@ def _task_cli_client_context(
             target=target,
             queue=task_queue,
             artifact_store=artifact_store,
+            hmac_provider=hmac_provider,
             execution_roots=(definition_path.parent,),
         ),
         database=database,
@@ -826,6 +864,23 @@ def _task_artifact_store() -> LocalArtifactStore | None:
     if not root:
         return None
     return LocalArtifactStore(root, raw_storage_allowed=True)
+
+
+def _task_hmac_provider() -> HmacProvider | None:
+    key_id = environ.get("AVALAN_TASK_HMAC_KEY_ID")
+    key_b64 = environ.get("AVALAN_TASK_HMAC_KEY_B64")
+    if not (
+        isinstance(key_id, str)
+        and key_id.strip()
+        and isinstance(key_b64, str)
+        and key_b64.strip()
+    ):
+        return None
+    try:
+        secret = b64decode(key_b64.strip(), validate=True)
+    except (BinasciiError, ValueError):
+        return None
+    return _TaskCliHmacProvider(key_id=key_id, secret=secret)
 
 
 def _task_store_dsn(args: Namespace) -> str | None:

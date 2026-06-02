@@ -2,6 +2,7 @@ from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
 
 from rich.console import Console
 
@@ -17,6 +18,11 @@ from avalan.task import (
     TaskPrivacyPolicy,
     validate_task_input,
 )
+
+TASK_HMAC_ENV = {
+    "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
+    "AVALAN_TASK_HMAC_KEY_B64": "dGFzay1obWFjLXRlc3Qta2V5",
+}
 
 
 class CliTaskInputParserTestCase(TestCase):
@@ -517,17 +523,18 @@ class CliTaskInputTestCase(TestCase):
                 encoding="utf-8",
             )
 
-            result = task_cmds.task_validate(
-                Namespace(
-                    definition=str(definition),
-                    task_input=None,
-                    task_input_json=None,
-                    task_input_fields=("question=private question",),
-                    task_files=(),
-                ),
-                console,
-                object(),
-            )
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(
+                        definition=str(definition),
+                        task_input=None,
+                        task_input_json=None,
+                        task_input_fields=("question=private question",),
+                        task_files=(),
+                    ),
+                    console,
+                    object(),
+                )
 
         output = console.export_text()
         self.assertTrue(result)
@@ -543,30 +550,32 @@ class CliTaskInputTestCase(TestCase):
                 input_type="integer",
             )
             parse_console = Console(record=True, width=160)
-            parse_result = task_cmds.task_validate(
-                Namespace(
-                    definition=str(definition),
-                    task_input="not-an-integer",
-                    task_input_json=None,
-                    task_input_fields=(),
-                    task_files=(),
-                ),
-                parse_console,
-                object(),
-            )
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                parse_result = task_cmds.task_validate(
+                    Namespace(
+                        definition=str(definition),
+                        task_input="not-an-integer",
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=(),
+                    ),
+                    parse_console,
+                    object(),
+                )
 
             validation_console = Console(record=True, width=160)
-            validation_result = task_cmds.task_validate(
-                Namespace(
-                    definition=str(definition),
-                    task_input=None,
-                    task_input_json=None,
-                    task_input_fields=(),
-                    task_files=("document=report.pdf",),
-                ),
-                validation_console,
-                object(),
-            )
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                validation_result = task_cmds.task_validate(
+                    Namespace(
+                        definition=str(definition),
+                        task_input=None,
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=("document=report.pdf",),
+                    ),
+                    validation_console,
+                    object(),
+                )
 
         self.assertFalse(parse_result)
         self.assertIn(

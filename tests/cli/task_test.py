@@ -16,6 +16,7 @@ from avalan.task import (
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
     TaskEventCategory,
+    TaskKeyPurpose,
     TaskRunState,
     TaskStoreNotFoundError,
     TaskTargetContext,
@@ -25,6 +26,10 @@ from avalan.task import (
 )
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
+TASK_HMAC_ENV = {
+    "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
+    "AVALAN_TASK_HMAC_KEY_B64": "dGFzay1obWFjLXRlc3Qta2V5",
+}
 
 
 class _FakeTaskClient:
@@ -199,11 +204,13 @@ class _FakeResource:
 
 
 class _FakeTaskWorker:
+    instances: list["_FakeTaskWorker"] = []
     results: list[object] = []
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args = args
         self.kwargs = kwargs
+        self.instances.append(self)
 
     async def process_once(self) -> object:
         if self.results:
@@ -218,17 +225,33 @@ class CliTaskValidateTestCase(TestCase):
     def test_validate_prints_success_for_valid_definition(self) -> None:
         console = Console(record=True, width=160)
 
-        result = task_cmds.task_validate(
-            Namespace(definition=str(FIXTURE_ROOT / "minimal.task.toml")),
-            console,
-            self.theme,
-        )
+        with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+            result = task_cmds.task_validate(
+                Namespace(definition=str(FIXTURE_ROOT / "minimal.task.toml")),
+                console,
+                self.theme,
+            )
 
         self.assertTrue(result)
         self.assertIn(
             "Task definition is valid: person_explainer 1",
             console.export_text(),
         )
+
+    def test_validate_reports_missing_hmac_key(self) -> None:
+        console = Console(record=True, width=160)
+
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            result = task_cmds.task_validate(
+                Namespace(definition=str(FIXTURE_ROOT / "minimal.task.toml")),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("privacy.hmac_key_missing", output)
+        self.assertNotIn("Ada Lovelace", output)
 
     def test_validate_prints_load_issues(self) -> None:
         console = Console(record=True, width=160)
@@ -271,11 +294,12 @@ class CliTaskValidateTestCase(TestCase):
                 encoding="utf-8",
             )
 
-            result = task_cmds.task_validate(
-                Namespace(definition=str(definition)),
-                console,
-                self.theme,
-            )
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
 
         output = console.export_text()
         self.assertFalse(result)
@@ -968,6 +992,7 @@ class CliTaskCommandShellTestCase(TestCase):
     def test_worker_processes_until_no_work(self) -> None:
         console = Console(record=True, width=160)
         database = _FakeResource()
+        _FakeTaskWorker.instances = []
         _FakeTaskWorker.results = [
             SimpleNamespace(
                 processed=True,
@@ -993,6 +1018,7 @@ class CliTaskCommandShellTestCase(TestCase):
                 task_cmds, "_agent_task_target", return_value=object()
             ),
             patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
         ):
             result = task_cmds.task_worker(
                 Namespace(
@@ -1013,6 +1039,9 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertTrue(result)
         self.assertTrue(database.entered)
         self.assertTrue(database.exited)
+        self.assertIsNotNone(
+            _FakeTaskWorker.instances[0].kwargs["hmac_provider"]
+        )
         self.assertIn("Task processed: run-1 succeeded", output)
         self.assertIn("Task worker processed 1 run.", output)
 
@@ -1079,6 +1108,7 @@ class CliTaskCommandShellTestCase(TestCase):
                 patch.object(
                     task_cmds, "_task_artifact_store", return_value=None
                 ),
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
             ):
                 ephemeral_context = task_cmds._task_cli_client_context(
                     definition_path,
@@ -1103,6 +1133,7 @@ class CliTaskCommandShellTestCase(TestCase):
                 patch.object(
                     task_cmds, "PgsqlTaskQueue", return_value=object()
                 ),
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
             ):
                 durable_context = task_cmds._task_cli_client_context(
                     definition_path,
@@ -1135,10 +1166,69 @@ class CliTaskCommandShellTestCase(TestCase):
                 )
 
         self.assertIsNone(ephemeral_context.database)
+        self.assertIsNotNone(ephemeral_context.client._hmac_provider)
         self.assertIs(database, durable_context.database)
+        self.assertIsNotNone(durable_context.client._hmac_provider)
         self.assertIsNotNone(inspection_context)
         assert inspection_context is not None
         self.assertIs(inspection_database, inspection_context.database)
+
+    def test_hmac_provider_uses_environment_key(self) -> None:
+        with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+            provider = task_cmds._task_hmac_provider()
+
+        self.assertIsNotNone(provider)
+        assert provider is not None
+        default_key = provider.hmac_key(purpose=TaskKeyPurpose.PRIVACY_HASH)
+        override_key = provider.hmac_key(
+            purpose=TaskKeyPurpose.IDEMPOTENCY,
+            key_id="cli-test-override",
+        )
+        self.assertEqual(default_key.key_id, "cli-test-v1")
+        self.assertEqual(default_key.algorithm, "hmac-sha256")
+        self.assertEqual(default_key.secret, b"task-hmac-test-key")
+        self.assertEqual(override_key.key_id, "cli-test-override")
+
+        with self.assertRaises(AssertionError):
+            provider.hmac_key(
+                purpose=TaskKeyPurpose.PRIVACY_HASH,
+                key_id=" ",
+            )
+
+    def test_hmac_provider_rejects_incomplete_environment(self) -> None:
+        cases = (
+            {},
+            {"AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1"},
+            {
+                "AVALAN_TASK_HMAC_KEY_B64": TASK_HMAC_ENV[
+                    "AVALAN_TASK_HMAC_KEY_B64"
+                ]
+            },
+            {
+                "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
+                "AVALAN_TASK_HMAC_KEY_B64": "not base64",
+            },
+            {
+                "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
+                "AVALAN_TASK_HMAC_KEY_B64": "",
+            },
+        )
+
+        for env in cases:
+            with (
+                self.subTest(env=env),
+                patch.dict(
+                    task_cmds.environ,
+                    env,
+                    clear=True,
+                ),
+            ):
+                self.assertIsNone(task_cmds._task_hmac_provider())
+
+        with self.assertRaises(AssertionError):
+            task_cmds._TaskCliHmacProvider(key_id="", secret=b"secret")
+        with self.assertRaises(AssertionError):
+            task_cmds._TaskCliHmacProvider(key_id="cli-test-v1", secret=b"")
 
     def test_agent_target_and_database_helpers_construct(self) -> None:
         stack = AsyncExitStack()
