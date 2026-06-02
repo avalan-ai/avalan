@@ -109,6 +109,30 @@ class SanitizedTaskEventTest(TestCase):
                 self.assertEqual(payload["status"], "ok")
                 self.assertNotIn("private", str(payload))
 
+    def test_flow_manager_events_keep_safe_metadata(self) -> None:
+        draft = sanitize_raw_task_event(
+            Event(
+                type=EventType.FLOW_MANAGER_CALL_AFTER,
+                payload={
+                    "name": "flow",
+                    "status": "succeeded",
+                    "flow": object(),
+                    "result": "private output",
+                },
+                elapsed=0.5,
+            ),
+            PrivacySanitizer(),
+        )
+
+        payload = cast(dict[str, object], draft.payload)
+        self.assertEqual(draft.category, TaskEventCategory.ENGINE)
+        self.assertEqual(payload["event_type"], "flow_manager_call_after")
+        self.assertEqual(payload["name"], "flow")
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["duration_ms"], 500.0)
+        self.assertNotIn("flow", payload)
+        self.assertNotIn("private output", str(payload))
+
     def test_unknown_events_reduce_to_safe_metadata_only(self) -> None:
         draft = sanitize_raw_task_event(
             Event(

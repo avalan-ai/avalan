@@ -1,3 +1,4 @@
+from ...event import Event, EventType
 from ...flow.flow import Flow
 from ..context import TaskTargetContext
 from ..definition import (
@@ -26,6 +27,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from time import perf_counter
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 FLOW_TASK_INPUT_KEY = "__task_input__"
@@ -117,11 +119,38 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     ),
                 )
             )
-        return await resolved.execute_async(
-            initial_node=start_node,
-            initial_inputs=flow_task_input_binding(task_input),
-            cancellation_checker=context.check_cancelled,
+        started = perf_counter()
+        await _emit_flow_event(
+            context,
+            EventType.FLOW_MANAGER_CALL_BEFORE,
+            status="started",
+            started=started,
         )
+        try:
+            result = await resolved.execute_async(
+                initial_node=start_node,
+                initial_inputs=flow_task_input_binding(task_input),
+                cancellation_checker=context.check_cancelled,
+            )
+        except BaseException:
+            finished = perf_counter()
+            await _emit_flow_event(
+                context,
+                EventType.FLOW_MANAGER_CALL_AFTER,
+                status="failed",
+                started=started,
+                finished=finished,
+            )
+            raise
+        finished = perf_counter()
+        await _emit_flow_event(
+            context,
+            EventType.FLOW_MANAGER_CALL_AFTER,
+            status="succeeded",
+            started=started,
+            finished=finished,
+        )
+        return result
 
 
 def validate_flow_task_compatibility(
@@ -144,7 +173,6 @@ def validate_flow_task_compatibility(
     if path_issue is not None:
         issues.append(path_issue)
     issues.extend(_validate_flow_contracts(definition))
-    issues.extend(_flow_observability_issues(definition))
     return FlowCompatibility(issues=tuple(issues))
 
 
@@ -185,18 +213,6 @@ def _validate_flow_contracts(
                 path="input.type",
                 message="Flow task targets do not support file inputs.",
                 hint="Use an agent target for file-backed tasks.",
-            )
-        )
-    if definition.output.type in {
-        TaskOutputType.FILE,
-        TaskOutputType.FILE_ARRAY,
-        TaskOutputType.ARTIFACT_ARRAY,
-    }:
-        issues.append(
-            _unsupported_flow_issue(
-                path="output.type",
-                message="Flow task targets do not support artifact outputs.",
-                hint="Use an agent target for artifact-producing tasks.",
             )
         )
     if (
@@ -261,6 +277,32 @@ def _task_input_value(context: TaskTargetContext) -> object:
     return value
 
 
+async def _emit_flow_event(
+    context: TaskTargetContext,
+    event_type: EventType,
+    *,
+    status: str,
+    started: float,
+    finished: float | None = None,
+) -> None:
+    if context.event_listener is None:
+        return
+    result = context.event_listener(
+        Event(
+            type=event_type,
+            payload={
+                "name": "flow",
+                "status": status,
+            },
+            started=started,
+            finished=finished,
+            elapsed=finished - started if finished is not None else None,
+        )
+    )
+    if result is not None:
+        await result
+
+
 def _single_start_node_name(flow: Flow) -> str | None:
     start_nodes = [
         name for name, inbound in flow.incoming.items() if not inbound
@@ -268,24 +310,6 @@ def _single_start_node_name(flow: Flow) -> str | None:
     if len(start_nodes) != 1:
         return None
     return start_nodes[0]
-
-
-def _flow_observability_issues(
-    definition: TaskDefinition,
-) -> tuple[TaskValidationIssue, ...]:
-    if (
-        not definition.observability.capture_events
-        and not definition.observability.metrics
-        and not definition.observability.trace
-    ):
-        return ()
-    return (
-        _unsupported_flow_issue(
-            path="observability.capture_events",
-            message="Flow task targets do not expose sanitized task events.",
-            hint="Disable flow observability until flow events are available.",
-        ),
-    )
 
 
 def _is_path_escape(ref: str) -> bool:

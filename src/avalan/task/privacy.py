@@ -78,6 +78,8 @@ _ENGINE_EVENT_TYPES = frozenset(
         "call_prepare_after",
         "call_prepare_before",
         "end",
+        "flow_manager_call_after",
+        "flow_manager_call_before",
         "start",
         "stream_end",
     }

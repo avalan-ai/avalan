@@ -12,6 +12,8 @@ KNOWN_EVENT_TYPES = (
     "engine_start",
     "engine_stop",
     "event_sanitization_failed",
+    "flow_manager_call_after",
+    "flow_manager_call_before",
     "input_token_count_after",
     "input_token_count_before",
     "memory_lookup",

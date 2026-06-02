@@ -40,7 +40,7 @@ try:
     HAS_BROWSER_DEPENDENCIES = True
 except ImportError:
     HAS_BROWSER_DEPENDENCIES = False
-    IndexFlatL2 = None
+    IndexFlatL2 = None  # type: ignore[assignment, misc]
     MarkItDown = None  # type: ignore[assignment, misc]
     vstack = None  # type: ignore[assignment]
     Browser = None  # type: ignore[assignment, misc]

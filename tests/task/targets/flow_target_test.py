@@ -1,6 +1,6 @@
 from asyncio import CancelledError, sleep, wait_for
 from asyncio import run as asyncio_run
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
@@ -12,7 +12,13 @@ from avalan.flow.node import Node
 from avalan.task import (
     STORED_MARKER,
     DirectTaskRunner,
+    PrivacyAction,
+    TaskArtifactPolicy,
+    TaskArtifactPurpose,
+    TaskArtifactRef,
+    TaskArtifactState,
     TaskDefinition,
+    TaskEventCategory,
     TaskExecutionTarget,
     TaskInputContract,
     TaskKeyMaterial,
@@ -28,6 +34,7 @@ from avalan.task import (
     TaskValidationError,
     TaskValidationIssue,
 )
+from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.store import TaskExecutionContext
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import (
@@ -53,7 +60,9 @@ class StaticHmacProvider:
 
 
 class FlowTaskTargetRunnerValidationTest(TestCase):
-    def test_flow_target_reports_observability_gap(self) -> None:
+    def test_flow_target_accepts_observability_without_path_leaks(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             flow_path = root / "flows" / "private.toml"
@@ -67,21 +76,14 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
                 TaskValidationContext(execution_roots=(root,)),
             )
 
-        self.assertEqual(
-            [issue.code for issue in issues],
-            ["execution.unsupported_flow"],
-        )
-        self.assertEqual(
-            [issue.path for issue in issues],
-            ["observability.capture_events"],
-        )
+        self.assertEqual(issues, ())
         rendered = " ".join(
             value for issue in issues for value in issue.as_dict().values()
         )
         self.assertNotIn("private.toml", rendered)
         self.assertNotIn("private flow", rendered)
 
-    def test_flow_target_reports_file_and_artifact_contract_gaps(
+    def test_flow_target_reports_file_input_gap_but_allows_artifact_output(
         self,
     ) -> None:
         runner = FlowTaskTargetRunner()
@@ -97,11 +99,7 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
 
         self.assertEqual(
             [issue.path for issue in issues],
-            [
-                "input.type",
-                "output.type",
-                "observability.capture_events",
-            ],
+            ["input.type"],
         )
         self.assertTrue(
             all(issue.code == "execution.unsupported_flow" for issue in issues)
@@ -205,14 +203,14 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
         )
         self.assertEqual(issues[0].path, "execution.type")
 
-    def test_compatibility_report_marks_scalar_flow_incompatible(self) -> None:
+    def test_compatibility_report_marks_scalar_flow_compatible(self) -> None:
         report = validate_flow_task_compatibility(
             self._definition(),
             TaskValidationContext(),
         )
 
-        self.assertFalse(report.compatible)
-        self.assertEqual(len(report.issues), 1)
+        self.assertTrue(report.compatible)
+        self.assertEqual(report.issues, ())
 
     def test_compatibility_report_marks_noop_scalar_flow_compatible(
         self,
@@ -558,6 +556,169 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, {"status": "ready", "count": 2})
 
+    async def test_direct_runner_persists_sanitized_flow_events(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: (
+                    inputs[FLOW_TASK_INPUT_KEY] + " private output"
+                ),
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-events",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=TaskInputContract.string(),
+                output_contract=TaskOutputContract.text(),
+                observability=TaskObservabilityPolicy(),
+            ),
+            input_value="private prompt",
+        )
+
+        events = await self.store.list_events(result.run.run_id)
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            [event.event_type for event in events],
+            [
+                "flow_manager_call_before",
+                "flow_manager_call_after",
+            ],
+        )
+        self.assertEqual(
+            [event.category for event in events],
+            [TaskEventCategory.ENGINE, TaskEventCategory.ENGINE],
+        )
+        start_payload = cast(Mapping[str, object], events[0].payload)
+        end_payload = cast(Mapping[str, object], events[1].payload)
+        self.assertEqual(start_payload["status"], "started")
+        self.assertEqual(end_payload["status"], "succeeded")
+        self.assertIn("duration_ms", end_payload)
+        self.assertNotIn("private prompt", str(events))
+        self.assertNotIn("private output", str(events))
+
+    async def test_direct_runner_persists_failed_flow_event_safely(
+        self,
+    ) -> None:
+        def fail(_: dict[str, object]) -> str:
+            raise RuntimeError("private node failure")
+
+        flow = Flow()
+        flow.add_node(Node("A", func=fail))
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-failed-event",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=TaskInputContract.string(),
+                output_contract=TaskOutputContract.text(),
+                observability=TaskObservabilityPolicy(),
+            ),
+            input_value="private prompt",
+        )
+
+        events = await self.store.list_events(result.run.run_id)
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(events[1].event_type, "flow_manager_call_after")
+        end_payload = cast(Mapping[str, object], events[1].payload)
+        self.assertEqual(end_payload["status"], "failed")
+        self.assertNotIn("private node failure", str(events))
+        self.assertNotIn("private prompt", str(events))
+
+    async def test_direct_runner_records_flow_file_output_artifact(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as artifacts:
+            artifact_store = LocalArtifactStore(
+                artifacts,
+                raw_storage_allowed=True,
+                id_factory=lambda: "flow-output-1",
+            )
+
+            async def produce_artifact(
+                _: dict[str, object],
+            ) -> TaskArtifactRef:
+                return await artifact_store.put(
+                    b"private flow bytes",
+                    media_type="text/plain",
+                    metadata={"filename": "private-flow.txt"},
+                )
+
+            flow = Flow()
+            flow.add_node(Node("A", func=produce_artifact))
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                definition_hash=lambda _: "flow-direct-artifact-output",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.string(),
+                    output_contract=TaskOutputContract.file(),
+                    artifact=TaskArtifactPolicy.references_only(
+                        retention_days=6,
+                    ),
+                    privacy=TaskPrivacyPolicy(output=PrivacyAction.REDACT),
+                ),
+                input_value="private prompt",
+            )
+
+        records = await self.store.list_artifacts(
+            result.run.run_id,
+            purpose=TaskArtifactPurpose.OUTPUT,
+        )
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].state, TaskArtifactState.READY)
+        self.assertEqual(records[0].retention.delete_after_days, 6)
+        self.assertEqual(records[0].ref.metadata, {"privacy": "<redacted>"})
+        self.assertNotIn("private-flow.txt", str(records))
+        self.assertNotIn("private flow bytes", str(records))
+        self.assertNotIn("private prompt", str(records))
+
+    async def test_direct_runner_rejects_invalid_flow_artifact_output(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: object()))
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-invalid-artifact-output",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=TaskInputContract.string(),
+                output_contract=TaskOutputContract.file(),
+            ),
+            input_value="private prompt",
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(
+            await self.store.list_artifacts(
+                result.run.run_id,
+                purpose=TaskArtifactPurpose.OUTPUT,
+            ),
+            (),
+        )
+        self.assertNotIn("private prompt", str(result.run.result))
+
     async def test_direct_runner_rejects_invalid_flow_output(self) -> None:
         flow = Flow()
         flow.add_node(
@@ -626,14 +787,18 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         *,
         input_contract: TaskInputContract,
         output_contract: TaskOutputContract,
+        artifact: TaskArtifactPolicy | None = None,
+        observability: TaskObservabilityPolicy | None = None,
+        privacy: TaskPrivacyPolicy | None = None,
     ) -> TaskDefinition:
         return TaskDefinition(
             task=TaskMetadata(name="flow-task", version="1"),
             input=input_contract,
             output=output_contract,
             execution=TaskExecutionTarget.flow("flows/report.toml"),
-            observability=TaskObservabilityPolicy.noop(),
-            privacy=TaskPrivacyPolicy(),
+            artifact=artifact or TaskArtifactPolicy.references_only(),
+            observability=observability or TaskObservabilityPolicy.noop(),
+            privacy=privacy or TaskPrivacyPolicy(),
         )
 
     def _object_input_contract(self) -> TaskInputContract:
