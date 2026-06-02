@@ -67,6 +67,7 @@ from ..store import (
     TaskStoreError,
     TaskStoreNotFoundError,
     TaskTransition,
+    allows_cancel_request_without_claim_token,
     ensure_attempt_is_mutable,
     ensure_run_is_mutable,
     freeze_snapshot_metadata,
@@ -341,12 +342,27 @@ class PgsqlTaskStore:
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
             run = await _run_or_raise(unit, run_id)
-            _verify_claim_token(run, claim_token)
+            if not allows_cancel_request_without_claim_token(
+                run,
+                to_state,
+                claim_token,
+            ):
+                _verify_claim_token(run, claim_token)
             validate_run_transition_request(
                 current_state=run.state,
                 from_states=from_states,
                 to_state=to_state,
             )
+            effective_claim_token: str | None
+            if allows_cancel_request_without_claim_token(
+                run,
+                to_state,
+                claim_token,
+            ):
+                assert run.claim is not None
+                effective_claim_token = run.claim.claim_token
+            else:
+                effective_claim_token = claim_token
             now = self._now()
             await unit.cursor.execute(
                 _UPDATE_RUN_STATE_SQL,
@@ -357,8 +373,8 @@ class PgsqlTaskStore:
                     now,
                     run_id,
                     run.state.value,
-                    claim_token,
-                    claim_token,
+                    effective_claim_token,
+                    effective_claim_token,
                 ),
             )
             row = await unit.cursor.fetchone()

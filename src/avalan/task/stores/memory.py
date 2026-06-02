@@ -35,6 +35,7 @@ from ..store import (
     TaskStoreConflictError,
     TaskStoreNotFoundError,
     TaskTransition,
+    allows_cancel_request_without_claim_token,
     ensure_attempt_is_mutable,
     ensure_run_is_mutable,
     freeze_snapshot_metadata,
@@ -166,7 +167,12 @@ class InMemoryTaskStore:
             assert isinstance(result, TaskExecutionResult)
         async with self._lock:
             run = self._run_or_raise(run_id)
-            self._verify_claim_token(run, claim_token)
+            if not allows_cancel_request_without_claim_token(
+                run,
+                to_state,
+                claim_token,
+            ):
+                self._verify_claim_token(run, claim_token)
             validate_run_transition_request(
                 current_state=run.state,
                 from_states=from_states,

@@ -525,6 +525,18 @@ def validate_run_transition_request(
         raise TaskStoreConflictError("task run transition is not valid")
 
 
+def allows_cancel_request_without_claim_token(
+    run: TaskRun,
+    to_state: TaskRunState,
+    claim_token: str | None,
+) -> bool:
+    return (
+        run.claim is not None
+        and to_state == TaskRunState.CANCEL_REQUESTED
+        and claim_token is None
+    )
+
+
 def validate_attempt_transition_request(
     *,
     current_state: TaskAttemptState,

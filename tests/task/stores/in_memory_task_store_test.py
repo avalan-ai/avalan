@@ -170,6 +170,57 @@ class InMemoryTaskStoreTest(IsolatedAsyncioTestCase):
                 reason="claimed_again",
             )
 
+    async def test_claimed_run_can_be_marked_cancel_requested_without_token(
+        self,
+    ) -> None:
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        validated = await self.store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.VALIDATED,
+            reason="validated",
+        )
+        queued = await self.store.transition_run(
+            validated.run_id,
+            from_states={TaskRunState.VALIDATED},
+            to_state=TaskRunState.QUEUED,
+            reason="queued",
+        )
+        claimed = await self.store.assign_claim(
+            queued.run_id,
+            from_states={TaskRunState.QUEUED},
+            worker_id="worker-1",
+            lease_expires_at=datetime(2026, 1, 1, 1, tzinfo=UTC),
+            reason="claimed",
+        )
+        assert claimed.claim is not None
+        running = await self.store.transition_run(
+            claimed.run_id,
+            from_states={TaskRunState.CLAIMED},
+            to_state=TaskRunState.RUNNING,
+            reason="started",
+            claim_token=claimed.claim.claim_token,
+        )
+
+        cancel_requested = await self.store.transition_run(
+            running.run_id,
+            from_states={TaskRunState.RUNNING},
+            to_state=TaskRunState.CANCEL_REQUESTED,
+            reason="cancel_requested",
+        )
+
+        self.assertEqual(cancel_requested.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertIsNotNone(cancel_requested.claim)
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.transition_run(
+                cancel_requested.run_id,
+                from_states={TaskRunState.CANCEL_REQUESTED},
+                to_state=TaskRunState.FAILED,
+                reason="failed",
+            )
+
     async def test_attempt_transition_rejects_stale_expected_state(
         self,
     ) -> None:

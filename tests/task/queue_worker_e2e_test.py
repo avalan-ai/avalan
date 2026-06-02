@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -163,6 +163,29 @@ class FailingTarget(TaskTargetRunner):
     async def run(self, context: TaskTargetContext) -> object:
         await context.check_cancelled()
         raise OSError("private backend path /tmp/customer-secret.txt")
+
+
+class CancellingTarget(TaskTargetRunner):
+    def __init__(
+        self,
+        cancel: Callable[[str], Awaitable[object]],
+    ) -> None:
+        self.cancel = cancel
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        await self.cancel(context.execution.run_id)
+        await context.check_cancelled()
+        return "unused"
 
 
 class InMemoryTaskQueue:
@@ -887,6 +910,47 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(depth.available, 1)
         self.assertEqual(target.inputs, [])
         self.assertNotIn("private cancelled prompt", str(inspection.as_dict()))
+
+    async def test_running_queue_task_cancellation_finalizes_safely(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        client_ref: list[TaskClient] = []
+
+        async def cancel(run_id: str) -> object:
+            return await client_ref[0].cancel(run_id)
+
+        target = CancellingTarget(cancel)
+        client = _client(store, queue, target=target, clock=clock)
+        client_ref.append(client)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private running prompt",
+        )
+        result = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(result.processed)
+        self.assertIsNone(result.retry)
+        self.assertIsNotNone(result.claimed)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.CANCELLED)
+        self.assertEqual(inspection.run.state, TaskRunState.CANCELLED)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 1)
+        self.assertEqual(len(target.inputs), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertIn("cancellation", str(output.error))
+        self.assertNotIn("private running prompt", str(inspection.as_dict()))
 
     async def test_scheduled_submission_waits_until_available(
         self,

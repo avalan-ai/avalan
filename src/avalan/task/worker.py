@@ -323,14 +323,16 @@ class TaskWorker:
             )
         run_state = TaskRunState.FAILED
         if isinstance(error, CancelledError):
-            await self._store.transition_run(
-                claim.run.run_id,
-                from_states={TaskRunState.RUNNING},
-                to_state=TaskRunState.CANCEL_REQUESTED,
-                reason="cancel_requested",
-                claim_token=claim.queue_item.claim_token or "",
-                metadata={"worker_id": self._worker_id},
-            )
+            run = await self._store.get_run(claim.run.run_id)
+            if run.state != TaskRunState.CANCEL_REQUESTED:
+                await self._store.transition_run(
+                    claim.run.run_id,
+                    from_states={TaskRunState.RUNNING},
+                    to_state=TaskRunState.CANCEL_REQUESTED,
+                    reason="cancel_requested",
+                    claim_token=claim.queue_item.claim_token or "",
+                    metadata={"worker_id": self._worker_id},
+                )
             run_state = TaskRunState.CANCELLED
         await self._queue.complete(
             claim.queue_item.queue_item_id,
