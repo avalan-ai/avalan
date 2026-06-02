@@ -40,7 +40,7 @@ class FlowManager:
             await event_manager.trigger(
                 Event(
                     type=EventType.FLOW_MANAGER_CALL_BEFORE,
-                    payload={"flow": flow},
+                    payload={"flow": flow, "status": "started"},
                     started=start,
                 )
             )
@@ -49,19 +49,38 @@ class FlowManager:
             initial_data=initial_data,
             cancellation_checker=cancellation_checker,
         )
-        if timeout_seconds is None:
-            result = await execution
-        else:
-            result = await wait_for(execution, timeout=timeout_seconds)
-        end = perf_counter()
-        if event_manager is not None:
-            await event_manager.trigger(
-                Event(
-                    type=EventType.FLOW_MANAGER_CALL_AFTER,
-                    payload={"flow": flow, "result": result},
-                    started=start,
-                    finished=end,
-                    elapsed=end - start,
+        try:
+            if timeout_seconds is None:
+                result = await execution
+            else:
+                result = await wait_for(execution, timeout=timeout_seconds)
+        except BaseException:
+            end = perf_counter()
+            if event_manager is not None:
+                await event_manager.trigger(
+                    Event(
+                        type=EventType.FLOW_MANAGER_CALL_AFTER,
+                        payload={"flow": flow, "status": "failed"},
+                        started=start,
+                        finished=end,
+                        elapsed=end - start,
+                    )
                 )
-            )
-        return result
+            raise
+        else:
+            end = perf_counter()
+            if event_manager is not None:
+                await event_manager.trigger(
+                    Event(
+                        type=EventType.FLOW_MANAGER_CALL_AFTER,
+                        payload={
+                            "flow": flow,
+                            "result": result,
+                            "status": "succeeded",
+                        },
+                        started=start,
+                        finished=end,
+                        elapsed=end - start,
+                    )
+                )
+            return result
