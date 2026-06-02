@@ -301,6 +301,24 @@ class PgsqlMigrationHelperTest(TestCase):
         )
         self.assertEqual(config.attributes["connection_name"], "test")
 
+    def test_builds_alembic_config_with_psycopg3_url(self) -> None:
+        modules = FakeAlembicModules()
+        settings = PgsqlTaskMigrationSettings(
+            url="postgresql://localhost/avalan",
+            module_finder=modules.module_finder,
+            module_importer=modules.module_importer,
+        )
+
+        config = cast(
+            FakeAlembicConfig,
+            task_pgsql_alembic_config(settings),
+        )
+
+        self.assertEqual(
+            config.options["sqlalchemy.url"],
+            "postgresql+psycopg://localhost/avalan",
+        )
+
     def test_missing_dependencies_raise_stable_diagnostic(self) -> None:
         settings = PgsqlTaskMigrationSettings(
             url="postgresql+psycopg://localhost/avalan",

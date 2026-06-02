@@ -1344,7 +1344,10 @@ def task_pgsql_alembic_config(
     config_module = cast(Any, settings.module_importer("alembic.config"))
     config = cast(_AlembicConfig, config_module.Config())
     config.set_main_option("script_location", task_pgsql_script_location())
-    config.set_main_option("sqlalchemy.url", settings.url)
+    config.set_main_option(
+        "sqlalchemy.url",
+        _task_pgsql_sqlalchemy_url(settings.url),
+    )
     config.set_main_option("version_table", settings.version_table)
     config.set_main_option(
         "task_advisory_lock_id",
@@ -1372,6 +1375,13 @@ def _run_alembic_command(
 def _assert_revision(value: str) -> None:
     _assert_non_empty_string(value, "revision")
     assert fullmatch(r"[A-Za-z0-9_.@+-]+", value)
+
+
+def _task_pgsql_sqlalchemy_url(url: str) -> str:
+    _assert_non_empty_string(url, "url")
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgresql://")
+    return url
 
 
 def _qualified_pgsql_column(

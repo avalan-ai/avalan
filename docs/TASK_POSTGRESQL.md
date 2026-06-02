@@ -100,10 +100,19 @@ provider tokens.
 
 ## Verification
 
-Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL migration
-verification tests. These tests create isolated schemas, run upgrade/current/
-check/stamp helpers, exercise concurrent migration runners through the advisory
-lock, and keep schema state separate from the default development schema.
+Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL
+verification tests against an existing test database. These tests create
+isolated schemas, run upgrade/current/check/stamp helpers, exercise concurrent
+migration runners through the advisory lock, verify artifact byte storage, and
+run queued tasks through the PostgreSQL queue and worker.
+
+Set `AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN` before `make test` to have the
+test target create a throwaway database, export
+`AVALAN_TASK_TEST_POSTGRESQL_DSN` for the pytest subprocess, run the migration
+and queue e2e tests, and drop the database afterwards. The admin DSN must point
+to a maintenance database with permission to create and drop databases. Use
+`AVALAN_TASK_TEST_POSTGRESQL_DATABASE_PREFIX` to override the generated
+database name prefix.
 
 Set `AVALAN_TASK_BENCHMARK_POSTGRESQL_DSN` to run the opt-in EXPLAIN coverage.
 The benchmark profile records worker count, run count, queue count, pool size,

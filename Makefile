@@ -25,7 +25,11 @@ test:
 ifeq ($(filter no-install,$(TEST_ARGS)),)
 	poetry sync --all-extras --with test
 endif
+ifneq ($(strip $(AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN)),)
+	poetry run python scripts/task_pgsql_test_database.py -- $(PYTEST_ARGS)
+else
 	poetry run pytest $(PYTEST_ARGS)
+endif
 
 .PHONY: test tests
 tests: test

@@ -344,7 +344,7 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         schema = f"avalan_task_artifact_test_{uuid4().hex}"
         task_pgsql_upgrade(PgsqlTaskMigrationSettings(url=dsn, schema=schema))
         database = PsycopgAsyncDatabase(
-            PsycopgPoolSettings(dsn=dsn, schema=schema)
+            PsycopgPoolSettings(dsn=_psycopg_dsn(dsn), schema=schema)
         )
         store = PgsqlArtifactStore(
             database,
@@ -590,7 +590,7 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
 
 
 async def _drop_schema(dsn: str, schema: str) -> None:
-    database = PsycopgAsyncDatabase(PsycopgPoolSettings(dsn=dsn))
+    database = PsycopgAsyncDatabase(PsycopgPoolSettings(dsn=_psycopg_dsn(dsn)))
     async with database:
         async with database.connection() as connection:
             async with connection.cursor() as cursor:
@@ -598,6 +598,12 @@ async def _drop_schema(dsn: str, schema: str) -> None:
                     "DROP SCHEMA IF EXISTS "
                     f"{quote_pgsql_identifier(schema)} CASCADE"
                 )
+
+
+def _psycopg_dsn(dsn: str) -> str:
+    if dsn.startswith("postgresql+psycopg://"):
+        return "postgresql://" + dsn.removeprefix("postgresql+psycopg://")
+    return dsn
 
 
 if __name__ == "__main__":

@@ -176,5 +176,11 @@ def real_task_pgsql_dsn() -> str | None:
     return environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN")
 
 
+def task_pgsql_psycopg_dsn(dsn: str) -> str:
+    if dsn.startswith("postgresql+psycopg://"):
+        return "postgresql://" + dsn.removeprefix("postgresql+psycopg://")
+    return dsn
+
+
 def unexpected_import(module: str) -> object:
     raise AssertionError(f"unexpected module import: {module}")
