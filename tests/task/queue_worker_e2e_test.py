@@ -803,6 +803,80 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("first private body", str(inspection.as_dict()))
         self.assertNotIn("second private body", str(inspection.as_dict()))
 
+    async def test_structured_file_input_materializes_for_worker(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            Path(root, "document.txt").write_bytes(b"private structured body")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = ReadingTarget()
+            client = _client(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                clock=clock,
+            )
+            definition = _definition(
+                input_contract=TaskInputContract.object(
+                    schema={
+                        "type": "object",
+                        "required": ["prompt", "document"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "prompt": {"type": "string"},
+                            "document": {"type": "object"},
+                        },
+                    }
+                ),
+                artifact=TaskArtifactPolicy(max_count=1),
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value={
+                    "prompt": "Review the document.",
+                    "document": {
+                        "source_kind": "local_path",
+                        "reference": "document.txt",
+                        "mime_type": "text/plain",
+                    },
+                },
+            )
+            processed = await worker.process_once()
+            inspection = await client.inspect(submission.run.run_id)
+            artifacts = await store.list_artifacts(
+                submission.run.run_id,
+                purpose=TaskArtifactPurpose.INPUT,
+            )
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(target.file_bodies, [b"private structured body"])
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].purpose, TaskArtifactPurpose.INPUT)
+        self.assertEqual(len(inspection.artifacts), 1)
+        assert isinstance(target.inputs[0], Mapping)
+        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertNotIn("private structured body", str(inspection.as_dict()))
+        self.assertNotIn("document.txt", str(inspection.as_dict()))
+        self.assertNotIn("Review the document.", str(inspection.as_dict()))
+
     async def test_duplicate_submission_reuses_queued_run(self) -> None:
         clock = Clock()
         store = InMemoryTaskStore(clock=lambda: clock.now)

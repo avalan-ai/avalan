@@ -179,6 +179,103 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
 
             self.assertEqual(files[0].identity, {"privacy": "<redacted>"})
 
+    async def test_structured_input_materializes_nested_file_descriptors(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "report-a.txt").write_bytes(b"private report a")
+            Path(root, "report-b.txt").write_bytes(b"private report b")
+            artifact_ids = iter(("artifact-a", "artifact-b"))
+            store = LocalArtifactStore(
+                artifacts,
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            definition = _definition(input_contract=_object_contract())
+
+            files = await materialize_task_input_files(
+                definition,
+                {
+                    "question": "Summarize the reports.",
+                    "document": {
+                        "source_kind": "local_path",
+                        "reference": "report-a.txt",
+                        "mime_type": "text/plain",
+                    },
+                    "attachments": [
+                        {
+                            "source_kind": "local_path",
+                            "reference": "report-b.txt",
+                            "mime_type": "text/plain",
+                        }
+                    ],
+                },
+                roots=(root,),
+                artifact_store=store,
+                hmac_provider=cast(HmacProvider, StaticHmacProvider()),
+            )
+
+            self.assertEqual(
+                [file.descriptor_path for file in files],
+                ["input.document", "input.attachments[0]"],
+            )
+            self.assertEqual(
+                [file.ref.artifact_id for file in files],
+                ["artifact-a", "artifact-b"],
+            )
+            self.assertNotIn("report-a.txt", str(files[0].identity))
+            self.assertNotIn("private report", str(files[1].identity))
+
+    async def test_structured_input_rejects_invalid_descriptors_safely(
+        self,
+    ) -> None:
+        cases = (
+            (
+                {"source_kind": 1, "reference": "private.txt"},
+                "input.document.source_kind",
+            ),
+            (
+                {"source_kind": "unknown", "reference": "private.txt"},
+                "input.document.source_kind",
+            ),
+            (
+                {"source_kind": "local_path", "reference": ""},
+                "input.document.reference",
+            ),
+            (
+                {
+                    "source_kind": "local_path",
+                    "reference": "private.txt",
+                    "conversions": "text",
+                },
+                "input.document.conversions",
+            ),
+            (
+                {
+                    "source_kind": "local_path",
+                    "reference": "private.txt",
+                    "role": 1,
+                },
+                "input.document",
+            ),
+        )
+
+        for descriptor, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(input_contract=_object_contract()),
+                        {"document": descriptor},
+                        roots=(),
+                        artifact_store=None,
+                    )
+
+            self.assertEqual(
+                [issue.path for issue in error.exception.issues],
+                [path],
+            )
+            self.assertNotIn("private.txt", str(error.exception))
+
     async def test_hmac_failure_falls_back_to_redacted_identity(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             Path(root, "input.txt").write_bytes(b"private text")
@@ -258,16 +355,21 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             ["input.source_kind", "input.mime_type"],
         )
 
-    async def test_descriptor_coercion_failure_without_issues_propagates(
+    async def test_descriptor_coercion_failure_returns_safe_diagnostic(
         self,
     ) -> None:
-        with self.assertRaises(KeyError):
+        with self.assertRaises(TaskFileMaterializationError) as error:
             await materialize_task_input_files(
                 _definition(),
                 DisappearingDescriptor(),
                 roots=(),
                 artifact_store=None,
             )
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues], ["input"]
+        )
+        self.assertNotIn("input.txt", str(error.exception))
 
     async def test_missing_artifact_backend_fails_before_path_access(
         self,
@@ -404,6 +506,32 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
                     )
                     self.assertNotIn("secret.txt", str(error.exception))
 
+    async def test_structured_input_traversal_fails_closed(self) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as outside:
+            Path(outside, "secret.txt").write_bytes(b"private text")
+            store = LocalArtifactStore(root, raw_storage_allowed=True)
+
+            with self.assertRaises(TaskFileMaterializationError) as error:
+                await materialize_task_input_files(
+                    _definition(input_contract=_object_contract()),
+                    {
+                        "documents": [
+                            {
+                                "source_kind": "local_path",
+                                "reference": "../outside/secret.txt",
+                            }
+                        ]
+                    },
+                    roots=(root,),
+                    artifact_store=store,
+                )
+
+            self.assertEqual(
+                [issue.path for issue in error.exception.issues],
+                ["input.documents[0].reference"],
+            )
+            self.assertNotIn("secret.txt", str(error.exception))
+
     async def test_missing_local_path_fails_without_leaking_reference(
         self,
     ) -> None:
@@ -496,6 +624,31 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             ["a.txt", "b.txt"],
         )
 
+    def test_descriptor_extraction_collects_structured_files(self) -> None:
+        descriptors = task_file_descriptors_from_input(
+            _definition(input_contract=_object_contract()),
+            {
+                "prompt": "Compare inputs.",
+                "primary": {
+                    "source_kind": "local_path",
+                    "reference": "a.txt",
+                },
+                "nested": {
+                    "attachments": [
+                        {
+                            "source_kind": "local_path",
+                            "reference": "b.txt",
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertEqual(
+            [descriptor.reference for descriptor in descriptors],
+            ["a.txt", "b.txt"],
+        )
+
 
 def _definition(
     *,
@@ -512,6 +665,10 @@ def _definition(
         artifact=artifact or TaskArtifactPolicy(),
         limits=limits or TaskLimitsPolicy(),
     )
+
+
+def _object_contract() -> TaskInputContract:
+    return TaskInputContract.object(schema={"type": "object"})
 
 
 def _id_factory() -> Callable[[], str]:

@@ -54,6 +54,9 @@ from avalan.task import (
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
+    UsageRecord,
+    UsageSource,
+    UsageTotals,
     safe_target_metadata,
     safe_target_value,
 )
@@ -88,6 +91,22 @@ class RecordingTarget:
     async def __call__(self, context: TaskTargetContext) -> object:
         self.contexts.append(context)
         return self.output
+
+
+class UsageObservingTarget:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.contexts: list[TaskTargetContext] = []
+
+    async def __call__(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        await context.observe_usage(self.response)
+        return "short summary"
+
+
+class CountingUsageResponse:
+    input_token_count = 3
+    output_token_count = 5
 
 
 class ArtifactOutputTarget:
@@ -223,6 +242,19 @@ class ConflictOnAttemptSuccessStore(InMemoryTaskStore):
             claim_token=claim_token,
             metadata=metadata,
         )
+
+
+class FailingUsageStore(InMemoryTaskStore):
+    async def append_usage(
+        self,
+        run_id: str,
+        *,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> UsageRecord:
+        raise RuntimeError("private usage store failure")
 
 
 class SystemExitRunner(DirectTaskRunner):
@@ -395,6 +427,41 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
                 TaskRunState.SUCCEEDED,
             ],
         )
+
+    async def test_observe_usage_ignores_unrecognized_response(self) -> None:
+        target = UsageObservingTarget(object())
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-unavailable",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            target.contexts[0].execution.run_id, result.run.run_id
+        )
+        self.assertEqual(await self.store.list_usage(result.run.run_id), ())
+
+    async def test_usage_store_failure_does_not_fail_run(self) -> None:
+        store = FailingUsageStore()
+        target = UsageObservingTarget(CountingUsageResponse())
+        runner = DirectTaskRunner(
+            store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-store-failure",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            target.contexts[0].execution.run_id, result.run.run_id
+        )
+        self.assertEqual(await store.list_usage(result.run.run_id), ())
 
     async def test_fake_target_failure_records_safe_failure(self) -> None:
         runner = DirectTaskRunner(
@@ -941,6 +1008,48 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             self.assertNotIn("private conversion failure", str(error_summary))
             self.assertNotIn("input.txt", str(error_summary))
 
+    async def test_missing_file_converter_finalizes_run_safely(self) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "input.txt").write_bytes(b"private text")
+            target = RecordingTarget("unused")
+            runner = DirectTaskRunner(
+                self.store,
+                target=cast(TaskDirectTarget, target),
+                hmac_provider=self.hmac_provider,
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "artifact-1",
+                ),
+                definition_hash=lambda task: "hash-missing-file-converter",
+                execution_roots=(root,),
+            )
+
+            result = await runner.run(
+                definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("markdown",),
+                    )
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                    conversions=(TaskFileConversionRequest(name="markdown"),),
+                ),
+            )
+
+            self.assertEqual(result.run.state, TaskRunState.FAILED)
+            self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+            self.assertEqual(target.contexts, [])
+            error_summary = cast(
+                Mapping[str, object],
+                result.run.result.error if result.run.result else {},
+            )
+            self.assertEqual(error_summary["category"], "input_contract")
+            self.assertEqual(error_summary["code"], "input_contract.failed")
+            self.assertNotIn("private text", str(error_summary))
+            self.assertNotIn("input.txt", str(error_summary))
+
     async def test_file_materialization_failure_finalizes_run(
         self,
     ) -> None:
@@ -1292,6 +1401,17 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         value = {"source_kind": "local_path"}
 
         self.assertIs(_input_summary_value(definition(), value), value)
+
+    def test_file_input_summary_returns_original_without_descriptor(
+        self,
+    ) -> None:
+        self.assertIs(
+            _input_summary_value(
+                definition(input_contract=TaskInputContract.file()),
+                None,
+            ),
+            None,
+        )
 
     def test_file_input_summary_returns_original_when_coercion_fails(
         self,

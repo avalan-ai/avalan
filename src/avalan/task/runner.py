@@ -1008,6 +1008,11 @@ def _input_summary_value(
     definition: TaskDefinition,
     input_value: object,
 ) -> object:
+    if definition.input.type not in {
+        TaskInputType.FILE,
+        TaskInputType.FILE_ARRAY,
+    }:
+        return input_value
     try:
         descriptors = task_file_descriptors_from_input(definition, input_value)
     except (AssertionError, KeyError, ValueError):

@@ -47,6 +47,7 @@ _REMOTE_URL_DISABLED_CODE = "feature.remote_url_file_inputs_disabled"
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TaskMaterializedFile:
     descriptor: TaskFileDescriptor
+    descriptor_path: str
     ref: TaskArtifactRef
     identity: TaskSnapshotMetadata
 
@@ -85,13 +86,11 @@ async def materialize_task_input_files(
             remote_url_policy=remote_url_policy,
         )
     )
-    try:
-        descriptors = task_file_descriptors_from_input(definition, value)
-    except (AssertionError, KeyError, ValueError):
-        if issues:
-            raise TaskFileMaterializationError(tuple(issues))
-        raise
-    if not descriptors:
+    descriptor_entries, descriptor_issues = (
+        _task_file_descriptor_entries_from_input(definition, value)
+    )
+    issues.extend(descriptor_issues)
+    if not descriptor_entries:
         if issues:
             raise TaskFileMaterializationError(tuple(issues))
         return ()
@@ -114,18 +113,22 @@ async def materialize_task_input_files(
         raise TaskFileMaterializationError(tuple(issues))
     if task_store is not None:
         assert isinstance(run_id, str) and run_id.strip()
+    descriptors = tuple(entry.descriptor for entry in descriptor_entries)
     issues.extend(_validate_count_limits(definition, descriptors))
-    is_array = definition.input.type == TaskInputType.FILE_ARRAY
     resolved = tuple(
-        _resolve_descriptor_path(descriptor, root_paths, index, is_array)
-        for index, descriptor in enumerate(descriptors)
+        _resolve_descriptor_path(entry, root_paths)
+        for entry in descriptor_entries
     )
     for result in resolved:
         if isinstance(result, TaskValidationIssue):
             issues.append(result)
         else:
             issues.extend(
-                _validate_resolved_file(definition, result.path, result.index)
+                _validate_resolved_file(
+                    definition,
+                    result.path,
+                    result.descriptor_path,
+                )
             )
     if issues:
         raise TaskFileMaterializationError(tuple(issues))
@@ -169,6 +172,7 @@ async def materialize_task_input_files(
         materialized.append(
             TaskMaterializedFile(
                 descriptor=result.descriptor,
+                descriptor_path=result.descriptor_path,
                 ref=ref,
                 identity=identity,
             )
@@ -180,29 +184,148 @@ def task_file_descriptors_from_input(
     definition: TaskDefinition,
     value: object,
 ) -> tuple[TaskFileDescriptor, ...]:
+    entries, issues = _task_file_descriptor_entries_from_input(
+        definition,
+        value,
+    )
+    if issues:
+        raise ValueError("task input contains invalid file descriptors")
+    return tuple(entry.descriptor for entry in entries)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _InputFileDescriptor:
+    descriptor: TaskFileDescriptor
+    path: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _InputFileDescriptorExtraction:
+    entries: tuple[_InputFileDescriptor, ...]
+    issues: tuple[TaskValidationIssue, ...]
+
+
+def _task_file_descriptor_entries_from_input(
+    definition: TaskDefinition,
+    value: object,
+) -> tuple[tuple[_InputFileDescriptor, ...], tuple[TaskValidationIssue, ...]]:
     assert isinstance(definition, TaskDefinition)
     if value is None:
-        return ()
+        return (), ()
     match definition.input.type:
         case TaskInputType.FILE:
-            return (_coerce_file_descriptor(value),)
+            return _file_descriptor_entries_from_values(
+                ((value, "input"),),
+            )
         case TaskInputType.FILE_ARRAY:
             assert isinstance(value, list | tuple)
-            return tuple(_coerce_file_descriptor(item) for item in value)
+            return _file_descriptor_entries_from_values(
+                (item, f"input[{index}]") for index, item in enumerate(value)
+            )
+        case TaskInputType.OBJECT | TaskInputType.ARRAY:
+            extraction = _collect_file_descriptor_entries(value, "input")
+            return extraction.entries, extraction.issues
         case _:
-            return ()
+            return (), ()
+
+
+def _file_descriptor_entries_from_values(
+    values: Iterable[tuple[object, str]],
+) -> tuple[tuple[_InputFileDescriptor, ...], tuple[TaskValidationIssue, ...]]:
+    entries: list[_InputFileDescriptor] = []
+    issues: list[TaskValidationIssue] = []
+    for value, path in values:
+        entry = _file_descriptor_entry(value, path)
+        if isinstance(entry, TaskValidationIssue):
+            issues.append(entry)
+        elif entry is not None:
+            entries.append(entry)
+    return tuple(entries), tuple(issues)
+
+
+def _collect_file_descriptor_entries(
+    value: object,
+    path: str,
+) -> _InputFileDescriptorExtraction:
+    entries: list[_InputFileDescriptor] = []
+    issues: list[TaskValidationIssue] = []
+    _collect_file_descriptor_entries_into(value, path, entries, issues)
+    return _InputFileDescriptorExtraction(
+        entries=tuple(entries),
+        issues=tuple(issues),
+    )
+
+
+def _collect_file_descriptor_entries_into(
+    value: object,
+    path: str,
+    entries: list[_InputFileDescriptor],
+    issues: list[TaskValidationIssue],
+) -> None:
+    entry = _file_descriptor_entry(value, path)
+    if isinstance(entry, TaskValidationIssue):
+        issues.append(entry)
+        return
+    if entry is not None:
+        entries.append(entry)
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if isinstance(key, str):
+                _collect_file_descriptor_entries_into(
+                    item,
+                    f"{path}.{key}",
+                    entries,
+                    issues,
+                )
+    elif isinstance(value, list | tuple):
+        for index, item in enumerate(value):
+            _collect_file_descriptor_entries_into(
+                item,
+                f"{path}[{index}]",
+                entries,
+                issues,
+            )
+
+
+def _file_descriptor_entry(
+    value: object,
+    path: str,
+) -> _InputFileDescriptor | TaskValidationIssue | None:
+    if isinstance(value, TaskFileDescriptor):
+        return _InputFileDescriptor(descriptor=value, path=path)
+    if not isinstance(value, Mapping):
+        return None
+    source_kind = value.get("source_kind")
+    if source_kind is None:
+        return None
+    if not isinstance(source_kind, str | TaskFileSourceKind):
+        return _descriptor_issue(path=f"{path}.source_kind")
+    try:
+        TaskFileSourceKind(source_kind)
+    except ValueError:
+        return _descriptor_issue(path=f"{path}.source_kind")
+    reference = value.get("reference")
+    if not isinstance(reference, str) or not reference.strip():
+        return _descriptor_issue(path=f"{path}.reference")
+    conversions = value.get("conversions", ())
+    if not isinstance(conversions, list | tuple):
+        return _descriptor_issue(path=f"{path}.conversions")
+    try:
+        descriptor = _coerce_file_descriptor(value)
+    except (AssertionError, KeyError, ValueError):
+        return _descriptor_issue(path=path)
+    return _InputFileDescriptor(descriptor=descriptor, path=path)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _ResolvedInputFile:
     descriptor: TaskFileDescriptor
+    descriptor_path: str
     path: Path
-    index: int
 
 
 def _coerce_file_descriptor(value: object) -> TaskFileDescriptor:
-    if isinstance(value, TaskFileDescriptor):
-        return value
     assert isinstance(value, Mapping)
     source_kind = value.get("source_kind")
     assert isinstance(source_kind, str | TaskFileSourceKind)
@@ -239,12 +362,11 @@ def _coerce_conversion(value: object) -> TaskFileConversionRequest:
 
 
 def _resolve_descriptor_path(
-    descriptor: TaskFileDescriptor,
+    entry: _InputFileDescriptor,
     roots: tuple[Path, ...],
-    index: int,
-    is_array: bool,
 ) -> _ResolvedInputFile | TaskValidationIssue:
-    path = _descriptor_path(index, is_array)
+    descriptor = entry.descriptor
+    path = entry.path
     if descriptor.source_kind != TaskFileSourceKind.LOCAL_PATH:
         return _issue(
             code="input.invalid_file",
@@ -277,8 +399,8 @@ def _resolve_descriptor_path(
         if resolved is not None:
             return _ResolvedInputFile(
                 descriptor=descriptor,
+                descriptor_path=path,
                 path=resolved,
-                index=index,
             )
     return _issue(
         code="input.invalid_file",
@@ -325,14 +447,10 @@ def _validate_count_limits(
 def _validate_resolved_file(
     definition: TaskDefinition,
     path: Path,
-    index: int,
+    descriptor_path: str,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     size = path.stat().st_size
-    descriptor_path = _descriptor_path(
-        index,
-        definition.input.type == TaskInputType.FILE_ARRAY,
-    )
     limits = (
         definition.limits.file_bytes,
         definition.artifact.max_bytes,
@@ -380,12 +498,6 @@ def _safe_file_identity(
     return freeze_snapshot_metadata(identity)
 
 
-def _descriptor_path(index: int, is_array: bool) -> str:
-    if is_array:
-        return f"input[{index}]"
-    return "input"
-
-
 def _issue(
     *,
     code: str,
@@ -400,6 +512,16 @@ def _issue(
         message=message,
         hint=hint,
         category=category,
+    )
+
+
+def _descriptor_issue(*, path: str) -> TaskValidationIssue:
+    return _issue(
+        code="input.invalid_file",
+        path=path,
+        message="Task file descriptor is invalid.",
+        hint="Pass a file descriptor with a valid source kind and reference.",
+        category=TaskValidationCategory.VALUE,
     )
 
 

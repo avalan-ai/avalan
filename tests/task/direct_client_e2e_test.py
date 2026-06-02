@@ -11,6 +11,7 @@ from avalan.event import Event, EventType
 from avalan.task import (
     HASHED_MARKER,
     RetryBackoff,
+    TaskArtifactPolicy,
     TaskArtifactPurpose,
     TaskArtifactState,
     TaskAttemptState,
@@ -1153,6 +1154,90 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private-token-text", inspection_value)
         self.assertNotIn("source.txt", inspection_value)
         self.assertNotIn("token_id", inspection_value)
+
+    async def test_structured_file_input_materializes_for_direct_target(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            (root / "agents").mkdir()
+            (root / "documents").mkdir()
+            (root / "documents" / "brief.txt").write_bytes(
+                b"private structured body"
+            )
+            artifact_ids = iter(("input-artifact", "output-artifact"))
+            definition = TaskDefinition(
+                task=TaskMetadata(name="structured_file_review", version="1"),
+                input=TaskInputContract.object(
+                    schema={
+                        "type": "object",
+                        "required": ["question", "document"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "question": {"type": "string"},
+                            "document": {"type": "object"},
+                        },
+                    }
+                ),
+                output=TaskOutputContract.file(),
+                execution=TaskExecutionTarget.agent("agents/reviewer.toml"),
+                run=TaskRunPolicy.direct(timeout_seconds=60),
+                artifact=TaskArtifactPolicy.references_only(retention_days=7),
+                observability=TaskObservabilityPolicy(
+                    metrics=True,
+                    trace=False,
+                    capture_events=True,
+                ),
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            target = ReviewingTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-structured-file-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            input_value = {
+                "question": "Summarize the document.",
+                "document": {
+                    "source_kind": "local_path",
+                    "reference": "documents/brief.txt",
+                    "mime_type": "text/plain",
+                },
+            }
+
+            result = await client.run(definition, input_value=input_value)
+            inspection = await client.inspect(result.run.run_id)
+            artifacts = await store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(target.file_bodies, [b"private structured body"])
+        self.assertEqual(target.input_values, [input_value])
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [TaskArtifactPurpose.INPUT, TaskArtifactPurpose.OUTPUT],
+        )
+        self.assertEqual(artifacts[0].retention.delete_after_days, 7)
+        self.assertEqual(len(inspection.artifacts), 2)
+        input_summary = cast(
+            Mapping[str, object],
+            inspection.run.request.input_summary,
+        )
+        self.assertEqual(input_summary["privacy"], HASHED_MARKER)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private structured body", inspection_value)
+        self.assertNotIn("documents/brief.txt", inspection_value)
+        self.assertNotIn("Summarize the document.", inspection_value)
 
     async def test_direct_run_reads_explicit_and_converted_inputs(
         self,
