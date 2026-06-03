@@ -6,6 +6,7 @@ from ...pgsql import (
 )
 from ...types import assert_non_empty_string as _assert_non_empty_string
 from ..artifact import (
+    DEFAULT_ARTIFACT_STREAM_CHUNK_SIZE,
     ArtifactStoreConflictError,
     ArtifactStoreError,
     ArtifactStoreNotFoundError,
@@ -163,18 +164,16 @@ class PgsqlArtifactStore:
         new_artifact_id = artifact_id or self._new_id()
         _assert_artifact_id(new_artifact_id)
         user_metadata = freeze_snapshot_metadata(metadata)
-        effective_max_bytes = (
-            max_bytes if max_bytes is not None else self._policy.max_bytes
+        effective_max_bytes = _effective_max_bytes(
+            requested_max_bytes=max_bytes,
+            configured_max_bytes=self._policy.max_bytes,
         )
-        if effective_max_bytes is None:
-            raise ArtifactStorePolicyError(
-                "artifact stream requires maximum bytes"
-            )
         content = read_artifact_stream_bytes(
             stream,
             max_bytes=effective_max_bytes,
             expected_size_bytes=expected_size_bytes,
             expected_sha256=expected_sha256,
+            chunk_size=_read_chunk_size(effective_max_bytes),
         )
         storage_key = _storage_key(new_artifact_id)
         digest = sha256(content).hexdigest()
@@ -260,7 +259,7 @@ class PgsqlArtifactStore:
         return bounded_artifact_reader(BytesIO(content), max_bytes=max_bytes)
 
     async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
-        record = await self._fetch_record(ref)
+        record = await self._fetch_stat_record(ref)
         return TaskArtifactStat(
             ref=ref,
             size_bytes=record.size_bytes,
@@ -288,6 +287,19 @@ class PgsqlArtifactStore:
         if row is None:
             raise ArtifactStoreNotFoundError("artifact was not found")
         return _record_from_row(row)
+
+    async def _fetch_stat_record(
+        self,
+        ref: TaskArtifactRef,
+    ) -> "_PgsqlArtifactByteStatRecord":
+        self._assert_ref(ref)
+        row = await self._execute_returning(
+            _SELECT_ARTIFACT_STAT_SQL,
+            (ref.storage_key,),
+        )
+        if row is None:
+            raise ArtifactStoreNotFoundError("artifact was not found")
+        return _stat_record_from_row(row)
 
     async def _execute_returning(
         self,
@@ -335,6 +347,10 @@ class PgsqlArtifactStore:
             raise ArtifactStorePolicyError(
                 "artifact byte storage requires retention"
             )
+        if self._policy.max_bytes is None:
+            raise ArtifactStorePolicyError(
+                "artifact byte storage requires maximum bytes"
+            )
 
     def _new_id(self) -> str:
         value = self._id_factory()
@@ -375,6 +391,22 @@ class _PgsqlArtifactByteRecord:
             assert isinstance(value, str)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PgsqlArtifactByteStatRecord:
+    artifact_id: str
+    storage_key: str
+    size_bytes: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        _assert_artifact_id(self.artifact_id)
+        _assert_storage_key(self.storage_key)
+        assert isinstance(self.size_bytes, int)
+        assert not isinstance(self.size_bytes, bool)
+        assert self.size_bytes >= 0
+        _assert_sha256(self.sha256)
+
+
 def _record_from_row(row: Mapping[str, object]) -> _PgsqlArtifactByteRecord:
     return _PgsqlArtifactByteRecord(
         artifact_id=_row_string(row, "artifact_id"),
@@ -386,6 +418,17 @@ def _record_from_row(row: Mapping[str, object]) -> _PgsqlArtifactByteRecord:
         encryption_key_id=_row_string(row, "encryption_key_id"),
         encryption_algorithm=_row_string(row, "encryption_algorithm"),
         encryption_metadata=_row_metadata(row, "encryption_metadata"),
+    )
+
+
+def _stat_record_from_row(
+    row: Mapping[str, object],
+) -> _PgsqlArtifactByteStatRecord:
+    return _PgsqlArtifactByteStatRecord(
+        artifact_id=_row_string(row, "artifact_id"),
+        storage_key=_row_string(row, "storage_key"),
+        size_bytes=_row_int(row, "size_bytes"),
+        sha256=_row_string(row, "sha256"),
     )
 
 
@@ -474,6 +517,27 @@ def _retention_deadline_at(retention_days: int | None) -> datetime:
     return datetime.now(UTC) + timedelta(days=retention_days)
 
 
+def _effective_max_bytes(
+    *,
+    requested_max_bytes: int | None,
+    configured_max_bytes: int | None,
+) -> int:
+    assert configured_max_bytes is not None
+    if requested_max_bytes is None:
+        return configured_max_bytes
+    assert isinstance(requested_max_bytes, int)
+    assert not isinstance(requested_max_bytes, bool)
+    assert requested_max_bytes >= 0
+    return min(requested_max_bytes, configured_max_bytes)
+
+
+def _read_chunk_size(max_bytes: int) -> int:
+    assert isinstance(max_bytes, int)
+    assert not isinstance(max_bytes, bool)
+    assert max_bytes >= 0
+    return max(1, min(DEFAULT_ARTIFACT_STREAM_CHUNK_SIZE, max_bytes + 1))
+
+
 def _uuid_id() -> str:
     return uuid4().hex
 
@@ -510,6 +574,17 @@ SELECT
     "encryption_key_id",
     "encryption_algorithm",
     "encryption_metadata"
+FROM "task_artifact_bytes"
+WHERE "storage_key" = %s
+    AND "deleted_at" IS NULL
+"""
+
+_SELECT_ARTIFACT_STAT_SQL = """
+SELECT
+    "artifact_id",
+    "storage_key",
+    "size_bytes",
+    "sha256"
 FROM "task_artifact_bytes"
 WHERE "storage_key" = %s
     AND "deleted_at" IS NULL

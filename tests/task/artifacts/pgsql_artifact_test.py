@@ -97,6 +97,7 @@ class FakeDatabase:
         self.invalid_row = False
         self.fail_after_insert = False
         self.last_parameters: tuple[object, ...] | None = None
+        self.selects: list[str] = []
         self.open_count = 0
         self.close_count = 0
 
@@ -206,11 +207,7 @@ class FakeCursor:
         if "INSERT INTO" in query:
             self._insert(parameters)
         elif "SELECT" in query:
-            self.row = (
-                ["invalid-row"]
-                if self.database.invalid_row
-                else self.database.rows.get(cast(str, parameters[0]))
-            )
+            self._select(query, parameters)
         elif "DELETE FROM" in query:
             storage_key = cast(str, parameters[0])
             self.row = (
@@ -247,6 +244,22 @@ class FakeCursor:
         if self.database.fail_after_insert:
             raise RuntimeError("raw database payload with secret")
         self.row = {"storage_key": storage_key}
+
+    def _select(self, query: str, parameters: tuple[object, ...]) -> None:
+        self.database.selects.append(query)
+        if self.database.invalid_row:
+            self.row = ["invalid-row"]
+            return
+        row = self.database.rows.get(cast(str, parameters[0]))
+        if row is None or '"ciphertext"' in query:
+            self.row = row
+            return
+        self.row = {
+            "artifact_id": row["artifact_id"],
+            "storage_key": row["storage_key"],
+            "size_bytes": row["size_bytes"],
+            "sha256": row["sha256"],
+        }
 
 
 class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
@@ -318,6 +331,9 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(ref.size_bytes, 13)
         self.assertEqual(stat.size_bytes, 13)
         self.assertEqual(ref.sha256, stat.sha256)
+        self.assertFalse(
+            any('"ciphertext"' in query for query in database.selects[-1:]),
+        )
         self.assertEqual(ref.metadata["retention_days"], 7)
         self.assertIsInstance(row["retention_deadline_at"], datetime)
         encryption = cast(Mapping[str, object], ref.metadata["encryption"])
@@ -330,6 +346,8 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         )
         with self.assertRaises(ArtifactStoreNotFoundError):
             await store.stat(ref)
+        with self.assertRaises(ArtifactStoreNotFoundError):
+            await store.open(ref)
         with self.assertRaises(ArtifactStoreNotFoundError):
             await store.delete(ref)
         self.assertTrue(cipher.decrypted)
@@ -387,21 +405,24 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(ref.metadata["retention_days"], 7)
         self.assertEqual(cipher.encrypt_context["artifact_id"], "artifact-1")
 
-    async def test_put_stream_requires_cap_and_skips_invalid_writes(
+    async def test_put_stream_enforces_configured_cap_and_skips_invalid_writes(
         self,
     ) -> None:
         database = FakeDatabase()
         store = PgsqlArtifactStore(
             database,
             cipher=ReversibleCipher(),
-            policy=self._enabled_policy(),
+            policy=PgsqlArtifactByteStoragePolicy(
+                raw_storage_allowed=True,
+                retention_days=7,
+                max_bytes=8,
+                enabled_features=(
+                    TaskFeature.POSTGRESQL,
+                    TaskFeature.RAW_STORAGE,
+                ),
+            ),
         )
 
-        with self.assertRaisesRegex(
-            ArtifactStorePolicyError,
-            "requires maximum bytes",
-        ):
-            await store.put_stream(BytesIO(b"private bytes"))
         with self.assertRaises(ArtifactStorePolicyError):
             await store.put_stream(
                 BytesIO(b"private bytes"),
@@ -415,7 +436,46 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
                 max_bytes=20,
                 expected_size_bytes=99,
             )
+        with self.assertRaises(ArtifactStorePolicyError):
+            await store.put_stream(
+                BytesIO(b"private bytes"),
+                artifact_id="artifact-3",
+                max_bytes=99,
+                expected_size_bytes=13,
+            )
+        with self.assertRaises(ArtifactStorePolicyError):
+            await store.put(
+                b"private bytes",
+                artifact_id="artifact-4",
+            )
 
+        self.assertEqual(database.rows, {})
+
+    async def test_configured_cap_is_required_before_stream_is_read(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        reader = RecordingReader()
+        store = PgsqlArtifactStore(
+            database,
+            cipher=ReversibleCipher(),
+            policy=PgsqlArtifactByteStoragePolicy(
+                raw_storage_allowed=True,
+                retention_days=7,
+                enabled_features=(
+                    TaskFeature.POSTGRESQL,
+                    TaskFeature.RAW_STORAGE,
+                ),
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            ArtifactStorePolicyError,
+            "requires maximum bytes",
+        ):
+            await store.put_stream(reader, max_bytes=20)  # type: ignore[arg-type]
+
+        self.assertFalse(reader.read_called)
         self.assertEqual(database.rows, {})
 
     async def test_real_postgresql_byte_backend_when_configured(
@@ -677,6 +737,7 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         return PgsqlArtifactByteStoragePolicy(
             raw_storage_allowed=True,
             retention_days=7,
+            max_bytes=64,
             enabled_features=(
                 TaskFeature.POSTGRESQL,
                 TaskFeature.RAW_STORAGE,
