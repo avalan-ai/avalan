@@ -102,6 +102,23 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             ["input.invalid_type"],
         )
 
+    async def test_invalid_file_array_shape_returns_validation_error(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(input_contract=TaskInputContract.file_array()),
+                "private scalar path",
+                roots=(),
+                artifact_store=None,
+            )
+
+        self.assertEqual(
+            [issue.code for issue in error.exception.issues],
+            ["input.invalid_type"],
+        )
+        self.assertNotIn("private scalar path", str(error.exception))
+
     async def test_local_file_materializes_to_artifact_backend(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             input_path = Path(root, "uploads", "input.txt")

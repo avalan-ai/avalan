@@ -218,7 +218,8 @@ def _task_file_descriptor_entries_from_input(
                 ((value, "input"),),
             )
         case TaskInputType.FILE_ARRAY:
-            assert isinstance(value, list | tuple)
+            if not isinstance(value, list | tuple):
+                return (), ()
             return _file_descriptor_entries_from_values(
                 (item, f"input[{index}]") for index, item in enumerate(value)
             )
