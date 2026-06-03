@@ -1149,9 +1149,14 @@ SELECT
         WHERE q."state" = 'available' AND q."available_at" <= %s
     ) AS "oldest_available_at",
     COUNT(*) FILTER (
-        WHERE q."state" = 'claimed' AND q."lease_expires_at" <= %s
+        WHERE
+            q."state" = 'claimed'
+            AND q."lease_expires_at" <= %s
+            AND r."state" IN ('claimed', 'running', 'cancel_requested')
+            AND (r."claim"->>'claim_token') = q."claim_token"
     ) AS "expired_claims"
 FROM "task_queue_items" q
+JOIN "task_runs" r ON r."run_id" = q."run_id"
 WHERE q."queue_name" = %s
 """
 

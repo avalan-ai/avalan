@@ -950,10 +950,29 @@ class FakeCursor:
             "expired_claims": sum(
                 1
                 for row in rows
-                if row["state"] == "claimed"
-                and cast(datetime, row["lease_expires_at"]) <= checked_at
+                if self._reclaimable_expired_claim(row, checked_at)
             ),
         }
+
+    def _reclaimable_expired_claim(
+        self,
+        row: dict[str, object],
+        checked_at: datetime,
+    ) -> bool:
+        run = self.database.runs[cast(str, row["run_id"])]
+        claim = cast(dict[str, object] | None, run.get("claim"))
+        return (
+            row["state"] == TaskQueueItemState.CLAIMED.value
+            and cast(datetime, row["lease_expires_at"]) <= checked_at
+            and run["state"]
+            in {
+                TaskRunState.CLAIMED.value,
+                TaskRunState.RUNNING.value,
+                TaskRunState.CANCEL_REQUESTED.value,
+            }
+            and claim is not None
+            and claim.get("claim_token") == row["claim_token"]
+        )
 
     def _with_run_state(
         self,
@@ -2533,8 +2552,15 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             run_id="run-cancel",
             available_at=self.now,
         )
+        self._add_claimed_row(
+            queue_item_id="manual-claimed",
+            run_id="run-claimed",
+            attempt_id="attempt-claimed",
+            attempts=1,
+            lease_expires_at=self.now - timedelta(seconds=1),
+        )
         self._add_queue_item(
-            "manual-claimed",
+            "manual-stale-claimed",
             run_id="run-queued",
             state=TaskQueueItemState.CLAIMED,
             available_at=self.now,
@@ -2552,7 +2578,7 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(depth.available, 2)
         self.assertEqual(depth.scheduled, 1)
-        self.assertEqual(depth.claimed, 1)
+        self.assertEqual(depth.claimed, 2)
         self.assertEqual(depth.dead, 1)
         self.assertEqual(depth.cancel_requested, 1)
         self.assertEqual(health.oldest_available_at, self.now)
