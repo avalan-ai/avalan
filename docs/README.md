@@ -19,6 +19,8 @@ tailored specifically to each use case.
   memory PostgreSQL schemas and extension prerequisites.
 - [Task PostgreSQL storage](TASK_POSTGRESQL.md) - Configure task PostgreSQL
   storage and schema migration dependencies.
+- [Task queue operations](TASK_OPERATIONS.md) - Deploy task workers and follow
+  failure-mode runbooks for durable queue mode.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
 

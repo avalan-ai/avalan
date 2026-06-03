@@ -4,6 +4,9 @@ This document records the operational shape for task PostgreSQL schemas.
 It applies to task lifecycle storage, task artifact metadata, queue tables,
 event and usage records, and task idempotency records.
 
+For worker deployment, environment configuration, and failure-mode runbooks,
+see [Task queue operations](TASK_OPERATIONS.md).
+
 ## Migration Framework
 
 Alembic is the authoritative schema migration framework for task PostgreSQL

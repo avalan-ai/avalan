@@ -93,3 +93,9 @@ Set `AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN` before `make test` to run the same
 temporary database flow against an existing PostgreSQL server. Set
 `AVALAN_TASK_BENCHMARK_POSTGRESQL_DSN` only when running the opt-in EXPLAIN
 benchmark checks.
+
+For durable queue deployments, also configure `AVALAN_TASK_HMAC_KEY_ID`,
+`AVALAN_TASK_HMAC_KEY_B64`, and `AVALAN_TASK_ARTIFACT_ROOT`, then run workers
+under a process supervisor or container restart policy. See
+[Task queue operations](TASK_OPERATIONS.md) for deployment profiles and
+failure-mode runbooks.
