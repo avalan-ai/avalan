@@ -19,6 +19,7 @@ from .idempotency import task_idempotency_identity
 from .materialization import (
     TaskMaterializedFile,
     materialize_task_input_files,
+    task_provider_reference_input_files_from_input,
 )
 from .observability import ObservabilitySink, TaskSanitizedEventObserver
 from .privacy import (
@@ -286,15 +287,17 @@ class TaskClient:
         validation = await self.validate(definition, input_value=input_value)
         validation.raise_for_issues()
         sanitizer = self._sanitizer(definition)
-        explicit_artifacts = self._explicit_queue_artifacts(
-            definition,
-            sanitizer,
-            files,
-        )
         definition_id = self._definition_hash_value(definition)
         await self._store.register_definition(
             definition,
             definition_hash=definition_id,
+        )
+        provider_reference_files = (
+            task_provider_reference_input_files_from_input(
+                definition,
+                input_value,
+                now=self._clock(),
+            )
         )
         materialized_files = await materialize_task_input_files(
             definition,
@@ -307,7 +310,12 @@ class TaskClient:
             materialized_file.as_input_file()
             for materialized_file in materialized_files
         )
-        queued_files = (*files, *input_files)
+        queued_files = (*files, *provider_reference_files, *input_files)
+        explicit_artifacts = self._explicit_queue_artifacts(
+            definition,
+            sanitizer,
+            (*files, *provider_reference_files),
+        )
         selected_queue_name = queue_name or definition.run.queue
         assert selected_queue_name is not None
         input_summary_value = _input_summary_value(definition, input_value)
@@ -550,17 +558,27 @@ class TaskClient:
         artifacts: list[TaskQueueArtifact] = []
         for index, file in enumerate(files):
             if file.artifact_ref is None:
+                if (
+                    file.provider_reference is not None
+                    and file.provider_reference.durable_for_queue
+                ):
+                    continue
+                issue_path = (
+                    f"files[{index}].provider_reference"
+                    if file.provider_reference is not None
+                    else f"files[{index}].artifact_ref"
+                )
                 issues.append(
                     TaskValidationIssue(
                         code="input.invalid_file",
-                        path=f"files[{index}].artifact_ref",
+                        path=issue_path,
                         message=(
                             "Queued task file attachments require a durable "
-                            "artifact reference."
+                            "artifact or provider reference."
                         ),
                         hint=(
-                            "Store file bytes in an artifact backend before "
-                            "enqueueing queued task attachments."
+                            "Store file bytes in an artifact backend or use "
+                            "a non-expiring provider reference."
                         ),
                         category=TaskValidationCategory.UNSUPPORTED,
                     )

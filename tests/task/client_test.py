@@ -32,6 +32,7 @@ from avalan.task import (
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
+    TaskProviderReferenceKind,
     TaskQueue,
     TaskQueueArtifact,
     TaskQueueItem,
@@ -614,6 +615,80 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(issue.path, "files[0].artifact_ref")
         self.assertEqual(issue.category, TaskValidationCategory.UNSUPPORTED)
         self.assertNotIn("private-report", str(error.exception))
+
+    async def test_enqueue_accepts_durable_provider_reference(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-provider-file-hash",
+        )
+        provider_reference = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            owner_scope="tenant-a",
+            mime_type="application/pdf",
+            identity_hmac="hmac-value",
+        ).provider_reference
+        assert provider_reference is not None
+
+        submission = await client.enqueue(
+            _definition(run=TaskRunPolicy.queued("documents")),
+            input_value="private prompt",
+            files=(
+                TaskInputFile(
+                    logical_path="provider:openai:provider_file_id",
+                    provider_reference=provider_reference,
+                    media_type="application/pdf",
+                ),
+            ),
+        )
+
+        self.assertEqual(submission.run.state, TaskRunState.QUEUED)
+        self.assertEqual(queue.artifacts, ())
+        self.assertIn("<hmac-sha256>", str(submission.run.request))
+        self.assertNotIn("file-private", str(submission.run.request))
+
+    async def test_enqueue_rejects_expiring_provider_reference(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-expiring-provider-file-hash",
+        )
+        provider_reference = TaskFileDescriptor.provider_reference_descriptor(
+            "https://example.test/private",
+            kind=TaskProviderReferenceKind.EXPIRING_PROVIDER_HANDLE,
+            provider="openai",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            durable=False,
+        ).provider_reference
+        assert provider_reference is not None
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(
+                _definition(run=TaskRunPolicy.queued("documents")),
+                input_value="private prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:openai:handle",
+                        provider_reference=provider_reference,
+                    ),
+                ),
+            )
+
+        self.assertEqual(queue.requests, [])
+        issue = error.exception.issues[0]
+        self.assertEqual(issue.code, "input.invalid_file")
+        self.assertEqual(issue.path, "files[0].provider_reference")
+        self.assertNotIn("example.test", str(error.exception))
 
     async def test_enqueue_materializes_files_and_waits_for_terminal_output(
         self,

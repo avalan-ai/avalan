@@ -1,4 +1,5 @@
 from collections.abc import Callable, ItemsView, Iterator, Mapping
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -24,11 +25,15 @@ from avalan.task import (
     TaskMaterializedFile,
     TaskMetadata,
     TaskOutputContract,
+    TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
     materialize_task_input_files,
     task_file_descriptors_from_input,
 )
 from avalan.task.artifacts import LocalArtifactStore
+from avalan.task.materialization import (
+    task_provider_reference_input_files_from_input,
+)
 from avalan.task.stores import InMemoryTaskStore
 
 
@@ -212,6 +217,165 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             ["input.invalid_type"],
         )
         self.assertNotIn("private scalar path", str(error.exception))
+
+    async def test_provider_reference_input_skips_byte_materialization(
+        self,
+    ) -> None:
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-openai",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            mime_type="application/pdf",
+            owner_scope="tenant-a",
+            identity_hmac="hmac-value",
+        )
+
+        materialized = await materialize_task_input_files(
+            _definition(input_contract=TaskInputContract.file()),
+            descriptor,
+            roots=(),
+            artifact_store=None,
+        )
+        files = task_provider_reference_input_files_from_input(
+            _definition(input_contract=TaskInputContract.file()),
+            descriptor,
+        )
+
+        self.assertEqual(materialized, ())
+        self.assertEqual(len(files), 1)
+        self.assertEqual(
+            files[0].logical_path, "provider:openai:provider_file_id"
+        )
+        self.assertIsNotNone(files[0].provider_reference)
+        assert files[0].provider_reference is not None
+        self.assertEqual(files[0].provider_reference.reference, "file-openai")
+
+    async def test_provider_reference_only_input_preserves_count_errors(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(
+                    input_contract=TaskInputContract.file_array(),
+                    limits=TaskLimitsPolicy(file_count=1),
+                ),
+                [
+                    TaskFileDescriptor.provider_reference_descriptor(
+                        "file-a",
+                        kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                        provider="openai",
+                    ),
+                    TaskFileDescriptor.provider_reference_descriptor(
+                        "file-b",
+                        kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                        provider="openai",
+                    ),
+                ],
+                roots=(),
+                artifact_store=None,
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input")
+        self.assertNotIn("file-a", str(error.exception))
+
+    def test_provider_reference_extraction_rejects_expired_values(
+        self,
+    ) -> None:
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "https://example.test/private",
+            kind=TaskProviderReferenceKind.EXPIRING_PROVIDER_HANDLE,
+            provider="openai",
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+            durable=False,
+        )
+
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            task_provider_reference_input_files_from_input(
+                _definition(input_contract=TaskInputContract.file()),
+                descriptor,
+                now=datetime.now(UTC),
+            )
+
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "input.provider_reference.expires_at",
+        )
+        self.assertNotIn("example.test", str(error.exception))
+
+    def test_provider_reference_extraction_rejects_missing_reference(
+        self,
+    ) -> None:
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-openai",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+        )
+        object.__setattr__(descriptor, "provider_reference", None)
+
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            task_provider_reference_input_files_from_input(
+                _definition(input_contract=TaskInputContract.file()),
+                descriptor,
+            )
+
+        self.assertEqual(
+            error.exception.issues[0].path, "input.provider_reference"
+        )
+
+    def test_provider_reference_mapping_extracts_datetime_shapes(self) -> None:
+        expires_at = datetime.now(UTC) + timedelta(minutes=5)
+        string_file = task_provider_reference_input_files_from_input(
+            _definition(input_contract=TaskInputContract.file()),
+            {
+                "source_kind": "provider_reference",
+                "reference": "https://example.test/private",
+                "provider_reference": {
+                    "kind": "hosted_url",
+                    "provider": "openai",
+                    "reference": "https://example.test/private",
+                    "expires_at": expires_at.isoformat(),
+                    "durable": False,
+                },
+            },
+        )[0]
+        datetime_file = task_provider_reference_input_files_from_input(
+            _definition(input_contract=TaskInputContract.file()),
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-openai",
+                "provider_reference": {
+                    "kind": TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    "provider": "openai",
+                    "reference": "file-openai",
+                    "expires_at": expires_at,
+                    "durable": False,
+                },
+            },
+        )[0]
+        object_reference = TaskFileDescriptor.provider_reference_descriptor(
+            "file-object",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+        ).provider_reference
+        object_file = task_provider_reference_input_files_from_input(
+            _definition(input_contract=TaskInputContract.file()),
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-object",
+                "provider_reference": object_reference,
+            },
+        )[0]
+
+        self.assertIsNotNone(string_file.provider_reference)
+        self.assertIsNotNone(datetime_file.provider_reference)
+        self.assertIsNotNone(object_file.provider_reference)
+        assert string_file.provider_reference is not None
+        assert datetime_file.provider_reference is not None
+        assert object_file.provider_reference is not None
+        self.assertFalse(string_file.provider_reference.durable_for_queue)
+        self.assertFalse(datetime_file.provider_reference.durable_for_queue)
+        self.assertTrue(object_file.provider_reference.durable_for_queue)
 
     async def test_local_file_materializes_to_artifact_backend(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:

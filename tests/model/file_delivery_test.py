@@ -199,6 +199,59 @@ def test_plan_delivery_prefers_provider_references() -> None:
     )
 
 
+def test_plan_delivery_uses_typed_provider_reference_metadata() -> None:
+    openai = resolve_file_delivery_profile("ai://env:KEY@openai/gpt-4o")
+    google = resolve_file_delivery_profile("ai://env:KEY@google/gemini")
+
+    id_decision = openai.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "openai",
+                    "reference": "file-1",
+                    "owner_scope": "tenant-a",
+                }
+            }
+        )
+    )
+    uri_decision = google.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "object_store_uri",
+                    "provider": "google",
+                    "reference": "gs://bucket/object",
+                }
+            }
+        )
+    )
+    url_decision = openai.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "hosted_url",
+                    "provider": "openai",
+                    "reference": "https://example.test/file",
+                }
+            }
+        )
+    )
+
+    assert id_decision == FileDeliveryDecision(
+        mode=FileDeliveryMode.PROVIDER_FILE_ID,
+        reference="file-1",
+    )
+    assert uri_decision == FileDeliveryDecision(
+        mode=FileDeliveryMode.OBJECT_STORE_URI,
+        reference="gs://bucket/object",
+    )
+    assert url_decision == FileDeliveryDecision(
+        mode=FileDeliveryMode.HOSTED_URL,
+        reference="https://example.test/file",
+    )
+
+
 def test_plan_delivery_selects_inline_bytes_and_text() -> None:
     openai = resolve_file_delivery_profile("ai://env:KEY@openai/gpt-4o")
     local_text = resolve_file_delivery_profile("ai://local/model")
@@ -333,6 +386,50 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
         FileDeliveryRequest(mime_type="application/pdf", has_artifact=True)
     )
     no_delivery_mode = local_text.plan_delivery(FileDeliveryRequest())
+    provider_mismatch = bedrock.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "object_store_uri",
+                    "provider": "google",
+                    "reference": "s3://bucket/object",
+                }
+            }
+        )
+    )
+    unsupported_reference = bedrock.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "bedrock",
+                    "reference": "file-1",
+                }
+            }
+        )
+    )
+    unsupported_reference_uri = bedrock.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "object_store_uri",
+                    "provider": "bedrock",
+                    "reference": "gs://bucket/object",
+                }
+            }
+        )
+    )
+    invalid_reference_metadata = bedrock.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "object_store_uri",
+                    "provider": "bedrock",
+                },
+                "provider_uri": "s3://bucket/object",
+            }
+        )
+    )
 
     assert unsupported.mode == FileDeliveryMode.REJECT
     assert unsupported.diagnostic is not None
@@ -356,6 +453,22 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
         no_delivery_mode.diagnostic.code
         == "model.file_delivery.no_supported_delivery_mode"
     )
+    assert provider_mismatch.diagnostic is not None
+    assert (
+        provider_mismatch.diagnostic.code
+        == "model.file_delivery.provider_mismatch"
+    )
+    assert unsupported_reference.diagnostic is not None
+    assert (
+        unsupported_reference.diagnostic.code
+        == "model.file_delivery.unsupported_provider_reference"
+    )
+    assert unsupported_reference_uri.diagnostic is not None
+    assert (
+        unsupported_reference_uri.diagnostic.code
+        == "model.file_delivery.unsupported_object_store_uri"
+    )
+    assert invalid_reference_metadata.mode == FileDeliveryMode.OBJECT_STORE_URI
 
 
 def test_plan_delivery_rejects_inline_limit_excess() -> None:

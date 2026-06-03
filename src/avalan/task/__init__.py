@@ -120,6 +120,8 @@ from .idempotency import (
 from .input import TaskFileConversionRequest as TaskFileConversionRequest
 from .input import TaskFileDescriptor as TaskFileDescriptor
 from .input import TaskFileSourceKind as TaskFileSourceKind
+from .input import TaskProviderReference as TaskProviderReference
+from .input import TaskProviderReferenceKind as TaskProviderReferenceKind
 from .input import TaskRemoteUrlPolicy as TaskRemoteUrlPolicy
 from .loader import TaskDefinitionLoader as TaskDefinitionLoader
 from .loader import TaskLoadError as TaskLoadError

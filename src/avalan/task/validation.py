@@ -25,6 +25,8 @@ from .input import (
     TaskFileConversionRequest,
     TaskFileDescriptor,
     TaskFileSourceKind,
+    TaskProviderReference,
+    TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
 )
 from .privacy import (
@@ -700,6 +702,7 @@ def _validate_file_descriptor_value(
         sha256 = descriptor.get("sha256")
         conversions = descriptor.get("conversions", ())
         metadata = descriptor.get("metadata")
+        provider_reference = descriptor.get("provider_reference")
     except Exception:
         return (
             _invalid_file_issue(
@@ -733,6 +736,23 @@ def _validate_file_descriptor_value(
                 reference,
                 path=path,
                 policy=remote_url_policy,
+            )
+        )
+    elif source_kind_value == TaskFileSourceKind.PROVIDER_REFERENCE:
+        issues.extend(
+            _validate_provider_reference_descriptor(
+                reference,
+                provider_reference,
+                conversions,
+                path=path,
+            )
+        )
+    elif provider_reference is not None:
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference",
+                "Task file provider reference is not allowed.",
+                "Use provider_reference as the file source kind.",
             )
         )
     if role is not None and (
@@ -829,10 +849,146 @@ def _file_descriptor_mapping(
             "sha256": value.sha256,
             "conversions": value.conversions,
             "metadata": value.metadata,
+            "provider_reference": value.provider_reference,
         }
     if isinstance(value, Mapping):
         return value
     return None
+
+
+def _validate_provider_reference_descriptor(
+    reference: object,
+    value: object,
+    conversions: object,
+    *,
+    path: str,
+) -> tuple[TaskValidationIssue, ...]:
+    issues: list[TaskValidationIssue] = []
+    if conversions:
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.conversions",
+                "Task file conversion conflicts with provider reference.",
+                "Use either a provider reference or a conversion request.",
+            )
+        )
+    if isinstance(value, TaskProviderReference):
+        if value.reference != reference:
+            issues.append(
+                _invalid_file_issue(
+                    f"{path}.provider_reference.reference",
+                    "Task file provider reference does not match.",
+                    "Use the same reference on the descriptor and provider.",
+                )
+            )
+        return tuple(issues)
+    if not isinstance(value, Mapping):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference",
+                "Task file provider reference is invalid.",
+                "Pass provider, kind, durability, and identity metadata.",
+            )
+        )
+        return tuple(issues)
+    kind = value.get("kind")
+    provider = value.get("provider")
+    provider_reference = value.get("reference")
+    durable = value.get("durable", True)
+    expires_at = value.get("expires_at")
+    owner_scope = value.get("owner_scope")
+    mime_type = value.get("mime_type")
+    size_bucket = value.get("size_bucket")
+    identity_hmac = value.get("identity_hmac")
+    metadata = value.get("metadata")
+    if not _is_valid_provider_reference_kind(kind):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.kind",
+                "Task file provider reference kind is invalid.",
+                "Use a supported provider reference kind.",
+            )
+        )
+    if not isinstance(provider, str) or not _is_valid_file_token(provider):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.provider",
+                "Task file provider reference provider is invalid.",
+                "Use a stable provider token.",
+            )
+        )
+    if provider_reference != reference:
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.reference",
+                "Task file provider reference does not match.",
+                "Use the same reference on the descriptor and provider.",
+            )
+        )
+    if not isinstance(durable, bool):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.durable",
+                "Task file provider reference durability is invalid.",
+                "Use true for durable references and false otherwise.",
+            )
+        )
+    if expires_at is not None and not isinstance(expires_at, str):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.expires_at",
+                "Task file provider reference expiry is invalid.",
+                "Use an ISO 8601 timestamp string.",
+            )
+        )
+    for field_name, field_value in (
+        ("owner_scope", owner_scope),
+        ("size_bucket", size_bucket),
+        ("identity_hmac", identity_hmac),
+    ):
+        if field_value is not None and (
+            not isinstance(field_value, str) or not field_value.strip()
+        ):
+            issues.append(
+                _invalid_file_issue(
+                    f"{path}.provider_reference.{field_name}",
+                    "Task file provider reference metadata is invalid.",
+                    "Use non-empty string metadata values.",
+                )
+            )
+    if mime_type is not None and (
+        not isinstance(mime_type, str) or not _is_valid_mime_type(mime_type)
+    ):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.mime_type",
+                "Task file provider reference MIME type is invalid.",
+                "Use MIME type values such as application/pdf.",
+            )
+        )
+    if metadata is not None and (
+        not isinstance(metadata, Mapping) or not _is_json_value(metadata)
+    ):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.metadata",
+                "Task file provider reference metadata is invalid.",
+                "Use JSON-compatible metadata with string keys.",
+            )
+        )
+    return tuple(issues)
+
+
+def _is_valid_provider_reference_kind(value: object) -> bool:
+    if isinstance(value, TaskProviderReferenceKind):
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        TaskProviderReferenceKind(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _is_valid_source_kind(value: object) -> bool:

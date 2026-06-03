@@ -16,6 +16,8 @@ from .input import (
     TaskFileConversionRequest,
     TaskFileDescriptor,
     TaskFileSourceKind,
+    TaskProviderReference,
+    TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
 )
 from .privacy import (
@@ -38,6 +40,7 @@ from .validation import (
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 from hmac import compare_digest
 from os import O_NOFOLLOW, O_RDONLY, close, fdopen, fstat
@@ -98,8 +101,20 @@ async def materialize_task_input_files(
         if issues:
             raise TaskFileMaterializationError(tuple(issues))
         return ()
+    descriptors = tuple(entry.descriptor for entry in descriptor_entries)
+    issues.extend(_validate_count_limits(definition, descriptors))
+    materializable_entries = tuple(
+        entry
+        for entry in descriptor_entries
+        if entry.descriptor.source_kind
+        != TaskFileSourceKind.PROVIDER_REFERENCE
+    )
     if _has_issue_code(issues, _REMOTE_URL_DISABLED_CODE):
         raise TaskFileMaterializationError(tuple(issues))
+    if not materializable_entries:
+        if issues:
+            raise TaskFileMaterializationError(tuple(issues))
+        return ()
     if artifact_store is None:
         issues.append(
             _issue(
@@ -117,11 +132,9 @@ async def materialize_task_input_files(
         raise TaskFileMaterializationError(tuple(issues))
     if task_store is not None:
         assert isinstance(run_id, str) and run_id.strip()
-    descriptors = tuple(entry.descriptor for entry in descriptor_entries)
-    issues.extend(_validate_count_limits(definition, descriptors))
     resolved = tuple(
         _resolve_descriptor_path(entry, root_paths)
-        for entry in descriptor_entries
+        for entry in materializable_entries
     )
     for result in resolved:
         if isinstance(result, TaskValidationIssue):
@@ -205,6 +218,68 @@ def task_file_descriptors_from_input(
     if issues:
         raise ValueError("task input contains invalid file descriptors")
     return tuple(entry.descriptor for entry in entries)
+
+
+def task_provider_reference_input_files_from_input(
+    definition: TaskDefinition,
+    value: object,
+    *,
+    now: datetime | None = None,
+) -> tuple[TaskInputFile, ...]:
+    entries, issues = _task_file_descriptor_entries_from_input(
+        definition,
+        value,
+    )
+    provider_entries = tuple(
+        entry
+        for entry in entries
+        if entry.descriptor.source_kind
+        == TaskFileSourceKind.PROVIDER_REFERENCE
+    )
+    for entry in provider_entries:
+        provider_reference = entry.descriptor.provider_reference
+        if provider_reference is not None and provider_reference.is_expired(
+            now
+        ):
+            issues = (
+                *issues,
+                _issue(
+                    code="input.invalid_file",
+                    path=f"{entry.path}.provider_reference.expires_at",
+                    message="Task file provider reference has expired.",
+                    hint="Refresh the provider reference before execution.",
+                    category=TaskValidationCategory.VALUE,
+                ),
+            )
+    if issues:
+        raise TaskFileMaterializationError(tuple(issues))
+    files: list[TaskInputFile] = []
+    for entry in provider_entries:
+        descriptor = entry.descriptor
+        provider_reference = descriptor.provider_reference
+        if provider_reference is None:
+            raise TaskFileMaterializationError(
+                (
+                    _descriptor_issue(
+                        path=f"{entry.path}.provider_reference",
+                    ),
+                )
+            )
+        files.append(
+            TaskInputFile(
+                logical_path=(
+                    "provider:"
+                    f"{provider_reference.provider}:"
+                    f"{provider_reference.kind.value}"
+                ),
+                provider_reference=provider_reference,
+                media_type=descriptor.mime_type
+                or provider_reference.mime_type,
+                size_bytes=descriptor.size_bytes,
+                metadata=descriptor.metadata,
+            )
+        )
+    return tuple(files)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -378,6 +453,51 @@ def _coerce_file_descriptor(value: object) -> TaskFileDescriptor:
         conversions=tuple(
             _coerce_conversion(conversion) for conversion in conversions
         ),
+        provider_reference=_coerce_provider_reference(
+            value.get("provider_reference"),
+            reference=str(value["reference"]),
+        ),
+        metadata=_mapping_or_empty(value.get("metadata")),
+    )
+
+
+def _coerce_provider_reference(
+    value: object,
+    *,
+    reference: str,
+) -> TaskProviderReference | None:
+    if value is None:
+        return None
+    if isinstance(value, TaskProviderReference):
+        return value
+    assert isinstance(value, Mapping)
+    raw_kind = value["kind"]
+    assert isinstance(raw_kind, str | TaskProviderReferenceKind)
+    raw_reference = value["reference"]
+    assert isinstance(raw_reference, str)
+    assert raw_reference == reference
+    raw_expires_at = value.get("expires_at")
+    expires_at = (
+        _coerce_datetime(raw_expires_at)
+        if raw_expires_at is not None
+        else None
+    )
+    durable = value.get("durable", True)
+    assert isinstance(durable, bool)
+    return TaskProviderReference(
+        kind=(
+            raw_kind
+            if isinstance(raw_kind, TaskProviderReferenceKind)
+            else TaskProviderReferenceKind(raw_kind)
+        ),
+        provider=str(value["provider"]),
+        reference=raw_reference,
+        owner_scope=_optional_string(value.get("owner_scope")),
+        expires_at=expires_at,
+        mime_type=_optional_string(value.get("mime_type")),
+        size_bucket=_optional_string(value.get("size_bucket")),
+        identity_hmac=_optional_string(value.get("identity_hmac")),
+        durable=durable,
         metadata=_mapping_or_empty(value.get("metadata")),
     )
 
@@ -732,3 +852,10 @@ def _mapping_or_empty(value: object) -> Mapping[str, object]:
         return {}
     assert isinstance(value, Mapping)
     return value
+
+
+def _coerce_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    assert isinstance(value, str)
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

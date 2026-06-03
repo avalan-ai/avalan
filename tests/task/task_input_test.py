@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest import TestCase, main
 
@@ -13,6 +14,8 @@ from avalan.task import (
     TaskLimitsPolicy,
     TaskMetadata,
     TaskOutputContract,
+    TaskProviderReference,
+    TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
     validate_task_definition,
     validate_task_input,
@@ -59,6 +62,11 @@ class TaskInputTest(TestCase):
             TaskFileDescriptor.remote_url("https://example.test/a.txt"),
             TaskFileDescriptor.artifact("artifact-1"),
             TaskFileDescriptor.inline_bytes("inline-1"),
+            TaskFileDescriptor.provider_reference_descriptor(
+                "file-openai",
+                kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                provider="openai",
+            ),
         )
 
         self.assertEqual(
@@ -68,8 +76,39 @@ class TaskInputTest(TestCase):
                 TaskFileSourceKind.REMOTE_URL,
                 TaskFileSourceKind.ARTIFACT,
                 TaskFileSourceKind.INLINE_BYTES,
+                TaskFileSourceKind.PROVIDER_REFERENCE,
             ],
         )
+
+    def test_provider_reference_summary_omits_raw_handle(self) -> None:
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
+        reference = TaskProviderReference(
+            kind=TaskProviderReferenceKind.HOSTED_URL,
+            provider="anthropic",
+            reference="https://private.example.test/raw",
+            owner_scope="tenant-a",
+            expires_at=expires_at,
+            mime_type="application/pdf",
+            size_bucket="1mb",
+            identity_hmac="hmac-value",
+            durable=False,
+            metadata={"filename": "private.pdf"},
+        )
+
+        summary = reference.summary()
+        execution_metadata = reference.execution_metadata()
+
+        self.assertEqual(summary["kind"], "hosted_url")
+        self.assertEqual(summary["provider"], "anthropic")
+        self.assertEqual(summary["owner_scope"], "tenant-a")
+        self.assertNotIn("reference", summary)
+        self.assertEqual(
+            execution_metadata["reference"],
+            "https://private.example.test/raw",
+        )
+        self.assertFalse(reference.durable_for_queue)
+        self.assertFalse(reference.is_expired(datetime.now(UTC)))
+        self.assertNotIn("private.example", str(summary))
 
     def test_file_input_accepts_descriptor_and_mapping_shapes(self) -> None:
         definition = self._definition(
@@ -105,6 +144,192 @@ class TaskInputTest(TestCase):
         self.assertEqual(
             validate_task_input(definition, mapping_descriptor), ()
         )
+
+    def test_file_input_accepts_provider_reference_descriptor(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(
+                mime_types=("application/pdf",),
+            ),
+        )
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-openai",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            owner_scope="tenant-a",
+            mime_type="application/pdf",
+            size_bucket="small",
+            identity_hmac="hmac-value",
+        )
+
+        issues = validate_task_input(definition, descriptor)
+
+        self.assertEqual(issues, ())
+
+        mapping_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-openai",
+                "mime_type": "application/pdf",
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "openai",
+                    "reference": "file-openai",
+                },
+            },
+        )
+
+        self.assertEqual(mapping_issues, ())
+
+    def test_provider_reference_descriptor_rejects_conflicts_safely(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(
+                conversions=("text",),
+                mime_types=("application/pdf",),
+            ),
+        )
+        descriptor = {
+            "source_kind": "provider_reference",
+            "reference": "raw-secret-handle",
+            "mime_type": "application/pdf",
+            "conversions": ["text"],
+            "provider_reference": {
+                "kind": "not-valid",
+                "provider": "bad provider",
+                "reference": "other-secret-handle",
+                "durable": "yes",
+                "expires_at": 1,
+                "mime_type": "not mime",
+                "metadata": {"bad": object()},
+            },
+        }
+
+        issues = validate_task_input(definition, descriptor)
+
+        self.assertEqual(
+            [issue.path for issue in issues],
+            [
+                "input.conversions",
+                "input.provider_reference.kind",
+                "input.provider_reference.provider",
+                "input.provider_reference.reference",
+                "input.provider_reference.durable",
+                "input.provider_reference.expires_at",
+                "input.provider_reference.mime_type",
+                "input.provider_reference.metadata",
+            ],
+        )
+        rendered = " ".join(
+            value for issue in issues for value in issue.as_dict().values()
+        )
+        self.assertNotIn("raw-secret-handle", rendered)
+        self.assertNotIn("other-secret-handle", rendered)
+
+    def test_provider_reference_validation_covers_boundary_shapes(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(),
+        )
+        foreign_reference = TaskProviderReference(
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            reference="different-handle",
+        )
+
+        wrong_source_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "local_path",
+                "reference": "file-openai",
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "openai",
+                    "reference": "file-openai",
+                },
+            },
+        )
+        missing_reference_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-openai",
+            },
+        )
+        object_reference_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-openai",
+                "provider_reference": foreign_reference,
+            },
+        )
+        metadata_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-openai",
+                "provider_reference": {
+                    "kind": TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    "provider": "openai",
+                    "reference": "file-openai",
+                    "owner_scope": "",
+                    "size_bucket": 1,
+                    "identity_hmac": object(),
+                },
+            },
+        )
+        non_string_kind_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "provider_reference",
+                "reference": "file-openai",
+                "provider_reference": {
+                    "kind": 1,
+                    "provider": "openai",
+                    "reference": "file-openai",
+                },
+            },
+        )
+
+        self.assertEqual(
+            [issue.path for issue in wrong_source_issues],
+            ["input.provider_reference"],
+        )
+        self.assertEqual(
+            [issue.path for issue in missing_reference_issues],
+            ["input.provider_reference"],
+        )
+        self.assertEqual(
+            [issue.path for issue in object_reference_issues],
+            ["input.provider_reference.reference"],
+        )
+        self.assertEqual(
+            [issue.path for issue in metadata_issues],
+            [
+                "input.provider_reference.owner_scope",
+                "input.provider_reference.size_bucket",
+                "input.provider_reference.identity_hmac",
+            ],
+        )
+        self.assertEqual(
+            [issue.path for issue in non_string_kind_issues],
+            ["input.provider_reference.kind"],
+        )
+        rendered = " ".join(
+            value
+            for issue in (
+                wrong_source_issues
+                + missing_reference_issues
+                + object_reference_issues
+                + metadata_issues
+                + non_string_kind_issues
+            )
+            for value in issue.as_dict().values()
+        )
+        self.assertNotIn("different-handle", rendered)
 
     def test_file_array_input_validates_count_and_descriptor_rules(
         self,

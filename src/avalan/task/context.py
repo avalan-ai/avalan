@@ -2,6 +2,7 @@ from ..event import Event
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactRef
 from .definition import TaskDefinition
+from .input import TaskProviderReference
 from .store import (
     TaskExecutionContext,
     freeze_snapshot_metadata,
@@ -21,6 +22,7 @@ TaskUsageObserver = Callable[[object], Awaitable[None] | None]
 class TaskInputFile:
     logical_path: str
     artifact_ref: TaskArtifactRef | None = None
+    provider_reference: TaskProviderReference | None = None
     media_type: str | None = None
     size_bytes: int | None = None
     metadata: Mapping[str, object] = field(
@@ -31,6 +33,11 @@ class TaskInputFile:
         _assert_non_empty_string(self.logical_path, "logical_path")
         if self.artifact_ref is not None:
             assert isinstance(self.artifact_ref, TaskArtifactRef)
+        if self.provider_reference is not None:
+            assert isinstance(
+                self.provider_reference,
+                TaskProviderReference,
+            )
         if self.media_type is not None:
             _assert_non_empty_string(self.media_type, "media_type")
         if self.size_bytes is not None:
@@ -47,6 +54,8 @@ class TaskInputFile:
         value: dict[str, object] = {"logical_path": self.logical_path}
         if self.artifact_ref is not None:
             value["artifact"] = self.artifact_ref.summary()
+        if self.provider_reference is not None:
+            value["provider_reference"] = self.provider_reference.summary()
         if self.media_type is not None:
             value["media_type"] = self.media_type
         if self.size_bytes is not None:

@@ -1,5 +1,6 @@
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,6 +33,7 @@ from avalan.task import (
     TaskKeyPurpose,
     TaskMetadata,
     TaskOutputContract,
+    TaskProviderReferenceKind,
     TaskRunState,
     TaskTargetContext,
     TaskValidationContext,
@@ -697,6 +699,78 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
         file_block = blocks[1]
         self.assertEqual(file_block.file["file_id"], "file-test")
         self.assertEqual(file_block.file["mime_type"], "application/pdf")
+
+    async def test_run_maps_typed_provider_file_reference(self) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(
+            loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:openai:provider_file_id",
+                        media_type="application/pdf",
+                        provider_reference=(
+                            TaskFileDescriptor.provider_reference_descriptor(
+                                "file-test",
+                                kind=(
+                                    TaskProviderReferenceKind.PROVIDER_FILE_ID
+                                ),
+                                provider="openai",
+                                mime_type="application/pdf",
+                                owner_scope="tenant-a",
+                                identity_hmac="hmac-value",
+                            ).provider_reference
+                        ),
+                    ),
+                ),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[1].file["file_id"], "file-test")
+        self.assertNotIn("tenant-a", str(content[1].file))
+
+    async def test_run_rejects_expired_provider_reference(self) -> None:
+        runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:handle",
+                            provider_reference=(
+                                TaskFileDescriptor.provider_reference_descriptor(
+                                    "https://example.test/private",
+                                    kind=(
+                                        TaskProviderReferenceKind.EXPIRING_PROVIDER_HANDLE
+                                    ),
+                                    provider="openai",
+                                    expires_at=(
+                                        datetime.now(UTC)
+                                        - timedelta(seconds=1)
+                                    ),
+                                    durable=False,
+                                ).provider_reference
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
 
     async def test_run_maps_provider_urls_at_execution_time(self) -> None:
         url_loader = FakeLoader(response="accepted")

@@ -29,6 +29,7 @@ from .materialization import (
     TaskMaterializedFile,
     materialize_task_input_files,
     task_file_descriptors_from_input,
+    task_provider_reference_input_files_from_input,
 )
 from .observability import (
     ObservabilitySink,
@@ -336,6 +337,13 @@ class DirectTaskRunner:
         )
         try:
             await self._check_cancellation_or_expiry(run, expires_at)
+            provider_reference_files = (
+                task_provider_reference_input_files_from_input(
+                    definition,
+                    input_value,
+                    now=self._clock(),
+                )
+            )
             materialized_files = await materialize_task_input_files(
                 definition,
                 input_value,
@@ -391,6 +399,7 @@ class DirectTaskRunner:
             )
         files = (
             *files,
+            *provider_reference_files,
             *input_files,
         )
         attempt_policy = TaskAttemptPolicy.from_retry_policy(
@@ -1180,10 +1189,11 @@ def _output_artifact_retention(
 
 
 def _file_descriptor_summary(file: TaskFileDescriptor) -> Mapping[str, object]:
-    value: dict[str, object] = {
-        "reference": file.reference,
-        "source_kind": file.source_kind.value,
-    }
+    value: dict[str, object] = {"source_kind": file.source_kind.value}
+    if file.provider_reference is not None:
+        value["provider_reference"] = file.provider_reference.summary()
+    else:
+        value["reference"] = file.reference
     if file.role is not None:
         value["role"] = file.role
     if file.mime_type is not None:

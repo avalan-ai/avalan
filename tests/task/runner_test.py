@@ -40,6 +40,7 @@ from avalan.task import (
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
+    TaskProviderReferenceKind,
     TaskRetryPolicy,
     TaskRun,
     TaskRunFinalizer,
@@ -952,6 +953,43 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
                 artifacts[0].attempt_id, result.attempt.attempt_id
             )
             self.assertNotIn("input.txt", str(artifacts[0].summary()))
+
+    async def test_provider_reference_input_reaches_target_without_bytes(
+        self,
+    ) -> None:
+        target = RecordingTarget("accepted")
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-provider-reference",
+        )
+
+        result = await runner.run(
+            definition(input_contract=TaskInputContract.file()),
+            input_value=TaskFileDescriptor.provider_reference_descriptor(
+                "file-openai",
+                kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                provider="openai",
+                mime_type="application/pdf",
+                owner_scope="tenant-a",
+                identity_hmac="hmac-value",
+            ),
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(target.contexts), 1)
+        self.assertEqual(len(target.contexts[0].files), 1)
+        file = target.contexts[0].files[0]
+        self.assertIsNotNone(file.provider_reference)
+        assert file.provider_reference is not None
+        self.assertEqual(file.provider_reference.reference, "file-openai")
+        self.assertIsNone(file.artifact_ref)
+        self.assertEqual(
+            await self.store.list_artifacts(result.run.run_id),
+            (),
+        )
+        self.assertNotIn("file-openai", str(result.run.request.input_summary))
 
     async def test_native_file_conversion_uses_materialized_input(
         self,

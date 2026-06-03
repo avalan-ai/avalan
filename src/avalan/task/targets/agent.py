@@ -267,16 +267,34 @@ async def _agent_file_content(
     profile: FileDeliveryProfile,
     path: str,
 ) -> MessageContent:
+    if (
+        file.provider_reference is not None
+        and file.provider_reference.is_expired()
+    ):
+        raise _agent_file_error(path=path)
+    metadata: Mapping[str, object] = file.metadata
+    if file.provider_reference is not None:
+        metadata = {
+            **file.metadata,
+            "provider_reference": file.provider_reference.execution_metadata(),
+        }
     decision = plan_file_delivery(
         profile,
         FileDeliveryRequest(
-            mime_type=file.media_type,
+            mime_type=(
+                file.media_type
+                or (
+                    file.provider_reference.mime_type
+                    if file.provider_reference is not None
+                    else None
+                )
+            ),
             size_bytes=file.size_bytes,
             has_artifact=(
                 file.artifact_ref is not None
                 and context.artifact_store is not None
             ),
-            metadata=file.metadata,
+            metadata=metadata,
         ),
     )
     match decision.mode:

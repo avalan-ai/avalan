@@ -97,6 +97,13 @@ class FileDeliveryDecision:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _ProviderReference:
+    kind: str
+    provider: str
+    reference: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FileDeliveryProfile:
     name: str
     delivery_modes: frozenset[FileDeliveryMode]
@@ -286,6 +293,12 @@ def plan_file_delivery(
             ),
         )
 
+    provider_reference = _provider_reference(request.metadata)
+    if provider_reference is not None:
+        decision = _plan_provider_reference(profile, provider_reference)
+        if decision is not None:
+            return decision
+
     provider_file_id = _metadata_string(
         request.metadata,
         "provider_file_id",
@@ -344,6 +357,53 @@ def plan_file_delivery(
         code="model.file_delivery.no_supported_delivery_mode",
         message="Model file delivery has no supported delivery mode.",
         hint="Provide a compatible file reference, artifact, or conversion.",
+    )
+
+
+def _plan_provider_reference(
+    profile: FileDeliveryProfile,
+    reference: _ProviderReference,
+) -> FileDeliveryDecision | None:
+    if reference.provider != profile.name:
+        return _reject(
+            code="model.file_delivery.provider_mismatch",
+            message="Model file delivery reference targets another provider.",
+            hint="Use a file reference owned by the selected target provider.",
+        )
+    match reference.kind:
+        case "provider_file_id":
+            if profile.supports_delivery_mode(
+                FileDeliveryMode.PROVIDER_FILE_ID
+            ):
+                return FileDeliveryDecision(
+                    mode=FileDeliveryMode.PROVIDER_FILE_ID,
+                    reference=reference.reference,
+                )
+        case "hosted_url" | "expiring_provider_handle":
+            if profile.supports_delivery_mode(FileDeliveryMode.HOSTED_URL):
+                return FileDeliveryDecision(
+                    mode=FileDeliveryMode.HOSTED_URL,
+                    reference=reference.reference,
+                )
+        case "object_store_uri":
+            if profile.supports_delivery_mode(
+                FileDeliveryMode.OBJECT_STORE_URI
+            ) and profile.allows_object_store_uri(reference.reference):
+                return FileDeliveryDecision(
+                    mode=FileDeliveryMode.OBJECT_STORE_URI,
+                    reference=reference.reference,
+                )
+            return _reject(
+                code="model.file_delivery.unsupported_object_store_uri",
+                message="Model file delivery does not accept this object URI.",
+                hint=(
+                    "Use an object URI scheme accepted by the target profile."
+                ),
+            )
+    return _reject(
+        code="model.file_delivery.unsupported_provider_reference",
+        message="Model file delivery does not accept this provider reference.",
+        hint="Use a provider reference kind accepted by the target profile.",
     )
 
 
@@ -583,6 +643,31 @@ def _metadata_string(
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _provider_reference(
+    metadata: Mapping[str, object],
+) -> _ProviderReference | None:
+    value = metadata.get("provider_reference")
+    if not isinstance(value, Mapping):
+        return None
+    kind = value.get("kind")
+    provider = value.get("provider")
+    reference = value.get("reference")
+    if (
+        not isinstance(kind, str)
+        or not kind.strip()
+        or not isinstance(provider, str)
+        or not provider.strip()
+        or not isinstance(reference, str)
+        or not reference.strip()
+    ):
+        return None
+    return _ProviderReference(
+        kind=kind,
+        provider=provider,
+        reference=reference,
+    )
 
 
 def _mime_type_matches(mime_type: str, pattern: str) -> bool:
