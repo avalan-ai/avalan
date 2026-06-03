@@ -10,6 +10,12 @@ from uuid import UUID, uuid4
 
 from avalan.entities import Message, MessageContentText, MessageRole
 from avalan.event import Event, EventType
+from avalan.model import (
+    FileDeliveryDecision,
+    FileDeliveryLimit,
+    FileDeliveryMode,
+    FileDeliveryProfile,
+)
 from avalan.task import (
     DirectTaskRunner,
     TaskArtifactPolicy,
@@ -186,8 +192,11 @@ class FakeLoader:
 
 
 class FakeArtifactStore:
+    def __init__(self, data: bytes = b"private bytes") -> None:
+        self.data = data
+
     async def open(self, ref: TaskArtifactRef) -> BytesIO:
-        return BytesIO(b"private bytes")
+        return BytesIO(self.data)
 
 
 class StaticHmacProvider:
@@ -305,7 +314,7 @@ uri = "ai://local/model"
         self.assertEqual(
             [issue.code for issue in issues], ["input.invalid_file"]
         )
-        self.assertEqual(issues[0].path, "input.type")
+        self.assertEqual(issues[0].path, "input.file_conversions")
         rendered = " ".join(issues[0].as_dict().values())
         self.assertNotIn("local/model", rendered)
 
@@ -387,7 +396,56 @@ uri = "ai://env:KEY@google/gemini-2.0-flash"
             uri = runner._agent_uri(self._definition())
 
         self.assertIsNone(uri)
-        self.assertFalse(agent_module._is_text_media_type(None))
+
+    def test_local_text_target_requires_compatible_text_delivery(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            pdf_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",),
+                    )
+                ),
+            )
+            text_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("text/plain",),
+                    )
+                ),
+            )
+            converted_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("text",),
+                        mime_types=("application/pdf",),
+                    )
+                ),
+            )
+
+        self.assertEqual(
+            [issue.code for issue in pdf_issues], ["input.invalid_file"]
+        )
+        self.assertEqual(pdf_issues[0].path, "input.file_conversions")
+        self.assertEqual(text_issues, ())
+        self.assertEqual(converted_issues, ())
 
     def test_unknown_agent_provider_rejects_file_contract(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -538,7 +596,7 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(output, "short summary")
         self.assertIsNotNone(response.cancellation_checker)
-        self.assertEqual(checks, 3)
+        self.assertEqual(checks, 4)
 
     async def test_run_maps_agent_input_shapes(self) -> None:
         message = Message(role=MessageRole.USER, content="hello")
@@ -712,6 +770,78 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             "s3://bucket/object",
         )
 
+    async def test_run_uses_injected_file_delivery_profile(self) -> None:
+        loader = FakeLoader(response="accepted")
+        seen_uris: list[str | None] = []
+        profile = FileDeliveryProfile(
+            name="id_only",
+            delivery_modes=frozenset({FileDeliveryMode.PROVIDER_FILE_ID}),
+        )
+
+        def resolver(uri: str | None) -> FileDeliveryProfile:
+            seen_uris.append(uri)
+            return profile
+
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=resolver,
+            uri="ai://env:KEY@unknown/model",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:file",
+                        metadata={"provider_file_id": "file-test"},
+                    ),
+                ),
+            )
+        )
+
+        message = cast(Message, loader.inputs[0])
+        self.assertEqual(
+            cast(list[Any], message.content)[1].file["file_id"],
+            "file-test",
+        )
+        self.assertEqual(seen_uris, ["ai://env:KEY@unknown/model"])
+
+    async def test_run_maps_local_text_artifact_to_text_block(self) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(
+            loader,
+            uri="ai://local/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="text/plain",
+                        size_bytes=12,
+                    ),
+                ),
+                artifact_store=FakeArtifactStore(b"private text"),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[0].type, "text")
+        self.assertEqual(content[0].text, "summarize")
+        self.assertEqual(content[1].type, "text")
+        self.assertEqual(content[1].text, "private text")
+
     async def test_run_rejects_unsupported_provider_uri_scheme(self) -> None:
         runner = AgentTaskTargetRunner(
             FakeLoader(),
@@ -735,6 +865,101 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
         self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+
+    async def test_run_rejects_invalid_inline_text_bytes_safely(self) -> None:
+        runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            uri="ai://local/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="text/plain",
+                            size_bytes=1,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\xff"),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertNotIn(
+            "artifact-1", str(error.exception.issues[0].as_dict())
+        )
+
+    async def test_run_rejects_profile_file_count_limit(self) -> None:
+        profile = FileDeliveryProfile(
+            name="single",
+            delivery_modes=frozenset({FileDeliveryMode.PROVIDER_FILE_ID}),
+            file_count_limit=FileDeliveryLimit(
+                name="files",
+                source="test",
+                max_count=1,
+            ),
+        )
+        loader = FakeLoader()
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:file",
+                            metadata={"provider_file_id": "file-test"},
+                        ),
+                        TaskInputFile(
+                            logical_path="provider:file-2",
+                            metadata={"provider_file_id": "file-test-2"},
+                        ),
+                    ),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files")
+        self.assertEqual(loader.paths, [])
+
+    async def test_artifact_bytes_rejects_missing_artifact_backend(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskValidationError) as error:
+            await agent_module._artifact_bytes(
+                TaskInputFile(logical_path="artifact:missing"),
+                context=self._context(self._definition(), "summarize"),
+                path="input.files[0]",
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+
+    def test_decision_reference_rejects_missing_reference(self) -> None:
+        with self.assertRaises(TaskValidationError) as error:
+            agent_module._decision_reference(
+                FileDeliveryDecision(mode=FileDeliveryMode.PROVIDER_FILE_ID)
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files")
 
     async def test_run_appends_files_to_message_inputs(self) -> None:
         message_loader = FakeLoader(response="accepted")

@@ -54,6 +54,49 @@ class FileDeliveryDiagnostic:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FileDeliveryRequest:
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    has_artifact: bool = False
+    metadata: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def __post_init__(self) -> None:
+        if self.mime_type is not None:
+            _assert_non_empty_string(self.mime_type, "mime_type")
+        _assert_optional_non_negative_int(self.size_bytes, "size_bytes")
+        assert isinstance(self.has_artifact, bool)
+        _assert_metadata(self.metadata)
+        object.__setattr__(
+            self,
+            "metadata",
+            MappingProxyType(dict(self.metadata)),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FileDeliveryDecision:
+    mode: FileDeliveryMode
+    reference: str | None = None
+    diagnostic: FileDeliveryDiagnostic | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.mode, FileDeliveryMode)
+        if self.reference is not None:
+            _assert_non_empty_string(self.reference, "reference")
+        if self.diagnostic is not None:
+            assert isinstance(self.diagnostic, FileDeliveryDiagnostic)
+
+    @property
+    def needs_artifact_read(self) -> bool:
+        return self.mode in {
+            FileDeliveryMode.INLINE_BYTES,
+            FileDeliveryMode.INLINE_TEXT,
+        }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FileDeliveryProfile:
     name: str
     delivery_modes: frozenset[FileDeliveryMode]
@@ -68,6 +111,10 @@ class FileDeliveryProfile:
     )
     object_store_uri_schemes: tuple[str, ...] = ()
     limits: tuple[FileDeliveryLimit, ...] = ()
+    inline_byte_limit: FileDeliveryLimit | None = None
+    inline_text_limit: FileDeliveryLimit | None = None
+    file_count_limit: FileDeliveryLimit | None = None
+    requires_conversion_for_file_blocks: bool = False
     diagnostics: tuple[FileDeliveryDiagnostic, ...] = ()
     metadata: Mapping[str, object] = field(
         default_factory=lambda: MappingProxyType({})
@@ -96,6 +143,19 @@ class FileDeliveryProfile:
             assert isinstance(
                 limit, FileDeliveryLimit
             ), "limits must contain FileDeliveryLimit values"
+        for field_name in (
+            "inline_byte_limit",
+            "inline_text_limit",
+            "file_count_limit",
+        ):
+            limit = getattr(self, field_name)
+            if limit is not None:
+                assert isinstance(
+                    limit, FileDeliveryLimit
+                ), f"{field_name} must be a FileDeliveryLimit"
+        assert isinstance(
+            self.requires_conversion_for_file_blocks, bool
+        ), "requires_conversion_for_file_blocks must be a bool"
         for diagnostic in self.diagnostics:
             assert isinstance(
                 diagnostic, FileDeliveryDiagnostic
@@ -107,6 +167,10 @@ class FileDeliveryProfile:
         )
 
     @property
+    def supports_file_delivery(self) -> bool:
+        return bool(self.delivery_modes - frozenset({FileDeliveryMode.REJECT}))
+
+    @property
     def has_native_file_delivery(self) -> bool:
         return bool(
             self.delivery_modes
@@ -116,6 +180,19 @@ class FileDeliveryProfile:
                     FileDeliveryMode.HOSTED_URL,
                     FileDeliveryMode.OBJECT_STORE_URI,
                     FileDeliveryMode.INLINE_BYTES,
+                }
+            )
+        )
+
+    @property
+    def has_reference_delivery(self) -> bool:
+        return bool(
+            self.delivery_modes
+            & frozenset(
+                {
+                    FileDeliveryMode.PROVIDER_FILE_ID,
+                    FileDeliveryMode.HOSTED_URL,
+                    FileDeliveryMode.OBJECT_STORE_URI,
                 }
             )
         )
@@ -140,6 +217,22 @@ class FileDeliveryProfile:
         _assert_non_empty_string(uri, "uri")
         scheme = urlparse(uri).scheme.lower()
         return bool(scheme) and scheme in self.object_store_uri_schemes
+
+    def accepts_file_count(self, count: int) -> bool:
+        assert isinstance(count, int), "count must be an integer"
+        assert not isinstance(count, bool), "count must be an integer"
+        assert count >= 0, "count must be non-negative"
+        if self.file_count_limit is None:
+            return True
+        if self.file_count_limit.max_count is None:
+            return True
+        return count <= self.file_count_limit.max_count
+
+    def plan_delivery(
+        self,
+        request: FileDeliveryRequest,
+    ) -> FileDeliveryDecision:
+        return plan_file_delivery(self, request)
 
 
 def resolve_file_delivery_profile(
@@ -169,6 +262,91 @@ def resolve_file_delivery_profile(
     return _unknown_profile()
 
 
+def plan_file_delivery(
+    profile: FileDeliveryProfile,
+    request: FileDeliveryRequest,
+) -> FileDeliveryDecision:
+    assert isinstance(profile, FileDeliveryProfile)
+    assert isinstance(request, FileDeliveryRequest)
+    if not profile.supports_file_delivery:
+        return _reject(
+            code="model.file_delivery.unsupported",
+            message="Model file delivery is not supported.",
+            hint="Use a target with file support or add a conversion path.",
+        )
+    if request.mime_type is not None and not profile.accepts_mime_type(
+        request.mime_type
+    ):
+        return _reject(
+            code="model.file_delivery.unsupported_mime_type",
+            message="Model file delivery does not accept this MIME type.",
+            hint=(
+                "Use an accepted MIME type or convert the file before"
+                " dispatch."
+            ),
+        )
+
+    provider_file_id = _metadata_string(
+        request.metadata,
+        "provider_file_id",
+    )
+    if provider_file_id is not None and profile.supports_delivery_mode(
+        FileDeliveryMode.PROVIDER_FILE_ID
+    ):
+        return FileDeliveryDecision(
+            mode=FileDeliveryMode.PROVIDER_FILE_ID,
+            reference=provider_file_id,
+        )
+
+    provider_url = _metadata_string(request.metadata, "provider_file_url")
+    if provider_url is not None and profile.supports_delivery_mode(
+        FileDeliveryMode.HOSTED_URL
+    ):
+        return FileDeliveryDecision(
+            mode=FileDeliveryMode.HOSTED_URL,
+            reference=provider_url,
+        )
+
+    provider_uri = _metadata_string(request.metadata, "provider_uri")
+    if provider_uri is not None:
+        if profile.supports_delivery_mode(
+            FileDeliveryMode.OBJECT_STORE_URI
+        ) and profile.allows_object_store_uri(provider_uri):
+            return FileDeliveryDecision(
+                mode=FileDeliveryMode.OBJECT_STORE_URI,
+                reference=provider_uri,
+            )
+        return _reject(
+            code="model.file_delivery.unsupported_object_store_uri",
+            message="Model file delivery does not accept this object URI.",
+            hint="Use an object URI scheme accepted by the target profile.",
+        )
+
+    if request.has_artifact and _can_inline_bytes(profile, request):
+        limit_diagnostic = _limit_diagnostic(
+            request,
+            profile.inline_byte_limit,
+        )
+        if limit_diagnostic is not None:
+            return limit_diagnostic
+        return FileDeliveryDecision(mode=FileDeliveryMode.INLINE_BYTES)
+
+    if request.has_artifact and _can_inline_text(profile, request):
+        limit_diagnostic = _limit_diagnostic(
+            request,
+            profile.inline_text_limit,
+        )
+        if limit_diagnostic is not None:
+            return limit_diagnostic
+        return FileDeliveryDecision(mode=FileDeliveryMode.INLINE_TEXT)
+
+    return _reject(
+        code="model.file_delivery.no_supported_delivery_mode",
+        message="Model file delivery has no supported delivery mode.",
+        hint="Provide a compatible file reference, artifact, or conversion.",
+    )
+
+
 def _hosted_provider_profile(
     provider: str,
     *,
@@ -190,6 +368,9 @@ def _hosted_provider_profile(
         delivery_modes=frozenset(modes),
         object_store_uri_schemes=object_store_uri_schemes,
         limits=_common_limits(provider),
+        inline_byte_limit=_inline_byte_limit(provider),
+        inline_text_limit=_inline_text_limit(provider),
+        file_count_limit=_file_count_limit(provider),
     )
 
 
@@ -209,6 +390,9 @@ def _bedrock_profile() -> FileDeliveryProfile:
         accepted_mime_types=_TEXT_MIME_PATTERNS,
         object_store_uri_schemes=("s3",),
         limits=_common_limits("bedrock"),
+        inline_byte_limit=_inline_byte_limit("bedrock"),
+        inline_text_limit=_inline_text_limit("bedrock"),
+        file_count_limit=_file_count_limit("bedrock"),
     )
 
 
@@ -226,6 +410,9 @@ def _local_text_profile() -> FileDeliveryProfile:
         accepted_mime_types=_TEXT_MIME_PATTERNS,
         object_store_uri_schemes=(),
         limits=_common_limits("local_text"),
+        inline_text_limit=_inline_text_limit("local_text"),
+        file_count_limit=_file_count_limit("local_text"),
+        requires_conversion_for_file_blocks=True,
     )
 
 
@@ -252,6 +439,9 @@ def _local_multimodal_profile() -> FileDeliveryProfile:
         ),
         object_store_uri_schemes=(),
         limits=_common_limits("local_multimodal"),
+        inline_byte_limit=_inline_byte_limit("local_multimodal"),
+        inline_text_limit=_inline_text_limit("local_multimodal"),
+        file_count_limit=_file_count_limit("local_multimodal"),
     )
 
 
@@ -291,6 +481,27 @@ def _common_limits(provider: str) -> tuple[FileDeliveryLimit, ...]:
     )
 
 
+def _inline_byte_limit(provider: str) -> FileDeliveryLimit:
+    return FileDeliveryLimit(
+        name="inline_file_bytes",
+        source=f"provider.{provider}",
+    )
+
+
+def _inline_text_limit(provider: str) -> FileDeliveryLimit:
+    return FileDeliveryLimit(
+        name="inline_text_bytes",
+        source=f"provider.{provider}",
+    )
+
+
+def _file_count_limit(provider: str) -> FileDeliveryLimit:
+    return FileDeliveryLimit(
+        name="file_count",
+        source=f"provider.{provider}",
+    )
+
+
 def _provider_from_uri(uri: str | None) -> str | None:
     if not isinstance(uri, str) or not uri.startswith("ai://"):
         return None
@@ -300,6 +511,77 @@ def _provider_from_uri(uri: str | None) -> str | None:
         return "local"
     if provider in get_args(Vendor):
         return provider
+    return None
+
+
+def _can_inline_bytes(
+    profile: FileDeliveryProfile,
+    request: FileDeliveryRequest,
+) -> bool:
+    if not profile.supports_delivery_mode(FileDeliveryMode.INLINE_BYTES):
+        return False
+    return _has_provider_file_reference(profile) or _can_inline_text(
+        profile,
+        request,
+    )
+
+
+def _has_provider_file_reference(profile: FileDeliveryProfile) -> bool:
+    return profile.supports_delivery_mode(
+        FileDeliveryMode.PROVIDER_FILE_ID
+    ) or profile.supports_delivery_mode(FileDeliveryMode.HOSTED_URL)
+
+
+def _can_inline_text(
+    profile: FileDeliveryProfile,
+    request: FileDeliveryRequest,
+) -> bool:
+    return profile.supports_delivery_mode(
+        FileDeliveryMode.INLINE_TEXT
+    ) and profile.accepts_mime_type(request.mime_type)
+
+
+def _limit_diagnostic(
+    request: FileDeliveryRequest,
+    limit: FileDeliveryLimit | None,
+) -> FileDeliveryDecision | None:
+    if (
+        limit is None
+        or limit.max_bytes is None
+        or request.size_bytes is None
+        or request.size_bytes <= limit.max_bytes
+    ):
+        return None
+    return _reject(
+        code="model.file_delivery.inline_limit_exceeded",
+        message="Model file delivery inline limit would be exceeded.",
+        hint=f"Use a delivery mode within the {limit.name} limit.",
+    )
+
+
+def _reject(
+    *,
+    code: str,
+    message: str,
+    hint: str,
+) -> FileDeliveryDecision:
+    return FileDeliveryDecision(
+        mode=FileDeliveryMode.REJECT,
+        diagnostic=FileDeliveryDiagnostic(
+            code=code,
+            message=message,
+            hint=hint,
+        ),
+    )
+
+
+def _metadata_string(
+    metadata: Mapping[str, object],
+    key: str,
+) -> str | None:
+    value = metadata.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
     return None
 
 
@@ -314,6 +596,17 @@ def _mime_type_matches(mime_type: str, pattern: str) -> bool:
 def _assert_non_empty_string(value: str, field_name: str) -> None:
     assert isinstance(value, str), f"{field_name} must be a string"
     assert value, f"{field_name} must not be empty"
+
+
+def _assert_optional_non_negative_int(
+    value: int | None,
+    field_name: str,
+) -> None:
+    if value is None:
+        return
+    assert isinstance(value, int), f"{field_name} must be an integer"
+    assert not isinstance(value, bool), f"{field_name} must be an integer"
+    assert value >= 0, f"{field_name} must be non-negative"
 
 
 def _assert_optional_positive_int(
@@ -331,6 +624,12 @@ def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_non_empty_string(value, field_name)
+
+
+def _assert_metadata(metadata: Mapping[str, object]) -> None:
+    assert isinstance(metadata, Mapping), "metadata must be a mapping"
+    for key in metadata:
+        _assert_non_empty_string(key, "metadata keys")
 
 
 _TEXT_MIME_PATTERNS = (

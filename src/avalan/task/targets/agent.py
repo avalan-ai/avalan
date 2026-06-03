@@ -12,8 +12,11 @@ from ...entities import (
     MessageRole,
 )
 from ...model.file_delivery import (
+    FileDeliveryDecision,
     FileDeliveryMode,
     FileDeliveryProfile,
+    FileDeliveryRequest,
+    plan_file_delivery,
     resolve_file_delivery_profile,
 )
 from ..context import TaskInputFile, TaskTargetContext
@@ -38,6 +41,8 @@ from pathlib import Path
 from tomllib import TOMLDecodeError, load
 from typing import Protocol, cast
 from uuid import UUID
+
+FileDeliveryProfileResolver = Callable[[str | None], FileDeliveryProfile]
 
 
 class AgentOrchestrator(Protocol):
@@ -72,12 +77,17 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         *,
         agent_id: UUID | None = None,
         disable_memory: bool = False,
+        file_delivery_resolver: FileDeliveryProfileResolver = (
+            resolve_file_delivery_profile
+        ),
         ref_base: str | Path | None = None,
         uri: str | None = None,
     ) -> None:
         self._loader = loader
         self._agent_id = agent_id
         self._disable_memory = disable_memory
+        assert callable(file_delivery_resolver)
+        self._file_delivery_resolver = file_delivery_resolver
         self._ref_base = Path(ref_base) if ref_base is not None else None
         self._uri = uri
 
@@ -111,13 +121,18 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         }:
             return _validate_agent_file_input(
                 definition,
-                _agent_file_capability(self._agent_uri(definition)),
+                self._agent_file_profile(definition),
             )
         return ()
 
     async def run(self, context: TaskTargetContext) -> object:
         assert isinstance(context, TaskTargetContext)
         assert context.definition.execution.type == TaskTargetType.AGENT
+        await context.check_cancelled()
+        agent_input = await _agent_input(
+            context,
+            self._agent_file_profile(context.definition),
+        )
         orchestrator = await self._loader.from_file(
             str(self._agent_path(context.definition)),
             agent_id=self._agent_id,
@@ -127,16 +142,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         async with orchestrator:
             async with _agent_event_listener(orchestrator, context):
                 await context.check_cancelled()
-                response = await orchestrator(
-                    await _agent_input(
-                        context,
-                        _agent_file_capability(
-                            self._agent_uri(
-                                context.definition,
-                            )
-                        ),
-                    )
-                )
+                response = await orchestrator(agent_input)
                 _attach_cancellation_checker(response, context.check_cancelled)
                 try:
                     output = await _agent_output(context.definition, response)
@@ -164,6 +170,12 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             return None
         uri = engine.get("uri")
         return uri if isinstance(uri, str) else None
+
+    def _agent_file_profile(
+        self,
+        definition: TaskDefinition,
+    ) -> FileDeliveryProfile:
+        return self._file_delivery_resolver(self._agent_uri(definition))
 
 
 def _attach_cancellation_checker(
@@ -206,33 +218,32 @@ async def _agent_input(
     value = _agent_input_value(context.input_value)
     if not context.files:
         return value
-    file_blocks: list[MessageContentFile] = []
+    if not profile.accepts_file_count(len(context.files)):
+        raise _agent_file_error(path="input.files")
+    file_content: list[MessageContent] = []
     for index, file in enumerate(context.files):
-        file_blocks.append(
-            MessageContentFile(
-                type="file",
-                file=await _agent_message_file(
-                    file,
-                    context=context,
-                    profile=profile,
-                    path=f"input.files[{index}]",
-                ),
+        file_content.append(
+            await _agent_file_content(
+                file,
+                context=context,
+                profile=profile,
+                path=f"input.files[{index}]",
             )
         )
     if isinstance(value, Message):
-        return _message_with_files(value, tuple(file_blocks))
+        return _message_with_content(value, tuple(file_content))
     if isinstance(value, list) and all(
         isinstance(item, Message) for item in value
     ):
         return [
             *cast(list[Message], value),
-            Message(role=MessageRole.USER, content=list(file_blocks)),
+            Message(role=MessageRole.USER, content=list(file_content)),
         ]
     content: list[MessageContent] = []
     text = _file_prompt_text(context.definition, cast(str | list[str], value))
     if text is not None:
         content.append(MessageContentText(type="text", text=text))
-    content.extend(file_blocks)
+    content.extend(file_content)
     return Message(role=MessageRole.USER, content=content)
 
 
@@ -249,51 +260,102 @@ def _agent_input_value(value: object) -> Input:
     return str(type(value).__name__)
 
 
-async def _agent_message_file(
+async def _agent_file_content(
     file: TaskInputFile,
     *,
     context: TaskTargetContext,
     profile: FileDeliveryProfile,
     path: str,
-) -> MessageFile:
-    provider_file_id = _metadata_string(file.metadata, "provider_file_id")
-    if provider_file_id is not None and profile.supports_delivery_mode(
-        FileDeliveryMode.PROVIDER_FILE_ID
-    ):
-        return _message_file(file, file_id=provider_file_id)
-    provider_url = _metadata_string(file.metadata, "provider_file_url")
-    if provider_url is not None and profile.supports_delivery_mode(
-        FileDeliveryMode.HOSTED_URL
-    ):
-        return _message_file(file, file_url=provider_url)
-    provider_uri = _metadata_string(file.metadata, "provider_uri")
-    if (
-        provider_uri is not None
-        and profile.supports_delivery_mode(FileDeliveryMode.OBJECT_STORE_URI)
-        and profile.allows_object_store_uri(provider_uri)
-    ):
-        return _message_file(file, file_url=provider_uri)
-    if (
-        file.artifact_ref is not None
-        and context.artifact_store is not None
-        and _can_inline_artifact(file.media_type, profile)
-    ):
-        reader = await context.artifact_store.open(file.artifact_ref)
-        try:
-            data = b64encode(reader.read()).decode("ascii")
-        finally:
-            reader.close()
-        return _message_file(file, file_data=data)
-    raise TaskValidationError(
+) -> MessageContent:
+    decision = plan_file_delivery(
+        profile,
+        FileDeliveryRequest(
+            mime_type=file.media_type,
+            size_bytes=file.size_bytes,
+            has_artifact=(
+                file.artifact_ref is not None
+                and context.artifact_store is not None
+            ),
+            metadata=file.metadata,
+        ),
+    )
+    match decision.mode:
+        case FileDeliveryMode.PROVIDER_FILE_ID:
+            return MessageContentFile(
+                type="file",
+                file=_message_file(
+                    file, file_id=_decision_reference(decision)
+                ),
+            )
+        case FileDeliveryMode.HOSTED_URL | FileDeliveryMode.OBJECT_STORE_URI:
+            return MessageContentFile(
+                type="file",
+                file=_message_file(
+                    file,
+                    file_url=_decision_reference(decision),
+                ),
+            )
+        case FileDeliveryMode.INLINE_BYTES:
+            data = await _artifact_bytes(file, context=context, path=path)
+            return MessageContentFile(
+                type="file",
+                file=_message_file(
+                    file,
+                    file_data=b64encode(data).decode("ascii"),
+                ),
+            )
+        case FileDeliveryMode.INLINE_TEXT:
+            data = await _artifact_bytes(file, context=context, path=path)
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise _agent_file_error(path=path) from exc
+            return MessageContentText(type="text", text=text)
+        case _:
+            raise _agent_file_error(path=path, decision=decision)
+
+
+async def _artifact_bytes(
+    file: TaskInputFile,
+    *,
+    context: TaskTargetContext,
+    path: str,
+) -> bytes:
+    if file.artifact_ref is None or context.artifact_store is None:
+        raise _agent_file_error(path=path)
+    reader = await context.artifact_store.open(file.artifact_ref)
+    try:
+        return reader.read()
+    finally:
+        reader.close()
+
+
+def _decision_reference(decision: FileDeliveryDecision) -> str:
+    if decision.reference is None:
+        raise _agent_file_error(path="input.files")
+    return decision.reference
+
+
+def _agent_file_error(
+    *,
+    path: str,
+    decision: FileDeliveryDecision | None = None,
+) -> TaskValidationError:
+    hint = (
+        decision.diagnostic.hint
+        if decision is not None and decision.diagnostic is not None
+        else (
+            "Use a provider-supported file reference, configure an "
+            "artifact backend, or declare a compatible conversion."
+        )
+    )
+    return TaskValidationError(
         (
             TaskValidationIssue(
                 code="input.invalid_file",
                 path=path,
                 message="Task file cannot be sent to the agent target.",
-                hint=(
-                    "Use a provider-supported file reference, configure an "
-                    "artifact backend, or declare a compatible conversion."
-                ),
+                hint=hint,
                 category=TaskValidationCategory.UNSUPPORTED,
             ),
         )
@@ -320,12 +382,12 @@ def _message_file(
     return payload
 
 
-def _message_with_files(
+def _message_with_content(
     message: Message,
-    file_blocks: tuple[MessageContentFile, ...],
+    file_content: tuple[MessageContent, ...],
 ) -> Message:
     content = _content_blocks(message.content)
-    content.extend(file_blocks)
+    content.extend(file_content)
     return Message(
         role=message.role,
         thinking=message.thinking,
@@ -361,44 +423,26 @@ def _file_prompt_text(
     return "\n".join(value)
 
 
-def _can_inline_artifact(
-    media_type: str | None,
-    profile: FileDeliveryProfile,
-) -> bool:
-    if not profile.supports_delivery_mode(FileDeliveryMode.INLINE_BYTES):
-        return False
-    return _has_native_file_reference(profile) or (
-        profile.supports_delivery_mode(FileDeliveryMode.INLINE_TEXT)
-        and profile.accepts_mime_type(media_type)
-    )
-
-
-def _metadata_string(
-    metadata: Mapping[str, object],
-    key: str,
-) -> str | None:
-    value = metadata.get(key)
-    if isinstance(value, str) and value.strip():
-        return value
-    return None
-
-
 def _validate_agent_file_input(
     definition: TaskDefinition,
     profile: FileDeliveryProfile,
 ) -> tuple[TaskValidationIssue, ...]:
-    if not _has_file_capability(profile):
+    if not profile.supports_file_delivery:
         return (_agent_file_issue(path="input.type"),)
+    mime_types_accepted = bool(definition.input.mime_types) and all(
+        profile.accepts_mime_type(value)
+        for value in definition.input.mime_types
+    )
     if (
-        _has_native_file_reference(profile)
+        definition.input.mime_types
+        and not mime_types_accepted
+        and not definition.input.file_conversions
+    ):
+        return (_agent_file_issue(path="input.file_conversions"),)
+    if (
+        profile.has_native_file_delivery
         or definition.input.file_conversions
-        or (
-            bool(definition.input.mime_types)
-            and all(
-                _is_text_media_type(value)
-                for value in definition.input.mime_types
-            )
-        )
+        or mime_types_accepted
     ):
         return ()
     return (_agent_file_issue(path="input.file_conversions"),)
@@ -415,40 +459,6 @@ def _agent_file_issue(*, path: str) -> TaskValidationIssue:
         ),
         category=TaskValidationCategory.UNSUPPORTED,
     )
-
-
-def _has_file_capability(profile: FileDeliveryProfile) -> bool:
-    return bool(
-        profile.delivery_modes
-        & frozenset(
-            {
-                FileDeliveryMode.PROVIDER_FILE_ID,
-                FileDeliveryMode.HOSTED_URL,
-                FileDeliveryMode.OBJECT_STORE_URI,
-                FileDeliveryMode.INLINE_BYTES,
-            }
-        )
-    )
-
-
-def _has_native_file_reference(profile: FileDeliveryProfile) -> bool:
-    return profile.supports_delivery_mode(
-        FileDeliveryMode.PROVIDER_FILE_ID
-    ) or profile.supports_delivery_mode(FileDeliveryMode.HOSTED_URL)
-
-
-def _agent_file_capability(uri: str | None) -> FileDeliveryProfile:
-    return resolve_file_delivery_profile(uri)
-
-
-def _is_text_media_type(media_type: str | None) -> bool:
-    if media_type is None:
-        return False
-    return media_type.startswith("text/") or media_type in {
-        "application/json",
-        "application/markdown",
-        "application/xml",
-    }
 
 
 async def _agent_output(
