@@ -184,7 +184,7 @@ class TaskRetentionService:
         action = TaskRetentionAction.DELETED
         reason = "retention_expired"
         try:
-            await artifact_store.delete(record.ref)
+            await artifact_store.stat(record.ref)
         except ArtifactStoreNotFoundError:
             action = TaskRetentionAction.LOST
             reason = "artifact_bytes_missing"
@@ -204,6 +204,11 @@ class TaskRetentionService:
             )
         except TaskStoreConflictError:
             return None
+        if action == TaskRetentionAction.DELETED:
+            try:
+                await artifact_store.delete(record.ref)
+            except ArtifactStoreNotFoundError:
+                pass
         return TaskRetentionResult(
             artifact_id=record.artifact_id,
             run_id=record.run_id,
