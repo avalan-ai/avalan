@@ -361,9 +361,12 @@ class TaskWorker:
                     )
                     raise error from None
                 raise _TaskWorkerShutdownRequested()  # pragma: no cover
+            if shutdown_task is not None and (
+                shutdown_task in done or self._shutdown_requested()
+            ):
+                raise _TaskWorkerShutdownRequested()
             if target_task in done:
                 return await target_task
-            assert shutdown_task is not None and shutdown_task in done
             raise _TaskWorkerShutdownRequested()  # pragma: no cover
         finally:
             await _cancel_task(target_task)

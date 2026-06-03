@@ -1,4 +1,5 @@
 from asyncio import Event as AsyncEvent
+from asyncio import Task as AsyncTask
 from asyncio import sleep
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
@@ -8,6 +9,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
 from avalan.event import Event, EventType
 from avalan.flow.flow import Flow
@@ -1715,7 +1717,8 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             _definition(),
             input_value="private late shutdown prompt",
         )
-        abandoned = await stopping_worker.process_once()
+        with patch("avalan.task.worker.wait", new=_target_done_wait):
+            abandoned = await stopping_worker.process_once()
         pending = await client.inspect(submission.run.run_id)
         pending_depth = await queue.depth("default")
         completed = await replacement_worker.process_once()
@@ -2602,6 +2605,21 @@ def _worker(
         heartbeat_seconds=heartbeat_seconds,
         clock=lambda: clock.now,
     )
+
+
+async def _target_done_wait(
+    tasks: set[AsyncTask[object]],
+    *,
+    timeout: float | None,
+    return_when: object,
+) -> tuple[set[AsyncTask[object]], set[AsyncTask[object]]]:
+    _ = timeout, return_when
+    for _attempt in range(3):
+        for task in tasks:
+            if task.done() and task.result() == "unused":
+                return {task}, tasks - {task}
+        await sleep(0)
+    raise AssertionError("target task did not finish")
 
 
 def _structured_definition(

@@ -1,4 +1,13 @@
-from asyncio import CancelledError, Event, TimeoutError, create_task, sleep
+from asyncio import (
+    CancelledError,
+    Event,
+    TimeoutError,
+    create_task,
+    sleep,
+)
+from asyncio import (
+    Task as AsyncTask,
+)
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -1254,6 +1263,30 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with self.assertRaises(_TaskWorkerShutdownRequested):
             await running
 
+    async def test_run_target_shutdown_wins_before_waiter_completes(
+        self,
+    ) -> None:
+        shutdown = TaskWorkerShutdown()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=ShutdownReturningTarget(shutdown),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+        claim = await self._claim()
+
+        with (
+            patch("avalan.task.worker.wait", new=_target_only_wait),
+            self.assertRaises(_TaskWorkerShutdownRequested),
+        ):
+            await worker._run_target(
+                self._target_context(claim),
+                claim=claim,
+                timeout=1,
+            )
+
     async def test_run_target_heartbeat_shutdown_cancels_running_target(
         self,
     ) -> None:
@@ -1483,6 +1516,21 @@ async def _raise_os_error(context: TaskTargetContext) -> object:
 
 async def _raise_cancelled(context: TaskTargetContext) -> object:
     raise CancelledError()
+
+
+async def _target_only_wait(
+    tasks: set[AsyncTask[object]],
+    *,
+    timeout: float | None,
+    return_when: object,
+) -> tuple[set[AsyncTask[object]], set[AsyncTask[object]]]:
+    _ = timeout, return_when
+    for _attempt in range(3):
+        for task in tasks:
+            if task.done() and task.result() == "safe output":
+                return {task}, tasks - {task}
+        await sleep(0)
+    raise AssertionError("target task did not finish")
 
 
 async def _callable_target(context: TaskTargetContext) -> object:
