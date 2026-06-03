@@ -352,6 +352,8 @@ def task_pgsql_queue_load_issues(
     issues: list[str] = []
     if len(unique_claims) != len(claims):
         issues.append("queue.duplicate_claim")
+    if len(claims) > profile.run_count:
+        issues.append("queue.claims_extra")
     if len(unique_claims) < profile.run_count:
         issues.append("queue.claims_missing")
     if attempt_count < len(unique_claims):
