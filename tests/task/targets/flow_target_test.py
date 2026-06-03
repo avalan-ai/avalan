@@ -7,6 +7,7 @@ from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 
+from avalan.event import Event, EventType
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 from avalan.task import (
@@ -294,6 +295,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(
                 definition=self._context_definition(
                     input_contract=TaskInputContract.integer(),
+                    output_contract=TaskOutputContract.json(
+                        {"type": "integer"}
+                    ),
                 ),
                 input_value=1,
             )
@@ -328,7 +332,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                             },
                         }
                     ),
-                    output_contract=TaskOutputContract.object(),
+                    output_contract=self._object_output_contract(),
                 ),
                 input_value={"name": "report", "limit": 3},
             )
@@ -365,7 +369,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                             },
                         }
                     ),
-                    output_contract=TaskOutputContract.object(),
+                    output_contract=self._object_output_contract(),
                 ),
                 input_value={
                     FLOW_TASK_INPUT_KEY: "private spoofed input",
@@ -419,7 +423,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                             },
                         }
                     ),
-                    output_contract=TaskOutputContract.object(),
+                    output_contract=self._object_output_contract(),
                 ),
                 input_value=input_value,
             )
@@ -447,7 +451,14 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
         runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
 
-        result = await runner.run(self._context(input_value="ready"))
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    output_contract=self._object_output_contract(),
+                ),
+                input_value="ready",
+            )
+        )
 
         self.assertEqual(result, {"full": "ready", "value": "ready"})
 
@@ -473,7 +484,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                             "items": {"type": "array"},
                         }
                     ),
-                    output_contract=TaskOutputContract.object(),
+                    output_contract=self._object_output_contract(),
                 ),
                 input_value=[("first", "second")],
             )
@@ -508,6 +519,60 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         self.assertEqual(error.exception.issues[0].code, "input.invalid_type")
         self.assertNotIn("private prompt", str(error.exception))
         self.assertNotIn("unused private output", str(error.exception))
+
+    async def test_run_rejects_invalid_output_before_success_event(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda _: {
+                    "status": "ready",
+                    "count": "private invalid count",
+                },
+            )
+        )
+        events: list[Event] = []
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    definition=self._context_definition(
+                        output_contract=TaskOutputContract.object(
+                            {
+                                "type": "object",
+                                "required": ["status", "count"],
+                                "additionalProperties": False,
+                                "properties": {
+                                    "status": {"type": "string"},
+                                    "count": {"type": "integer"},
+                                },
+                            }
+                        )
+                    ),
+                    input_value="private prompt",
+                    event_listener=events.append,
+                )
+            )
+
+        self.assertEqual(
+            [issue.code for issue in error.exception.issues],
+            ["output.invalid_type"],
+        )
+        self.assertEqual(
+            [event.type for event in events],
+            [
+                EventType.FLOW_MANAGER_CALL_BEFORE,
+                EventType.FLOW_MANAGER_CALL_AFTER,
+            ],
+        )
+        failed_payload = cast(Mapping[str, object], events[1].payload)
+        self.assertEqual(failed_payload["status"], "failed")
+        self.assertNotIn("private prompt", str(events))
+        self.assertNotIn("private invalid count", str(events))
+        self.assertNotIn("private invalid count", str(error.exception))
 
     async def test_run_unwraps_stored_queued_input(self) -> None:
         flow = Flow()
@@ -590,7 +655,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                             },
                         }
                     ),
-                    output_contract=TaskOutputContract.object(),
+                    output_contract=self._object_output_contract(),
                     run=TaskRunPolicy.queued("default"),
                 ),
                 input_value={
@@ -644,7 +709,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                                     },
                                 }
                             ),
-                            output_contract=TaskOutputContract.object(),
+                            output_contract=self._object_output_contract(),
                             run=TaskRunPolicy.queued("default"),
                         ),
                         input_value={
@@ -707,7 +772,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                             },
                         }
                     ),
-                    output_contract=TaskOutputContract.object(),
+                    output_contract=self._object_output_contract(),
                     run=TaskRunPolicy.queued("default"),
                 ),
                 input_value={"name": "ready", "limit": 2},
@@ -847,6 +912,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         definition: TaskDefinition | None = None,
         input_value: object = None,
         cancellation_checker: Callable[[], Awaitable[None]] | None = None,
+        event_listener: (
+            Callable[[Event], Awaitable[None] | None] | None
+        ) = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
             definition=definition or self._context_definition(),
@@ -857,6 +925,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             ),
             input_value=input_value,
             cancellation_checker=cancellation_checker,
+            event_listener=event_listener,
         )
 
     def _context_definition(
@@ -876,6 +945,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             privacy=privacy or TaskPrivacyPolicy(),
             run=run or TaskRunPolicy.direct(),
         )
+
+    def _object_output_contract(self) -> TaskOutputContract:
+        return TaskOutputContract.object({"type": "object"})
 
 
 class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
@@ -1205,12 +1277,19 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             self._definition(
                 input_contract=self._object_input_contract(),
                 output_contract=self._object_output_contract(),
+                observability=TaskObservabilityPolicy(),
             ),
             input_value={"prompt": "private prompt", "limit": 1},
         )
 
+        events = await self.store.list_events(result.run.run_id)
         self.assertEqual(result.run.state, TaskRunState.FAILED)
         self.assertIsNone(result.output)
+        self.assertEqual(events[1].event_type, "flow_manager_call_after")
+        end_payload = cast(Mapping[str, object], events[1].payload)
+        self.assertEqual(end_payload["status"], "failed")
+        self.assertNotIn("private invalid count", str(events))
+        self.assertNotIn("private prompt", str(events))
         self.assertNotIn("private invalid count", str(result.run.result))
         self.assertNotIn("private prompt", str(result.run.result))
 

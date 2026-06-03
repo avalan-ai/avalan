@@ -22,6 +22,7 @@ from ..validation import (
     TaskValidationError,
     TaskValidationIssue,
     validate_task_input,
+    validate_task_output,
 )
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -133,6 +134,9 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                 initial_inputs=flow_task_input_binding(task_input),
                 cancellation_checker=context.check_cancelled,
             )
+            output_issues = validate_task_output(context.definition, result)
+            if output_issues:
+                raise TaskValidationError(output_issues)
         except BaseException:
             finished = perf_counter()
             await _emit_flow_event(
