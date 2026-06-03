@@ -451,6 +451,45 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"full": "ready", "value": "ready"})
 
+    async def test_run_binds_array_input_as_json_lists(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "full": inputs[FLOW_TASK_INPUT_KEY],
+                    "items": inputs["items"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.array(
+                        {
+                            "type": "array",
+                            "items": {"type": "array"},
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(),
+                ),
+                input_value=[("first", "second")],
+            )
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "full": [["first", "second"]],
+                "items": [["first", "second"]],
+            },
+        )
+        assert isinstance(result, Mapping)
+        self.assertIsInstance(result["full"], list)
+        self.assertIsInstance(result["items"], list)
+
     async def test_run_rejects_invalid_input_contract_safely(self) -> None:
         flow = Flow()
         flow.add_node(Node("A", func=lambda _: "unused private output"))
@@ -640,6 +679,42 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "ready!")
+
+    async def test_run_accepts_plain_queued_object_input(self) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "name": inputs["name"],
+                    "limit": inputs[FLOW_TASK_INPUT_KEY]["limit"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.object(
+                        {
+                            "type": "object",
+                            "required": ["name", "limit"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string"},
+                                "limit": {"type": "integer"},
+                            },
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(),
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={"name": "ready", "limit": 2},
+            )
+        )
+
+        self.assertEqual(result, {"name": "ready", "limit": 2})
 
     async def test_run_rejects_unavailable_queued_input_safely(self) -> None:
         flow = Flow()
@@ -1139,6 +1214,75 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private invalid count", str(result.run.result))
         self.assertNotIn("private prompt", str(result.run.result))
 
+    async def test_direct_runner_commits_array_output_from_flow_input(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node("A", func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY])
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-array-output",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=self._array_input_contract(),
+                output_contract=self._array_output_contract(),
+            ),
+            input_value=["safe", "done"],
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, ["safe", "done"])
+        self.assertIsInstance(result.output, list)
+
+    async def test_direct_runner_rejects_invalid_flow_array_output(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: [
+                    cast(list[object], inputs[FLOW_TASK_INPUT_KEY])[0],
+                    "private invalid item",
+                ],
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=FlowTaskTargetRunner(flow_resolver=lambda _: flow),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda _: "flow-direct-invalid-array-output",
+        )
+
+        result = await runner.run(
+            self._definition(
+                input_contract=TaskInputContract.array(
+                    {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 1,
+                    }
+                ),
+                output_contract=TaskOutputContract.array(
+                    {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    }
+                ),
+            ),
+            input_value=[1],
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertIsNone(result.output)
+        self.assertNotIn("private invalid item", str(result.run.result))
+
     def test_input_binding_exposes_scalar_array_and_object_shapes(
         self,
     ) -> None:
@@ -1148,7 +1292,7 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             flow_task_input_binding([1, 2]),
-            {FLOW_TASK_INPUT_KEY: (1, 2), "items": (1, 2)},
+            {FLOW_TASK_INPUT_KEY: [1, 2], "items": [1, 2]},
         )
         self.assertEqual(
             flow_task_input_binding({"limit": 2}),
@@ -1188,10 +1332,10 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
     def test_input_binding_isolates_nested_array_mutation(self) -> None:
         value = [{"items": ["original"]}]
         binding = flow_task_input_binding(value)
-        field_items = cast(tuple[object, ...], binding["items"])
+        field_items = cast(list[object], binding["items"])
         field_item = cast(dict[str, object], field_items[0])
         cast(list[str], field_item["items"]).append("mutated")
-        full_items = cast(tuple[object, ...], binding[FLOW_TASK_INPUT_KEY])
+        full_items = cast(list[object], binding[FLOW_TASK_INPUT_KEY])
         full_item = cast(dict[str, object], full_items[0])
 
         self.assertEqual(
@@ -1201,12 +1345,12 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(cast(list[str], full_item["items"]), ["original"])
         self.assertEqual(value, [{"items": ["original"]}])
 
-    def test_input_binding_copies_nested_tuple_values(self) -> None:
+    def test_input_binding_normalizes_nested_tuple_values(self) -> None:
         self.assertEqual(
             flow_task_input_binding([("first", "second")]),
             {
-                FLOW_TASK_INPUT_KEY: (("first", "second"),),
-                "items": (("first", "second"),),
+                FLOW_TASK_INPUT_KEY: [["first", "second"]],
+                "items": [["first", "second"]],
             },
         )
 
@@ -1268,6 +1412,24 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
                     "status": {"type": "string", "enum": ["ready"]},
                     "count": {"type": "integer", "minimum": 1},
                 },
+            }
+        )
+
+    def _array_input_contract(self) -> TaskInputContract:
+        return TaskInputContract.array(
+            {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+            }
+        )
+
+    def _array_output_contract(self) -> TaskOutputContract:
+        return TaskOutputContract.array(
+            {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
             }
         )
 

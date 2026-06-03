@@ -1657,6 +1657,110 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(output.ready)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
 
+    async def test_queued_flow_array_input_returns_json_array_output(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow = Flow()
+        flow.add_node(
+            Node("A", func=lambda inputs: inputs[FLOW_TASK_INPUT_KEY])
+        )
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            input_contract=TaskInputContract.array(
+                schema={
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                }
+            ),
+            output_contract=TaskOutputContract.array(
+                schema={
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                }
+            ),
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value=["safe", "done"],
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(processed.output, ["safe", "done"])
+        self.assertIsInstance(processed.output, list)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+
+    async def test_queued_flow_array_output_contract_failure_is_safe(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: [
+                    cast(list[object], inputs[FLOW_TASK_INPUT_KEY])[0],
+                    "private invalid item",
+                ],
+            )
+        )
+        target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            input_contract=TaskInputContract.array(
+                schema={
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 1,
+                }
+            ),
+            output_contract=TaskOutputContract.array(
+                schema={
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 1,
+                }
+            ),
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value=[1],
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.retry)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertIn("output_contract", str(output.error))
+        self.assertNotIn("private invalid item", str(inspection.as_dict()))
+
     async def test_queued_flow_object_input_validates_output_contract(
         self,
     ) -> None:

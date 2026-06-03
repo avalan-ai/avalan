@@ -239,10 +239,9 @@ def flow_task_input_binding(value: object) -> dict[str, object]:
         binding[FLOW_TASK_INPUT_KEY] = _copy_mapping(value)
         return binding
     if isinstance(value, list | tuple):
-        items = tuple(_copy_task_input_value(item) for item in value)
         return {
-            FLOW_TASK_INPUT_KEY: items,
-            "items": tuple(_copy_task_input_value(item) for item in value),
+            FLOW_TASK_INPUT_KEY: _copy_sequence(value),
+            "items": _copy_sequence(value),
         }
     return {
         FLOW_TASK_INPUT_KEY: _copy_task_input_value(value),
@@ -262,10 +261,14 @@ def _copy_task_input_value(value: object) -> object:
     if isinstance(value, Mapping):
         return _copy_mapping(value)
     if isinstance(value, list):
-        return [_copy_task_input_value(item) for item in value]
+        return _copy_sequence(value)
     if isinstance(value, tuple):
-        return tuple(_copy_task_input_value(item) for item in value)
+        return _copy_sequence(value)
     return value
+
+
+def _copy_sequence(value: list[object] | tuple[object, ...]) -> list[object]:
+    return [_copy_task_input_value(item) for item in value]
 
 
 def _task_input_value(context: TaskTargetContext) -> object:
