@@ -136,7 +136,7 @@ async def materialize_task_input_files(
     verified: list[_VerifiedInputFile] = []
     for result in resolved:
         assert isinstance(result, _ResolvedInputFile)
-        verified_result = _read_verified_file(result)
+        verified_result = _read_verified_file(definition, result)
         if isinstance(verified_result, TaskValidationIssue):
             issues.append(verified_result)
         else:
@@ -521,10 +521,14 @@ def _validate_resolved_file(
 
 
 def _read_verified_file(
+    definition: TaskDefinition,
     resolved: _ResolvedInputFile,
 ) -> _VerifiedInputFile | TaskValidationIssue:
     try:
-        content = resolved.path.read_bytes()
+        content = _read_file_bytes(
+            resolved.path,
+            limit=_read_size_limit(definition, resolved.descriptor),
+        )
     except OSError:
         return _issue(
             code="input.invalid_file",
@@ -533,6 +537,13 @@ def _read_verified_file(
             hint="Pass an available file within an allowlisted root.",
             category=TaskValidationCategory.VALUE,
         )
+    size_issue = _validated_content_size_issue(
+        definition,
+        resolved,
+        len(content),
+    )
+    if size_issue is not None:
+        return size_issue
     digest = sha256(content).hexdigest()
     expected_digest = resolved.descriptor.sha256
     if expected_digest is not None and not compare_digest(
@@ -551,6 +562,69 @@ def _read_verified_file(
         content=content,
         sha256=digest,
     )
+
+
+def _read_file_bytes(path: Path, *, limit: int | None) -> bytes:
+    if limit is None:
+        return path.read_bytes()
+    content = bytearray()
+    with path.open("rb") as file:
+        while len(content) <= limit:
+            chunk = file.read(limit + 1 - len(content))
+            if not chunk:
+                break
+            content.extend(chunk)
+            if len(content) > limit:
+                break
+    return bytes(content)
+
+
+def _read_size_limit(
+    definition: TaskDefinition,
+    descriptor: TaskFileDescriptor,
+) -> int | None:
+    limits = tuple(
+        limit
+        for limit in (
+            descriptor.size_bytes,
+            definition.limits.file_bytes,
+            definition.artifact.max_bytes,
+        )
+        if limit is not None
+    )
+    if not limits:
+        return None
+    return min(limits)
+
+
+def _validated_content_size_issue(
+    definition: TaskDefinition,
+    resolved: _ResolvedInputFile,
+    size: int,
+) -> TaskValidationIssue | None:
+    descriptor = resolved.descriptor
+    descriptor_path = resolved.descriptor_path
+    if descriptor.size_bytes is not None and size != descriptor.size_bytes:
+        return _issue(
+            code="input.invalid_file",
+            path=f"{descriptor_path}.size_bytes",
+            message="Task file size does not match the descriptor.",
+            hint="Pass a descriptor whose size matches the file bytes.",
+            category=TaskValidationCategory.VALUE,
+        )
+    limits = (
+        definition.limits.file_bytes,
+        definition.artifact.max_bytes,
+    )
+    if any(limit is not None and size > limit for limit in limits):
+        return _issue(
+            code="input.invalid_file",
+            path=f"{descriptor_path}.size_bytes",
+            message="Task file exceeds the byte limit.",
+            hint="Pass a smaller file.",
+            category=TaskValidationCategory.VALUE,
+        )
+    return None
 
 
 def _safe_file_identity(

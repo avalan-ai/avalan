@@ -775,6 +775,85 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
                     self.assertNotIn("secret.txt", str(error.exception))
                     self.assertNotIn("private text", str(error.exception))
 
+    async def test_file_growth_after_validation_is_rejected(self) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            input_path = Path(root, "secret.txt")
+            input_path.write_bytes(b"1234")
+
+            def mutate_after_validation(*_: object) -> tuple[object, ...]:
+                input_path.write_bytes(b"12345-private")
+                return ()
+
+            with patch(
+                "avalan.task.materialization._validate_resolved_file",
+                side_effect=mutate_after_validation,
+            ):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(
+                            limits=TaskLimitsPolicy(file_bytes=4),
+                        ),
+                        TaskFileDescriptor.local_path(
+                            "secret.txt",
+                            mime_type="text/plain",
+                        ),
+                        roots=(root,),
+                        artifact_store=LocalArtifactStore(
+                            artifacts,
+                            raw_storage_allowed=True,
+                            id_factory=lambda: "artifact-1",
+                        ),
+                    )
+
+            self.assertEqual(
+                [(issue.code, issue.path) for issue in error.exception.issues],
+                [("input.invalid_file", "input.size_bytes")],
+            )
+            self.assertFalse(
+                any(path.is_file() for path in Path(artifacts).rglob("*"))
+            )
+            self.assertNotIn("secret.txt", str(error.exception))
+            self.assertNotIn("12345-private", str(error.exception))
+
+    async def test_declared_size_is_rechecked_after_validation(self) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            input_path = Path(root, "secret.txt")
+            input_path.write_bytes(b"1234")
+
+            def mutate_after_validation(*_: object) -> tuple[object, ...]:
+                input_path.write_bytes(b"12345")
+                return ()
+
+            with patch(
+                "avalan.task.materialization._validate_resolved_file",
+                side_effect=mutate_after_validation,
+            ):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        TaskFileDescriptor.local_path(
+                            "secret.txt",
+                            mime_type="text/plain",
+                            size_bytes=4,
+                        ),
+                        roots=(root,),
+                        artifact_store=LocalArtifactStore(
+                            artifacts,
+                            raw_storage_allowed=True,
+                            id_factory=lambda: "artifact-1",
+                        ),
+                    )
+
+            self.assertEqual(
+                [(issue.code, issue.path) for issue in error.exception.issues],
+                [("input.invalid_file", "input.size_bytes")],
+            )
+            self.assertFalse(
+                any(path.is_file() for path in Path(artifacts).rglob("*"))
+            )
+            self.assertNotIn("secret.txt", str(error.exception))
+            self.assertNotIn("12345", str(error.exception))
+
     async def test_read_failure_returns_safe_diagnostic(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             Path(root, "secret.txt").write_bytes(b"private text")
