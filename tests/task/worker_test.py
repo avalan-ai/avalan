@@ -916,7 +916,9 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             TaskAttemptState.ABANDONED,
         )
 
-    async def test_process_once_finalizes_heartbeat_failure(self) -> None:
+    async def test_process_once_stops_after_heartbeat_failure(
+        self,
+    ) -> None:
         await self._use_definition(
             _definition(retry=TaskRetryPolicy(max_attempts=1))
         )
@@ -933,10 +935,21 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         result = await worker.process_once()
 
         self.assertTrue(result.processed)
-        self.assertIsNotNone(self.queue.completed)
-        assert self.queue.completed is not None
-        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
-        self.assertNotIn("private heartbeat", str(self.queue.completed.run))
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.completion)
+        self.assertIsNone(result.retry)
+        self.assertIsNone(result.abandonment)
+        self.assertIsNone(self.queue.completed)
+        self.assertIsNone(self.queue.retried)
+        self.assertIsNone(self.queue.abandoned)
+        self.assertEqual(
+            (await self.store.get_run(self.run.run_id)).state,
+            TaskRunState.RUNNING,
+        )
+        attempts = await self.store.list_attempts(self.run.run_id)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].state, TaskAttemptState.RUNNING)
+        self.assertNotIn("private heartbeat", str(result))
 
     async def test_process_once_stops_after_heartbeat_claim_conflict(
         self,
@@ -1131,6 +1144,39 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
                 claim=claim,
                 timeout=1,
             )
+
+    async def test_run_target_heartbeat_failure_is_sanitized(
+        self,
+    ) -> None:
+        cases = (
+            TaskQueueConflictError("private stale claim"),
+            RuntimeError("private heartbeat outage"),
+        )
+        for heartbeat_error in cases:
+            with self.subTest(error=type(heartbeat_error).__name__):
+                await self._use_definition(_definition())
+                self.queue.heartbeat_error = heartbeat_error
+                worker = TaskWorker(
+                    self.store,
+                    cast(object, self.queue),
+                    target=PassiveWaitingTarget(),
+                    worker_id="worker-1",
+                    heartbeat_seconds=0.001,
+                    clock=lambda: self.now,
+                )
+                claim = await self._claim()
+
+                with self.assertRaises(TaskQueueConflictError) as error:
+                    await worker._run_target(
+                        self._target_context(claim),
+                        claim=claim,
+                        timeout=1,
+                    )
+
+                self.assertEqual(
+                    str(error.exception),
+                    "task queue heartbeat failed",
+                )
 
     async def test_run_target_returns_with_heartbeat_enabled(self) -> None:
         worker = TaskWorker(

@@ -44,6 +44,7 @@ from avalan.task import (
     TaskQueueCompletion,
     TaskQueueConflictError,
     TaskQueueDepth,
+    TaskQueueError,
     TaskQueueHealth,
     TaskQueueItem,
     TaskQueueItemState,
@@ -1490,6 +1491,51 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private stale token", str(inspection.as_dict()))
         self.assertNotIn(
             "private heartbeat prompt",
+            str(inspection.as_dict()),
+        )
+
+    async def test_heartbeat_failure_does_not_finalize_run(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = HeartbeatWaitingTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(
+            store,
+            queue,
+            target=target,
+            heartbeat_seconds=0.001,
+            clock=clock,
+        )
+        queue.heartbeat_error = TaskQueueError("private heartbeat outage")
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private outage prompt",
+        )
+        result = await worker.process_once()
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.completion)
+        self.assertIsNone(result.retry)
+        self.assertIsNone(result.abandonment)
+        self.assertEqual(inspection.run.state, TaskRunState.RUNNING)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.RUNNING,
+        )
+        self.assertEqual(depth.claimed, 1)
+        self.assertEqual(depth.dead, 0)
+        self.assertEqual(len(target.inputs), 1)
+        self.assertNotIn("private heartbeat outage", str(result))
+        self.assertNotIn(
+            "private outage prompt",
             str(inspection.as_dict()),
         )
 

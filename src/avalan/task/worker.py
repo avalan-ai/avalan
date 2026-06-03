@@ -344,22 +344,22 @@ class TaskWorker:
                 return_when=FIRST_COMPLETED,
             )
             if not done:
-                await _cancel_task(target_task)
                 raise TimeoutError()  # pragma: no cover
             if heartbeat_task is not None and heartbeat_task in done:
                 try:
                     heartbeat_task.result()
                 except BaseException:
-                    await _cancel_task(target_task)
-                    raise  # pragma: no cover
-                await _cancel_task(target_task)
+                    error = TaskQueueConflictError(
+                        "task queue heartbeat failed"
+                    )
+                    raise error from None
                 raise _TaskWorkerShutdownRequested()  # pragma: no cover
             if target_task in done:
                 return await target_task
             assert shutdown_task is not None and shutdown_task in done
-            await _cancel_task(target_task)
             raise _TaskWorkerShutdownRequested()  # pragma: no cover
         finally:
+            await _cancel_task(target_task)
             if heartbeat_task is not None:
                 await _cancel_task(heartbeat_task)
             if shutdown_task is not None:
