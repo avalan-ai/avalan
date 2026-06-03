@@ -12,6 +12,8 @@ from ..artifact import (
     ArtifactStorePolicyError,
     TaskArtifactRef,
     TaskArtifactStat,
+    bounded_artifact_reader,
+    read_artifact_stream_bytes,
 )
 from ..feature_gate import ModuleFinder, TaskFeature, require_features
 from ..privacy import ENCRYPTED_MARKER, EncryptedPrivacyValue, TaskKeyPurpose
@@ -53,6 +55,7 @@ class PgsqlArtifactCipher(Protocol):
 class PgsqlArtifactByteStoragePolicy:
     raw_storage_allowed: bool = False
     retention_days: int | None = None
+    max_bytes: int | None = None
     enabled_features: tuple[TaskFeature, ...] = ()
     module_finder: ModuleFinder = find_spec
 
@@ -62,6 +65,10 @@ class PgsqlArtifactByteStoragePolicy:
             assert isinstance(self.retention_days, int)
             assert not isinstance(self.retention_days, bool)
             assert self.retention_days > 0
+        if self.max_bytes is not None:
+            assert isinstance(self.max_bytes, int)
+            assert not isinstance(self.max_bytes, bool)
+            assert self.max_bytes >= 0
         assert isinstance(self.enabled_features, tuple)
         for feature in self.enabled_features:
             assert isinstance(feature, TaskFeature)
@@ -129,11 +136,46 @@ class PgsqlArtifactStore:
         metadata: Mapping[str, object] | None = None,
     ) -> TaskArtifactRef:
         assert isinstance(content, bytes), "content must be bytes"
+        return await self.put_stream(
+            BytesIO(content),
+            artifact_id=artifact_id,
+            media_type=media_type,
+            metadata=metadata,
+            max_bytes=len(content),
+            expected_size_bytes=len(content),
+        )
+
+    async def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        max_bytes: int | None = None,
+        expected_size_bytes: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> TaskArtifactRef:
+        assert hasattr(stream, "read"), "stream must be readable"
         self._require_policy()
         if media_type is not None:
             _assert_non_empty_string(media_type, "media_type")
         new_artifact_id = artifact_id or self._new_id()
         _assert_artifact_id(new_artifact_id)
+        user_metadata = freeze_snapshot_metadata(metadata)
+        effective_max_bytes = (
+            max_bytes if max_bytes is not None else self._policy.max_bytes
+        )
+        if effective_max_bytes is None:
+            raise ArtifactStorePolicyError(
+                "artifact stream requires maximum bytes"
+            )
+        content = read_artifact_stream_bytes(
+            stream,
+            max_bytes=effective_max_bytes,
+            expected_size_bytes=expected_size_bytes,
+            expected_sha256=expected_sha256,
+        )
         storage_key = _storage_key(new_artifact_id)
         digest = sha256(content).hexdigest()
         context = _encryption_context(
@@ -150,7 +192,7 @@ class PgsqlArtifactStore:
         )
         ref_metadata = freeze_snapshot_metadata(
             {
-                **dict(metadata or {}),
+                **dict(user_metadata),
                 "encryption": {
                     "algorithm": encrypted.algorithm,
                     "key_id": encrypted.key_id,
@@ -182,7 +224,7 @@ class PgsqlArtifactStore:
                 dumps(dict(encrypted.metadata or {}), sort_keys=True),
                 self._policy.retention_days,
                 retention_deadline_at,
-                dumps(dict(metadata or {}), sort_keys=True),
+                dumps(dict(user_metadata), sort_keys=True),
             ),
         )
         if row is None:
@@ -190,6 +232,14 @@ class PgsqlArtifactStore:
         return ref
 
     async def open(self, ref: TaskArtifactRef) -> BinaryIO:
+        return await self.open_stream(ref)
+
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> BinaryIO:
         record = await self._fetch_record(ref)
         encrypted = EncryptedPrivacyValue(
             ciphertext=record.ciphertext,
@@ -207,7 +257,7 @@ class PgsqlArtifactStore:
         )
         if sha256(content).hexdigest() != record.sha256:
             raise ArtifactStoreError("artifact content digest mismatch")
-        return BytesIO(content)
+        return bounded_artifact_reader(BytesIO(content), max_bytes=max_bytes)
 
     async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
         record = await self._fetch_record(ref)

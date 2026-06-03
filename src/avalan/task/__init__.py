@@ -16,14 +16,18 @@ from .artifact import TaskArtifactRef as TaskArtifactRef
 from .artifact import TaskArtifactRetention as TaskArtifactRetention
 from .artifact import TaskArtifactStat as TaskArtifactStat
 from .artifact import TaskArtifactState as TaskArtifactState
+from .artifact import TaskArtifactStreamDigest as TaskArtifactStreamDigest
 from .artifact import TaskOutputArtifact as TaskOutputArtifact
 from .artifact import (
     assert_artifact_state_collection as assert_artifact_state_collection,
 )
+from .artifact import bounded_artifact_reader as bounded_artifact_reader
+from .artifact import copy_artifact_stream as copy_artifact_stream
 from .artifact import is_terminal_artifact_state as is_terminal_artifact_state
 from .artifact import (
     is_valid_artifact_transition as is_valid_artifact_transition,
 )
+from .artifact import read_artifact_stream_bytes as read_artifact_stream_bytes
 from .artifact import (
     task_output_artifact_from_value as task_output_artifact_from_value,
 )

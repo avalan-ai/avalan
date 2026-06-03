@@ -15,11 +15,15 @@ from .store import (
     freeze_snapshot_value,
 )
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import BinaryIO, Protocol
+from hashlib import sha256
+from io import BytesIO
+from typing import BinaryIO, Protocol, cast
+
+DEFAULT_ARTIFACT_STREAM_CHUNK_SIZE = 1024 * 1024
 
 
 class TaskArtifactPurpose(StrEnum):
@@ -67,6 +71,17 @@ class ArtifactStoreNotFoundError(ArtifactStoreError):
 
 class ArtifactStorePolicyError(ArtifactStoreError):
     pass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskArtifactStreamDigest:
+    size_bytes: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        _assert_non_negative_int(self.size_bytes, "size_bytes")
+        assert self.size_bytes is not None
+        _assert_sha256(self.sha256)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -307,7 +322,26 @@ class ArtifactStore(Protocol):
         metadata: Mapping[str, object] | None = None,
     ) -> TaskArtifactRef: ...
 
+    async def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        max_bytes: int | None = None,
+        expected_size_bytes: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> TaskArtifactRef: ...
+
     async def open(self, ref: TaskArtifactRef) -> BinaryIO: ...
+
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> BinaryIO: ...
 
     async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat: ...
 
@@ -381,6 +415,163 @@ def assert_artifact_state_collection(
         assert isinstance(
             value, TaskArtifactState
         ), f"{field_name} must contain TaskArtifactState values"
+
+
+def copy_artifact_stream(
+    stream: BinaryIO,
+    write: Callable[[bytes], object],
+    *,
+    max_bytes: int | None = None,
+    expected_size_bytes: int | None = None,
+    expected_sha256: str | None = None,
+    chunk_size: int = DEFAULT_ARTIFACT_STREAM_CHUNK_SIZE,
+) -> TaskArtifactStreamDigest:
+    assert hasattr(stream, "read"), "stream must be readable"
+    assert callable(write)
+    _assert_artifact_stream_limits(
+        max_bytes=max_bytes,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+        chunk_size=chunk_size,
+    )
+    digest = sha256()
+    size_bytes = 0
+    while True:
+        chunk = stream.read(chunk_size)
+        assert isinstance(chunk, bytes), "artifact stream must return bytes"
+        if not chunk:
+            break
+        size_bytes += len(chunk)
+        if max_bytes is not None and size_bytes > max_bytes:
+            raise ArtifactStorePolicyError(
+                "artifact stream exceeds maximum bytes"
+            )
+        digest.update(chunk)
+        write(chunk)
+    stream_digest = TaskArtifactStreamDigest(
+        size_bytes=size_bytes,
+        sha256=digest.hexdigest(),
+    )
+    _validate_artifact_stream_digest(
+        stream_digest,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+    )
+    return stream_digest
+
+
+def read_artifact_stream_bytes(
+    stream: BinaryIO,
+    *,
+    max_bytes: int | None = None,
+    expected_size_bytes: int | None = None,
+    expected_sha256: str | None = None,
+    chunk_size: int = DEFAULT_ARTIFACT_STREAM_CHUNK_SIZE,
+) -> bytes:
+    buffer = BytesIO()
+    copy_artifact_stream(
+        stream,
+        buffer.write,
+        max_bytes=max_bytes,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+        chunk_size=chunk_size,
+    )
+    return buffer.getvalue()
+
+
+def bounded_artifact_reader(
+    reader: BinaryIO,
+    *,
+    max_bytes: int | None,
+) -> BinaryIO:
+    _assert_optional_size(max_bytes, "max_bytes")
+    if max_bytes is None:
+        return reader
+    return cast(BinaryIO, _BoundedArtifactReader(reader, max_bytes=max_bytes))
+
+
+def _assert_artifact_stream_limits(
+    *,
+    max_bytes: int | None,
+    expected_size_bytes: int | None,
+    expected_sha256: str | None,
+    chunk_size: int,
+) -> None:
+    _assert_optional_size(max_bytes, "max_bytes")
+    _assert_optional_size(expected_size_bytes, "expected_size_bytes")
+    if expected_sha256 is not None:
+        _assert_sha256(expected_sha256)
+    assert isinstance(chunk_size, int)
+    assert not isinstance(chunk_size, bool)
+    assert chunk_size > 0, "chunk_size must be positive"
+    if (
+        max_bytes is not None
+        and expected_size_bytes is not None
+        and expected_size_bytes > max_bytes
+    ):
+        raise ArtifactStorePolicyError("artifact stream exceeds maximum bytes")
+
+
+def _validate_artifact_stream_digest(
+    digest: TaskArtifactStreamDigest,
+    *,
+    expected_size_bytes: int | None,
+    expected_sha256: str | None,
+) -> None:
+    if (
+        expected_size_bytes is not None
+        and digest.size_bytes != expected_size_bytes
+    ):
+        raise ArtifactStoreError("artifact stream size mismatch")
+    if expected_sha256 is not None and digest.sha256 != expected_sha256:
+        raise ArtifactStoreError("artifact stream digest mismatch")
+
+
+def _assert_optional_size(value: int | None, field_name: str) -> None:
+    if value is None:
+        return
+    assert isinstance(value, int), f"{field_name} must be an integer"
+    assert not isinstance(value, bool), f"{field_name} must be an integer"
+    assert value >= 0, f"{field_name} must not be negative"
+
+
+class _BoundedArtifactReader:
+    def __init__(self, reader: BinaryIO, *, max_bytes: int) -> None:
+        self._reader = reader
+        self._max_bytes = max_bytes
+        self._bytes_read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        assert isinstance(size, int)
+        assert not isinstance(size, bool)
+        remaining = self._max_bytes - self._bytes_read
+        read_size = remaining + 1 if size < 0 or size > remaining else size
+        data = self._reader.read(read_size)
+        assert isinstance(data, bytes), "artifact reader must return bytes"
+        self._bytes_read += len(data)
+        if self._bytes_read > self._max_bytes:
+            raise ArtifactStorePolicyError(
+                "artifact stream exceeds maximum bytes"
+            )
+        return data
+
+    def close(self) -> None:
+        self._reader.close()
+
+    def __enter__(self) -> "_BoundedArtifactReader":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        self.close()
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._reader, name)
 
 
 def _assert_datetime(value: datetime, field_name: str) -> None:

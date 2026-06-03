@@ -1,5 +1,7 @@
 from collections.abc import Mapping
 from datetime import datetime
+from hashlib import sha256
+from io import BytesIO
 from json import loads
 from os import environ
 from typing import cast
@@ -78,6 +80,15 @@ class TamperingCipher(ReversibleCipher):
         context: Mapping[str, str] | None = None,
     ) -> bytes:
         return b"tampered"
+
+
+class RecordingReader:
+    def __init__(self) -> None:
+        self.read_called = False
+
+    def read(self, _size: int = -1) -> bytes:
+        self.read_called = True
+        return b"private bytes"
 
 
 class FakeDatabase:
@@ -331,6 +342,82 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_put_stream_buffers_under_explicit_cap(self) -> None:
+        database = FakeDatabase()
+        cipher = ReversibleCipher()
+        store = PgsqlArtifactStore(
+            database,
+            cipher=cipher,
+            policy=PgsqlArtifactByteStoragePolicy(
+                raw_storage_allowed=True,
+                retention_days=7,
+                max_bytes=20,
+                enabled_features=(
+                    TaskFeature.POSTGRESQL,
+                    TaskFeature.RAW_STORAGE,
+                ),
+            ),
+            id_factory=lambda: "artifact-1",
+        )
+        content = b"private bytes"
+        expected_sha256 = sha256(content).hexdigest()
+
+        ref = await store.put_stream(
+            BytesIO(content),
+            media_type="text/plain",
+            metadata={"label": "sanitized"},
+            expected_size_bytes=len(content),
+            expected_sha256=expected_sha256,
+        )
+        reader = await store.open_stream(ref, max_bytes=len(content))
+        try:
+            read_content = reader.read()
+        finally:
+            reader.close()
+        bounded = await store.open_stream(ref, max_bytes=3)
+        try:
+            with self.assertRaises(ArtifactStorePolicyError):
+                bounded.read()
+        finally:
+            bounded.close()
+
+        self.assertEqual(read_content, content)
+        self.assertEqual(ref.size_bytes, len(content))
+        self.assertEqual(ref.sha256, expected_sha256)
+        self.assertEqual(ref.metadata["retention_days"], 7)
+        self.assertEqual(cipher.encrypt_context["artifact_id"], "artifact-1")
+
+    async def test_put_stream_requires_cap_and_skips_invalid_writes(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        store = PgsqlArtifactStore(
+            database,
+            cipher=ReversibleCipher(),
+            policy=self._enabled_policy(),
+        )
+
+        with self.assertRaisesRegex(
+            ArtifactStorePolicyError,
+            "requires maximum bytes",
+        ):
+            await store.put_stream(BytesIO(b"private bytes"))
+        with self.assertRaises(ArtifactStorePolicyError):
+            await store.put_stream(
+                BytesIO(b"private bytes"),
+                artifact_id="artifact-1",
+                max_bytes=3,
+            )
+        with self.assertRaises(ArtifactStoreError):
+            await store.put_stream(
+                BytesIO(b"private bytes"),
+                artifact_id="artifact-2",
+                max_bytes=20,
+                expected_size_bytes=99,
+            )
+
+        self.assertEqual(database.rows, {})
+
     async def test_real_postgresql_byte_backend_when_configured(
         self,
     ) -> None:
@@ -556,6 +643,8 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             PgsqlArtifactByteStoragePolicy(retention_days=0)
         with self.assertRaises(AssertionError):
+            PgsqlArtifactByteStoragePolicy(max_bytes=-1)
+        with self.assertRaises(AssertionError):
             PgsqlArtifactStore(
                 database,
                 cipher=object(),  # type: ignore[arg-type]
@@ -572,6 +661,16 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
             await store.put(b"private bytes", artifact_id="../bad")
         with self.assertRaises(AssertionError):
             await store.put(b"private bytes", media_type="")
+        with self.assertRaises(AssertionError):
+            await store.put_stream(object(), max_bytes=1)  # type: ignore[arg-type]
+        reader = RecordingReader()
+        with self.assertRaises(AssertionError):
+            await store.put_stream(
+                reader,  # type: ignore[arg-type]
+                metadata={"bad": object()},
+                max_bytes=20,
+            )
+        self.assertFalse(reader.read_called)
 
     @staticmethod
     def _enabled_policy() -> PgsqlArtifactByteStoragePolicy:
