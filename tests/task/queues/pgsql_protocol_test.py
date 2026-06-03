@@ -1295,6 +1295,52 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(duplicate.artifacts, ())
         self.assertEqual(self.database.queue_items, {})
 
+    async def test_enqueue_run_rejects_idempotency_identity_mismatch(
+        self,
+    ) -> None:
+        identity = self._identity()
+        mismatched = self._identity(spec_hash="hash-other")
+
+        first = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+        )
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.enqueue_run(
+                TaskExecutionRequest(
+                    definition_id="hash-a",
+                    queue="default",
+                ),
+                queue_name="default",
+                idempotency=mismatched,
+            )
+
+        self.assertTrue(first.created)
+        self.assertIsNotNone(first.queue_item)
+        assert first.queue_item is not None
+        self.assertEqual(
+            [
+                run_id
+                for run_id in self.database.runs
+                if run_id.startswith("id-")
+            ],
+            [first.run.run_id],
+        )
+        self.assertEqual(
+            [
+                queue_item_id
+                for queue_item_id in self.database.queue_items
+                if queue_item_id.startswith("id-")
+            ],
+            [first.queue_item.queue_item_id],
+        )
+        self.assertEqual(
+            self.database.idempotency[identity.identity_key]["run_id"],
+            first.run.run_id,
+        )
+
     async def test_enqueue_run_replaces_expired_idempotency_key(self) -> None:
         identity = self._identity()
         expires_at = self.now + timedelta(seconds=10)
@@ -2872,7 +2918,11 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         ] = TaskAttemptState.RUNNING.value
         return claim
 
-    def _identity(self) -> TaskIdempotencyIdentity:
+    def _identity(
+        self,
+        *,
+        spec_hash: str = "hash-a",
+    ) -> TaskIdempotencyIdentity:
         digest = TaskIdempotencyDigest(
             algorithm="hmac-sha256",
             digest="a" * 64,
@@ -2882,7 +2932,7 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             identity_key="identity-1",
             task_name="summarize",
             task_version="1",
-            spec_hash="hash-a",
+            spec_hash=spec_hash,
             owner_scope=digest,
             strategy=IdempotencyMode.INPUT_HASH,
             input=digest,

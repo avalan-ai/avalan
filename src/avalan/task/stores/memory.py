@@ -745,6 +745,10 @@ class InMemoryTaskStore:
         expires_at = reservation.expires_at
         if expires_at is not None and expires_at <= self._now():
             return None
+        if reservation.identity != identity:
+            raise TaskStoreConflictError(
+                "idempotency key is reserved for a different identity"
+            )
         return reservation
 
     def _ensure_no_active_attempt(self, run_id: str) -> None:

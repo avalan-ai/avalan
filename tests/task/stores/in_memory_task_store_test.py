@@ -292,6 +292,37 @@ class InMemoryTaskStoreTest(IsolatedAsyncioTestCase):
         self.assertTrue(second.created)
         self.assertEqual(second.reservation.run_id, second_run.run_id)
 
+    async def test_active_idempotency_key_rejects_identity_mismatch(
+        self,
+    ) -> None:
+        first_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        second_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        identity = _identity("identity-collision")
+        mismatched = _identity(
+            "identity-collision",
+            spec_hash="hash-other",
+        )
+
+        reserved = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=first_run.run_id,
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.reserve_idempotency_key(
+                mismatched,
+                run_id=second_run.run_id,
+            )
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.lookup_idempotency_key(mismatched)
+
+        found = await self.store.lookup_idempotency_key(identity)
+        self.assertEqual(found, reserved.reservation)
+
     async def test_idempotency_reservation_requires_existing_run(self) -> None:
         with self.assertRaises(TaskStoreNotFoundError):
             await self.store.reserve_idempotency_key(
@@ -315,7 +346,11 @@ if __name__ == "__main__":
     main()
 
 
-def _identity(identity_key: str) -> TaskIdempotencyIdentity:
+def _identity(
+    identity_key: str,
+    *,
+    spec_hash: str = "hash-classify",
+) -> TaskIdempotencyIdentity:
     digest = TaskIdempotencyDigest(
         algorithm="hmac-sha256",
         digest="a" * 64,
@@ -325,7 +360,7 @@ def _identity(identity_key: str) -> TaskIdempotencyIdentity:
         identity_key=identity_key,
         task_name="classify",
         task_version="1",
-        spec_hash="hash-classify",
+        spec_hash=spec_hash,
         owner_scope=digest,
         strategy=IdempotencyMode.INPUT_HASH,
         input=digest,

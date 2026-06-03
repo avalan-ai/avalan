@@ -1595,7 +1595,12 @@ async def _active_idempotency_reservation(
     row = await unit.cursor.fetchone()
     if row is None:
         return None
-    return _idempotency_from_row(row)
+    reservation = _idempotency_from_row(row)
+    if reservation.identity != identity:
+        raise TaskQueueConflictError(
+            "idempotency key is reserved for a different identity"
+        )
+    return reservation
 
 
 async def _reserve_idempotency(

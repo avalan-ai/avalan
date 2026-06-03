@@ -1016,6 +1016,39 @@ class PgsqlStoreContractTest(
             second_run.run_id,
         )
 
+    async def test_active_idempotency_key_rejects_identity_mismatch(
+        self,
+    ) -> None:
+        first_run = await self._created_run()
+        second_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id=first_run.definition_id)
+        )
+        identity = _identity("identity-collision")
+        mismatched = _identity(
+            "identity-collision",
+            spec_hash="hash-other",
+        )
+
+        reserved = await self.store.reserve_idempotency_key(
+            identity,
+            run_id=first_run.run_id,
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.reserve_idempotency_key(
+                mismatched,
+                run_id=second_run.run_id,
+            )
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.lookup_idempotency_key(mismatched)
+
+        found = await self.store.lookup_idempotency_key(identity)
+        self.assertEqual(found, reserved.reservation)
+        self.assertEqual(
+            self.database.idempotency[identity.identity_key]["run_id"],
+            first_run.run_id,
+        )
+
     async def test_cached_usage_counters_are_independent(self) -> None:
         run = await self._created_run()
         attempt = await self.store.create_attempt(run.run_id)
@@ -1033,6 +1066,31 @@ class PgsqlStoreContractTest(
             await self.store.usage_totals(run.run_id),
             UsageTotals(input_tokens=1, cached_input_tokens=3),
         )
+
+
+def _identity(
+    identity_key: str,
+    *,
+    spec_hash: str = "hash-a",
+) -> TaskIdempotencyIdentity:
+    digest = TaskIdempotencyDigest(
+        algorithm="hmac-sha256",
+        digest="a" * 64,
+        key_id="idempotency-v1",
+    )
+    return TaskIdempotencyIdentity(
+        identity_key=identity_key,
+        task_name="summarize",
+        task_version="1",
+        spec_hash=spec_hash,
+        owner_scope=digest,
+        strategy=IdempotencyMode.INPUT_HASH,
+        input=TaskIdempotencyDigest(
+            algorithm="hmac-sha256",
+            digest="b" * 64,
+            key_id="idempotency-v1",
+        ),
+    )
 
 
 if __name__ == "__main__":
