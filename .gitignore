@@ -1,4 +1,7 @@
 build/
+.coverage
+.coverage.*
+coverage.json
 specs/
 docs/examples/playground
 docs/images/*.mov
