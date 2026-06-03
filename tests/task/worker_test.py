@@ -812,6 +812,27 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         assert self.queue.item is not None
         self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
 
+    async def test_rejects_heartbeat_interval_not_shorter_than_lease(
+        self,
+    ) -> None:
+        for heartbeat_seconds in (30, 30.0, 31):
+            with (
+                self.subTest(heartbeat_seconds=heartbeat_seconds),
+                self.assertRaisesRegex(
+                    AssertionError,
+                    "heartbeat_seconds must be shorter than lease_seconds",
+                ),
+            ):
+                TaskWorker(
+                    self.store,
+                    cast(object, self.queue),
+                    target=FakeTarget(),
+                    worker_id="worker-1",
+                    lease_seconds=30,
+                    heartbeat_seconds=heartbeat_seconds,
+                    clock=lambda: self.now,
+                )
+
     async def test_process_once_abandons_active_shutdown_for_reclaim(
         self,
     ) -> None:

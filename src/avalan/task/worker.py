@@ -171,6 +171,9 @@ class TaskWorker:
             assert isinstance(heartbeat_seconds, int | float)
             assert not isinstance(heartbeat_seconds, bool)
             assert heartbeat_seconds > 0
+            assert (
+                heartbeat_seconds < lease_seconds
+            ), "heartbeat_seconds must be shorter than lease_seconds"
         self._heartbeat_seconds = heartbeat_seconds
         if shutdown is not None:
             assert isinstance(shutdown, TaskWorkerShutdown)

@@ -1072,6 +1072,32 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertFalse(result)
         self.assertIn("store.ephemeral_unsupported", console.export_text())
 
+    def test_worker_rejects_heartbeat_interval_not_shorter_than_lease(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        result = task_cmds.task_worker(
+            Namespace(
+                queue="default",
+                store_dsn="postgresql://user:secret@db/tasks",
+                store_schema=None,
+                worker_id="worker-a",
+                once=True,
+                limit=10,
+                lease_seconds=30,
+                heartbeat_seconds=30,
+                ephemeral=False,
+            ),
+            console,
+            self.theme,
+        )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("worker.heartbeat_interval", output)
+        self.assertNotIn("secret", output)
+
     def test_worker_processes_until_no_work(self) -> None:
         console = Console(record=True, width=160)
         database = _FakeResource()

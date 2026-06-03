@@ -742,6 +742,16 @@ async def _task_worker(
             "Configure a durable task store for workers.",
         )
         return False
+    lease_seconds = getattr(args, "lease_seconds", 300)
+    heartbeat_seconds = getattr(args, "heartbeat_seconds", None)
+    if heartbeat_seconds is not None and heartbeat_seconds >= lease_seconds:
+        _print_task_command_error(
+            console,
+            "Task worker heartbeat must be shorter than the lease.",
+            "worker.heartbeat_interval",
+            "Set --heartbeat-seconds lower than --lease-seconds.",
+        )
+        return False
     dsn = _task_store_dsn(args)
     if dsn is None:
         _print_missing_store(console)
@@ -780,10 +790,10 @@ async def _task_worker(
                 hmac_provider=_task_hmac_provider(),
                 worker_id=getattr(args, "worker_id", None),
                 queue_name=getattr(args, "queue", None) or "default",
-                lease_seconds=getattr(args, "lease_seconds", 300),
+                lease_seconds=lease_seconds,
                 artifact_store=_task_artifact_store(),
                 shutdown=shutdown,
-                heartbeat_seconds=getattr(args, "heartbeat_seconds", None),
+                heartbeat_seconds=heartbeat_seconds,
             )
             for _index in range(limit):
                 if shutdown.requested:
