@@ -10,7 +10,19 @@ from ..artifact import (
 from ..store import freeze_snapshot_metadata
 
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from hashlib import sha256
+from os import (
+    O_CREAT,
+    O_DIRECTORY,
+    O_EXCL,
+    O_NOFOLLOW,
+    O_RDONLY,
+    O_WRONLY,
+    close,
+    fdopen,
+)
+from os import open as open_file_descriptor
 from pathlib import Path, PurePosixPath
 from re import fullmatch
 from typing import BinaryIO
@@ -55,8 +67,6 @@ class LocalArtifactStore:
         path = self._path_for_storage_key(storage_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path = self._path_for_storage_key(storage_key)
-        if path.exists():
-            raise ArtifactStoreConflictError("artifact already exists")
         digest = sha256(content).hexdigest()
         ref = TaskArtifactRef(
             artifact_id=new_artifact_id,
@@ -67,7 +77,7 @@ class LocalArtifactStore:
             sha256=digest,
             metadata=freeze_snapshot_metadata(metadata),
         )
-        path.write_bytes(content)
+        _write_new_file(path, content)
         return ref
 
     async def open(self, ref: TaskArtifactRef) -> BinaryIO:
@@ -132,6 +142,43 @@ def _assert_artifact_id(value: str) -> None:
         r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
         value,
     ), "artifact_id must be a stable token"
+
+
+def _write_new_file(path: Path, content: bytes) -> None:
+    try:
+        parent_descriptor = open_file_descriptor(
+            path.parent,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+        )
+    except OSError as exc:
+        raise ArtifactStoreError("artifact storage path is unsafe") from exc
+    try:
+        try:
+            file_descriptor = open_file_descriptor(
+                path.name,
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+                0o600,
+                dir_fd=parent_descriptor,
+            )
+        except FileExistsError as exc:
+            raise ArtifactStoreConflictError(
+                "artifact already exists"
+            ) from exc
+        except OSError as exc:
+            raise ArtifactStoreError(
+                "artifact storage path is unsafe"
+            ) from exc
+        try:
+            with fdopen(file_descriptor, "wb") as file:
+                file.write(content)
+        except Exception as exc:
+            with suppress(OSError):
+                close(file_descriptor)
+            with suppress(OSError):
+                path.unlink()
+            raise ArtifactStoreError("artifact write failed") from exc
+    finally:
+        close(parent_descriptor)
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

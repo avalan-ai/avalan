@@ -1,6 +1,8 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import TracebackType
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
 from avalan.task import (
     ArtifactStoreConflictError,
@@ -10,6 +12,23 @@ from avalan.task import (
     TaskArtifactRef,
 )
 from avalan.task.artifacts import LocalArtifactStore
+from avalan.task.artifacts import local as local_artifacts
+
+
+class BrokenWriter:
+    def __enter__(self) -> "BrokenWriter":
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        return None
+
+    def write(self, _content: bytes) -> int:
+        raise OSError("private write failure")
 
 
 class LocalArtifactStoreTest(IsolatedAsyncioTestCase):
@@ -67,6 +86,77 @@ class LocalArtifactStoreTest(IsolatedAsyncioTestCase):
                 self.assertEqual(reader.read(), b"first")
             finally:
                 reader.close()
+
+    async def test_parent_directory_swap_does_not_write_outside_root(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as outside:
+            store = LocalArtifactStore(tmp, raw_storage_allowed=True)
+            original_path_for_storage_key = store._path_for_storage_key
+            checked_path = Path(tmp, "ar", "artifact-1")
+            calls = 0
+
+            def swap_after_directory_check(storage_key: str) -> Path:
+                nonlocal calls
+                calls += 1
+                path = original_path_for_storage_key(storage_key)
+                if calls == 2:
+                    checked_path.parent.rmdir()
+                    checked_path.parent.symlink_to(
+                        outside,
+                        target_is_directory=True,
+                    )
+                    return checked_path
+                return path
+
+            with patch.object(
+                store,
+                "_path_for_storage_key",
+                side_effect=swap_after_directory_check,
+            ):
+                with self.assertRaises(ArtifactStoreError) as error:
+                    await store.put(
+                        b"private bytes",
+                        artifact_id="artifact-1",
+                    )
+
+            self.assertEqual(
+                str(error.exception),
+                "artifact storage path is unsafe",
+            )
+            self.assertFalse(Path(outside, "artifact-1").exists())
+
+    def test_unsafe_final_path_returns_sanitized_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            parent = Path(tmp, "ar")
+            parent.mkdir()
+
+            with self.assertRaises(ArtifactStoreError) as error:
+                local_artifacts._write_new_file(
+                    parent / ("x" * 10_000),
+                    b"private bytes",
+                )
+
+            self.assertEqual(
+                str(error.exception),
+                "artifact storage path is unsafe",
+            )
+            self.assertNotIn("private", str(error.exception))
+
+    def test_failed_write_removes_partial_artifact(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp, "artifact-1")
+
+            with patch.object(
+                local_artifacts,
+                "fdopen",
+                return_value=BrokenWriter(),
+            ):
+                with self.assertRaises(ArtifactStoreError) as error:
+                    local_artifacts._write_new_file(path, b"private bytes")
+
+            self.assertEqual(str(error.exception), "artifact write failed")
+            self.assertFalse(path.exists())
 
     async def test_references_cannot_escape_or_cross_store(self) -> None:
         with TemporaryDirectory() as tmp, TemporaryDirectory() as outside:
