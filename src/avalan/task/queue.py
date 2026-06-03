@@ -404,6 +404,16 @@ class TaskQueue(Protocol):
         metadata: Mapping[str, object] | None = None,
     ) -> TaskQueueRetry: ...
 
+    async def abandon(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        max_attempts: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueAbandonment: ...
+
     async def abandon_expired(
         self,
         queue_name: str,

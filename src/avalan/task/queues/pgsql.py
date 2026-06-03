@@ -685,6 +685,45 @@ class PgsqlTaskQueue:
             ),
         )
 
+    async def abandon(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        max_attempts: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueAbandonment:
+        _assert_non_empty_string(queue_item_id, "queue_item_id")
+        _assert_non_empty_string(claim_token, "claim_token")
+        _assert_positive_int(max_attempts, "max_attempts")
+        checked_at = _ensure_aware_utc(now or self._now())
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            queue_row = await _fenced_queue_item_row(
+                unit,
+                queue_item_id=queue_item_id,
+                claim_token=claim_token,
+                now=checked_at,
+            )
+            return await _abandon_claimed_queue_item(
+                unit,
+                queue_row=queue_row,
+                max_attempts=max_attempts,
+                now=checked_at,
+                metadata=safe_metadata,
+                new_id=self._new_id,
+            )
+
+        return cast(
+            TaskQueueAbandonment,
+            await self._transaction(
+                operation="task_queue_abandon",
+                callback=execute,
+            ),
+        )
+
     async def abandon_expired(
         self,
         queue_name: str,
@@ -708,66 +747,14 @@ class PgsqlTaskQueue:
             expired_rows = tuple(await unit.cursor.fetchall())
             abandonments = []
             for queue_row in expired_rows:
-                claim_token = _row_str(queue_row, "claim_token")
-                attempts = _row_int(queue_row, "attempts", 0)
-                run_from_state = _run_state(queue_row)
-                cancel_requested = (
-                    run_from_state == TaskRunState.CANCEL_REQUESTED
-                )
-                retryable = attempts < max_attempts and not cancel_requested
-                run_to_state = (
-                    TaskRunState.CANCELLED
-                    if cancel_requested
-                    else (
-                        TaskRunState.QUEUED
-                        if retryable
-                        else TaskRunState.FAILED
-                    )
-                )
-                queue_to_state = (
-                    TaskQueueItemState.AVAILABLE
-                    if retryable
-                    else TaskQueueItemState.DEAD
-                )
-                attempt = await _transition_claimed_attempt(
-                    unit,
-                    attempt_id=_row_str(queue_row, "last_attempt_id"),
-                    claim_token=claim_token,
-                    to_state=TaskAttemptState.ABANDONED,
-                    result=None,
-                    reason="abandoned",
-                    transition_id=self._new_id(),
-                    now=checked_at,
-                    metadata=safe_metadata,
-                )
-                run = await _transition_claimed_run(
-                    unit,
-                    run_id=_row_str(queue_row, "run_id"),
-                    claim_token=claim_token,
-                    from_state=run_from_state,
-                    to_state=run_to_state,
-                    result=None,
-                    reason="abandoned",
-                    transition_id=self._new_id(),
-                    now=checked_at,
-                    metadata=safe_metadata,
-                )
-                updated_queue = await _abandon_queue_item(
-                    unit,
-                    queue_item_id=_row_str(queue_row, "queue_item_id"),
-                    claim_token=claim_token,
-                    to_state=queue_to_state,
-                    available_at=checked_at,
-                    now=checked_at,
-                )
                 abandonments.append(
-                    TaskQueueAbandonment(
-                        queue_item=_queue_item_from_row(
-                            updated_queue,
-                            run_state=run.state,
-                        ),
-                        run=run,
-                        attempt=attempt,
+                    await _abandon_claimed_queue_item(
+                        unit,
+                        queue_row=queue_row,
+                        max_attempts=max_attempts,
+                        now=checked_at,
+                        metadata=safe_metadata,
+                        new_id=self._new_id,
                     )
                 )
             return tuple(abandonments)
@@ -1395,6 +1382,69 @@ async def _abandon_queue_item(
         claim_token=claim_token,
         to_state=to_state,
         now=now,
+    )
+
+
+async def _abandon_claimed_queue_item(
+    unit: PgsqlUnitOfWork,
+    *,
+    queue_row: PgsqlRow,
+    max_attempts: int,
+    now: datetime,
+    metadata: TaskSnapshotMetadata,
+    new_id: Callable[[], str],
+) -> TaskQueueAbandonment:
+    claim_token = _row_str(queue_row, "claim_token")
+    attempts = _row_int(queue_row, "attempts", 0)
+    run_from_state = _run_state(queue_row)
+    cancel_requested = run_from_state == TaskRunState.CANCEL_REQUESTED
+    retryable = attempts < max_attempts and not cancel_requested
+    run_to_state = (
+        TaskRunState.CANCELLED
+        if cancel_requested
+        else TaskRunState.QUEUED if retryable else TaskRunState.FAILED
+    )
+    queue_to_state = (
+        TaskQueueItemState.AVAILABLE if retryable else TaskQueueItemState.DEAD
+    )
+    attempt = await _transition_claimed_attempt(
+        unit,
+        attempt_id=_row_str(queue_row, "last_attempt_id"),
+        claim_token=claim_token,
+        to_state=TaskAttemptState.ABANDONED,
+        result=None,
+        reason="abandoned",
+        transition_id=new_id(),
+        now=now,
+        metadata=metadata,
+    )
+    run = await _transition_claimed_run(
+        unit,
+        run_id=_row_str(queue_row, "run_id"),
+        claim_token=claim_token,
+        from_state=run_from_state,
+        to_state=run_to_state,
+        result=None,
+        reason="abandoned",
+        transition_id=new_id(),
+        now=now,
+        metadata=metadata,
+    )
+    updated_queue = await _abandon_queue_item(
+        unit,
+        queue_item_id=_row_str(queue_row, "queue_item_id"),
+        claim_token=claim_token,
+        to_state=queue_to_state,
+        available_at=now,
+        now=now,
+    )
+    return TaskQueueAbandonment(
+        queue_item=_queue_item_from_row(
+            updated_queue,
+            run_state=run.state,
+        ),
+        run=run,
+        attempt=attempt,
     )
 
 

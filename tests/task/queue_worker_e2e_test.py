@@ -55,6 +55,7 @@ from avalan.task import (
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
+    TaskWorkerShutdown,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
@@ -241,6 +242,29 @@ class CancellingTarget(TaskTargetRunner):
         await self.cancel(context.execution.run_id)
         await context.check_cancelled()
         return "unused"
+
+
+class ShutdownOnceTarget(TaskTargetRunner):
+    def __init__(self, shutdown: TaskWorkerShutdown) -> None:
+        self.shutdown = shutdown
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        if len(self.inputs) == 1:
+            self.shutdown.request()
+            await context.check_cancelled()
+            return "unused"
+        await context.check_cancelled()
+        return "public answer"
 
 
 class InMemoryTaskQueue:
@@ -532,6 +556,71 @@ class InMemoryTaskQueue:
         return TaskQueueRetry(
             queue_item=updated,
             run=queued_run,
+            attempt=attempt,
+        )
+
+    async def abandon(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        max_attempts: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueAbandonment:
+        item = self.items[queue_item_id]
+        run = await self.store.get_run(item.run_id)
+        attempt = await self.store.transition_attempt(
+            run.last_attempt_id or "",
+            from_states={
+                TaskAttemptState.CREATED,
+                TaskAttemptState.RUNNING,
+            },
+            to_state=TaskAttemptState.ABANDONED,
+            reason="abandoned",
+            claim_token=claim_token,
+            metadata=metadata,
+        )
+        cancel_requested = run.state == TaskRunState.CANCEL_REQUESTED
+        retryable = (
+            attempt.attempt_number < max_attempts and not cancel_requested
+        )
+        next_run_state = (
+            TaskRunState.CANCELLED
+            if cancel_requested
+            else TaskRunState.QUEUED if retryable else TaskRunState.FAILED
+        )
+        abandoned_run = await self.store.transition_run(
+            run.run_id,
+            from_states={run.state},
+            to_state=next_run_state,
+            reason="abandoned",
+            claim_token=claim_token,
+            metadata=metadata,
+        )
+        if retryable:
+            abandoned_run = replace(abandoned_run, claim=None)
+            self.store._runs[run.run_id] = abandoned_run
+        updated = TaskQueueItem(
+            queue_item_id=item.queue_item_id,
+            run_id=item.run_id,
+            queue_name=item.queue_name,
+            state=(
+                TaskQueueItemState.AVAILABLE
+                if retryable
+                else TaskQueueItemState.DEAD
+            ),
+            priority=item.priority,
+            available_at=now or self.clock.now,
+            attempts=item.attempts,
+            created_at=item.created_at,
+            updated_at=now or self.clock.now,
+            run_state=abandoned_run.state,
+        )
+        self.items[queue_item_id] = updated
+        return TaskQueueAbandonment(
+            queue_item=updated,
+            run=abandoned_run,
             attempt=attempt,
         )
 
@@ -1320,6 +1409,67 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
         self.assertIn("cancellation", str(output.error))
         self.assertNotIn("private running prompt", str(inspection.as_dict()))
+
+    async def test_worker_shutdown_abandons_and_reclaims_queue_task(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        shutdown = TaskWorkerShutdown()
+        target = ShutdownOnceTarget(shutdown)
+        client = _client(store, queue, target=target, clock=clock)
+        stopping_worker = _worker(
+            store,
+            queue,
+            target=target,
+            shutdown=shutdown,
+            clock=clock,
+        )
+        replacement_worker = _worker(
+            store,
+            queue,
+            target=target,
+            clock=clock,
+        )
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private shutdown prompt",
+        )
+        abandoned = await stopping_worker.process_once()
+        pending = await client.inspect(submission.run.run_id)
+        pending_depth = await queue.depth("default")
+        completed = await replacement_worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        final_depth = await queue.depth("default")
+
+        self.assertTrue(abandoned.processed)
+        self.assertTrue(abandoned.shutdown_requested)
+        self.assertIsNotNone(abandoned.abandonment)
+        assert abandoned.abandonment is not None
+        self.assertTrue(abandoned.abandonment.retryable)
+        self.assertEqual(pending.run.state, TaskRunState.QUEUED)
+        self.assertEqual(len(pending.attempts), 1)
+        self.assertEqual(
+            pending.attempts[0].state,
+            TaskAttemptState.ABANDONED,
+        )
+        self.assertEqual(pending_depth.available, 1)
+        self.assertTrue(completed.processed)
+        self.assertIsNotNone(completed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(inspection.attempts), 2)
+        self.assertEqual(
+            inspection.attempts[1].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+        self.assertEqual(final_depth.active, 0)
+        self.assertEqual(final_depth.dead, 0)
+        self.assertEqual(len(target.inputs), 2)
+        self.assertNotIn("private shutdown prompt", str(inspection.as_dict()))
 
     async def test_scheduled_submission_waits_until_available(
         self,
@@ -2160,6 +2310,7 @@ def _worker(
     target: TaskTargetRunner,
     queue_name: str = "default",
     artifact_store: LocalArtifactStore | None = None,
+    shutdown: TaskWorkerShutdown | None = None,
     clock: Clock,
 ) -> TaskWorker:
     return TaskWorker(
@@ -2169,6 +2320,7 @@ def _worker(
         worker_id="worker-1",
         queue_name=queue_name,
         artifact_store=artifact_store,
+        shutdown=shutdown,
         clock=lambda: clock.now,
     )
 

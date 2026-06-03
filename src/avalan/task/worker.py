@@ -20,6 +20,7 @@ from .privacy import (
 )
 from .queue import (
     TaskQueue,
+    TaskQueueAbandonment,
     TaskQueueClaim,
     TaskQueueCompletion,
     TaskQueueRetry,
@@ -74,6 +75,10 @@ class TaskWorkerError(RuntimeError):
     pass
 
 
+class _TaskWorkerShutdownRequested(Exception):
+    pass
+
+
 class TaskQueuedTarget(Protocol):
     def __call__(
         self,
@@ -86,6 +91,7 @@ class TaskWorkerProcessResult:
     claimed: TaskQueueClaim | None = None
     completion: TaskQueueCompletion | None = None
     retry: TaskQueueRetry | None = None
+    abandonment: TaskQueueAbandonment | None = None
     output: object = None
     shutdown_requested: bool = False
 
@@ -196,6 +202,16 @@ class TaskWorker:
                 attempt=attempt,
                 sanitizer=sanitizer,
             )
+        except _TaskWorkerShutdownRequested:
+            abandonment = await self._finalize_shutdown(
+                definition,
+                claim=claim,
+            )
+            return TaskWorkerProcessResult(
+                claimed=claim,
+                abandonment=abandonment,
+                shutdown_requested=True,
+            )
         except (KeyboardInterrupt, SystemExit):  # pragma: no cover
             raise
         except BaseException as error:
@@ -262,7 +278,7 @@ class TaskWorker:
             claim=claim,
             timeout=definition.run.timeout_seconds,
         )
-        await self._check_cancelled(run.run_id)
+        await self._check_run_cancelled(run.run_id)
         issues = validate_task_output(definition, output)
         if issues:
             raise TaskValidationError(issues)
@@ -273,7 +289,7 @@ class TaskWorker:
             attempt=attempt,
             sanitizer=sanitizer,
         )
-        await self._check_cancelled(run.run_id)
+        await self._check_run_cancelled(run.run_id)
         return output
 
     async def _run_target(
@@ -316,10 +332,13 @@ class TaskWorker:
                 except BaseException:
                     await _cancel_task(target_task)
                     raise  # pragma: no cover
-            if shutdown_task is not None and shutdown_task in done:
                 await _cancel_task(target_task)
-                raise CancelledError()
-            return await target_task
+                raise _TaskWorkerShutdownRequested()  # pragma: no cover
+            if target_task in done:
+                return await target_task
+            assert shutdown_task is not None and shutdown_task in done
+            await _cancel_task(target_task)
+            raise _TaskWorkerShutdownRequested()  # pragma: no cover
         finally:
             if heartbeat_task is not None:
                 await _cancel_task(heartbeat_task)
@@ -464,6 +483,21 @@ class TaskWorker:
         )
         return None
 
+    async def _finalize_shutdown(
+        self,
+        definition: TaskDefinition,
+        *,
+        claim: TaskQueueClaim,
+    ) -> TaskQueueAbandonment:
+        policy = TaskAttemptPolicy.from_retry_policy(definition.retry)
+        return await self._queue.abandon(
+            claim.queue_item.queue_item_id,
+            claim_token=claim.queue_item.claim_token or "",
+            max_attempts=policy.max_attempts,
+            now=self._now(),
+            metadata={"worker_id": self._worker_id, "reason": "shutdown"},
+        )
+
     async def _input_files(self, run_id: str) -> tuple[TaskInputFile, ...]:
         records = await self._store.list_artifacts(
             run_id,
@@ -586,7 +620,10 @@ class TaskWorker:
 
     async def _check_cancelled(self, run_id: str) -> None:
         if self._shutdown_requested():
-            raise CancelledError()
+            raise _TaskWorkerShutdownRequested()
+        await self._check_run_cancelled(run_id)
+
+    async def _check_run_cancelled(self, run_id: str) -> None:
         run = await self._store.get_run(run_id)
         if run.state == TaskRunState.CANCEL_REQUESTED:
             raise CancelledError()

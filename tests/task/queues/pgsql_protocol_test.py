@@ -2237,6 +2237,86 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             TaskAttemptState.RUNNING.value,
         )
 
+    async def test_abandon_releases_active_claim_for_reclaim(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+        abandoned = await self.queue.abandon(
+            "manual-ready",
+            claim_token=claim.queue_item.claim_token or "",
+            max_attempts=2,
+            now=self.now + timedelta(seconds=1),
+            metadata={"source": "worker"},
+        )
+
+        self.assertTrue(abandoned.retryable)
+        self.assertEqual(
+            abandoned.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertEqual(abandoned.run.state, TaskRunState.QUEUED)
+        self.assertIsNone(abandoned.run.claim)
+        self.assertEqual(
+            abandoned.attempt.state,
+            TaskAttemptState.ABANDONED,
+        )
+        self.assertIsNone(
+            self.database.queue_items["manual-ready"]["claim_token"],
+        )
+        self.assertEqual(
+            self.database.attempt_transitions["id-4"]["metadata"]["source"],
+            "worker",
+        )
+        self.assertEqual(
+            self.database.run_transitions["id-5"]["from_state"],
+            TaskRunState.RUNNING.value,
+        )
+
+        second_claim = await self.queue.claim(
+            "default",
+            worker_id="worker-2",
+            lease_expires_at=self.now + timedelta(minutes=10),
+            now=self.now + timedelta(seconds=2),
+        )
+
+        self.assertIsNotNone(second_claim)
+        assert second_claim is not None
+        self.assertEqual(second_claim.attempt.attempt_number, 2)
+
+    async def test_abandon_rejects_stale_claim_token(self) -> None:
+        await self._claim_ready_running_attempt()
+        previous = self.database.snapshot()
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.abandon(
+                "manual-ready",
+                claim_token="stale",
+                max_attempts=2,
+                now=self.now + timedelta(seconds=1),
+            )
+
+        self.assertEqual(self.database.snapshot(), previous)
+
+    async def test_abandon_exhaustion_finishes_failed_run(self) -> None:
+        claim = await self._claim_ready_running_attempt()
+
+        abandoned = await self.queue.abandon(
+            "manual-ready",
+            claim_token=claim.queue_item.claim_token or "",
+            max_attempts=1,
+            now=self.now + timedelta(seconds=1),
+        )
+
+        self.assertFalse(abandoned.retryable)
+        self.assertEqual(
+            abandoned.queue_item.state,
+            TaskQueueItemState.DEAD,
+        )
+        self.assertEqual(abandoned.run.state, TaskRunState.FAILED)
+        self.assertIsNone(abandoned.run.claim)
+        self.assertEqual(
+            abandoned.attempt.state,
+            TaskAttemptState.ABANDONED,
+        )
+
     async def test_abandon_expired_claims_counts_toward_limit(self) -> None:
         self._add_queue_item(
             "manual-ready",

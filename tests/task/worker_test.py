@@ -1,5 +1,6 @@
-from asyncio import CancelledError, Event, TimeoutError, sleep
+from asyncio import CancelledError, Event, TimeoutError, create_task, sleep
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
@@ -48,7 +49,12 @@ from avalan.task import (
 from avalan.task.error import classify_task_error
 from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
-from avalan.task.worker import _target_runner, _utc_now, _worker_id
+from avalan.task.worker import (
+    _target_runner,
+    _TaskWorkerShutdownRequested,
+    _utc_now,
+    _worker_id,
+)
 
 
 class FakeTarget(TaskTargetRunner):
@@ -80,6 +86,23 @@ class WaitingTarget(FakeTarget):
         while True:
             await sleep(0)
             await context.check_cancelled()
+
+
+class PassiveWaitingTarget(FakeTarget):
+    def __init__(self) -> None:
+        super().__init__("done")
+        self.started = Event()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        self.started.set()
+        while True:
+            await sleep(0)
+
+
+class DelayedWaitShutdown(TaskWorkerShutdown):
+    async def wait(self) -> None:
+        await sleep(1)
 
 
 class InvalidTarget(FakeTarget):
@@ -128,6 +151,7 @@ class FakeQueue:
         self.item: TaskQueueItem | None = None
         self.completed: TaskQueueCompletion | None = None
         self.retried: TaskQueueRetry | None = None
+        self.abandoned: TaskQueueAbandonment | None = None
         self.heartbeats: list[datetime] = []
         self.heartbeat_error: BaseException | None = None
         self.heartbeat_shutdown: TaskWorkerShutdown | None = None
@@ -348,6 +372,73 @@ class FakeQueue:
             attempt=attempt,
         )
         return self.retried
+
+    async def abandon(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        max_attempts: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueAbandonment:
+        assert self.item is not None
+        assert self.item.queue_item_id == queue_item_id
+        current_run = await self.store.get_run(self.item.run_id)
+        attempt_id = current_run.last_attempt_id
+        attempt = await self.store.transition_attempt(
+            attempt_id or "",
+            from_states={
+                TaskAttemptState.CREATED,
+                TaskAttemptState.RUNNING,
+            },
+            to_state=TaskAttemptState.ABANDONED,
+            reason="abandoned",
+            claim_token=claim_token,
+            metadata=metadata,
+        )
+        cancel_requested = current_run.state == TaskRunState.CANCEL_REQUESTED
+        retryable = (
+            attempt.attempt_number < max_attempts and not cancel_requested
+        )
+        run_state = (
+            TaskRunState.CANCELLED
+            if cancel_requested
+            else TaskRunState.QUEUED if retryable else TaskRunState.FAILED
+        )
+        run = await self.store.transition_run(
+            self.item.run_id,
+            from_states={current_run.state},
+            to_state=run_state,
+            reason="abandoned",
+            claim_token=claim_token,
+            metadata=metadata,
+        )
+        if retryable:
+            run = replace(run, claim=None)
+            self.store._runs[run.run_id] = run
+        self.item = TaskQueueItem(
+            queue_item_id=self.item.queue_item_id,
+            run_id=run.run_id,
+            queue_name=self.item.queue_name,
+            state=(
+                TaskQueueItemState.AVAILABLE
+                if retryable
+                else TaskQueueItemState.DEAD
+            ),
+            priority=self.item.priority,
+            available_at=now or self.now,
+            attempts=self.item.attempts,
+            created_at=self.item.created_at,
+            updated_at=now or self.now,
+            run_state=run.state,
+        )
+        self.abandoned = TaskQueueAbandonment(
+            queue_item=self.item,
+            run=run,
+            attempt=attempt,
+        )
+        return self.abandoned
 
     async def abandon_expired(
         self,
@@ -720,7 +811,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         assert self.queue.item is not None
         self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
 
-    async def test_process_once_finalizes_active_shutdown_as_cancelled(
+    async def test_process_once_abandons_active_shutdown_for_reclaim(
         self,
     ) -> None:
         shutdown = TaskWorkerShutdown()
@@ -744,15 +835,56 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         result = await worker.process_once()
 
         self.assertTrue(result.processed)
-        self.assertIsNotNone(self.queue.completed)
-        assert self.queue.completed is not None
+        self.assertTrue(result.shutdown_requested)
+        self.assertIsNotNone(result.abandonment)
+        assert result.abandonment is not None
+        self.assertIsNone(self.queue.completed)
+        self.assertTrue(result.abandonment.retryable)
         self.assertEqual(
-            self.queue.completed.run.state,
-            TaskRunState.CANCELLED,
+            result.abandonment.run.state,
+            TaskRunState.QUEUED,
         )
         self.assertEqual(
-            self.queue.completed.attempt.state,
-            TaskAttemptState.FAILED,
+            result.abandonment.attempt.state,
+            TaskAttemptState.ABANDONED,
+        )
+        assert self.queue.item is not None
+        self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
+
+    async def test_process_once_shutdown_abandon_can_exhaust_attempts(
+        self,
+    ) -> None:
+        await self._use_definition(
+            _definition(retry=TaskRetryPolicy(max_attempts=1))
+        )
+        shutdown = TaskWorkerShutdown()
+
+        class ShutdownTarget(FakeTarget):
+            async def run(self, context: TaskTargetContext) -> object:
+                self.contexts.append(context)
+                shutdown.request()
+                await context.check_cancelled()
+                return "unreachable"
+
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=ShutdownTarget(),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.abandonment)
+        assert result.abandonment is not None
+        self.assertFalse(result.abandonment.retryable)
+        self.assertEqual(result.abandonment.run.state, TaskRunState.FAILED)
+        self.assertEqual(
+            result.abandonment.queue_item.state,
+            TaskQueueItemState.DEAD,
         )
 
     async def test_process_once_stops_heartbeat_on_shutdown(self) -> None:
@@ -772,11 +904,15 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
 
         self.assertTrue(result.processed)
         self.assertEqual(len(self.queue.heartbeats), 1)
-        self.assertIsNotNone(self.queue.completed)
-        assert self.queue.completed is not None
+        self.assertIsNotNone(result.abandonment)
+        assert result.abandonment is not None
         self.assertEqual(
-            self.queue.completed.run.state,
-            TaskRunState.CANCELLED,
+            result.abandonment.run.state,
+            TaskRunState.QUEUED,
+        )
+        self.assertEqual(
+            result.abandonment.attempt.state,
+            TaskAttemptState.ABANDONED,
         )
 
     async def test_process_once_finalizes_heartbeat_failure(self) -> None:
@@ -823,6 +959,56 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             )
 
         self.assertFalse(shutdown.requested)
+
+    async def test_run_target_shutdown_cancels_running_target(self) -> None:
+        shutdown = TaskWorkerShutdown()
+        target = PassiveWaitingTarget()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+        claim = await self._claim()
+        running = create_task(
+            worker._run_target(
+                self._target_context(claim),
+                claim=claim,
+                timeout=1,
+            )
+        )
+
+        await target.started.wait()
+        shutdown.request()
+
+        with self.assertRaises(_TaskWorkerShutdownRequested):
+            await running
+
+    async def test_run_target_heartbeat_shutdown_cancels_running_target(
+        self,
+    ) -> None:
+        shutdown = DelayedWaitShutdown()
+        shutdown.request()
+        target = PassiveWaitingTarget()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            shutdown=shutdown,
+            heartbeat_seconds=0.001,
+            clock=lambda: self.now,
+        )
+        claim = await self._claim()
+
+        with self.assertRaises(_TaskWorkerShutdownRequested):
+            await worker._run_target(
+                self._target_context(claim),
+                claim=claim,
+                timeout=1,
+            )
 
     async def test_run_target_returns_with_heartbeat_enabled(self) -> None:
         worker = TaskWorker(
