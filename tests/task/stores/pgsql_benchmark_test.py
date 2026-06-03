@@ -9,9 +9,12 @@ from avalan.task.stores.pgsql_benchmark import (
     TaskPgsqlBenchmarkCase,
     TaskPgsqlBenchmarkOperation,
     TaskPgsqlBenchmarkSettings,
+    TaskPgsqlEventVolumeProfile,
     TaskPgsqlQueueLoadProfile,
     task_pgsql_benchmark_cases,
     task_pgsql_benchmark_metadata,
+    task_pgsql_event_volume_issues,
+    task_pgsql_event_volume_metadata,
     task_pgsql_explain_statement,
     task_pgsql_plan_issues,
     task_pgsql_queue_load_issues,
@@ -111,6 +114,25 @@ class PgsqlBenchmarkCaseTest(TestCase):
         self.assertNotIn("min_claims_per_second", metadata)
         self.assertNotIn("claims_per_second", metadata)
 
+    def test_event_volume_metadata_records_rollout_profile(self) -> None:
+        profile = TaskPgsqlEventVolumeProfile(
+            run_count=10_000,
+            max_events_per_run=250,
+            retention_days=30,
+            max_unpartitioned_event_rows=5_000_000,
+            postgresql_version="16.3",
+        )
+
+        metadata = task_pgsql_event_volume_metadata(profile)
+
+        self.assertEqual(metadata["run_count"], 10_000)
+        self.assertEqual(metadata["max_events_per_run"], 250)
+        self.assertEqual(metadata["expected_event_rows"], 2_500_000)
+        self.assertEqual(metadata["retention_days"], 30)
+        self.assertEqual(metadata["max_unpartitioned_event_rows"], 5_000_000)
+        self.assertFalse(metadata["partitioning_enabled"])
+        self.assertEqual(metadata["postgresql_version"], "16.3")
+
     def test_queue_load_issues_accept_clean_measurement(self) -> None:
         profile = TaskPgsqlQueueLoadProfile(
             worker_count=2,
@@ -168,6 +190,78 @@ class PgsqlBenchmarkCaseTest(TestCase):
                 "queue.claim_throughput_low",
             ),
         )
+
+    def test_event_volume_issues_accept_indexed_unpartitioned_profile(
+        self,
+    ) -> None:
+        profile = TaskPgsqlEventVolumeProfile(
+            run_count=100,
+            max_events_per_run=100,
+            retention_days=14,
+            max_unpartitioned_event_rows=100_000,
+            postgresql_version="16.3",
+        )
+        index_plan = (
+            "Index Scan using ix_task_events_by_run_sequence on task_events",
+        )
+
+        issues = task_pgsql_event_volume_issues(
+            profile,
+            append_plan_lines=index_plan,
+            fetch_plan_lines=index_plan,
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_event_volume_issues_detect_partition_and_plan_regressions(
+        self,
+    ) -> None:
+        profile = TaskPgsqlEventVolumeProfile(
+            run_count=2_000,
+            max_events_per_run=1_000,
+            retention_days=90,
+            max_unpartitioned_event_rows=1_000_000,
+            postgresql_version="16.3",
+        )
+
+        issues = task_pgsql_event_volume_issues(
+            profile,
+            append_plan_lines=("Seq Scan on task_events",),
+            fetch_plan_lines=(),
+        )
+
+        self.assertEqual(
+            issues,
+            (
+                "event.partitioning_required",
+                "event.append_missing_index",
+                "event.append_unbounded_scan",
+                "event.fetch_missing_index",
+            ),
+        )
+
+    def test_event_volume_issues_allow_explicit_partitioned_profile(
+        self,
+    ) -> None:
+        profile = TaskPgsqlEventVolumeProfile(
+            run_count=2_000,
+            max_events_per_run=1_000,
+            retention_days=90,
+            max_unpartitioned_event_rows=1_000_000,
+            postgresql_version="16.3",
+            partitioning_enabled=True,
+        )
+        index_plan = (
+            "Index Scan using ix_task_events_by_run_sequence on task_events",
+        )
+
+        issues = task_pgsql_event_volume_issues(
+            profile,
+            append_plan_lines=index_plan,
+            fetch_plan_lines=index_plan,
+        )
+
+        self.assertEqual(issues, ())
 
     def test_explain_statement_can_enable_analyze_explicitly(self) -> None:
         benchmark_case = self._case(TaskPgsqlBenchmarkOperation.RUN_CREATION)
@@ -281,6 +375,27 @@ class PgsqlBenchmarkCaseTest(TestCase):
                 stale_token_commits=0,
                 reaped_claims=0,
                 elapsed_seconds=1.0,
+            )
+        with self.assertRaises(AssertionError):
+            TaskPgsqlEventVolumeProfile(
+                run_count=0,
+                max_events_per_run=1,
+                retention_days=1,
+                max_unpartitioned_event_rows=1,
+                postgresql_version="16",
+            )
+        event_profile = TaskPgsqlEventVolumeProfile(
+            run_count=1,
+            max_events_per_run=1,
+            retention_days=1,
+            max_unpartitioned_event_rows=1,
+            postgresql_version="16",
+        )
+        with self.assertRaises(AssertionError):
+            task_pgsql_event_volume_issues(
+                event_profile,
+                append_plan_lines="Seq Scan on task_events",
+                fetch_plan_lines=(),
             )
         with self.assertRaises(AssertionError):
             task_pgsql_queue_load_issues(

@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from pathlib import Path
 from sys import modules
 from types import SimpleNamespace
 from typing import cast
@@ -268,6 +269,21 @@ class PgsqlMigrationSchemaTest(TestCase):
                 "token",
                 table_alias="bad-alias",
             )
+
+    def test_operational_docs_cover_event_volume_and_recovery(self) -> None:
+        docs_path = Path(__file__).parents[3] / "docs" / "TASK_POSTGRESQL.md"
+        docs = docs_path.read_text()
+
+        for required_text in (
+            "single `task_events` table",
+            "5 million rows per schema",
+            "ix_task_events_by_run_sequence",
+            "forward migration fails",
+            "corrective forward revision",
+            "`stamp` only after manually verifying",
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, docs)
 
 
 class PgsqlMigrationHelperTest(TestCase):

@@ -95,6 +95,37 @@ class TaskPgsqlQueueLoadProfile:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TaskPgsqlEventVolumeProfile:
+    run_count: int
+    max_events_per_run: int
+    retention_days: int
+    max_unpartitioned_event_rows: int
+    postgresql_version: str
+    partitioning_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        _assert_positive_int(self.run_count, "run_count")
+        _assert_positive_int(
+            self.max_events_per_run,
+            "max_events_per_run",
+        )
+        _assert_positive_int(self.retention_days, "retention_days")
+        _assert_positive_int(
+            self.max_unpartitioned_event_rows,
+            "max_unpartitioned_event_rows",
+        )
+        _assert_non_empty_string(
+            self.postgresql_version,
+            "postgresql_version",
+        )
+        assert isinstance(self.partitioning_enabled, bool)
+
+    @property
+    def expected_event_rows(self) -> int:
+        return self.run_count * self.max_events_per_run
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TaskPgsqlBenchmarkCase:
     operation: TaskPgsqlBenchmarkOperation
     statement: str
@@ -280,6 +311,21 @@ def task_pgsql_queue_load_metadata(
     return metadata
 
 
+def task_pgsql_event_volume_metadata(
+    profile: TaskPgsqlEventVolumeProfile,
+) -> dict[str, object]:
+    assert isinstance(profile, TaskPgsqlEventVolumeProfile)
+    return {
+        "run_count": profile.run_count,
+        "max_events_per_run": profile.max_events_per_run,
+        "expected_event_rows": profile.expected_event_rows,
+        "retention_days": profile.retention_days,
+        "max_unpartitioned_event_rows": profile.max_unpartitioned_event_rows,
+        "partitioning_enabled": profile.partitioning_enabled,
+        "postgresql_version": profile.postgresql_version,
+    }
+
+
 def task_pgsql_queue_load_issues(
     profile: TaskPgsqlQueueLoadProfile,
     *,
@@ -322,6 +368,34 @@ def task_pgsql_queue_load_issues(
     return tuple(dict.fromkeys(issues))
 
 
+def task_pgsql_event_volume_issues(
+    profile: TaskPgsqlEventVolumeProfile,
+    *,
+    append_plan_lines: Iterable[str],
+    fetch_plan_lines: Iterable[str],
+) -> tuple[str, ...]:
+    assert isinstance(profile, TaskPgsqlEventVolumeProfile)
+    issues: list[str] = []
+    if (
+        profile.expected_event_rows > profile.max_unpartitioned_event_rows
+        and not profile.partitioning_enabled
+    ):
+        issues.append("event.partitioning_required")
+    issues.extend(
+        _event_plan_issues(
+            append_plan_lines,
+            prefix="event.append",
+        )
+    )
+    issues.extend(
+        _event_plan_issues(
+            fetch_plan_lines,
+            prefix="event.fetch",
+        )
+    )
+    return tuple(dict.fromkeys(issues))
+
+
 def task_pgsql_plan_issues(
     benchmark_case: TaskPgsqlBenchmarkCase,
     plan_lines: Iterable[str],
@@ -342,6 +416,24 @@ def task_pgsql_plan_issues(
     ):
         issues.append("plan.duplicate_claim_risk")
     return tuple(dict.fromkeys(issues))
+
+
+def _event_plan_issues(
+    plan_lines: Iterable[str],
+    *,
+    prefix: str,
+) -> tuple[str, ...]:
+    assert isinstance(plan_lines, Iterable)
+    assert not isinstance(plan_lines, str)
+    _assert_non_empty_string(prefix, "prefix")
+    lines = tuple(_safe_plan_line(line) for line in plan_lines)
+    plan = "\n".join(line for line in lines if line)
+    issues: list[str] = []
+    if "ix_task_events_by_run_sequence" not in plan:
+        issues.append(f"{prefix}_missing_index")
+    if "Seq Scan" in plan:
+        issues.append(f"{prefix}_unbounded_scan")
+    return tuple(issues)
 
 
 def _safe_plan_line(line: object) -> str:

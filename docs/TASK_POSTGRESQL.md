@@ -40,6 +40,14 @@ lock key is stable for task migrations and independent from memory migration
 locks. Helpers should expose `upgrade`, `current`, `check`, and `stamp` so
 operators can apply, inspect, validate, or intentionally mark schema state.
 
+Before applying production migrations, take a database snapshot or provider
+backup and run `avalan task pgsql check` against the target schema. If a
+forward migration fails after partial infrastructure rollout, restore the
+database backup or apply a new corrective forward revision, then run
+`avalan task pgsql check` again. Use `stamp` only after manually verifying
+that the live schema already matches the intended revision; stamping is not a
+repair mechanism for mismatched objects.
+
 ## Schema Shape
 
 Task rows keep privacy-sanitized snapshots in JSONB only where the structure is
@@ -53,6 +61,16 @@ state, priority, availability, worker id, claim token, heartbeat time, lease
 expiry, attempt counts, artifact byte retention deadlines, and usage counters
 are indexed as columns rather than extracted from JSONB during queue, worker,
 retention, or inspection paths.
+
+Task events use a single `task_events` table with a unique `(run_id,
+sequence)` constraint and indexes for incremental run and attempt inspection.
+This layout is the default profile for deployments that keep retained task
+events below 5 million rows per schema and whose EXPLAIN plans for append and
+incremental fetch use `ix_task_events_by_run_sequence`. Above that threshold,
+or when plans show sequential scans on `task_events`, introduce a forward
+partitioning revision before increasing retention or worker throughput. The
+partitioning key should preserve ordered per-run fetches and keep sanitized
+payloads separate from lifecycle transition state.
 
 Artifact byte rows store encrypted bytes only with explicit key id, algorithm,
 encryption metadata, retention days, and a concrete retention deadline. Cleanup
@@ -127,6 +145,12 @@ idempotency reservation, enqueue, claim, heartbeat, event append, inspection
 fetch, and retention sweeps. Plan checks are designed to flag missing indexes,
 unbounded scans, duplicate-claim risk, and inspection fetch regressions without
 executing user workloads.
+
+For event-volume checks, record the expected retained run count, maximum events
+per run, retention window, PostgreSQL version, and the maximum unpartitioned
+event-row threshold for the schema. A profile that exceeds the threshold must
+either enable a partitioned event table revision or keep retention and worker
+throughput capped until the forward revision has been applied and checked.
 
 Set `AVALAN_TASK_LOAD_POSTGRESQL_DSN` to run the opt-in queue load profile.
 The load profile records worker count, run count, queue count, lease duration,

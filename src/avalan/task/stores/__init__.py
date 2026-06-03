@@ -27,6 +27,9 @@ from .pgsql_benchmark import (
     TaskPgsqlBenchmarkSettings as TaskPgsqlBenchmarkSettings,
 )
 from .pgsql_benchmark import (
+    TaskPgsqlEventVolumeProfile as TaskPgsqlEventVolumeProfile,
+)
+from .pgsql_benchmark import (
     TaskPgsqlQueueLoadProfile as TaskPgsqlQueueLoadProfile,
 )
 from .pgsql_benchmark import (
@@ -34,6 +37,12 @@ from .pgsql_benchmark import (
 )
 from .pgsql_benchmark import (
     task_pgsql_benchmark_metadata as task_pgsql_benchmark_metadata,
+)
+from .pgsql_benchmark import (
+    task_pgsql_event_volume_issues as task_pgsql_event_volume_issues,
+)
+from .pgsql_benchmark import (
+    task_pgsql_event_volume_metadata as task_pgsql_event_volume_metadata,
 )
 from .pgsql_benchmark import (
     task_pgsql_explain_statement as task_pgsql_explain_statement,
