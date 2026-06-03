@@ -9,10 +9,13 @@ from avalan.task.stores.pgsql_benchmark import (
     TaskPgsqlBenchmarkCase,
     TaskPgsqlBenchmarkOperation,
     TaskPgsqlBenchmarkSettings,
+    TaskPgsqlQueueLoadProfile,
     task_pgsql_benchmark_cases,
     task_pgsql_benchmark_metadata,
     task_pgsql_explain_statement,
     task_pgsql_plan_issues,
+    task_pgsql_queue_load_issues,
+    task_pgsql_queue_load_metadata,
 )
 
 
@@ -59,6 +62,112 @@ class PgsqlBenchmarkCaseTest(TestCase):
         self.assertEqual(metadata["pool_size"], 8)
         self.assertEqual(metadata["postgresql_version"], "16.3")
         self.assertEqual(metadata["thresholds"], {"claim": 25.0})
+
+    def test_queue_load_metadata_records_operational_profile(self) -> None:
+        profile = TaskPgsqlQueueLoadProfile(
+            worker_count=4,
+            run_count=100,
+            queue_count=2,
+            lease_seconds=30,
+            max_attempts=3,
+            abandon_limit=25,
+            pool_size=8,
+            postgresql_version="16.3",
+            retry_delay_seconds=5,
+            min_claims_per_second=20.0,
+        )
+
+        metadata = task_pgsql_queue_load_metadata(
+            profile,
+            elapsed_seconds=4.0,
+        )
+
+        self.assertEqual(metadata["worker_count"], 4)
+        self.assertEqual(metadata["run_count"], 100)
+        self.assertEqual(metadata["queue_count"], 2)
+        self.assertEqual(metadata["lease_seconds"], 30)
+        self.assertEqual(metadata["max_attempts"], 3)
+        self.assertEqual(metadata["abandon_limit"], 25)
+        self.assertEqual(metadata["pool_size"], 8)
+        self.assertEqual(metadata["postgresql_version"], "16.3")
+        self.assertEqual(metadata["retry_delay_seconds"], 5)
+        self.assertEqual(metadata["min_claims_per_second"], 20.0)
+        self.assertEqual(metadata["claims_per_second"], 25.0)
+
+    def test_queue_load_metadata_allows_unthresholded_profiles(self) -> None:
+        profile = TaskPgsqlQueueLoadProfile(
+            worker_count=1,
+            run_count=1,
+            queue_count=1,
+            lease_seconds=30,
+            max_attempts=1,
+            abandon_limit=1,
+            pool_size=1,
+            postgresql_version="16.3",
+        )
+
+        metadata = task_pgsql_queue_load_metadata(profile)
+
+        self.assertNotIn("min_claims_per_second", metadata)
+        self.assertNotIn("claims_per_second", metadata)
+
+    def test_queue_load_issues_accept_clean_measurement(self) -> None:
+        profile = TaskPgsqlQueueLoadProfile(
+            worker_count=2,
+            run_count=3,
+            queue_count=1,
+            lease_seconds=30,
+            max_attempts=2,
+            abandon_limit=2,
+            pool_size=4,
+            postgresql_version="16.3",
+            min_claims_per_second=1.0,
+        )
+
+        issues = task_pgsql_queue_load_issues(
+            profile,
+            claimed_run_ids=("run-1", "run-2", "run-3"),
+            attempt_count=3,
+            stale_token_commits=0,
+            reaped_claims=2,
+            elapsed_seconds=1.0,
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_queue_load_issues_detect_delivery_regressions(self) -> None:
+        profile = TaskPgsqlQueueLoadProfile(
+            worker_count=2,
+            run_count=4,
+            queue_count=2,
+            lease_seconds=30,
+            max_attempts=2,
+            abandon_limit=1,
+            pool_size=4,
+            postgresql_version="16.3",
+            min_claims_per_second=10.0,
+        )
+
+        issues = task_pgsql_queue_load_issues(
+            profile,
+            claimed_run_ids=("run-1", "run-1", "run-2"),
+            attempt_count=1,
+            stale_token_commits=1,
+            reaped_claims=2,
+            elapsed_seconds=1.0,
+        )
+
+        self.assertEqual(
+            issues,
+            (
+                "queue.duplicate_claim",
+                "queue.claims_missing",
+                "queue.lost_attempt",
+                "queue.stale_token_commit",
+                "queue.reaper_unbounded",
+                "queue.claim_throughput_low",
+            ),
+        )
 
     def test_explain_statement_can_enable_analyze_explicitly(self) -> None:
         benchmark_case = self._case(TaskPgsqlBenchmarkOperation.RUN_CREATION)
@@ -137,6 +246,50 @@ class PgsqlBenchmarkCaseTest(TestCase):
                 operation=TaskPgsqlBenchmarkOperation.CLAIM,
                 statement='SELECT "queue_item_id"',
                 parameters=(("bad-name", "value"),),
+            )
+        with self.assertRaises(AssertionError):
+            TaskPgsqlQueueLoadProfile(
+                worker_count=1,
+                run_count=1,
+                queue_count=1,
+                lease_seconds=30,
+                max_attempts=1,
+                abandon_limit=2,
+                pool_size=1,
+                postgresql_version="16",
+            )
+        profile = TaskPgsqlQueueLoadProfile(
+            worker_count=1,
+            run_count=1,
+            queue_count=1,
+            lease_seconds=30,
+            max_attempts=1,
+            abandon_limit=1,
+            pool_size=1,
+            postgresql_version="16",
+        )
+        with self.assertRaises(AssertionError):
+            task_pgsql_queue_load_metadata(
+                profile,
+                elapsed_seconds=0.0,
+            )
+        with self.assertRaises(AssertionError):
+            task_pgsql_queue_load_issues(
+                profile,
+                claimed_run_ids="run-1",
+                attempt_count=1,
+                stale_token_commits=0,
+                reaped_claims=0,
+                elapsed_seconds=1.0,
+            )
+        with self.assertRaises(AssertionError):
+            task_pgsql_queue_load_issues(
+                profile,
+                claimed_run_ids=("run-1",),
+                attempt_count=-1,
+                stale_token_commits=0,
+                reaped_claims=0,
+                elapsed_seconds=1.0,
             )
 
     def _case(

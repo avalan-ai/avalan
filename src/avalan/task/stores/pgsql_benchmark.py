@@ -3,6 +3,12 @@ from ...types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 from ...types import (
+    assert_non_negative_int as _assert_non_negative_int,
+)
+from ...types import (
+    assert_optional_positive_number as _assert_optional_positive_number,
+)
+from ...types import (
     assert_positive_int as _assert_positive_int,
 )
 
@@ -48,6 +54,44 @@ class TaskPgsqlBenchmarkSettings:
             assert isinstance(threshold, int | float)
             assert not isinstance(threshold, bool)
             assert threshold > 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskPgsqlQueueLoadProfile:
+    worker_count: int
+    run_count: int
+    queue_count: int
+    lease_seconds: int
+    max_attempts: int
+    abandon_limit: int
+    pool_size: int
+    postgresql_version: str
+    retry_delay_seconds: int = 0
+    min_claims_per_second: float | None = None
+
+    def __post_init__(self) -> None:
+        _assert_positive_int(self.worker_count, "worker_count")
+        _assert_positive_int(self.run_count, "run_count")
+        _assert_positive_int(self.queue_count, "queue_count")
+        _assert_positive_int(self.lease_seconds, "lease_seconds")
+        _assert_positive_int(self.max_attempts, "max_attempts")
+        _assert_positive_int(self.abandon_limit, "abandon_limit")
+        assert (
+            self.abandon_limit <= self.run_count
+        ), "abandon_limit must not exceed run_count"
+        _assert_positive_int(self.pool_size, "pool_size")
+        _assert_non_empty_string(
+            self.postgresql_version,
+            "postgresql_version",
+        )
+        _assert_non_negative_int(
+            self.retry_delay_seconds,
+            "retry_delay_seconds",
+        )
+        _assert_optional_positive_number(
+            self.min_claims_per_second,
+            "min_claims_per_second",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -208,6 +252,74 @@ def task_pgsql_benchmark_metadata(
             for operation, threshold in settings.thresholds.items()
         },
     }
+
+
+def task_pgsql_queue_load_metadata(
+    profile: TaskPgsqlQueueLoadProfile,
+    *,
+    elapsed_seconds: float | None = None,
+) -> dict[str, object]:
+    assert isinstance(profile, TaskPgsqlQueueLoadProfile)
+    _assert_optional_positive_number(elapsed_seconds, "elapsed_seconds")
+    metadata: dict[str, object] = {
+        "worker_count": profile.worker_count,
+        "run_count": profile.run_count,
+        "queue_count": profile.queue_count,
+        "lease_seconds": profile.lease_seconds,
+        "max_attempts": profile.max_attempts,
+        "abandon_limit": profile.abandon_limit,
+        "pool_size": profile.pool_size,
+        "postgresql_version": profile.postgresql_version,
+        "retry_delay_seconds": profile.retry_delay_seconds,
+    }
+    if profile.min_claims_per_second is not None:
+        metadata["min_claims_per_second"] = profile.min_claims_per_second
+    if elapsed_seconds is not None:
+        metadata["elapsed_seconds"] = elapsed_seconds
+        metadata["claims_per_second"] = profile.run_count / elapsed_seconds
+    return metadata
+
+
+def task_pgsql_queue_load_issues(
+    profile: TaskPgsqlQueueLoadProfile,
+    *,
+    claimed_run_ids: Iterable[str],
+    attempt_count: int,
+    stale_token_commits: int,
+    reaped_claims: int,
+    elapsed_seconds: float,
+) -> tuple[str, ...]:
+    assert isinstance(profile, TaskPgsqlQueueLoadProfile)
+    assert isinstance(claimed_run_ids, Iterable)
+    assert not isinstance(claimed_run_ids, str)
+    _assert_non_negative_int(attempt_count, "attempt_count")
+    _assert_non_negative_int(
+        stale_token_commits,
+        "stale_token_commits",
+    )
+    _assert_non_negative_int(reaped_claims, "reaped_claims")
+    _assert_optional_positive_number(elapsed_seconds, "elapsed_seconds")
+    claims = tuple(claimed_run_ids)
+    for run_id in claims:
+        _assert_non_empty_string(run_id, "claimed_run_id")
+    unique_claims = set(claims)
+    issues: list[str] = []
+    if len(unique_claims) != len(claims):
+        issues.append("queue.duplicate_claim")
+    if len(unique_claims) < profile.run_count:
+        issues.append("queue.claims_missing")
+    if attempt_count < len(unique_claims):
+        issues.append("queue.lost_attempt")
+    if stale_token_commits:
+        issues.append("queue.stale_token_commit")
+    if reaped_claims > profile.abandon_limit:
+        issues.append("queue.reaper_unbounded")
+    if (
+        profile.min_claims_per_second is not None
+        and len(claims) / elapsed_seconds < profile.min_claims_per_second
+    ):
+        issues.append("queue.claim_throughput_low")
+    return tuple(dict.fromkeys(issues))
 
 
 def task_pgsql_plan_issues(

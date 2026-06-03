@@ -128,6 +128,25 @@ fetch, and retention sweeps. Plan checks are designed to flag missing indexes,
 unbounded scans, duplicate-claim risk, and inspection fetch regressions without
 executing user workloads.
 
+Set `AVALAN_TASK_LOAD_POSTGRESQL_DSN` to run the opt-in queue load profile.
+The load profile records worker count, run count, queue count, lease duration,
+retry settings, bounded reaper limit, pool size, PostgreSQL version, elapsed
+time, and optional minimum claims per second. Override the defaults with
+`AVALAN_TASK_LOAD_WORKERS`, `AVALAN_TASK_LOAD_RUNS`,
+`AVALAN_TASK_LOAD_QUEUES`, `AVALAN_TASK_LOAD_LEASE_SECONDS`,
+`AVALAN_TASK_LOAD_MAX_ATTEMPTS`, `AVALAN_TASK_LOAD_RETRY_DELAY_SECONDS`,
+`AVALAN_TASK_LOAD_ABANDON_LIMIT`, `AVALAN_TASK_LOAD_POOL_SIZE`, and
+`AVALAN_TASK_LOAD_MIN_CLAIMS_PER_SECOND`.
+
+Queue depth and health are inspected before claims, while all load-profile
+runs are claimed, and after expired claims are reaped. Before claims, active
+depth should equal the submitted run count and the oldest available timestamp
+should be present for non-empty queues. During claims, claimed depth should
+equal the submitted run count and expired claim count should remain zero until
+the test clock crosses the lease deadline. Reaper calls must stay within the
+configured per-call limit, stale claim tokens must not commit, each claimed run
+must have a created attempt, and claimed run ids must be unique.
+
 ## Existing Databases
 
 Existing embedded task migration metadata and development databases do not

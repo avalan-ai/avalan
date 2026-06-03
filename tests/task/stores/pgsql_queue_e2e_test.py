@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, main
 
 from pgsql_harness import (
+    drop_task_pgsql_schema,
     isolated_task_pgsql_schema,
     real_task_pgsql_dsn,
     task_pgsql_psycopg_dsn,
@@ -11,7 +12,6 @@ from pytest import importorskip
 from avalan.pgsql import (
     PsycopgAsyncDatabase,
     PsycopgPoolSettings,
-    quote_pgsql_identifier,
 )
 from avalan.task import (
     TaskAttemptState,
@@ -101,7 +101,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
         dsn = getattr(self, "dsn", None)
         schema = getattr(self, "schema", None)
         if dsn is not None and schema is not None:
-            await _drop_schema(dsn, schema)
+            await drop_task_pgsql_schema(dsn, schema)
 
     async def test_worker_completes_pgsql_queue_run(self) -> None:
         definition_hash = "queue-e2e-success"
@@ -225,19 +225,6 @@ def _definition(*, max_attempts: int = 1) -> TaskDefinition:
         run=TaskRunPolicy.queued("pgsql-e2e"),
         retry=TaskRetryPolicy(max_attempts=max_attempts),
     )
-
-
-async def _drop_schema(dsn: str, schema: str) -> None:
-    database = PsycopgAsyncDatabase(
-        PsycopgPoolSettings(dsn=task_pgsql_psycopg_dsn(dsn))
-    )
-    async with database:
-        async with database.connection() as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(
-                    "DROP SCHEMA IF EXISTS "
-                    f"{quote_pgsql_identifier(schema)} CASCADE"
-                )
 
 
 if __name__ == "__main__":

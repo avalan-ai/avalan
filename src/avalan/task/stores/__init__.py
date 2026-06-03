@@ -27,6 +27,9 @@ from .pgsql_benchmark import (
     TaskPgsqlBenchmarkSettings as TaskPgsqlBenchmarkSettings,
 )
 from .pgsql_benchmark import (
+    TaskPgsqlQueueLoadProfile as TaskPgsqlQueueLoadProfile,
+)
+from .pgsql_benchmark import (
     task_pgsql_benchmark_cases as task_pgsql_benchmark_cases,
 )
 from .pgsql_benchmark import (
@@ -37,4 +40,10 @@ from .pgsql_benchmark import (
 )
 from .pgsql_benchmark import (
     task_pgsql_plan_issues as task_pgsql_plan_issues,
+)
+from .pgsql_benchmark import (
+    task_pgsql_queue_load_issues as task_pgsql_queue_load_issues,
+)
+from .pgsql_benchmark import (
+    task_pgsql_queue_load_metadata as task_pgsql_queue_load_metadata,
 )

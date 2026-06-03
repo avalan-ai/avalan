@@ -1,6 +1,12 @@
 from os import environ
 from uuid import uuid4
 
+from avalan.pgsql import (
+    PsycopgAsyncDatabase,
+    PsycopgPoolSettings,
+    quote_pgsql_identifier,
+)
+
 
 class FakeAlembicConfig:
     def __init__(self) -> None:
@@ -183,6 +189,19 @@ def task_pgsql_psycopg_dsn(dsn: str) -> str:
     if dsn.startswith("postgresql+psycopg://"):
         return "postgresql://" + dsn.removeprefix("postgresql+psycopg://")
     return dsn
+
+
+async def drop_task_pgsql_schema(dsn: str, schema: str) -> None:
+    database = PsycopgAsyncDatabase(
+        PsycopgPoolSettings(dsn=task_pgsql_psycopg_dsn(dsn))
+    )
+    async with database:
+        async with database.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    "DROP SCHEMA IF EXISTS "
+                    f"{quote_pgsql_identifier(schema)} CASCADE"
+                )
 
 
 def unexpected_import(module: str) -> object:
