@@ -691,14 +691,23 @@ def _validate_file_descriptor_value(
         )
 
     issues: list[TaskValidationIssue] = []
-    source_kind = descriptor.get("source_kind")
-    reference = descriptor.get("reference")
-    role = descriptor.get("role")
-    mime_type = descriptor.get("mime_type")
-    size_bytes = descriptor.get("size_bytes")
-    sha256 = descriptor.get("sha256")
-    conversions = descriptor.get("conversions", ())
-    metadata = descriptor.get("metadata")
+    try:
+        source_kind = descriptor.get("source_kind")
+        reference = descriptor.get("reference")
+        role = descriptor.get("role")
+        mime_type = descriptor.get("mime_type")
+        size_bytes = descriptor.get("size_bytes")
+        sha256 = descriptor.get("sha256")
+        conversions = descriptor.get("conversions", ())
+        metadata = descriptor.get("metadata")
+    except Exception:
+        return (
+            _invalid_file_issue(
+                path,
+                "Task input must be a file descriptor.",
+                "Pass a file descriptor with source_kind and reference.",
+            ),
+        )
 
     if not _is_valid_source_kind(source_kind):
         issues.append(
@@ -1729,12 +1738,18 @@ def _is_json_value(value: object) -> bool:
     if isinstance(value, float):
         return isfinite(value)
     if isinstance(value, Mapping):
-        return all(
-            isinstance(key, str) and _is_json_value(item)
-            for key, item in value.items()
-        )
+        try:
+            return all(
+                isinstance(key, str) and _is_json_value(item)
+                for key, item in value.items()
+            )
+        except Exception:
+            return False
     if isinstance(value, list | tuple):
-        return all(_is_json_value(item) for item in value)
+        try:
+            return all(_is_json_value(item) for item in value)
+        except Exception:
+            return False
     return False
 
 

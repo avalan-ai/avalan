@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, ItemsView, Iterator, Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
@@ -73,6 +73,89 @@ class DisappearingDescriptor(Mapping[str, object]):
 
     def get(self, key: str, default: object = None) -> object:
         return self._data.get(key, default)
+
+
+class VolatileStructuredInput(Mapping[str, object]):
+    def __init__(self) -> None:
+        self._remaining_safe_items_calls = 2
+        self._data: dict[str, object] = {
+            "document": {
+                "source_kind": "local_path",
+                "reference": "private.txt",
+            }
+        }
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def get(self, key: str, default: object = None) -> object:
+        return self._data.get(key, default)
+
+    def items(self) -> ItemsView[str, object]:
+        if self._remaining_safe_items_calls <= 0:
+            raise RuntimeError("private descriptor traversal failure")
+        self._remaining_safe_items_calls -= 1
+        return self._data.items()
+
+
+class VolatileDescriptorLookup(Mapping[str, object]):
+    def __init__(self) -> None:
+        self._data: dict[str, object] = {
+            "source_kind": "local_path",
+            "reference": "private.txt",
+        }
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def get(self, key: str, default: object = None) -> object:
+        raise RuntimeError("private descriptor lookup failure")
+
+    def items(self) -> ItemsView[str, object]:
+        return self._data.items()
+
+
+class VolatileKeyInput(Mapping[object, object]):
+    def __init__(self) -> None:
+        self._remaining_safe_items_calls = 2
+        self._safe_data: dict[object, object] = {"safe": "ok"}
+        self._unsafe_data: dict[object, object] = {1: "private"}
+
+    def __getitem__(self, key: object) -> object:
+        if self._remaining_safe_items_calls > 0:
+            return self._safe_data[key]
+        return self._unsafe_data[key]
+
+    def __iter__(self) -> Iterator[object]:
+        if self._remaining_safe_items_calls > 0:
+            return iter(self._safe_data)
+        return iter(self._unsafe_data)
+
+    def __len__(self) -> int:
+        if self._remaining_safe_items_calls > 0:
+            return len(self._safe_data)
+        return len(self._unsafe_data)
+
+    def get(self, key: object, default: object = None) -> object:
+        return default
+
+    def items(self) -> ItemsView[object, object]:
+        if self._remaining_safe_items_calls > 0:
+            self._remaining_safe_items_calls -= 1
+            return self._safe_data.items()
+        return self._unsafe_data.items()
 
 
 class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
@@ -387,6 +470,57 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             [issue.path for issue in error.exception.issues], ["input"]
         )
         self.assertNotIn("input.txt", str(error.exception))
+
+    async def test_structured_descriptor_traversal_failure_is_safe(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(input_contract=_object_contract()),
+                VolatileStructuredInput(),
+                roots=(),
+                artifact_store=None,
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private", str(error.exception))
+
+    async def test_structured_descriptor_lookup_failure_is_safe(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(input_contract=_object_contract()),
+                {"document": VolatileDescriptorLookup()},
+                roots=(),
+                artifact_store=None,
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("input.invalid_file", "input.document")],
+        )
+        self.assertNotIn("private", str(error.exception))
+
+    async def test_structured_descriptor_non_string_key_is_safe(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(input_contract=_object_contract()),
+                VolatileKeyInput(),
+                roots=(),
+                artifact_store=None,
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private", str(error.exception))
 
     async def test_missing_artifact_backend_fails_before_path_access(
         self,

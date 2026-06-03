@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from math import inf
 from pathlib import Path
@@ -68,6 +68,36 @@ class ConfiguredEncryptionProvider:
             key_id=key_id or "enc-v1",
             algorithm="test-aead",
         )
+
+
+class HostileMapping(Mapping[str, object]):
+    def __getitem__(self, key: str) -> object:
+        raise RuntimeError("private raw mapping value")
+
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("private raw mapping key")
+
+    def __len__(self) -> int:
+        return 1
+
+
+class HostileDescriptorMapping(Mapping[str, object]):
+    def __getitem__(self, key: str) -> object:
+        raise RuntimeError("private raw descriptor value")
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("source_kind", "reference"))
+
+    def __len__(self) -> int:
+        return 2
+
+    def get(self, key: str, default: object = None) -> object:
+        raise RuntimeError("private raw descriptor lookup")
+
+
+class HostileTuple(tuple[object, ...]):
+    def __iter__(self) -> Iterator[object]:
+        raise RuntimeError("private raw array value")
 
 
 class TaskValidationTest(TestCase):
@@ -699,6 +729,56 @@ class TaskValidationTest(TestCase):
             ],
             ["output.invalid_type"],
         )
+
+    def test_structured_validation_rejects_hostile_mapping_safely(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(schema={"type": "object"}),
+            output_contract=TaskOutputContract.object(
+                schema={"type": "object"}
+            ),
+        )
+
+        input_issues = validate_task_input(definition, HostileMapping())
+        output_issues = validate_task_output(definition, HostileMapping())
+
+        self.assertEqual(
+            [issue.code for issue in input_issues],
+            ["input.invalid_type"],
+        )
+        self.assertEqual(
+            [issue.code for issue in output_issues],
+            ["output.invalid_type"],
+        )
+        rendered = f"{input_issues} {output_issues}"
+        self.assertNotIn("private raw", rendered)
+
+    def test_array_validation_rejects_hostile_tuple_safely(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.array(schema={"type": "array"}),
+        )
+
+        issues = validate_task_input(definition, HostileTuple(("private",)))
+
+        self.assertEqual(
+            [issue.code for issue in issues],
+            [
+                "input.invalid_type",
+            ],
+        )
+        self.assertNotIn("private raw", str(issues))
+
+    def test_file_validation_rejects_hostile_descriptor_safely(self) -> None:
+        definition = self._definition(input_contract=TaskInputContract.file())
+
+        issues = validate_task_input(definition, HostileDescriptorMapping())
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private raw", str(issues))
 
     def test_missing_json_schema_dependency_returns_safe_diagnostic(
         self,

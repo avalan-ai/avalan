@@ -263,7 +263,11 @@ def _collect_file_descriptor_entries_into(
     entries: list[_InputFileDescriptor],
     issues: list[TaskValidationIssue],
 ) -> None:
-    entry = _file_descriptor_entry(value, path)
+    try:
+        entry = _file_descriptor_entry(value, path)
+    except Exception:
+        issues.append(_descriptor_issue(path=path))
+        return
     if isinstance(entry, TaskValidationIssue):
         issues.append(entry)
         return
@@ -271,14 +275,21 @@ def _collect_file_descriptor_entries_into(
         entries.append(entry)
         return
     if isinstance(value, Mapping):
-        for key, item in value.items():
-            if isinstance(key, str):
-                _collect_file_descriptor_entries_into(
-                    item,
-                    f"{path}.{key}",
-                    entries,
-                    issues,
-                )
+        try:
+            items = tuple(value.items())
+        except Exception:
+            issues.append(_descriptor_issue(path=path))
+            return
+        for key, item in items:
+            if not isinstance(key, str):
+                issues.append(_descriptor_issue(path=path))
+                continue
+            _collect_file_descriptor_entries_into(
+                item,
+                f"{path}.{key}",
+                entries,
+                issues,
+            )
     elif isinstance(value, list | tuple):
         for index, item in enumerate(value):
             _collect_file_descriptor_entries_into(
