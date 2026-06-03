@@ -1200,6 +1200,139 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertNotIn("run-2", output)
         self.assertIn("Task worker processed 1 run.", output)
 
+    def test_worker_reports_shutdown_abandonment(self) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeTaskWorker.instances = []
+        _FakeTaskWorker.results = [
+            SimpleNamespace(
+                processed=True,
+                completion=None,
+                retry=None,
+                abandonment=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-abandoned",
+                        state=TaskRunState.QUEUED,
+                    )
+                ),
+                shutdown_requested=True,
+                lease_lost=False,
+            ),
+            SimpleNamespace(
+                processed=True,
+                completion=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-2",
+                        state=TaskRunState.SUCCEEDED,
+                    )
+                ),
+                retry=None,
+            ),
+        ]
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "require_feature", return_value=()),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
+            patch.object(
+                task_cmds, "_agent_task_target", return_value=object()
+            ),
+            patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="documents",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="tasks",
+                    worker_id="worker-a",
+                    once=False,
+                    limit=2,
+                    lease_seconds=30,
+                    heartbeat_seconds=0.25,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertEqual(_FakeTaskWorker.instances[0].calls, 1)
+        self.assertIn("Task processed: run-abandoned queued", output)
+        self.assertIn("Task worker shutdown requested.", output)
+        self.assertNotIn("run-2", output)
+        self.assertIn("Task worker processed 1 run.", output)
+
+    def test_worker_reports_claim_loss_as_failure(self) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeTaskWorker.instances = []
+        _FakeTaskWorker.results = [
+            SimpleNamespace(
+                processed=True,
+                completion=None,
+                retry=None,
+                abandonment=None,
+                shutdown_requested=False,
+                lease_lost=True,
+                claimed=SimpleNamespace(
+                    run=SimpleNamespace(run_id="run-lost")
+                ),
+                private_detail="private heartbeat outage",
+            ),
+            SimpleNamespace(
+                processed=True,
+                completion=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-2",
+                        state=TaskRunState.SUCCEEDED,
+                    )
+                ),
+                retry=None,
+            ),
+        ]
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "require_feature", return_value=()),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
+            patch.object(
+                task_cmds, "_agent_task_target", return_value=object()
+            ),
+            patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="documents",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="tasks",
+                    worker_id="worker-a",
+                    once=False,
+                    limit=2,
+                    lease_seconds=30,
+                    heartbeat_seconds=0.25,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertEqual(_FakeTaskWorker.instances[0].calls, 1)
+        self.assertIn("Task claim lost: run-lost", output)
+        self.assertNotIn("run-2", output)
+        self.assertNotIn("private heartbeat outage", output)
+        self.assertIn("Task worker processed 1 run.", output)
+
     def test_worker_reports_retry_and_counts_missing_run_results(
         self,
     ) -> None:

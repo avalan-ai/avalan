@@ -751,6 +751,7 @@ async def _task_worker(
         _print_feature_gate_diagnostics(console, diagnostics)
         return False
     processed = 0
+    lease_lost = False
     limit = (
         1
         if bool(getattr(args, "once", False))
@@ -788,21 +789,42 @@ async def _task_worker(
                 if shutdown.requested:
                     break
                 result = await worker.process_once()
-                if not result.processed or bool(
-                    getattr(result, "shutdown_requested", False)
-                ):
+                if not result.processed:
                     break
                 processed += 1
+                abandonment = getattr(result, "abandonment", None)
                 run = (
                     result.completion.run
                     if result.completion is not None
-                    else result.retry.run if result.retry is not None else None
+                    else (
+                        result.retry.run
+                        if result.retry is not None
+                        else (
+                            abandonment.run
+                            if abandonment is not None
+                            else None
+                        )
+                    )
                 )
                 if run is not None:
                     console.print(
                         f"Task processed: {run.run_id} {run.state.value}",
                         markup=False,
                     )
+                if bool(getattr(result, "lease_lost", False)):
+                    lease_lost = True
+                    claim = result.claimed
+                    message = "Task claim lost."
+                    if claim is not None:
+                        message = f"Task claim lost: {claim.run.run_id}"
+                    console.print(message, markup=False)
+                    break
+                if bool(getattr(result, "shutdown_requested", False)):
+                    console.print(
+                        "Task worker shutdown requested.",
+                        markup=False,
+                    )
+                    break
     except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
         _print_task_execution_error(console, exc)
         return False
@@ -811,7 +833,7 @@ async def _task_worker(
         f"{'s' if processed != 1 else ''}.",
         markup=False,
     )
-    return True
+    return not lease_lost
 
 
 def _load_definition_for_execution(
