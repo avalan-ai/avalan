@@ -10,6 +10,7 @@ from .artifact import (
 from .store import (
     TaskSnapshotMetadata,
     TaskStore,
+    TaskStoreConflictError,
     freeze_snapshot_metadata,
 )
 
@@ -121,9 +122,12 @@ class TaskRetentionService:
                 continue
             if not _retention_expired(record, enforced_at):
                 continue
-            results.append(
-                await self._enforce_record(record, enforced_at=enforced_at)
+            result = await self._enforce_record(
+                record,
+                enforced_at=enforced_at,
             )
+            if result is not None:
+                results.append(result)
         return TaskRetentionSweep(
             run_id=run_id,
             enforced_at=enforced_at,
@@ -154,12 +158,12 @@ class TaskRetentionService:
             for record in records:
                 if not _retention_expired(record, enforced_at):
                     continue
-                results.append(
-                    await self._enforce_record(
-                        record,
-                        enforced_at=enforced_at,
-                    )
+                result = await self._enforce_record(
+                    record,
+                    enforced_at=enforced_at,
                 )
+                if result is not None:
+                    results.append(result)
         return TaskRetentionBatchSweep(
             enforced_at=enforced_at,
             limit=limit,
@@ -171,7 +175,7 @@ class TaskRetentionService:
         record: TaskArtifactRecord,
         *,
         enforced_at: datetime,
-    ) -> TaskRetentionResult:
+    ) -> TaskRetentionResult | None:
         artifact_store = self._artifact_stores.get(record.ref.store)
         if artifact_store is None:
             raise TaskRetentionStoreNotFoundError(
@@ -190,13 +194,16 @@ class TaskRetentionService:
             enforced_at=enforced_at,
             reason=reason,
         )
-        updated = await self._store.transition_artifact(
-            record.artifact_id,
-            from_states={TaskArtifactState.READY},
-            to_state=_state_for_action(action),
-            reason=reason,
-            metadata=metadata,
-        )
+        try:
+            updated = await self._store.transition_artifact(
+                record.artifact_id,
+                from_states={TaskArtifactState.READY},
+                to_state=_state_for_action(action),
+                reason=reason,
+                metadata=metadata,
+            )
+        except TaskStoreConflictError:
+            return None
         return TaskRetentionResult(
             artifact_id=record.artifact_id,
             run_id=record.run_id,

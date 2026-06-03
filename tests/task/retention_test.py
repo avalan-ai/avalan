@@ -7,6 +7,7 @@ from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.task import (
     TaskArtifactPurpose,
+    TaskArtifactRef,
     TaskArtifactRetention,
     TaskArtifactState,
     TaskDefinition,
@@ -583,6 +584,63 @@ class TaskRetentionServiceTest(IsolatedAsyncioTestCase):
 
             self.assertEqual(sweep.results, ())
             self.assertTrue(Path(tmp, ref.storage_key).exists())
+
+    async def test_sweep_expired_skips_concurrent_artifact_transition(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            task_store = await self._task_store(
+                lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            run = await task_store.create_run(
+                TaskExecutionRequest(definition_id="hash-a")
+            )
+
+            class RacingArtifactStore(LocalArtifactStore):
+                async def delete(self, ref: TaskArtifactRef) -> None:
+                    await super().delete(ref)
+                    await task_store.transition_artifact(
+                        ref.artifact_id,
+                        from_states={TaskArtifactState.READY},
+                        to_state=TaskArtifactState.DELETED,
+                        reason="retention_expired",
+                        metadata={
+                            "retention": {
+                                "action": "deleted",
+                                "reason": "retention_expired",
+                            }
+                        },
+                    )
+
+            artifact_store = RacingArtifactStore(
+                tmp,
+                raw_storage_allowed=True,
+            )
+            ref = await artifact_store.put(
+                b"private output",
+                artifact_id="output-1",
+            )
+            await task_store.append_artifact(
+                run.run_id,
+                ref=ref,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                retention=TaskArtifactRetention(delete_after_days=1),
+            )
+            service = TaskRetentionService(
+                task_store,
+                {"local": artifact_store},
+            )
+
+            sweep = await service.sweep_expired(
+                now=datetime(2026, 1, 3, tzinfo=UTC),
+            )
+
+            self.assertEqual(sweep.results, ())
+            self.assertFalse(Path(tmp, ref.storage_key).exists())
+            self.assertEqual(
+                (await task_store.get_artifact(ref.artifact_id)).state,
+                TaskArtifactState.DELETED,
+            )
 
     async def test_invalid_inputs_fail_fast(self) -> None:
         task_store = await self._task_store(
