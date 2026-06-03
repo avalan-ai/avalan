@@ -39,6 +39,7 @@ from .validation import (
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
+from hmac import compare_digest
 from pathlib import Path, PurePath, PureWindowsPath
 
 _REMOTE_URL_DISABLED_CODE = "feature.remote_url_file_inputs_disabled"
@@ -126,29 +127,39 @@ async def materialize_task_input_files(
             issues.extend(
                 _validate_resolved_file(
                     definition,
-                    result.path,
-                    result.descriptor_path,
+                    result,
                 )
             )
     if issues:
         raise TaskFileMaterializationError(tuple(issues))
 
-    materialized: list[TaskMaterializedFile] = []
+    verified: list[_VerifiedInputFile] = []
     for result in resolved:
         assert isinstance(result, _ResolvedInputFile)
-        content = result.path.read_bytes()
-        digest = sha256(content).hexdigest()
+        verified_result = _read_verified_file(result)
+        if isinstance(verified_result, TaskValidationIssue):
+            issues.append(verified_result)
+        else:
+            verified.append(verified_result)
+    if issues:
+        raise TaskFileMaterializationError(tuple(issues))
+
+    materialized: list[TaskMaterializedFile] = []
+    for verified_file in verified:
+        content = verified_file.content
+        digest = verified_file.sha256
+        descriptor = verified_file.resolved.descriptor
         identity = _safe_file_identity(
-            result.descriptor,
+            descriptor,
             digest,
             hmac_provider=hmac_provider,
         )
         ref = await artifact_store.put(
             content,
-            media_type=result.descriptor.mime_type,
+            media_type=descriptor.mime_type,
             metadata={
                 "identity": identity,
-                "source_kind": result.descriptor.source_kind.value,
+                "source_kind": descriptor.source_kind.value,
             },
         )
         if task_store is not None:
@@ -161,7 +172,7 @@ async def materialize_task_input_files(
                     operation="materialization",
                     metadata={
                         "identity": identity,
-                        "source_kind": result.descriptor.source_kind.value,
+                        "source_kind": descriptor.source_kind.value,
                     },
                 ),
                 retention=TaskArtifactRetention(
@@ -171,8 +182,8 @@ async def materialize_task_input_files(
             )
         materialized.append(
             TaskMaterializedFile(
-                descriptor=result.descriptor,
-                descriptor_path=result.descriptor_path,
+                descriptor=descriptor,
+                descriptor_path=verified_file.resolved.descriptor_path,
                 ref=ref,
                 identity=identity,
             )
@@ -337,6 +348,13 @@ class _ResolvedInputFile:
     path: Path
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _VerifiedInputFile:
+    resolved: _ResolvedInputFile
+    content: bytes
+    sha256: str
+
+
 def _coerce_file_descriptor(value: object) -> TaskFileDescriptor:
     assert isinstance(value, Mapping)
     source_kind = value.get("source_kind")
@@ -458,11 +476,33 @@ def _validate_count_limits(
 
 def _validate_resolved_file(
     definition: TaskDefinition,
-    path: Path,
-    descriptor_path: str,
+    resolved: _ResolvedInputFile,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
-    size = path.stat().st_size
+    descriptor = resolved.descriptor
+    descriptor_path = resolved.descriptor_path
+    try:
+        size = resolved.path.stat().st_size
+    except OSError:
+        return (
+            _issue(
+                code="input.invalid_file",
+                path=f"{descriptor_path}.reference",
+                message="Task file cannot be read.",
+                hint="Pass an available file within an allowlisted root.",
+                category=TaskValidationCategory.VALUE,
+            ),
+        )
+    if descriptor.size_bytes is not None and size != descriptor.size_bytes:
+        issues.append(
+            _issue(
+                code="input.invalid_file",
+                path=f"{descriptor_path}.size_bytes",
+                message="Task file size does not match the descriptor.",
+                hint="Pass a descriptor whose size matches the file bytes.",
+                category=TaskValidationCategory.VALUE,
+            )
+        )
     limits = (
         definition.limits.file_bytes,
         definition.artifact.max_bytes,
@@ -478,6 +518,39 @@ def _validate_resolved_file(
             )
         )
     return tuple(issues)
+
+
+def _read_verified_file(
+    resolved: _ResolvedInputFile,
+) -> _VerifiedInputFile | TaskValidationIssue:
+    try:
+        content = resolved.path.read_bytes()
+    except OSError:
+        return _issue(
+            code="input.invalid_file",
+            path=f"{resolved.descriptor_path}.reference",
+            message="Task file cannot be read.",
+            hint="Pass an available file within an allowlisted root.",
+            category=TaskValidationCategory.VALUE,
+        )
+    digest = sha256(content).hexdigest()
+    expected_digest = resolved.descriptor.sha256
+    if expected_digest is not None and not compare_digest(
+        digest,
+        expected_digest,
+    ):
+        return _issue(
+            code="input.invalid_file",
+            path=f"{resolved.descriptor_path}.sha256",
+            message="Task file digest does not match the descriptor.",
+            hint="Pass a descriptor whose digest matches the file bytes.",
+            category=TaskValidationCategory.VALUE,
+        )
+    return _VerifiedInputFile(
+        resolved=resolved,
+        content=content,
+        sha256=digest,
+    )
 
 
 def _safe_file_identity(
